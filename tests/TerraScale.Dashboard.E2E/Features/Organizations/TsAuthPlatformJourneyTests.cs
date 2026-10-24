@@ -448,8 +448,9 @@ public sealed class TsAuthPlatformJourneyTests
             await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(completed.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
         }
-        await Assert.That(await platform.StoredAsync(AccountService.AccountsCollection, key)).IsFalse();
-        await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, personal)).IsEqualTo(becomesShared);
+        await Assert.That(await platform.ErasedAccountAsync(key)).IsTrue();
+        await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, personal)).IsTrue();
+        await Assert.That(await platform.ErasedOrganizationAsync(personal)).IsEqualTo(!becomesShared);
         await Assert.That(await client.GetStringAsync("/account-deleted")).Contains("Account deleted");
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
@@ -641,6 +642,8 @@ public sealed class TsAuthPlatformJourneyTests
         });
 
         public async Task<bool> StoredAsync(string collection, string key) => await state!.GetAsync(collection, key, default) is not null;
+        public async Task<bool> ErasedAccountAsync(string key) => AccountService.IsDeletionFence((await state!.GetAsync(AccountService.AccountsCollection, key, default))!);
+        public async Task<bool> ErasedOrganizationAsync(string key) => AccountService.IsDeletionFence((await state!.GetAsync(AccountService.OrganizationsCollection, key, default))!);
 
         public Task PlanAsync(string organizationId, string planId) => ProjectionAsync(organizationId, organization => organization.PlanId = planId);
 

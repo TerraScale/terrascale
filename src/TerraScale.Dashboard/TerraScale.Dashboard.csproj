@@ -3,6 +3,7 @@
     <RootNamespace>TerraScale.Dashboard</RootNamespace>
     <AssemblyName>TerraScale.Dashboard</AssemblyName>
     <WebRoot>web/static</WebRoot>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Shared/Accounts/pricing.json" />

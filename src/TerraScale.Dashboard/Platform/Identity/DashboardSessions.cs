@@ -18,6 +18,8 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         var credentials = await identity.ReadAsync(context.RequestAborted);
         var encrypted = Seal(record, credentials.SessionEncryptionKey);
         var id = Key(token);
+        await AccountEnrollment.RememberAsync(state, record.UserId, "sessions", id, context.RequestAborted);
+        await AccountEnrollment.RememberAsync(state, record.UserId, "session_indexes", Key(record.UserId), context.RequestAborted);
         await state.PutAsync("sessions", id, JsonSerializer.SerializeToElement(encrypted), TerraBasePrecondition.Absent, context.RequestAborted);
         try { await UpdateIndexAsync(record.UserId, entries => entries[id] = record.SessionExpiresAt!.Value, context.RequestAborted); }
         catch
@@ -30,6 +32,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
             { context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardSessions").LogWarning("Partial session cleanup failed ({ErrorType})", error.GetType().Name); }
             throw;
         }
+        await AccountEnrollment.ThrowIfErasedAsync(state, record.UserId, context.RequestAborted);
         context.Response.Cookies.Append(Cookie, token, new CookieOptions
         {
             HttpOnly = true,
@@ -85,7 +88,9 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         var id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var credentials = await identity.ReadAsync(cancellationToken);
         record = record with { SessionExpiresAt = expiresAt, RefreshLease = "", RefreshLeaseUntil = null };
+        await AccountEnrollment.RememberAsync(state, record.UserId, "auth_credentials", id, cancellationToken);
         await state.PutAsync("auth_credentials", id, JsonSerializer.SerializeToElement(Seal(record, credentials.SessionEncryptionKey)), TerraBasePrecondition.Absent, cancellationToken);
+        await AccountEnrollment.ThrowIfErasedAsync(state, record.UserId, cancellationToken);
         return id;
     }
 
@@ -96,6 +101,38 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
     {
         if (id is not { Length: 64 } || !id.All(char.IsAsciiHexDigitLower)) return;
         await DeleteStrictAsync("auth_credentials", id, cancellationToken);
+    }
+
+    // Completed auth deletions need no active grant, but every stored credential
+    // must still belong to the proven subject before it can be removed.
+    public async Task DeleteCredentialAsync(string id, string subject, CancellationToken cancellationToken)
+    {
+        if (id is not { Length: 64 } || !id.All(char.IsAsciiHexDigitLower)) throw new IOException("Credential identity is invalid.");
+        var document = await state.GetAsync("auth_credentials", id, cancellationToken);
+        if (document is null) return;
+        if (document.Id != id || document.State != "value") throw new IOException("Credential identity is invalid.");
+        var credentials = await identity.ReadAsync(cancellationToken);
+        var record = Open(document.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard credential is invalid."), credentials.SessionEncryptionKey);
+        if (record.UserId != subject) throw new IOException("Credential ownership is invalid.");
+        await state.DeleteAsync("auth_credentials", id, document.Version, cancellationToken);
+    }
+
+    // Erasure replay uses retained references, independently of active issuer grants
+    // and mutable indexes. Password-change revocation continues to use RevokeUserAsync.
+    public async Task CleanEnrollmentsAsync(string userId, CancellationToken cancellationToken)
+    {
+        foreach (var reference in await AccountEnrollment.ListAsync(state, userId, cancellationToken))
+        {
+            if (reference.Collection is not ("sessions" or "auth_credentials")) continue;
+            var document = await state.GetAsync(reference.Collection, reference.RecordId, cancellationToken);
+            if (document is null) continue;
+            if (document.Id != reference.RecordId || document.State != "value") throw new IOException("Enrollment identity is invalid.");
+            var credentials = await identity.ReadAsync(cancellationToken);
+            var record = Open(document.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard credential is invalid."), credentials.SessionEncryptionKey);
+            if (record.UserId != userId) throw new IOException("Enrollment ownership is invalid.");
+            await state.DeleteAsync(reference.Collection, reference.RecordId, document.Version, cancellationToken);
+        }
+        await AccountEnrollment.CleanAsync(state, userId, cancellationToken);
     }
 
     public async Task<IReadOnlyList<DashboardSessionInfo>> ListAsync(HttpContext context, SessionRecord session)

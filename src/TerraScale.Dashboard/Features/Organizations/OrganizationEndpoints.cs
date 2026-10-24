@@ -27,7 +27,7 @@ public static class OrganizationEndpoints
         .AddSingleton<OrganizationOperations>();
     public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/organization", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
+        endpoints.MapGet("/organization", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
             StripeBilling billing, SpendingService spending, TimeProvider time, InternalBillingService internalBilling) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);

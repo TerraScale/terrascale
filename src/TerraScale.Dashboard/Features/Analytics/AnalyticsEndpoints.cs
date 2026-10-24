@@ -11,7 +11,7 @@ public static class AnalyticsEndpoints
 
     public static IEndpointRouteBuilder MapAnalytics(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/analytics", async (HttpContext http, DashboardSessions sessions, AccountService accounts, AnalyticsService analytics) =>
+        endpoints.MapGet("/analytics", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, AnalyticsService analytics) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);

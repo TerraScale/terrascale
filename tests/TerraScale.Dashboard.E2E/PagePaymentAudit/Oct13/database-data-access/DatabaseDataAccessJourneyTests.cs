@@ -6,8 +6,8 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class DatabaseDataAccessJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class DatabaseDataAccessJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("SELECT * FROM users WHERE name = $1 LIMIT 20")]

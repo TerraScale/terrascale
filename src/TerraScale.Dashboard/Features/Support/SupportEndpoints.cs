@@ -52,7 +52,7 @@ public static class SupportEndpoints
 
     public static IEndpointRouteBuilder MapSupport(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/support", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+        endpoints.MapGet("/support", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);

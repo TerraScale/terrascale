@@ -11,7 +11,7 @@ public static class UsageEndpoints
         .AddSingleton<IUsageMeasurements, UsageBackend>().AddSingleton<IUsageStorage, UsageStorageBackend>().AddSingleton<IUsageReplication, UsageReplicationBackend>().AddSingleton<UsageService>();
     public static IEndpointRouteBuilder MapUsage(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/usage", async (HttpContext http, DashboardSessions sessions, AccountService accounts, UsageService usage) =>
+        endpoints.MapGet("/usage", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, UsageService usage) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);

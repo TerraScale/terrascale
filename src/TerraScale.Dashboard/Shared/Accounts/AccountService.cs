@@ -25,6 +25,46 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     public static string AccountId(string subject) => AccountStorageKey(subject);
     public static string NewId() => Ids.NewId();
 
+    public static bool IsDeletionFence(TerraBaseDocument document) => document.State == "value" &&
+        document.Document.ValueKind == JsonValueKind.Object && document.Document.EnumerateObject().Count() == 1 &&
+        document.Document.TryGetProperty(nameof(DeletionFence.ErasureId), out var id) && id.ValueKind == JsonValueKind.String && TerraScaleIds.IsValid(id.GetString());
+
+    public static async Task FenceDeletionAsync(IDashboardState state, string subject, string erasureId, CancellationToken cancellationToken)
+    {
+        var key = AccountStorageKey(subject);
+        await FenceRecordAsync(state, IdentitiesCollection, key, erasureId, document => Read<AccountIdentityBinding>(document).UserId == subject, cancellationToken);
+        await FenceRecordAsync(state, AccountsCollection, key, erasureId, document => Read<AccountRecord>(document).UserId == subject, cancellationToken);
+    }
+
+    public static Task FenceOrganizationDeletionAsync(IDashboardState state, string organizationId, string erasureId, CancellationToken cancellationToken)
+    {
+        if (!TerraScaleIds.IsValid(organizationId)) throw new IOException("Organization erasure identity is invalid.");
+        return FenceRecordAsync(state, OrganizationsCollection, organizationId, erasureId, document => Read<OrganizationRecord>(document).Id == organizationId, cancellationToken);
+    }
+
+    public static async Task FenceRecordAsync(IDashboardState state, string collection, string key, string erasureId,
+        Func<TerraBaseDocument, bool> owns, CancellationToken cancellationToken)
+    {
+        if (!TerraScaleIds.IsValid(erasureId)) throw new IOException("Erasure identity is invalid.");
+        for (var attempt = 0; ; attempt++)
+        {
+            var document = await state.GetAsync(collection, key, cancellationToken);
+            if (document is not null)
+            {
+                if (document.Id != key) throw new IOException("Erasure scope does not match.");
+                if (IsDeletionFence(document)) return;
+                if (!owns(document)) throw new IOException("Erasure ownership does not match.");
+            }
+            try
+            {
+                await state.PutAsync(collection, key, JsonSerializer.SerializeToElement(new DeletionFence(erasureId)),
+                    document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                return;
+            }
+            catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+        }
+    }
+
     public async Task<AccountRecord> EnsureAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
@@ -111,6 +151,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                 throw new AccountAccessException("Personal organization identity does not match.");
             org.Name = live.Name;
             org.OwnerUserId = session.UserId;
+            if (org.DeletedProjectIds.Contains(project.Id)) throw new AccountAccessException("Project is unavailable.", 404);
             org.Projects.TryAdd(project.Id, new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, IsDefault = true, CreatedAt = project.CreatedAt });
         }
         return org;
@@ -240,6 +281,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                 document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
             }
         }
+        if (IsDeletionFence(document)) throw new AccountAccessException("Organization is unavailable.", 404);
         var org = Read<OrganizationRecord>(document);
         if (document.Id != live.Id || org.Id != live.Id) throw new JsonException("Organization identity is invalid.");
         return org;
@@ -255,7 +297,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         if (projects is null) return;
         var saved = org.Projects;
         org.Projects = new();
-        foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id)))
+        foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id) && !org.DeletedProjectIds.Contains(project.Id)))
         {
             var project = saved.GetValueOrDefault(remote.Id) ?? new ProjectRecord { Id = remote.Id, CreatedAt = remote.CreatedAt };
             project.OrganizationId = live.Id;
@@ -351,6 +393,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             var live = (await platform.ListOrganizationsAsync(context.Session, cancellationToken)).FirstOrDefault(org => org.Id == id);
             if (live?.Role is not { Length: > 0 }) throw new AccountAccessException("Organization membership is required.");
             var document = await state.GetAsync(OrganizationsCollection, id, cancellationToken) ?? throw new AccountAccessException("Organization is unavailable.", 404);
+            if (IsDeletionFence(document)) throw new AccountAccessException("Organization is unavailable.", 404);
             var org = Read<OrganizationRecord>(document);
             if (document.Id != id || org.Id != id) throw new JsonException("Organization identity is invalid.");
             Hydrate(org, live, await platform.ListProjectsAsync(context.Session, id, cancellationToken), context.Session);
@@ -359,6 +402,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             if (!org.ContainsMember(context.UserId)) throw new AccountAccessException("Organization membership is required.");
             var recorded = org.AuditEvents.Count;
             await update(org);
+            if (org.Projects.Keys.Any(org.DeletedProjectIds.Contains)) throw new AccountAccessException("Project is unavailable.", 404);
             for (var index = recorded; index < org.AuditEvents.Count; index++)
                 if (org.AuditEvents[index].Ip is null) org.AuditEvents[index] = org.AuditEvents[index] with { Ip = ClientIp };
             if (org.Id != id) throw new AccountAccessException("Organization identity cannot change.");
@@ -437,7 +481,11 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         };
         // A context read between creation and this write stores the default business state; keep it.
         try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken); }
-        catch (TerraBasePreconditionFailedException) { }
+        catch (TerraBasePreconditionFailedException)
+        {
+            var current = await state.GetAsync(OrganizationsCollection, org.Id, cancellationToken);
+            if (current is null || IsDeletionFence(current)) throw new AccountAccessException("Organization is unavailable.", 404);
+        }
         await UpdateAccountAsync(session, account => { account.OrganizationIds.Add(org.Id); account.ActiveOrganizationId = org.Id; account.ActiveProjectId = ""; }, cancellationToken);
         return org;
     }
@@ -455,16 +503,18 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     public static T Read<T>(TerraBaseDocument document)
     {
         if (document.State != "value") throw new IOException("Dashboard record has a causal conflict.");
+        if (IsDeletionFence(document)) throw new IOException("Dashboard record was erased.");
         var value = document.Document.Deserialize<T>() ?? throw new JsonException("Dashboard record is invalid.");
         if (value is AccountRecord account && (account.OrganizationIds is null || account.Notifications is null || account.Name is null || account.Email is null || account.ActiveOrganizationId is null || account.ActiveProjectId is null || account.PersonalOrganizationId is null))
             throw new JsonException("Dashboard account structure is invalid.");
-        if (value is OrganizationRecord org && (org.Members is null || org.Projects is null || org.AuditEvents is null || org.Invitations is null || org.InvitationReservations is null || org.InvitationReservations.Values.Any(reservation => reservation?.Known is null) || org.Invitations.Values.Any(invite => invite is null) || org.Name is null || org.OwnerUserId is null || org.Members.Values.Any(member => member is null) || org.Projects.Values.Any(project => project is null || project.Databases is null || project.Regions is null)))
+        if (value is OrganizationRecord org && (org.DeletedProjectIds is null || org.DeletedProjectIds.Any(id => !TerraScaleIds.IsValid(id)) || org.PendingProjectDeletions is null || org.Projects is null || org.Projects.Keys.Any(org.DeletedProjectIds.Contains) || org.Members is null || org.AuditEvents is null || org.Invitations is null || org.InvitationReservations is null || org.InvitationReservations.Values.Any(reservation => reservation?.Known is null) || org.Invitations.Values.Any(invite => invite is null) || org.Name is null || org.OwnerUserId is null || org.Members.Values.Any(member => member is null) || org.Projects.Values.Any(project => project is null || project.Databases is null || project.Regions is null)))
             throw new JsonException("Dashboard organization structure is invalid.");
         return value;
     }
 
     private async Task<AccountRecord> ReadAccountAsync(TerraBaseDocument document, string subject, CancellationToken cancellationToken)
     {
+        if (IsDeletionFence(document)) throw IdentityMismatch();
         var key = AccountStorageKey(subject);
         var account = Read<AccountRecord>(document);
         if (document.Id != key || account.UserId != subject || !ValidPublicId(account.Id, key)) throw IdentityMismatch();
@@ -501,6 +551,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
 
     private static AccountIdentityBinding ReadIdentity(TerraBaseDocument document, string subject)
     {
+        if (IsDeletionFence(document)) throw IdentityMismatch();
         var key = AccountStorageKey(subject);
         var identity = Read<AccountIdentityBinding>(document);
         if (document.Id != key || identity.UserId != subject || !ValidPublicId(identity.AccountId, key)) throw IdentityMismatch();

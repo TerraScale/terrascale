@@ -119,6 +119,8 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
             // Scenarios run plan reconciliation on demand, so its timer never races their billing assertions.
             builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(PlanReconciler)));
+            // Deletion journeys run the production consumer on demand against their isolated producer.
+            builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Features.Profile.DeletionReconciler)));
             builder.Logging.ClearProviders();
             builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
             configureScenario?.Invoke(builder);
@@ -908,6 +910,41 @@ sealed class TestStripeTransport : HttpMessageHandler
             if (organizationId.Length == 0 || customerOrganizations.GetOrAdd(customerId, organizationId) != organizationId)
                 throw new HttpRequestException("The Stripe fixture customer must retain its original organization metadata.");
             value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId } };
+        }
+        else if (request.Method == HttpMethod.Get && path == "/v1/customers/search")
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            const string prefix = "metadata['organization_id']:'";
+            var filter = query.GetValueOrDefault("query").ToString();
+            if (!filter.StartsWith(prefix, StringComparison.Ordinal) || !filter.EndsWith("'", StringComparison.Ordinal)) throw new HttpRequestException("Customer cleanup search must bind organization metadata.");
+            var organization = filter[prefix.Length..^1];
+            value = new
+            {
+                @object = "search_result",
+                has_more = false,
+                data = customerOrganizations.Where(pair => pair.Value == organization)
+                    .Select(pair => new { id = pair.Key, @object = "customer", metadata = new { organization_id = pair.Value } }).ToArray()
+            };
+        }
+        else if (request.Method == HttpMethod.Get && path == "/v1/checkout/sessions")
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            var customer = query.GetValueOrDefault("customer").ToString();
+            if (customer.Length == 0 || query.GetValueOrDefault("limit") != "100") throw new HttpRequestException("Checkout cleanup must list a bounded customer scope.");
+            value = new { @object = "list", has_more = false, data = checkouts.Values.Where(checkout => checkout.CustomerId == customer).Select(Session).ToArray() };
+        }
+        else if (request.Method == HttpMethod.Get && path == "/v1/subscriptions")
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            var customer = query.GetValueOrDefault("customer").ToString();
+            if (customer.Length == 0 || query.GetValueOrDefault("status") != "all" || query.GetValueOrDefault("limit") != "100") throw new HttpRequestException("Subscription cleanup must include all statuses in a bounded customer scope.");
+            value = new
+            {
+                @object = "list",
+                has_more = false,
+                data = subscriptions.Values.Select(item => JsonSerializer.SerializeToElement(item))
+                    .Where(item => item.GetProperty("customer").GetString() == customer).ToArray()
+            };
         }
         else if (request.Method == HttpMethod.Get && path.StartsWith("/v1/customers/", StringComparison.Ordinal))
         {
