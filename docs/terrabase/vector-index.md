@@ -31,17 +31,23 @@ TerraBase therefore keeps a derived index in the database file, next to the coll
   remembering its position (`_tb_vector_indexes.built`), so writers wait for one batch at most. Until the index lists
   as `active`, `near` queries scan as without an index. A node resumes unfinished builds at start and every hour, which
   also covers an index that reached a node by replication.
-- A query reads every code row, keeps the `max(400, 4 × limit)` slots with the smallest Hamming distance to the query's
+- A query reads every code row, keeps the `max(200, 4 × limit)` slots with the smallest Hamming distance to the query's
   sign bits (4096 when the query has a filter), computes their exact float32 distances from the stored values, and hands
   the nearest `limit` ids (every candidate, nearest first, when there is a filter) to the ordinary `near` statement,
   which reads only those documents, applies the filter and returns them with `tb_near` distances. Results are exact
   among the candidates; a document outside them is missed. Reranking from stored float32 values instead of document
   JSON was the main cost in profiling: parsing 400 arrays of 768 JSON numbers took most of a query.
+- Turso's per-connection page cache is small, so on production reading every code row was most of the remaining time.
+  Read transactions therefore share each index's decoded codes in `VectorCodeCache` (at most 64 indexes and 128 MiB per
+  process, least recently used first). The codes table's row `chunk = -1` holds a random generation that every write
+  of codes replaces in the same transaction; a cached copy is used only while it matches, and write transactions, which
+  can see their own uncommitted codes, never use or fill the cache.
 - With a filter, only those 4096 candidates are filtered, so a very selective filter can return fewer than `limit`
   documents even when more matches exist.
 
 On real embeddings sign bits keep neighbourhoods well: on 100000 OpenAI `text-embedding-3-large` vectors truncated to
-768 dimensions, an offline simulation reranking the 400 closest codes found 99.7% of the exact top 10. Random
+768 dimensions, an offline simulation reranking the 400 closest codes found 99.7% of the exact top 10, and the 200
+closest 98.8%; the measured recall is in the reports below. Random
 (isotropic) vectors are the worst case for any approximate index and recall less.
 
 ## Measurements

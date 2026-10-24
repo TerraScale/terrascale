@@ -20,7 +20,7 @@ internal sealed partial class TursoStorageTransaction
     private const int ChunkBitmapBytes = SlotsPerChunk / 8;
 
     // Exact reranking reads this many candidates at least; a filtered query reads more, since the filter runs after them.
-    private const int MinVectorCandidates = 400;
+    private const int MinVectorCandidates = 200;
     private const int FilteredVectorCandidates = 4096;
 
     // Existing documents added per background write transaction.
@@ -130,6 +130,8 @@ internal sealed partial class TursoStorageTransaction
                 WriteChunk(index.Name, number, chunk);
             }
 
+            TouchCodes(index.Name);
+
             var advance = VectorCommand("UPDATE _tb_vector_indexes SET built = $built WHERE name = $name;");
             advance.Parameters.AddWithValue("$name", index.Name);
             advance.Parameters.AddWithValue("$built", page.Count < VectorBuildBatch ? DBNull.Value : page[^1].Id);
@@ -191,7 +193,64 @@ internal sealed partial class TursoStorageTransaction
             var chunk = ReadChunk(index.Name, slot!.Value / SlotsPerChunk, code.Length);
             SetSlot(chunk, slot.Value, values is null ? null : code);
             WriteChunk(index.Name, slot.Value / SlotsPerChunk, chunk);
+            TouchCodes(index.Name);
         }
+    }
+
+    // Every occupied slot's code. A read transaction sees committed codes only, so it may share them through
+    // VectorCodeCache for as long as the generation row (chunk -1) is unchanged.
+    private VectorCodeCache.Codes ReadCodes(string name, int words, CancellationToken cancellationToken)
+    {
+        var generation = VectorCommand($"SELECT codes FROM {VectorChunks(name)} WHERE chunk = -1;").ExecuteScalar() is byte[] { Length: 8 } stamp
+            ? BinaryPrimitives.ReadInt64LittleEndian(stamp) : (long?)null;
+        if (!write && generation is { } current && VectorCodeCache.Get(store, name, current) is { } cached)
+        {
+            return cached;
+        }
+
+        var slots = new List<long>();
+        var values = new List<ulong>();
+        var chunks = VectorCommand($"SELECT chunk, codes FROM {VectorChunks(name)} WHERE chunk >= 0;");
+        CountRead("query");
+        using (var reader = chunks.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                session.ThrowIfStopped();
+                if (_queryBudget!.Row())
+                {
+                    throw new QueryCapacityException("query execution budget exceeded");
+                }
+
+                var first = reader.GetInt64(0) * SlotsPerChunk;
+                var chunk = (byte[])reader.GetValue(1);
+                for (var i = 0; i < SlotsPerChunk; i++)
+                {
+                    if ((chunk[i / 8] & (1 << (i % 8))) != 0)
+                    {
+                        slots.Add(first + i);
+                        values.AddRange(MemoryMarshal.Cast<byte, ulong>(chunk.AsSpan(ChunkBitmapBytes + (i * words * 8), words * 8)));
+                    }
+                }
+            }
+        }
+
+        var codes = new VectorCodeCache.Codes(generation ?? 0, words, [.. slots], [.. values]);
+        if (!write && generation is not null)
+        {
+            VectorCodeCache.Put(store, name, codes);
+        }
+
+        return codes;
+    }
+
+    // A new random generation for the index's codes, in the transaction that changes them.
+    private void TouchCodes(string name)
+    {
+        var stamp = new byte[8];
+        BinaryPrimitives.WriteInt64LittleEndian(stamp, Random.Shared.NextInt64());
+        WriteChunk(name, -1, stamp);
     }
 
     private void WriteChunk(string name, long chunk, byte[] codes)
@@ -222,47 +281,26 @@ internal sealed partial class TursoStorageTransaction
             target[i / 8] |= (byte)((float)near.Vector[i] > 0 ? 1 << (i % 8) : 0);
         }
 
+        var codes = ReadCodes(index.Name, target.Length / 8, cancellationToken);
         var wanted = query.Filter is null ? Math.Max(MinVectorCandidates, 4 * query.Limit) : FilteredVectorCandidates;
         var closest = new PriorityQueue<long, int>(wanted + 1, Comparer<int>.Create(static (left, right) => right.CompareTo(left)));
         var words = MemoryMarshal.Cast<byte, ulong>(target);
-        var chunks = VectorCommand($"SELECT chunk, codes FROM {VectorChunks(index.Name)};");
+        for (var i = 0; i < codes.Slots.Length; i++)
         {
-            CountRead("query");
-            using var reader = chunks.ExecuteReader();
-            while (reader.Read())
+            var code = codes.Values.AsSpan(i * codes.Words, codes.Words);
+            var distance = 0;
+            for (var w = 0; w < words.Length; w++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                session.ThrowIfStopped();
-                if (_queryBudget!.Row())
-                {
-                    throw new QueryCapacityException("query execution budget exceeded");
-                }
+                distance += BitOperations.PopCount(code[w] ^ words[w]);
+            }
 
-                var first = reader.GetInt64(0) * SlotsPerChunk;
-                var codes = (byte[])reader.GetValue(1);
-                for (var i = 0; i < SlotsPerChunk; i++)
-                {
-                    if ((codes[i / 8] & (1 << (i % 8))) == 0)
-                    {
-                        continue;
-                    }
-
-                    var code = MemoryMarshal.Cast<byte, ulong>(codes.AsSpan(ChunkBitmapBytes + (i * target.Length), target.Length));
-                    var distance = 0;
-                    for (var w = 0; w < words.Length; w++)
-                    {
-                        distance += BitOperations.PopCount(code[w] ^ words[w]);
-                    }
-
-                    if (closest.Count < wanted)
-                    {
-                        closest.Enqueue(first + i, distance);
-                    }
-                    else if (closest.TryPeek(out _, out var farthest) && distance < farthest)
-                    {
-                        closest.EnqueueDequeue(first + i, distance);
-                    }
-                }
+            if (closest.Count < wanted)
+            {
+                closest.Enqueue(codes.Slots[i], distance);
+            }
+            else if (closest.TryPeek(out _, out var farthest) && distance < farthest)
+            {
+                closest.EnqueueDequeue(codes.Slots[i], distance);
             }
         }
 
