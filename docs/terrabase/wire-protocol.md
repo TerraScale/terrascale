@@ -23,9 +23,12 @@ Statuses are the HTTP API's (200, 201, 400, 401, 403, 404, 409, 421, 429, 503, .
 | Operation | Body | Success answer |
 | --- | --- | --- |
 | `0` hello | `u8 version` (1), then three `u16`-length UTF-8 strings: API key, project ULID, database name | 200, `u8 version` |
+| `1` get | `u8 collection length`, collection, the document's 26-character ULID | 200, `u8 ETag length`, ETag, the stored JSON document |
+| `2` put | as get, then `u8 durability` (0 `local_durable`, 1 `remote_durable`, as the HTTP API's `TB-Durability`), then the JSON document (an object of at most 1 MiB) | 201 (created) or 200, `u8 durability` (0 `local_durable`, 1 `remote_durable`), `u8 ETag length`, ETag |
 
-Point gets and puts follow (RT3c). Any other operation answers `400 unknown_operation` and the connection stays open. A
-frame is at most 1 MiB + 1 KiB (4 KiB before the hello is accepted). A frame out of those bounds answers `400 invalid_frame` with request id 0 and closes
+v1 carries point gets and unconditional puts only: no preconditions (`If-Match`), deletes, patches, lists or queries; those
+stay on the HTTP API. Any other operation answers `400 unknown_operation` and the connection stays open. A frame is at most 1 MiB + 1 KiB
+(4 KiB before the hello is accepted). A frame out of those bounds answers `400 invalid_frame` with request id 0 and closes
 the connection. The memory budget admits each frame before it is read (`429 tenant_memory` with request id 0 otherwise,
 which also closes the connection).
 
@@ -34,8 +37,8 @@ which also closes the connection).
 The first frame must be a hello for version 1, sent within 10 seconds; anything else answers `400 unsupported_version` and
 closes. The API key is checked as on the HTTP client listener: the key exists, has not expired and grants
 `documents:read`; the database is in the key's reach (organization, and project and database when the key is narrowed);
-the database is placed in this region (`421 wrong_region` otherwise). A refused hello answers its error and closes.
-ts-auth project tokens are not accepted.
+the database is placed in this region (`421 wrong_region` otherwise). A refused hello answers its error and closes. Puts
+also need `documents:write`. ts-auth project tokens are not accepted.
 
 The connection keeps its authorization while the system catalog has not committed since it was checked. After any catalog
 commit (a revocation, a deletion, a placement change, or any other catalog write, local or replicated) and at the key's
@@ -48,13 +51,21 @@ under the same name is another database: the connection does not follow it.
 Up to 128 requests run at once per connection; the server reads the next frame when an answer has been written. A
 request keeps its memory admission (and its answer's) until its answer is written, so a client that stops reading holds
 at most 128 admitted answers. Answers are sent as requests complete, so they may arrive out of order: match them by
-request id.
+request id. Requests to one document run in arrival order: each starts after the connection's previous request to that
+document answered, so a get sees the connection's earlier puts to it and none of its later ones. Requests to different
+documents run concurrently, so pipelined puts share the engine's group commit; a client that needs order across documents
+waits for the earlier answer.
 
-## Same admission as the HTTP API
+## Same semantics as the HTTP API
 
-Every request passes the catalog gate (`503 catalog_unverified`), the organization's request lease (`429 tenant_busy`)
-and the memory budget, and is recorded as one client request with its bytes, as the HTTP request it replaces. Pressure
-signals count it as a client request.
+- Admission: the catalog gate (`503 catalog_unverified`), the organization's request lease (`429 tenant_busy`), the
+  memory budget, and the copy-fault checks (`503 copy_faulted`): the node's, then the database copy's, which the document
+  service checks on every read and write.
+- Durability: a put answers when `IDocumentService.WriteConfirmedAsync` does, the HTTP path's call: after this region's
+  durable commit (`local_durable`, decision 0013e), or, when the put asks for `remote_durable`, after another placed
+  region's acknowledgement in a cell, with the same `503` refusals and `write_outcome_unknown`.
+- Metering: the document service counts each read and write once, as for HTTP; each frame is also recorded as one client
+  request with its bytes, as the HTTP request it replaces. Pressure signals count it as a client request.
 
 ## What an SDK needs
 
