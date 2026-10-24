@@ -47,9 +47,6 @@ internal static class ManagementErrors
     /// <summary>The operation belongs to the database's home region (docs/cross-region.md).</summary>
     public static readonly Conflict WrongRegion = new("the database is managed in another region: send it to its home region", "wrong_region");
 
-    /// <summary>The database still has replica regions.</summary>
-    public static readonly Conflict Replicated = new("remove the database's replica regions and allRegions first", "database_replicated");
-
     /// <summary>The organization's live databases reach its plan's database allowance (https://terrascale.tech/pricing.json).</summary>
     public static Conflict DatabaseLimit(string plan, long allowed) => new(
         $"the organization's {plan} plan allows {allowed} database{(allowed == 1 ? "" : "s")}; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing",

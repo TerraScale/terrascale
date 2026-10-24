@@ -34,7 +34,7 @@ permissions:
 
 env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
-  TS_DOTNET_REV: 408044452f0a71c3725866bcc6b95603714acb1f
+  TS_DOTNET_REV: 675978f1ed0b2524f8f655b0ade0a6c6a5850e81
   TERRABASE_REVISION: ${{ github.sha }}
   DOTNET_PROCESSOR_COUNT: 8
   DOTNET_GCHeapCount: 8

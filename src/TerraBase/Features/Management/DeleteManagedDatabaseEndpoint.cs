@@ -17,7 +17,7 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
         Summary("Deletes a database and its data");
-        Description("Branches of the database are independent copies and are not deleted. A database is deleted in its home region (421 wrong_region elsewhere) once it has no replica regions (409 database_replicated): remove them with PATCH first." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Branches of the database are independent copies and are not deleted. Delete in its home region (421 wrong_region elsewhere). Permanent purge authority removes every replica, including allRegions placement, without a preceding PATCH. 204 records logical deletion and local cleanup; remote erasure is retried durably." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);

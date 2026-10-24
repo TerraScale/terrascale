@@ -41,6 +41,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         // The intent is committed and TerraBase accepted, then ts-auth lost the answer before removing the root: the retry
         // presents the same stored closure.
         var intent = await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().RequestProjectClosureAsync(owner.Id, organization, second, null, CancellationToken.None);
+        await Assert.That(intent.Value.ProjectClosureVersion).IsEqualTo(1);
         await Assert.That((await terraBase.CloseProjectAsync(second, organization, intent.Value.Id)).Accepted).IsTrue();
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{second}", token);
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{second}", token, status: HttpStatusCode.NoContent);
@@ -122,6 +123,13 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Solo");
 
+        await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{project}", token, status: HttpStatusCode.Accepted);
+        var directoryBeforeRestart = oidc.Server.App.Services.GetRequiredService<PlatformDirectory>();
+        var pending = (await directoryBeforeRestart.ClosureAsync("project", project, CancellationToken.None))!;
+        await Assert.That(pending.Value.ProjectClosureVersion).IsEqualTo(1);
+        await Assert.That(async () => await directoryBeforeRestart.RequestProjectClosureAsync(alice.Id, organization, project, alice.Id, CancellationToken.None)).Throws<ApiException>();
+        await Assert.That((await JobAsync(oidc, "project", project))!.ProjectClosureVersion).IsEqualTo(1);
+
         var receipt = Receipt();
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((202, (string?)null));
@@ -131,6 +139,17 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That(await users.GetAsync("terrascale", alice.Id)).IsNotNull();
         await Assert.That(await JobAsync(oidc, "account", alice.Id)).IsNotNull();
         await Assert.That(await JobAsync(oidc, "organization", organization)).IsNotNull();
+        await Assert.That((await JobAsync(oidc, "project", project))!.ProjectClosureVersion).IsEqualTo(2);
+        var adopted = (await JobAsync(oidc, "project", project))!;
+        await Assert.That(adopted.Id).IsEqualTo(pending.Value.Id);
+        await Assert.That(adopted.Generation).IsNotEqualTo(pending.Value.Generation);
+        await Assert.That(adopted.Same(pending.Value)).IsFalse();
+        await Assert.That(adopted.AccountId).IsEqualTo(alice.Id);
+        await Assert.That(await directoryBeforeRestart.CancelClosureAsync(pending, CancellationToken.None)).IsFalse();
+        var liveClosures = ActivatorUtilities.CreateInstance<Closures>(oidc.Server.App.Services, fixture.Server.Management());
+        await Assert.That(await liveClosures.AdvanceAsync(pending, CancellationToken.None)).IsFalse();
+        await Assert.That((await JobAsync(oidc, "project", project))!.Same(adopted)).IsTrue();
+        await Assert.That(await directoryBeforeRestart.ProjectAsync(project, CancellationToken.None)).IsNotNull();
         // Nobody joins the closing organization, so the sole-owner decision cannot go stale.
         await Assert.That(async () => await oidc.AddMemberAsync(organization, bob.Id, "member")).Throws<ApiException>();
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.MembershipCollection, "terrascale", $"{organization}/{bob.Id}")).IsNull();
@@ -197,7 +216,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
 
         var receipt = Receipt();
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
-        await Assert.That((await JobAsync(oidc, "project", started))?.AccountId).IsEqualTo(alice.Id);
+        var startedJob = (await JobAsync(oidc, "project", started))!;
+        await Assert.That(startedJob.AccountId).IsEqualTo(alice.Id);
+        await Assert.That(startedJob.ProjectClosureVersion).IsEqualTo(2);
         await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{shared}/leave", bobToken, status: HttpStatusCode.NoContent);
 
         await oidc.Server.DisposeAsync();
@@ -214,6 +235,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That(await directory.OrganizationAsync(solo, CancellationToken.None)).IsNotNull();
         await Assert.That(await directory.ProjectAsync(started, CancellationToken.None)).IsNull();
         await FencedAsync(started, solo);
+        // Detaching the child cannot downgrade the authorized erasure: the real permanent fence retains version 2.
+        var downgraded = await Assert.That(async () => await fixture.Server.Management().CloseProjectAsync(started, solo, startedJob.Id)).Throws<TerraBaseConflictException>();
+        await Assert.That(downgraded!.ErrorCode).IsEqualTo("closure_conflict");
         foreach (var (scope, subject) in new[] { ("organization", solo), ("project", started), ("project", untouched) })
         {
             await Assert.That(await directory.ClosureAsync(scope, subject, CancellationToken.None)).IsNull().Because(subject);

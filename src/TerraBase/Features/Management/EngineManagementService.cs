@@ -624,13 +624,11 @@ internal sealed partial class EngineManagementService(
 
     private readonly union RecordedDeletion(bool, Unavailable);
 
-    // A database is deleted in its home region, once it has no replicas (docs/cross-region.md).
+    // Its home records permanent purge authority; convergence deletes every replica without a placement edit.
     private readonly union DeletionPlacement(Done, Conflict);
 
     private static DeletionPlacement CheckDeletionPlacement(ManagedDatabase database, string region) =>
-        database.Home(region) != region ? ManagementErrors.WrongRegion
-        : database.Replicas.Count > 0 || database.AllRegions ? ManagementErrors.Replicated
-        : new Done();
+        database.Home(region) != region ? ManagementErrors.WrongRegion : new Done();
 
     // A database the user may delete in this region, with the tenant its storage is addressed by, in the caller's transaction.
     private static async ValueTask<DeletableDatabaseCheck> DeletableAsync(

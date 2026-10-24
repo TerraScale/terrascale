@@ -560,8 +560,20 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         {
             var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Admin);
-            if (await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is not null)
+            if (await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is { } existing)
             {
+                if (accountId is not null && existing.Value.ProjectClosureVersion == 1)
+                {
+                    var adopted = existing.Value with { AccountId = accountId, ProjectClosureVersion = 2, Generation = AuthStore.NewId(), NextAttemptAt = clock.GetUtcNow() };
+                    return new Plan<bool>(
+                    [
+                        Authority(access, Roles.Admin),
+                        AuthStore.Require(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key("account", accountId), Filter("exists", "/id")),
+                        AuthStore.Replace(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key("project", projectId),
+                            JsonSerializer.SerializeToElement(adopted, ClosureJson.Default.ClosureJob), existing.Version),
+                    ], true);
+                }
+
                 return new Plan<bool>([], true);
             }
 

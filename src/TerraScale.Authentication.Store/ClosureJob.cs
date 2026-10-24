@@ -34,6 +34,7 @@ namespace TerraScale.Authentication.Store;
 /// An account scope only: when it began removing organizations, memberships or the user. From then on it never cancels;
 /// a late refusal pauses it until resolved.
 /// </param>
+/// <param name="ProjectClosureVersion">The authorized TerraBase handoff: 1 requires emptiness, 2 erases account-owned contents; retained when detached.</param>
 public sealed record ClosureJob(
     string Id,
     string InstanceId,
@@ -48,11 +49,13 @@ public sealed record ClosureJob(
     string? FailureCode = null,
     bool FenceSeen = false,
     string? Generation = null,
-    DateTimeOffset? CommittedAt = null)
+    DateTimeOffset? CommittedAt = null,
+    int ProjectClosureVersion = 1)
 {
     /// <summary>Whether <paramref name="other"/> is this very intent (same subject, same creation), whatever its later state.</summary>
     public bool Same(ClosureJob other) =>
-        other is not null && other.Id == this.Id && other.Scope == this.Scope && other.SubjectId == this.SubjectId && other.Generation == this.Generation;
+        other is not null && other.Id == this.Id && other.Scope == this.Scope && other.SubjectId == this.SubjectId && other.Generation == this.Generation
+        && other.ProjectClosureVersion == this.ProjectClosureVersion;
 
     /// <summary>The natural key of a scope's intent: one per subject.</summary>
     public static string Key(string scope, string subjectId) => scope + "/" + subjectId;
@@ -64,7 +67,7 @@ public sealed record ClosureJob(
         ArgumentNullException.ThrowIfNull(clock);
         var now = clock.GetUtcNow();
         var job = new ClosureJob(closureId ?? AuthStore.NewId(), instanceId, scope, subjectId, organizationId, requestedBy, now, now, accountId,
-            Generation: AuthStore.NewId());
+            Generation: AuthStore.NewId(), ProjectClosureVersion: scope == "project" && accountId is not null ? 2 : 1);
         return (job, AuthStore.Create(AuthStore.ClosureJobCollection, instanceId, Key(scope, subjectId), JsonSerializer.SerializeToElement(job, ClosureJson.Default.ClosureJob)));
     }
 }
