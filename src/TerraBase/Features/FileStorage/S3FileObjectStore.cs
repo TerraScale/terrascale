@@ -23,13 +23,10 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         }
         // Existing OCI Vault delivery supplies the object-store identity. No customer or operator setting is added.
         var r2 = settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
-        if (!r2 && settings.Endpoint.Host != "fly.storage.tigris.dev")
-        {
-            throw new TerraBaseConfigurationException("app files require R2 or the Tigris integration-test store");
-        }
-        // Do not disrupt existing backups when app-file R2 credentials have not reached this node yet.
-        // App-file operations fail closed; production never sends customer files to Tigris.
-        if (!r2 && !environment.IsDevelopment())
+        // Backups may use another S3 endpoint, including their isolated HTTP test fake.
+        // Leave file operations unavailable without preventing the database or backups from starting.
+        // Production never sends customer files to Tigris or to an arbitrary backup endpoint.
+        if (!r2 && (!environment.IsDevelopment() || settings.Endpoint.Host != "fly.storage.tigris.dev"))
         {
             return;
         }
