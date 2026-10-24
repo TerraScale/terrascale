@@ -322,7 +322,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             var pinned = provenance.RootElement.GetProperty("version").GetString()!;
             var loaded = typeof(TerraBaseDocumentsClient).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
             Check(loaded == pinned || loaded.StartsWith(pinned + "+", StringComparison.Ordinal), "Use the exact official .NET SDK pinned by the checkout: " + loaded);
-            Check("net" + Environment.Version.ToString(2) == provenance.RootElement.GetProperty("targetFramework").GetString(),
+            Check(provenance.RootElement.GetProperty("assemblySha256ByFramework").TryGetProperty("net" + Environment.Version.ToString(2), out _),
                 "Run customer SDK qualification on the pinned SDK's supported .NET runtime");
         }
         Check(TerraScaleIds.IsValid(projectId), "Use the canonical ULID project returned by the current producer, without translating it");

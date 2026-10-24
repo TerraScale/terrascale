@@ -21,7 +21,7 @@ public interface ITsAuthPlatform
     Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
     Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken);
-    Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
+    Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken);
     // With a project id, an invitation to that project only. A platform without project invitations refuses one
@@ -40,7 +40,7 @@ public interface ITsAuthPlatform
     Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     // Deletes the caller's user, sessions, tokens, memberships and the organizations only they belong to.
     // ts-auth refuses with last_owner while the caller is the last owner of an organization with other members.
-    Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken);
+    Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken);
 }
 
 // The official ts-dotnet platform client, called with the user's own sign-in token.
@@ -85,7 +85,7 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.RenameProjectAsync(Bearer(session), Id(organizationId), Id(projectId), new(name), cancellationToken));
 
-    public Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken) =>
+    public Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.DeleteProjectAsync(Bearer(session), Id(organizationId), Id(projectId), cancellationToken));
 
     public Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
@@ -137,7 +137,7 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PagesAsync(after => Client().Platform.ListAuditEventsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));
 
-    public Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) =>
+    public Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.DeleteAccountAsync(Bearer(session), cancellationToken));
 
     private static string Bearer(SessionRecord session) =>
@@ -180,6 +180,8 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     {
         "name_taken" => "That name is already used in this organization.",
         "last_owner" => "The organization needs another owner first.",
+        "closure_conflict" => "Deletion is paused because a project closure could not be confirmed. Resolve the project conflict and try again.",
+        "binding_conflict" => "Deletion is paused because a project ownership binding could not be verified. Resolve the project conflict and try again.",
         "not_empty" => "Delete the organization's projects first.",
         "invitation_pending" => "This email already has a pending invitation.",
         "already_member" => "This email is already an active member.",

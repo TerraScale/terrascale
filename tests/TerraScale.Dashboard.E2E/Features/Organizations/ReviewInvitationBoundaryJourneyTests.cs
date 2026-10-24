@@ -340,7 +340,7 @@ public sealed class ReviewInvitationBoundaryJourneyTests
         public Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ListProjectsAsync(session, organizationId, cancellationToken);
         public Task<TerraScaleAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken) => inner.CreateProjectAsync(session, organizationId, name, cancellationToken);
         public Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken) => inner.RenameProjectAsync(session, organizationId, projectId, name, cancellationToken);
-        public Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken) => inner.DeleteProjectAsync(session, organizationId, projectId, cancellationToken);
+        public Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken) => inner.DeleteProjectAsync(session, organizationId, projectId, cancellationToken);
         public Task RevokeInvitationAsync(SessionRecord session, string organizationId, string invitationId, CancellationToken cancellationToken) => inner.RevokeInvitationAsync(session, organizationId, invitationId, cancellationToken);
         public Task<TerraScaleAuthPlatformInvitationLookup?> LookupInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken) => inner.LookupInvitationAsync(session, token, cancellationToken);
         public Task<TerraScaleAuthPlatformAcceptedInvitation> AcceptInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken) => inner.AcceptInvitationAsync(session, token, cancellationToken);
@@ -350,6 +350,6 @@ public sealed class ReviewInvitationBoundaryJourneyTests
         public Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ConfirmOwnershipTransferAsync(session, organizationId, cancellationToken);
         public Task CancelOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.CancelOwnershipTransferAsync(session, organizationId, cancellationToken);
         public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ListAuditEventsAsync(session, organizationId, cancellationToken);
-        public Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) => inner.DeleteAccountAsync(session, cancellationToken);
+        public Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) => inner.DeleteAccountAsync(session, cancellationToken);
     }
 }

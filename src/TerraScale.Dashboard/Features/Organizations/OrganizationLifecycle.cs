@@ -43,7 +43,11 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         // ts-auth refuses an organization that still has projects; a 404 is a delete an interrupted request already made.
         foreach (var projectId in org.Projects.Keys)
         {
-            try { await platform.DeleteProjectAsync(context.Session, org.Id, projectId, cancellationToken); }
+            try
+            {
+                if (!await platform.DeleteProjectAsync(context.Session, org.Id, projectId, cancellationToken))
+                    throw PendingDeletion();
+            }
             catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
         }
         try { await platform.DeleteOrganizationAsync(context.Session, org.Id, cancellationToken); }
@@ -61,7 +65,11 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         if (project.Name != confirmation.Trim()) throw new AccountAccessException("Type the project name to confirm deletion.", 422);
         if (project.IsDefault || context.Organization.Projects.Count <= 1) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
         if (project.Databases.Count > 0) throw new AccountAccessException("Delete this project's databases before deleting the project.", 409);
-        try { await platform.DeleteProjectAsync(context.Session, context.Organization.Id, projectId, cancellationToken); }
+        try
+        {
+            if (!await platform.DeleteProjectAsync(context.Session, context.Organization.Id, projectId, cancellationToken))
+                throw PendingDeletion();
+        }
         // A completed provider delete can outlive an interrupted dashboard write;
         // the exact project and current role were authorized above.
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
@@ -78,6 +86,8 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
                 account.ActiveProjectId = context.Organization.Projects.Values.FirstOrDefault(item => item.Id != projectId && item.IsDefault)?.Id ?? context.Organization.Projects.Keys.Where(id => id != projectId).Order().FirstOrDefault() ?? "";
         }, cancellationToken);
     }
+
+    private static AccountAccessException PendingDeletion() => new("Project deletion is still in progress. Try again shortly; the organization will stay until its project closures are confirmed.", 409, "deletion_pending");
 
     private async Task<AccountContext> FreshAsync(AccountContext context, CancellationToken cancellationToken)
     {

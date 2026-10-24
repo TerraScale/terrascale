@@ -34,7 +34,11 @@ public static class AccountDeletion
                     throw new AccountAccessException($"Cancel the paid plan of {org.Name} before deleting your account.", 409);
                 sole.Add(org.Id);
             }
-            try { await platform.DeleteAccountAsync(context.Session, cancellationToken); }
+            try
+            {
+                if (!await platform.DeleteAccountAsync(context.Session, cancellationToken))
+                    throw new AccountAccessException("Account deletion is still in progress. Try again shortly; your dashboard records will stay until deletion is confirmed.", 409, "deletion_pending");
+            }
             catch (AccountAccessException error) when (error.Code == "last_owner")
             { throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409); }
             // Dashboard records go only after ts-auth confirms; a 401/404 can mean an expired token or a ts-auth without the route.
