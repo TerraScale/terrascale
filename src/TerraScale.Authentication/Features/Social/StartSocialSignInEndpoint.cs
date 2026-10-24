@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraScale.Authentication.Features.Social;
 
 /// <summary>Starts same-origin provider sign-in, with a fresh browser binding and PKCE verifier.</summary>
-public sealed class StartSocialSignInEndpoint(SocialSignIn social, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class StartSocialSignInEndpoint(PlatformSocialSignIn social, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

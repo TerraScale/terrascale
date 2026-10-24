@@ -18,7 +18,7 @@ using TerraScale.Authentication.Store;
 namespace TerraScale.Authentication.Features.Social;
 
 /// <summary>Authorization-code OAuth with S256 PKCE, browser binding and durable single-use state.</summary>
-public sealed class SocialSignIn(AuthOptions options, AuthStore store, Users users,
+public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, Users users,
     Sessions sessions, TotpCredentials mfa, IHttpClientFactory clients, TimeProvider clock)
 {
     /// <summary>The named backchannel; tests replace only its HTTP transport.</summary>
@@ -38,7 +38,7 @@ public sealed class SocialSignIn(AuthOptions options, AuthStore store, Users use
         var browser = Tokens.RandomToken(43);
         var verifier = Tokens.RandomToken(64);
         var state = SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(
-            new SocialState(tenant, provider, credential.ClientId, Tokens.Sha256Hex(SocialProviders.Open(options, tenant, credential)), verifier, Tokens.Sha256Hex(browser), SignInFlow.SafeNext(context, next)), SocialJson.Default.SocialState), Purpose);
+            new PlatformSocialState(tenant, provider, credential.ClientId, Tokens.Sha256Hex(SocialProviders.Open(options, tenant, credential)), verifier, Tokens.Sha256Hex(browser), SignInFlow.SafeNext(context, next)), PlatformSocialJson.Default.PlatformSocialState), Purpose);
         var hash = Tokens.Sha256Hex(state);
         await store.CreateChallengeAsync(tenant, Purpose, hash, tenant, clock.GetUtcNow() + Lifetime, cancellationToken);
         context.Response.Cookies.Append(Cookie(hash), browser, CookieOptions());
@@ -68,10 +68,10 @@ public sealed class SocialSignIn(AuthOptions options, AuthStore store, Users use
             return Refused(context, tenant);
         }
 
-        SocialState? payload;
+        PlatformSocialState? payload;
         try
         {
-            payload = JsonSerializer.Deserialize(SecretBox.Open(options.MasterKey, state, Purpose), SocialJson.Default.SocialState);
+            payload = JsonSerializer.Deserialize(SecretBox.Open(options.MasterKey, state, Purpose), PlatformSocialJson.Default.PlatformSocialState);
         }
         catch (Exception error) when (error is CryptographicException or JsonException)
         {
@@ -207,9 +207,9 @@ public sealed class SocialSignIn(AuthOptions options, AuthStore store, Users use
         { ErrorTitle = "Provider sign-in failed" }, StatusCodes.Status401Unauthorized);
 }
 
-internal sealed record SocialState(string Tenant, string Provider, string ClientId, string CredentialHash, string Verifier, string BrowserHash, string? Next);
+internal sealed record PlatformSocialState(string Tenant, string Provider, string ClientId, string CredentialHash, string Verifier, string BrowserHash, string? Next);
 
-[JsonSerializable(typeof(SocialState))]
+[JsonSerializable(typeof(PlatformSocialState))]
 [JsonSerializable(typeof(LinkedProvidersBody))]
 [JsonSerializable(typeof(UnlinkProviderRequest))]
-internal sealed partial class SocialJson : JsonSerializerContext;
+internal sealed partial class PlatformSocialJson : JsonSerializerContext;

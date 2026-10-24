@@ -55,9 +55,9 @@ credentials has no hosted button. Adding these delivery references and rolling
 out the reviewed release follows credential creation; no new IAM grants are
 assumed or made by this script.
 
-Project clients retain their own credentials and project callback URLs from the
-project provider management API. Platform credentials never cross into project
-tenants. OAuth uses authorization code + S256 PKCE, browser-bound state, a
+Project clients use the existing flow in `project-social-sign-in.md`, with their
+own credentials and callbacks. Platform credentials and state never cross into
+project tenants. OAuth uses authorization code + S256 PKCE, browser-bound state, a
 single-use durable challenge and verified provider email. Provider tokens are
 used only for identity lookup, never stored or returned to the browser.
 

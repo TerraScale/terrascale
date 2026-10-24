@@ -181,7 +181,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Project_credentials_and_callbacks_stay_in_the_project_and_honor_sign_up_policy()
+    public async Task Platform_credentials_and_state_are_never_accepted_by_project_sign_in()
     {
         using var fake = new Provider("google");
         await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route);
@@ -204,18 +204,23 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/ui/{project}/social/google") { Content = new FormUrlEncodedContent([]) };
         request.Headers.Add("Origin", OidcHarness.PublicOrigin);
         using var start = await oidc.Client.SendAsync(request);
-        var query = QueryHelpers.ParseQuery(start.Headers.Location!.Query);
-        await Assert.That(query["client_id"].ToString()).IsEqualTo("project-google");
-        await Assert.That(query["redirect_uri"].ToString()).IsEqualTo($"{OidcHarness.PublicOrigin}/ui/{project}/social/google/callback");
-        var started = new Started(start.Headers.Location, query["state"].ToString(), start.Headers.GetValues("Set-Cookie").Single().Split(';')[0]);
-        using var platform = await CompleteAsync(oidc.Client, "google", started);
-        await Assert.That(platform.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(page).DoesNotContain($"action=\"/ui/{project}/social/");
+        var started = await StartAsync(oidc.Client, "google");
+        var query = QueryHelpers.ParseQuery(started.Location.Query);
+        await Assert.That(query["client_id"].ToString()).IsEqualTo("google-test");
+        await Assert.That(query["redirect_uri"].ToString()).IsEqualTo($"{OidcHarness.PublicOrigin}/signin/google");
         using var callback = new HttpRequestMessage(HttpMethod.Get, QueryHelpers.AddQueryString($"/ui/{project}/social/google/callback", new Dictionary<string, string?> { ["state"] = started.State, ["code"] = "synthetic-code" }));
         callback.Headers.Add("Cookie", started.Cookie);
         using var refused = await oidc.Client.SendAsync(callback);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(fake.Exchanges).IsEqualTo(0);
         await Assert.That(await services.GetRequiredService<Users>().FindByEmailAsync(project, fake.Email)).IsNull();
         await Assert.That(await services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, fake.Email)).IsNull();
+        using var platform = await CompleteAsync(oidc.Client, "google", started);
+        await Assert.That(platform.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await services.GetRequiredService<Users>().FindByEmailAsync(project, fake.Email)).IsNull();
+        await Assert.That(await services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, fake.Email)).IsNotNull();
     }
 
     private static void Credentials(Dictionary<string, string> settings)
@@ -257,7 +262,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         public int Exchanges { get; private set; }
         public string? Verifier { get; private set; }
 
-        public void Route(IServiceCollection services) => services.AddHttpClient(SocialSignIn.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => this);
+        public void Route(IServiceCollection services) => services.AddHttpClient(PlatformSocialSignIn.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => this);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

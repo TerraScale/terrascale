@@ -33,7 +33,7 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
             throw Invalid("Unknown provider.");
         }
 
-        var body = await this.BodyAsync(SocialJson.Default.UnlinkProviderRequest, cancellationToken);
+        var body = await this.BodyAsync(PlatformSocialJson.Default.UnlinkProviderRequest, cancellationToken);
         if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
             ?? await hosted.LimitCodeAsync(caller.Email, PasscodePurpose.SignIn, issuing: false, cancellationToken)) is { } wait)
         {

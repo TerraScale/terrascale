@@ -21,5 +21,5 @@ public sealed class ListLinkedProvidersEndpoint(PlatformAuthentication authentic
 
     /// <inheritdoc />
     protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => Task.FromResult<IResult>(
-        Results.Json(new LinkedProvidersBody([.. caller.LinkedProviders.Select(item => item.Provider).Distinct(StringComparer.Ordinal)]), SocialJson.Default.LinkedProvidersBody));
+        Results.Json(new LinkedProvidersBody([.. caller.LinkedProviders.Select(item => item.Provider).Distinct(StringComparer.Ordinal)]), PlatformSocialJson.Default.LinkedProvidersBody));
 }

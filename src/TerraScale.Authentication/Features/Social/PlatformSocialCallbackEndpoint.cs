@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 namespace TerraScale.Authentication.Features.Social;
 
 /// <summary>The platform OAuth callback registered at GitHub and Google.</summary>
-public sealed class SocialCallbackEndpoint(SocialSignIn social) : EndpointWithoutRequest<IResult>
+public sealed class PlatformSocialCallbackEndpoint(PlatformSocialSignIn social) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
