@@ -15,7 +15,7 @@ public sealed class InvoiceSummaryContractTests
         var summary = InvoiceHistory.Summarize([paid], Now, new(Now.AddYears(1).AddHours(-1), 3000, "usd", "annual"));
         await Assert.That(summary.NextInvoice).IsEqualTo("$30.00");
         await Assert.That(summary.NextDetail).IsEqualTo("Renewal invoice on Oct 23, 2027");
-        await Assert.That(summary.Period).IsEqualTo("Oct 23 – Oct 23, 2027");
+        await Assert.That(summary.Period).IsEqualTo("Oct 23, 2026 – Oct 23, 2027");
         await Assert.That(summary.HasPeriod).IsTrue();
         await Assert.That(summary.OutstandingDetail).IsEqualTo("0 open invoices in recorded history");
     }
