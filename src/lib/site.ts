@@ -43,6 +43,19 @@ export type PlanLimits = {
   egressGbPerMonth: number | null
 }
 
+// Per-plan ceilings TerraBase enforces; null means no plan ceiling.
+export type PlanEntitlements = {
+  requestsPerSecond: number | null
+  burstRequests: number | null
+  concurrentRequests: number | null
+  queryTimeoutSeconds: number | null
+  storageLimitGb: number | null
+  pitrDays: number
+  backupRetentionDays: number
+  regionsPerDatabase: number
+  support: string
+}
+
 export type PublicAlphaPlanSlug = 'free' | 'starter' | 'pro' | 'team' | 'enterprise'
 
 const planPresentation: Record<
@@ -67,6 +80,7 @@ export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
   annualPrice: plan.priceAnnualUsd,
   billingInterval: plan.billingInterval as 'free' | 'year' | 'month' | 'contact',
   limits: plan.limits as PlanLimits,
+  entitlements: plan.entitlements as PlanEntitlements,
 }))
 
 export const launchRegions = regionsJson.regions

@@ -1,5 +1,5 @@
 import type { Messages } from '@/lib/i18n'
-import type { PlanLimits } from '@/lib/site'
+import type { PlanEntitlements, PlanLimits } from '@/lib/site'
 
 type LimitCopy = Messages['pricing']['limits']
 
@@ -11,6 +11,31 @@ const plural = ([one, other]: readonly string[], n: number, format: Intl.NumberF
 // Decimal units, matching how allowances are billed: 0.1 GB renders as 100 MB.
 const formatStorage = (gb: number, format: Intl.NumberFormat) =>
   gb < 1 ? `${format.format(Math.round(gb * 1000))} MB` : `${format.format(gb)} GB`
+
+type CompareCopy = Messages['pricing']['compare']
+type EntitlementPlan = { slug: string; entitlements: PlanEntitlements }
+
+// Renders the entitlement rows of the comparison table from the canonical
+// entitlements in static/pricing.json. Null renders as "no plan ceiling".
+export function formatEntitlementRows(plans: EntitlementPlan[], copy: CompareCopy, bcp47: string) {
+  const format = new Intl.NumberFormat(bcp47)
+  const ceiling = (n: number | null, render: (n: number) => string = (v) => format.format(v)) =>
+    n === null ? copy.noCeiling : render(n)
+  const days = (n: number) => plural(copy.days, n, format)
+  const row = (label: string, cell: (e: PlanEntitlements) => string) =>
+    ({ label, cells: plans.map((plan) => cell(plan.entitlements)) })
+  return [
+    row(copy.requestsPerSecond, (e) => ceiling(e.requestsPerSecond)),
+    row(copy.burstRequests, (e) => ceiling(e.burstRequests)),
+    row(copy.concurrentRequests, (e) => ceiling(e.concurrentRequests)),
+    row(copy.queryTimeout, (e) => ceiling(e.queryTimeoutSeconds, (n) => fill(copy.seconds, format.format(n)))),
+    row(copy.storageLimit, (e) => ceiling(e.storageLimitGb, (n) => formatStorage(n, format))),
+    row(copy.pitr, (e) => days(e.pitrDays)),
+    row(copy.backupRetention, (e) => days(e.backupRetentionDays)),
+    row(copy.regionsPerDatabase, (e) => format.format(e.regionsPerDatabase)),
+    row(copy.support, (e) => copy.supportTargets[e.support as keyof CompareCopy['supportTargets']]),
+  ]
+}
 
 // Renders the allowance lines of a plan card from the canonical limits in
 // static/pricing.json. Custom (null) allowances are omitted.

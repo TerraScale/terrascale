@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { formatPlanBilling, formatPlanLimits } from '../src/lib/pricing.ts';
+import { formatEntitlementRows, formatPlanBilling, formatPlanLimits } from '../src/lib/pricing.ts';
 import { en } from '../src/lib/i18n/messages/en.ts';
 import { es } from '../src/lib/i18n/messages/es.ts';
 import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
@@ -9,10 +9,12 @@ import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
 const catalog = JSON.parse(readFileSync(new URL('../static/pricing.json', import.meta.url), 'utf8'));
 const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
 const usageCaveats = {
-  en: /usage charges are not yet collected/i,
-  es: /aún no se cobran cargos por uso/i,
-  'pt-BR': /cobranças por uso ainda não são coletadas/i,
+  en: /storage and client egress overages are not billed yet/i,
+  es: /excedentes de almacenamiento y salida a clientes aún no se facturan/i,
+  'pt-BR': /excedentes de armazenamento e saída para clientes ainda não são cobrados/i,
 };
+const overageRules = { en: /next (?:subscription )?invoice/i, es: /próxima factura/i, 'pt-BR': /próxima fatura/i };
+const staleClaims = /not yet collected|aún no se cobran|ainda não são coletadas|self-service purchase|compra directa|contratação direta|confirm (?:paid plan )?enrollment/i;
 const operationRules = {
   en: [/writes count once/i, /replication (?:is free|between regions is not billed)/i],
   es: [/escrituras cuentan una vez/i, /replicación (?:es gratis|entre regiones no se factura)/i],
@@ -27,10 +29,14 @@ for (const [locale, messages] of locales) {
     }
     assert.ok(catalog.metering.operationUnit.rules.includes('Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed.'));
   });
-  test(`${locale}: approved pricing preserves the usage collection caveat`, () => {
+  test(`${locale}: pricing states the overage rule and the storage and egress caveat`, () => {
     const pricingCopy = JSON.stringify(messages.pricing);
     assert.doesNotMatch(pricingCopy, /propos|pending review|pendientes de revisión|pendentes de revisão|propõem|proponen/i);
-    assert.match(messages.pricing.status, /approved|aprobados|aprovados/);
+    assert.doesNotMatch(JSON.stringify([messages.pricing, messages.cta, messages.about]), staleClaims);
+    for (const copy of [messages.pricing.status, messages.pricing.detailed.text, messages.pricing.faq.items[1].a]) {
+      assert.match(copy, overageRules[locale]);
+    }
+    assert.match(messages.pricing.status, /checkout/);
     for (const copy of [messages.pricing.status, messages.pricing.triad[2].text,
       messages.pricing.detailed.text, messages.pricing.faq.items[1].a, messages.cta.text,
       messages.about.pillars[2].text]) {
@@ -62,4 +68,38 @@ for (const [locale, messages] of locales) {
     assert.match(formatPlanLimits(catalog.plans[0].limits, messages.pricing.limits, locale).join(' '), /100 MB/);
     assert.equal(messages.pricing.detailed.rows.length, 3);
   });
+  test(`${locale}: entitlement rows render every plan without null or NaN`, () => {
+    const plans = catalog.plans.map((plan) => ({ slug: plan.id, entitlements: plan.entitlements }));
+    const rows = formatEntitlementRows(plans, messages.pricing.compare, locale);
+    assert.equal(rows.length, 9);
+    for (const row of rows) {
+      assert.ok(row.label);
+      assert.equal(row.cells.length, catalog.plans.length);
+      assert.ok(row.cells.every((cell) => typeof cell === 'string' && cell && !/null|undefined|NaN|\{/.test(cell)));
+    }
+    const enterprise = rows.map((row) => row.cells[catalog.plans.length - 1]);
+    assert.deepEqual(enterprise.slice(0, 5), Array(5).fill(messages.pricing.compare.noCeiling));
+    const free = rows.map((row) => row.cells[0]);
+    assert.match(free[0], /^50$/);
+    assert.match(free[4], /100 MB/);
+    assert.match(rows[5].cells[3], /14/);
+    assert.match(messages.pricing.compare.entitlementsNote, /429/);
+    assert.match(messages.pricing.compare.entitlementsNote, /Retry-After/);
+    assert.match(messages.pricing.compare.entitlementsNote, /SLA/);
+    if (locale === 'en') {
+      assert.deepEqual(rows[8].cells, catalog.plans.map((plan) => plan.entitlements.support));
+    }
+  });
 }
+
+test('catalog entitlements match the enforced engine tiers', () => {
+  const byId = Object.fromEntries(catalog.plans.map((plan) => [plan.id, plan.entitlements]));
+  assert.deepEqual(byId.free, { requestsPerSecond: 50, burstRequests: 100, concurrentRequests: 4, queryTimeoutSeconds: 1,
+    storageLimitGb: 0.1, pitrDays: 1, backupRetentionDays: 1, regionsPerDatabase: 3, support: 'Community' });
+  assert.equal(byId.enterprise.requestsPerSecond, null);
+  assert.equal(byId.team.pitrDays, 14);
+  assert.equal(catalog.metering.allowances.paidOverages, true);
+  assert.match(catalog.metering.allowances.definition, /next subscription invoice/);
+  assert.match(catalog.metering.allowances.definition, /not billed yet/);
+  assert.match(catalog.metering.entitlements.definition, /Retry-After/);
+});
