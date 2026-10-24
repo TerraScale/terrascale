@@ -23,7 +23,8 @@ public sealed record DeletionJob(
     DateTimeOffset? FenceExpiresAt = null,
     string? HistoryStatus = null,
     DateTimeOffset? HistoryCompletedAt = null,
-    string? ErasureId = null)
+    string? ErasureId = null,
+    string? ClosureGeneration = null)
 {
     /// <summary>
     /// How long the fence must outlive its request: every credential issued before it expires by then. Sessions and OIDC
@@ -43,11 +44,11 @@ public sealed record DeletionJob(
     public static string Key(string instanceId, string scope, string subjectId) => AuthStore.NaturalKeyId(instanceId, "deletion-" + scope, subjectId);
 
     /// <summary>Creates the immutable request/deadline in the same transaction that removes its authorized root.</summary>
-    public static StoreOperation Enqueue(string instanceId, string scope, string subjectId, TimeProvider clock, string? organizationId = null)
+    public static StoreOperation Enqueue(string instanceId, string scope, string subjectId, TimeProvider clock, string? organizationId = null, string? closureGeneration = null)
     {
         var now = clock.GetUtcNow();
         var job = new DeletionJob(Key(instanceId, scope, subjectId), instanceId, scope, subjectId, organizationId, now, now.AddDays(30), now,
-            FenceExpiresAt: now + CredentialBound, ErasureId: AuthStore.NewId());
+            FenceExpiresAt: now + CredentialBound, ErasureId: AuthStore.NewId(), ClosureGeneration: closureGeneration);
         return AuthStore.Create(AuthStore.DeletionJobCollection, instanceId, job.Id, JsonSerializer.SerializeToElement(job, DeletionJson.Default.DeletionJob));
     }
 }
@@ -55,4 +56,5 @@ public sealed record DeletionJob(
 /// <summary>Source-generated storage metadata for deletion jobs.</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(DeletionJob))]
+[JsonSerializable(typeof(AccountDeletionReceipt))]
 public sealed partial class DeletionJson : JsonSerializerContext;

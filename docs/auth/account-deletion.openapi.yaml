@@ -1,0 +1,43 @@
+openapi: 3.1.0
+info:
+  title: TerraScale account deletion status API
+  version: v1
+  description: Status-only supplement to platform-api.openapi.yaml; see account-deletion-receipts.md for authenticated receipt binding.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://auth.terrascale.tech
+security:
+  - accountDeletionReceipt: []
+tags:
+  - name: Members
+    description: Account closure completion evidence.
+paths:
+  /v1/terrascale/account/deletion:
+    get:
+      operationId: account_deletion_status
+      tags: [Members]
+      summary: Read your account deletion status
+      description: Status-only proof for the exact closure generation bound by an authenticated DELETE. No bearer token, mutation rights or personal data. Responses have Cache-Control no-store. Unknown receipts and rejected credentials never prove completion.
+      parameters:
+        - name: organization
+          in: query
+          description: Candidate organization ULID; completion additionally requires its own deletion fence. A retained shared candidate stays 202.
+          schema:
+            type: string
+            pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+      responses:
+        '202': { description: 'Pending account generation, or candidate organization retained.' }
+        '204': { description: 'Exact account generation logically deleted; when requested, candidate organization also fenced.' }
+        '400': { $ref: 'platform-api.openapi.yaml#/components/responses/BadRequest' }
+        '404': { description: 'Unknown or expired receipt, or noncandidate organization.' }
+        '409': { description: 'deletion_refused; generation ended without completion proof.' }
+        '503': { $ref: 'platform-api.openapi.yaml#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    accountDeletionReceipt:
+      type: apiKey
+      in: header
+      name: X-TerraScale-Deletion-Receipt
+      description: Canonical 32-byte unpadded base64url capability, bound by authenticated account DELETE. Expires after 15 days. Keep private; never place in URLs or logs.

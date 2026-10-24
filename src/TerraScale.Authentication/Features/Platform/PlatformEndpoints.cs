@@ -282,13 +282,14 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
     public override void Configure()
     {
         Delete("/v1/terrascale/account");
-        this.Document("delete_account", "Delete your account", "Logically deletes the caller's auth account, immediately revokes auth access, frees its email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects, each project only after TerraBase accepted its closure; the others are left. 202 while a project closure is pending: the account stays until it finishes in the background, and repeating the request resumes it. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
+        this.Document("delete_account", "Delete your account", "Once logical deletion completes (204), revokes auth access and frees the caller's email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects, each project only after TerraBase accepted its closure; the others are left. 202 while a project closure is pending: the account stays until it finishes in the background, and new sign-ins are temporarily refused until completion or cancellation; cancellation restores sign-in without changing credentials. The background worker resumes without another submit. Optional X-TerraScale-Deletion-Receipt: a canonical 32-byte random base64url capability, retained for 15 days to read status after tokens stop working. Reuse it only for this closure generation; 409 deletion_refused otherwise. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
         Produces(StatusCodes.Status202Accepted);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
     }
 
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        await accounts.DeleteAsync(caller, cancellationToken) ? Results.NoContent() : Results.Accepted();
+        await accounts.DeleteAsync(caller, cancellationToken, DeletionReceiptHeader.Read(this.HttpContext.Request)) ? Results.NoContent() : Results.Accepted();
 }
 
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/projects</c>.</summary>

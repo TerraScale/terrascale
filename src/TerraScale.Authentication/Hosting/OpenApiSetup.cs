@@ -33,6 +33,9 @@ public static class SecuritySchemes
     /// <summary>A whole project API key, restricted to server-to-server end-user token minting.</summary>
     public const string ProjectApiKey = "projectApiKey";
 
+    /// <summary>Status-only account deletion capability, independent of sign-in credentials.</summary>
+    public const string AccountDeletionReceipt = "accountDeletionReceipt";
+
     /// <summary>Session cookie name used by every hosted UI route.</summary>
     public const string SessionCookieName = "tsauth_session";
 }
@@ -71,6 +74,30 @@ public static partial class OpenApiSetup
                 else if (metadata.OfType<RequiresSecurity>().LastOrDefault() is { } declared)
                 {
                     operation.Security = [Requirement(declared.Scheme, context.Document)];
+                }
+
+                if (operation.OperationId is "delete_account" or "account_deletion_status")
+                {
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "X-TerraScale-Deletion-Receipt",
+                        In = ParameterLocation.Header,
+                        Required = operation.OperationId == "account_deletion_status",
+                        Description = "Status-only capability: 32 random bytes in canonical unpadded base64url. Never put it in a URL or logs.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 43, MaxLength = 43, Pattern = "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$" },
+                    });
+                }
+
+                if (operation.OperationId == "account_deletion_status")
+                {
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "organization",
+                        In = ParameterLocation.Query,
+                        Required = false,
+                        Description = "Candidate organization ULID; completion additionally requires its own deletion fence.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                    });
                 }
 
                 // OpenAPI 11 documents every reference-typed response body as oneOf [null, $ref]. No response body
@@ -117,6 +144,7 @@ public static partial class OpenApiSetup
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)
     {
+        [SecuritySchemes.AccountDeletionReceipt] = () => new() { Type = SecuritySchemeType.ApiKey, In = ParameterLocation.Header, Name = "X-TerraScale-Deletion-Receipt" },
         [SecuritySchemes.ManagementBearer] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Instance management API key (sk_…)." },
         [SecuritySchemes.SessionCookie] = () => new() { Type = SecuritySchemeType.ApiKey, In = ParameterLocation.Cookie, Name = SecuritySchemes.SessionCookieName },
         [SecuritySchemes.OAuthAccessBearer] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT" },

@@ -16,7 +16,7 @@ namespace TerraScale.Authentication.Features.Platform;
 public sealed class Closures(
     AuthStore store, PlatformDirectory directory, [FromKeyedServices(App.StorageAuthority)] TerraBaseManagementClient terraBase, TimeProvider clock, ILogger<Closures> logger)
 {
-    private static readonly TimeSpan Retry = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan Retry = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Closes a project for <paramref name="userId"/>, who needs its admin role: true once it is removed, false while
@@ -223,11 +223,11 @@ public sealed class Closures(
     }
 }
 
-/// <summary>Resumes pending closures at startup and every minute, so a crash or restart never strands an intent.</summary>
+/// <summary>Resumes pending closures at startup and every two seconds, so a crash or restart never strands an intent.</summary>
 public sealed class ClosureWorker(Closures closures, PlatformDirectory directory, AccountDeletion accounts, TimeProvider clock, ILogger<ClosureWorker> logger) : BackgroundService
 {
     private const int BatchSize = 20;
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
 
     /// <summary>Advances one batch of due closures; each failure is logged without detail and retried later.</summary>
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)

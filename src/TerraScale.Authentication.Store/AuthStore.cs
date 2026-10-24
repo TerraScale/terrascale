@@ -85,6 +85,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Durable retries for auth logical deletion; completion is not physical erasure.</summary>
     public const string DeletionJobCollection = "deletion_jobs";
 
+    /// <summary>Hashed, expiring status capabilities bound to an account closure generation.</summary>
+    public const string AccountDeletionReceiptCollection = "account_deletion_receipts";
+
     /// <summary>Authorized closure intents (<see cref="ClosureJob"/>); while one exists it fences access-adding writes to its scope.</summary>
     public const string ClosureJobCollection = "closure_jobs";
 
@@ -118,7 +121,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_support_deliveries",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, ClosureJobCollection, HistoryMarkCollection,
-        ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection,
+        ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection, AccountDeletionReceiptCollection,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();

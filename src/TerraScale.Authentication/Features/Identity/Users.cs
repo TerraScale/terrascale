@@ -129,7 +129,10 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     /// Deletes the account and releases its email in one transaction, so the address can sign up again. Every check
     /// reads the user, so its sessions and tokens stop working at once.
     /// </summary>
-    public async Task DeleteAsync(string instanceId, string userId, CancellationToken cancellationToken = default)
+    public Task DeleteAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
+        this.DeleteAsync(instanceId, userId, null, cancellationToken);
+
+    internal async Task DeleteAsync(string instanceId, string userId, string? closureGeneration, CancellationToken cancellationToken)
     {
         for (var round = 0; round < 3; round++)
         {
@@ -141,7 +144,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             List<StoreOperation> operations =
             [
                 AuthStore.Delete(AuthStore.UserCollection, instanceId, userId, current.Version),
-                DeletionJob.Enqueue(instanceId, "account", userId, clock),
+                DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
             ];
             if (await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is { } claim && claim.OwnerId == userId)
             {
