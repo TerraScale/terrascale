@@ -115,6 +115,9 @@ public static class BillingEndpoints
             catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
                 error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             {
+                // The customer sees a generic 503; the cause (such as a Stripe refusal) must reach the host log.
+                http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingEndpoints)).LogWarning(
+                    "Checkout for organization {OrganizationId} is unavailable ({ErrorType}: {Error})", context.Organization?.Id, error.GetType().Name, BillingPlanEndpoints.Describe(error));
                 if (!DatabaseEndpoints.WantsHtml(http)) return Results.Problem("Checkout is temporarily unavailable. Return to billing to reconcile before trying again.", statusCode: 503);
                 var page = BillingCheckoutUnavailable.Create(new DocumentModel("Checkout unavailable", DocumentModel.NonceFor(http)));
                 page.StatusCode = 503;
