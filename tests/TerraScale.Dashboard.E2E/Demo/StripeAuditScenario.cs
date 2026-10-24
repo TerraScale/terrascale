@@ -236,7 +236,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
                 is_default = isDefault,
                 active = true,
                 livemode = fault == "portal-mode" ? !live : live,
-                features = new { payment_method_update = new { enabled = true }, invoice_history = new { enabled = true }, subscription_cancel = new { enabled = true }, subscription_update = new { enabled = switching } }
+                features = new { payment_method_update = new { enabled = true }, invoice_history = new { enabled = true }, subscription_cancel = new { enabled = true }, subscription_update = new { enabled = switching }, customer_update = new { enabled = true, allowed_updates = fault == "portal-tax-fields" ? new[] { "name", "address" } : new[] { "name", "address", "tax_id" } } }
             };
             var rows = fault == "unsafe-default-portal" ? new[] { Portal(false, false), Portal(true, true) } : [Portal(true, false)];
             return JsonSerializer.Serialize(new { @object = "list", url = "/v1/billing_portal/configurations", has_more = false, data = rows });

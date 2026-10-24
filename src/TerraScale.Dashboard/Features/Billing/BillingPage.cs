@@ -10,6 +10,8 @@ public sealed record BillingPage(ShellModel Shell, IReadOnlyList<BillingPlan> Pl
     public BillingBinding? Binding { get; init; }
     public BillingCard? PaymentMethod { get; init; }
     public bool PaymentMethodUnavailable { get; init; }
+    public BillingDetails? Details { get; init; }
+    public bool DetailsUnavailable { get; init; }
     // Operation-unit overage already on Stripe this month; null when it could not be read.
     public long? OverageUnits { get; init; }
     public TerraScale.Dashboard.Features.Billing.InternalBill? InternalBill { get; init; }

@@ -28,6 +28,10 @@ public sealed class StripeSetupJourneyTests
             "Price amounts come from PlanCatalog");
         Check(stripe.Products.Single(product => product["metadata[plan]"] == "enterprise")["name"] == "TerraScale Enterprise support" &&
             !PlanCatalog.Plans.Any(plan => plan.Key == "enterprise"), "Support pricing leaves Enterprise contact-only without a selectable entitlement");
+        var portal = stripe.Portals.Single();
+        Check(portal.GetValueOrDefault("features[customer_update][enabled]") == "true" &&
+            new[] { "name", "address", "tax_id" }.SequenceEqual(Enumerable.Range(0, 3).Select(index => portal.GetValueOrDefault($"features[customer_update][allowed_updates][{index}]"))),
+            "Owners can edit their invoice name, billing address and tax IDs in the configured portal");
         var writes = stripe.Writes;
         Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[]}") && stripe.Writes == writes, "A second run changes nothing");
         Check(stripe.ApiKeys.Count > 0 && stripe.ApiKeys.All(actual => actual == key), "Every Stripe request uses the delivered identity's key");
@@ -160,6 +164,19 @@ public sealed class StripeSetupJourneyTests
         return (result, output.ToString().Replace(" ", "").Replace("\n", "").Replace("\r", ""));
     }
 
+    [Test]
+    public async Task SetupRepairsMissingPortalTaxFieldsWithoutReplacingPrices()
+    {
+        using var stripe = new FakeStripe();
+        Check((await Run(stripe, "sk_test_SETUP")).Item1 == 0, "Seed the catalog and default portal");
+        stripe.Portals.Single().Remove("features[customer_update][allowed_updates][2]");
+        var prices = stripe.Prices.Select(price => price["id"]).ToArray();
+        var writes = stripe.Writes;
+        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[\"portal_updated\"]}"), "Repair the incomplete portal");
+        Check(stripe.Writes == writes + 1 && prices.SequenceEqual(stripe.Prices.Select(price => price["id"])), "Only the portal changes");
+        Check(stripe.Portals.Single()["features[customer_update][allowed_updates][2]"] == "tax_id", "Tax ID edits are restored");
+    }
+
     // An in-memory Stripe for the endpoints the setup command uses; stored objects keep their raw form fields.
     private sealed class FakeStripe(bool live = false) : HttpMessageHandler
     {
@@ -240,8 +257,14 @@ public sealed class StripeSetupJourneyTests
             {
                 json["object"] = "billing_portal.configuration";
                 json["is_default"] = On("is_default");
-                json["features"] = new JsonObject(new[] { "payment_method_update", "invoice_history", "subscription_cancel", "subscription_update" }
+                var features = new JsonObject(new[] { "payment_method_update", "invoice_history", "subscription_cancel", "subscription_update" }
                     .Select(feature => KeyValuePair.Create(feature, (JsonNode?)new JsonObject { ["enabled"] = On($"features[{feature}][enabled]") })));
+                features["customer_update"] = new JsonObject
+                {
+                    ["enabled"] = On("features[customer_update][enabled]"),
+                    ["allowed_updates"] = new JsonArray(Enumerable.Range(0, 3).Select(index => (JsonNode?)JsonValue.Create(item.GetValueOrDefault($"features[customer_update][allowed_updates][{index}]"))).ToArray())
+                };
+                json["features"] = features;
             }
             return json;
         }
