@@ -268,30 +268,18 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
                 return true;
             }
 
-            foreach (var peer in listed.Where(peer => !_verified.Contains(peer.Name)))
+            // Every machine still needed at once: each pull is a WAN round trip and a bucket repair, so a pass waits for the
+            // slowest machine instead of their sum (TS-983: 23-60 s to open after a restart, racing readiness).
+            var pulls = await Task.WhenAll(listed.Where(peer => !_verified.Contains(peer.Name))
+                .Select(peer => VerifyPeerAsync(peer, cancellationToken))).ConfigureAwait(false);
+            foreach (var peer in pulls.OfType<string>())
             {
-                try
+                if (_verified.Count == MaxMembers && !_verified.Contains(peer))
                 {
-                    if (!await PeerTrustedAsync(peer, cancellationToken).ConfigureAwait(false))
-                    {
-                        continue;
-                    }
-
-                    var pulled = await _antiEntropy.PullAsync(ChangeGroups.System, peer, cancellationToken).ConfigureAwait(false);
-                    if (pulled is not null && await PeerTrustedAsync(peer, cancellationToken).ConfigureAwait(false))
-                    {
-                        if (_verified.Count == MaxMembers && !_verified.Contains(peer.Name))
-                        {
-                            throw new InvalidDataException("the catalog gate's verified member limit was exceeded");
-                        }
-
-                        _ = _verified.Add(peer.Name);
-                    }
+                    throw new InvalidDataException("the catalog gate's verified member limit was exceeded");
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-                {
-                    _logger.ZLogWarning(error, $"The catalog could not be pulled from machine {peer.Name:@Peer} in {peer.Region:@Region}; this machine stays closed and tries again");
-                }
+
+                _ = _verified.Add(peer);
             }
 
             // Read after the pulls: a pull may record more machines. A catalog not created yet records none.
@@ -400,6 +388,29 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
 
     // Whether the peer's catalog is known not to be a restored older copy (its gate's Trusted, GET /catalog-gate on its
     // internal listener); a pull from it verifies nothing otherwise.
+    // Pulls the catalog from one trusted machine; its name once the pull holds what it had, null otherwise.
+    private async Task<string?> VerifyPeerAsync(ClusterMember peer, CancellationToken cancellationToken)
+    {
+        var started = _time.GetTimestamp();
+        try
+        {
+            if (!await PeerTrustedAsync(peer, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var pulled = await _antiEntropy.PullAsync(ChangeGroups.System, peer, cancellationToken).ConfigureAwait(false);
+            var trusted = pulled is not null && await PeerTrustedAsync(peer, cancellationToken).ConfigureAwait(false);
+            _logger.ZLogInformation($"The catalog pull from machine {peer.Name:@Peer} in {peer.Region:@Region} took {_time.GetElapsedTime(started).TotalMilliseconds:F0} ms and repaired {pulled ?? 0} states (verified: {trusted})");
+            return trusted ? peer.Name : null;
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"The catalog could not be pulled from machine {peer.Name:@Peer} in {peer.Region:@Region} after {_time.GetElapsedTime(started).TotalMilliseconds:F0} ms; this machine stays closed and tries again");
+            return null;
+        }
+    }
+
     private async Task<bool> PeerTrustedAsync(ClusterMember peer, CancellationToken cancellationToken)
     {
         using var client = new HttpClient(_credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
