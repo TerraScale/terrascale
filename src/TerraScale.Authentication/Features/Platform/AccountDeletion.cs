@@ -105,17 +105,7 @@ public sealed class AccountDeletion(
     /// <summary>Reads only opaque status; neither token validity nor user absence is completion evidence.</summary>
     public async Task<bool> StatusAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(AuthStore.AccountDeletionReceiptCollection, PlatformDirectory.Instance, receiptHash, cancellationToken).ConfigureAwait(false);
-        var receipt = document?.Document.Deserialize(DeletionJson.Default.AccountDeletionReceipt);
-        if (receipt is null || receipt.InstanceId != PlatformDirectory.Instance || receipt.TokenHash != receiptHash || receipt.ExpiresAt <= clock.GetUtcNow())
-        {
-            throw PlatformDirectory.NotFound();
-        }
-
-        if (organizationId is not null && !receipt.OrganizationIds.Contains(organizationId, StringComparer.Ordinal))
-        {
-            throw PlatformDirectory.NotFound();
-        }
+        var receipt = await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false);
 
         var job = await platform.ClosureAsync("account", receipt.SubjectId, cancellationToken).ConfigureAwait(false);
         if (await this.CompletedAsync(receipt.SubjectId, receipt.Generation, cancellationToken).ConfigureAwait(false))
@@ -136,6 +126,35 @@ public sealed class AccountDeletion(
         }
 
         throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
+    }
+
+    /// <summary>Correlates an authorized logical deletion to its history request without advancing either worker.</summary>
+    internal async Task<AccountDeletionHistory?> HistoryAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
+    {
+        if (!await this.StatusAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var receipt = await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false);
+        var scope = organizationId is null ? "account" : "organization";
+        var subject = organizationId ?? receipt.SubjectId;
+        var key = DeletionJob.Key(PlatformDirectory.Instance, scope, subject);
+        var document = await store.GetAsync(AuthStore.DeletionJobCollection, PlatformDirectory.Instance, key, cancellationToken).ConfigureAwait(false);
+        var job = document?.Document.Deserialize(DeletionJson.Default.DeletionJob);
+        return job is not null && job.Id == key && job.InstanceId == PlatformDirectory.Instance && job.Scope == scope && job.SubjectId == subject
+            && (organizationId is not null || job.ClosureGeneration == receipt.Generation) && job.ErasureId is { } erasure && PlatformDirectory.IsId(erasure)
+            ? new AccountDeletionHistory(erasure, job.RequestedAt, job.AuthLogicalVerifiedAt, job.HistoryStatus, job.HistoryCompletedAt)
+            : null;
+    }
+
+    private async Task<AccountDeletionReceipt> ReadReceiptAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
+    {
+        var document = await store.GetAsync(AuthStore.AccountDeletionReceiptCollection, PlatformDirectory.Instance, receiptHash, cancellationToken).ConfigureAwait(false);
+        var receipt = document?.Document.Deserialize(DeletionJson.Default.AccountDeletionReceipt);
+        return receipt is not null && receipt.InstanceId == PlatformDirectory.Instance && receipt.TokenHash == receiptHash && receipt.ExpiresAt > clock.GetUtcNow()
+            && (organizationId is null || receipt.OrganizationIds.Contains(organizationId, StringComparer.Ordinal))
+            ? receipt : throw PlatformDirectory.NotFound();
     }
 
     private async Task<bool> CompletedAsync(string userId, string generation, CancellationToken cancellationToken)
