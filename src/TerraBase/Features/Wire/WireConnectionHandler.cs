@@ -3,7 +3,6 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Text;
-using Microsoft.AspNetCore.Connections;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -28,7 +27,7 @@ namespace TerraBase.Features.Wire;
 /// key against a database as the client listener does, and again whenever the catalog commits; every request runs the HTTP
 /// API's admission, validation, metering and durability.
 /// </summary>
-internal sealed class WireConnectionHandler(IServiceProvider services) : ConnectionHandler
+internal sealed class WireConnectionHandler(IServiceProvider services)
 {
     public const byte Version = 1;
     public const byte Hello = 0, Get = 1, Put = 2;
@@ -56,15 +55,8 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
         public required Grant Grant { get; set; }
     }
 
-    /// <inheritdoc />
-    public override Task OnConnectedAsync(ConnectionContext connection)
-    {
-        ArgumentNullException.ThrowIfNull(connection);
-        return RunAsync(connection.Transport.Input, connection.Transport.Output, connection.ConnectionClosed);
-    }
-
-    // Serves one connection until the client, a refusal or the shutdown drain ends it.
-    private async Task RunAsync(PipeReader input, PipeWriter output, CancellationToken closed)
+    /// <summary>Serves one connection until the client, a refusal or the shutdown drain (<paramref name="closed"/>) ends it.</summary>
+    public async Task RunAsync(PipeReader input, PipeWriter output, CancellationToken closed)
     {
         // Cancelled to stop reading frames (a revoked key); requests already running finish and answer.
         using var closing = CancellationTokenSource.CreateLinkedTokenSource(closed);

@@ -22,6 +22,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Wire;
 using TerraBase.Hosting;
 
 namespace TerraBase.Testing;
@@ -47,13 +48,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         _factory = factory;
         _temporaryDirectory = temporaryDirectory;
         DataDirectory = Path.GetFullPath(settings["data-directory"]);
-        // Kestrel reports listeners in bind order: internal, public, metrics, postgres, wire. The last four bind every interface outside Development.
+        // Kestrel reports listeners in bind order: internal, public, metrics, postgres. The last three bind every interface outside Development.
         Listeners = listeners;
         BaseAddress = listeners[0];
         ClientAddress = new UriBuilder(listeners[1]) { Host = "127.0.0.1" }.Uri;
         MetricsAddress = new UriBuilder(listeners[2]) { Host = "127.0.0.1" }.Uri;
         PostgresPort = listeners[3].Port;
-        WirePort = listeners[4].Port;
+        WirePort = factory.Services.GetRequiredService<WireListener>().Port;
         // The effective registration, so a test that replaced the credential gets a client that sends its secret.
         Credential = factory.Services.GetRequiredService<PeerCredential>();
         Client = PeerTls.CreateClient(BaseAddress, credential: Credential);
@@ -65,7 +66,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// </summary>
     public string DataDirectory { get; }
 
-    /// <summary>The addresses Kestrel bound, in bind order: internal, public, metrics, postgres, wire.</summary>
+    /// <summary>The addresses Kestrel bound, in bind order: internal, public, metrics, postgres.</summary>
     public IReadOnlyList<Uri> Listeners { get; }
 
     /// <summary>The loopback origin of the internal listener (HTTP/2 only).</summary>
@@ -83,7 +84,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>The loopback port of the PostgreSQL wire listener.</summary>
     public int PostgresPort { get; }
 
-    /// <summary>The port of the TerraBase wire protocol listener.</summary>
+    /// <summary>The port of the TerraBase wire protocol listener (its own socket, not Kestrel's).</summary>
     public int WirePort { get; }
 
     /// <summary>An HTTP/2 client for the internal listener that never follows redirects and never stores cookies.</summary>

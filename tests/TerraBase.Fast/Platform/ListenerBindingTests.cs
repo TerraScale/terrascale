@@ -10,7 +10,7 @@ public sealed class ListenerBindingTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
 
-        await Assert.That(server.Listeners.Count).IsEqualTo(5);
+        await Assert.That(server.Listeners.Count).IsEqualTo(4);
         foreach (var listener in server.Listeners)
         {
             await Assert.That(IPAddress.IsLoopback(IPAddress.Parse(listener.Host))).IsTrue();
@@ -24,7 +24,7 @@ public sealed class ListenerBindingTests
         var s3 = new FakeS3();
         await using var server = await TerraBaseTestServer.StartAsync(s3.Configure, s3.Route, environmentName: "Production");
 
-        await Assert.That(server.Listeners.Count).IsEqualTo(5);
+        await Assert.That(server.Listeners.Count).IsEqualTo(4);
         await Assert.That(IPAddress.IsLoopback(IPAddress.Parse(server.Listeners[0].Host))).IsTrue();
         foreach (var listener in server.Listeners.Skip(1))
         {

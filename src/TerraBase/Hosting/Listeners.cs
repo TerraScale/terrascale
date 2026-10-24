@@ -8,7 +8,6 @@ using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Postgres;
-using TerraBase.Features.Wire;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Replication;
 
@@ -31,9 +30,6 @@ public enum TerraBaseListener
 
     /// <summary>PostgreSQL wire protocol 3.0, plaintext behind the platform edge (TLS ends there), authorized by API keys.</summary>
     Postgres,
-
-    /// <summary>TerraBase wire protocol v1 (pipelined binary frames), plaintext behind the platform edge, authorized by API keys.</summary>
-    Wire,
 }
 
 /// <summary>
@@ -193,7 +189,7 @@ public static class Listeners
         {
             connection.Items[ListenerKey] = listener;
             using var drain = listen.ApplicationServices.GetRequiredService<Shutdown>().Drain(connection);
-            var pressure = listener is TerraBaseListener.Client or TerraBaseListener.Postgres or TerraBaseListener.Wire ? listen.ApplicationServices.GetRequiredService<IPressureSignals>() : null;
+            var pressure = listener is TerraBaseListener.Client or TerraBaseListener.Postgres ? listen.ApplicationServices.GetRequiredService<IPressureSignals>() : null;
             pressure?.ConnectionOpened();
             try
             {
@@ -207,6 +203,13 @@ public static class Listeners
         return listen;
     }
 
+    /// <summary>Local development (Development outside a cluster): the public listeners bind loopback only.</summary>
+    public static bool LoopbackOnly(TerraBaseOptions options, string environmentName)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return options.PeersFile is null && environmentName == Environments.Development;
+    }
+
     /// <summary>
     /// The address of the internal listener: this node's private mesh address from ts-orch's peers file in a cluster, never
     /// the host's public interfaces; loopback outside one.
@@ -218,15 +221,15 @@ public static class Listeners
     }
 
     /// <summary>
-    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public, metrics, postgres and wire listeners, in
-    /// that order. Those four bind every interface, except in local development (Development outside a cluster), where nothing but this
-    /// machine may reach them: loopback only.
+    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public, metrics and postgres listeners, in
+    /// that order. Those three bind every interface, except in local development (<see cref="LoopbackOnly"/>), where nothing but
+    /// this machine may reach them: loopback only. The wire protocol has its own socket listener (<c>WireListener</c>).
     /// </summary>
     public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress, string environmentName)
     {
         ArgumentNullException.ThrowIfNull(kestrel);
         ArgumentNullException.ThrowIfNull(options);
-        var local = options.PeersFile is null && environmentName == Environments.Development;
+        var local = LoopbackOnly(options, environmentName);
         // HTTP/2 only: without TLS there is no ALPN, and gRPC needs HTTP/2 prior knowledge.
         kestrel.Listen(internalAddress, options.InternalPort, listen =>
         {
@@ -236,7 +239,6 @@ public static class Listeners
         Bind(options.Port, TerraBaseListener.Client);
         Bind(options.MetricsPort, TerraBaseListener.Metrics);
         Bind(options.PostgresPort, TerraBaseListener.Postgres);
-        Bind(options.WirePort, TerraBaseListener.Wire);
 
         void Bind(int port, TerraBaseListener listener)
         {
@@ -247,10 +249,6 @@ public static class Listeners
                 if (listener == TerraBaseListener.Postgres)
                 {
                     listen.UseConnectionHandler<PostgresConnectionHandler>();
-                }
-                else if (listener == TerraBaseListener.Wire)
-                {
-                    listen.UseConnectionHandler<WireConnectionHandler>();
                 }
             }
 
