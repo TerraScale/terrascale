@@ -143,6 +143,10 @@ public sealed class Cluster : IAsyncDisposable
     internal static Task<Cluster> StartBucketAsync(string[] regions, Action<Dictionary<string, string>> bucket) =>
         StartLocalCoreAsync(ChooseRegions(regions), new Dictionary<string, TimeSpan>(), bucket: bucket);
 
+    /// <summary>Starts local nodes of <paramref name="regions"/> that share <paramref name="bucket"/> as their platform bucket.</summary>
+    internal static Task<Cluster> StartLocalAsync(string[] regions, FakeS3 bucket) =>
+        StartLocalCoreAsync(ChooseRegions(regions), new Dictionary<string, TimeSpan>(), backups: bucket);
+
     // Backup qualification owns a whole database: snapshots never include other parallel tests' collections.
     internal static Task<Cluster> StartBackupAsync() =>
         StartLocalCoreAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
