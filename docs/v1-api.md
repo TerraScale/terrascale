@@ -89,7 +89,9 @@ for local validation (`Error::InvalidTxOp`).
 ## Queries
 
 ```rust
-Filter::{and, or, not, eq, ne, lt, lte, gt, gte, in_, nin, exists, prefix, contains}
+Filter::{and, or, not, eq, ne, lt, lte, gt, gte, in_, nin, exists, prefix, contains, within_radius, within_box}
+Filter::within_radius("/loc", lat, lon, meters)   // {lat, lon} points, haversine meters 0..=20_000_000
+Filter::within_box("/loc", south, west, north, east) // west > east crosses the antimeridian
 Filter::from_json(r#"{"eq":["/email","a@b.c"]}"#)?
 Path::from("/email") | Path::lower("/email") | Path::Id ("$id")
 Query::new().filter(f).sort(SortKey::desc("/created_at")).project(["/email"]).limit(50).cursor(c).count(true).explain(Explain::Plan)
@@ -99,6 +101,12 @@ coll.query_all::<T>(Query, max_items) -> Result<Vec<Document<T>>>
 Query::new().filter(f).near(Near::new("/embedding", vec![0.1, 0.2]).metric(Metric::L2)).limit(10)
   // near is the only sort key: no sort/cursor, limit <= 100, Metric::{Cosine (default), L2};
   // each item gets document.distance: Option<f64>
+Query::new().filter(f).geo_near(GeoNear::new("/loc", -23.55, -46.63)).limit(10)
+  // same limits as near; document.distance is meters, documents without a point are skipped
+Query::new().filter(f).aggregate(Aggregate::new().group_by(["/status"]).sum(["/amount"]).avg(["/amount"]).min(["/amount"]).max(["/amount"])).limit(100)
+  // group_by 0-4 paths, sum/avg/min/max at most 16 distinct pointers; no sort/project/cursor/count;
+  // limit bounds the groups. page.groups: Option<Vec<Group { key: Vec<Value>, count: u64,
+  //   sum/avg/min/max: BTreeMap<String, Option<f64>> }>>, items is empty
 coll.set_ttl("/expiresAt") -> Result<()>;  coll.get_ttl() -> Result<Option<String>>;  coll.clear_ttl() -> Result<()>
   // documents expire once the member holds a past RFC 3339 UTC time; an hourly sweep deletes them
 ```

@@ -1,5 +1,7 @@
-//! Queries (query-v1.md): the filter grammar, sort, projection, cursors and
-//! counts.
+//! Queries (query-v1.md): the filter grammar, sort, projection, cursors,
+//! counts, aggregates and geo filters.
+
+use std::collections::BTreeMap;
 
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
@@ -135,6 +137,8 @@ pub enum Filter {
     Exists(Path),
     Prefix(Path, String),
     Contains(Path, Scalar),
+    /// The `{lat, lon}` point at the path lies within the area.
+    Within(Path, Area),
     /// A filter given as raw JSON grammar, sent unchanged.
     Raw(Box<RawValue>),
 }
@@ -226,6 +230,27 @@ impl Filter {
         Self::Contains(path.into(), value.into())
     }
 
+    /// The `{lat, lon}` point is at most `meters` (0 to 20,000,000) away
+    /// from (`lat`, `lon`), by haversine distance.
+    #[must_use]
+    pub fn within_radius(path: impl Into<Path>, lat: f64, lon: f64, meters: f64) -> Self {
+        Self::Within(path.into(), Area::Circle { lat, lon, meters })
+    }
+    /// The `{lat, lon}` point lies in the box; `west > east` crosses the
+    /// antimeridian.
+    #[must_use]
+    pub fn within_box(path: impl Into<Path>, south: f64, west: f64, north: f64, east: f64) -> Self {
+        Self::Within(
+            path.into(),
+            Area::Box {
+                south,
+                west,
+                north,
+                east,
+            },
+        )
+    }
+
     /// Parses a filter written in the query-v1 JSON grammar. Only JSON
     /// syntax and object shape are checked locally; the server validates the
     /// grammar.
@@ -264,6 +289,7 @@ impl Filter {
             Self::In(_, v) | Self::Nin(_, v) if v.is_empty() || v.len() > 256 => {
                 bad("in/nin need 1-256 values")
             }
+            Self::Within(_, a) => a.validate(),
             _ => Ok(()),
         }
     }
@@ -301,9 +327,48 @@ impl Serialize for Filter {
             Self::Exists(p) => m.serialize_entry("exists", p)?,
             Self::Prefix(p, v) => m.serialize_entry("prefix", &Pair(p, v))?,
             Self::Contains(p, v) => m.serialize_entry("contains", &Pair(p, v))?,
+            Self::Within(p, a) => m.serialize_entry("within", &Pair(p, a))?,
             Self::Raw(_) => unreachable!(),
         }
         m.end()
+    }
+}
+
+/// A `within` area in WGS 84 degrees.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Area {
+    /// Points at most `meters` (0 to 20,000,000) from the centre.
+    Circle { lat: f64, lon: f64, meters: f64 },
+    /// Points in the box; `west > east` crosses the antimeridian.
+    Box {
+        south: f64,
+        west: f64,
+        north: f64,
+        east: f64,
+    },
+}
+
+impl Area {
+    fn validate(&self) -> Result<()> {
+        let ok = match *self {
+            Self::Circle { lat, lon, meters } => {
+                lat.is_finite() && lon.is_finite() && (0.0..=20_000_000.0).contains(&meters)
+            }
+            Self::Box {
+                south,
+                west,
+                north,
+                east,
+            } => [south, west, north, east].iter().all(|v| v.is_finite()),
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(Error::InvalidInput(
+                "filter: within needs finite degrees and meters 0-20000000".into(),
+            ))
+        }
     }
 }
 
@@ -379,16 +444,112 @@ impl Near {
     }
 }
 
-fn near_sort<S: Serializer>(near: &Option<Near>, s: S) -> std::result::Result<S::Ok, S::Error> {
+/// A geo distance sort: nearest `{lat, lon}` points first, each result
+/// carrying [`Document::distance`] in meters.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GeoNear {
+    /// RFC 6901 JSON Pointer to the stored `{lat, lon}` point.
+    pub path: String,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+impl GeoNear {
+    /// Sorts by meters from (`lat`, `lon`).
+    #[must_use]
+    pub fn new(path: impl Into<String>, lat: f64, lon: f64) -> Self {
+        Self {
+            path: path.into(),
+            lat,
+            lon,
+        }
+    }
+}
+
+fn near_sort<N: Serialize, S: Serializer>(
+    near: &Option<N>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
     #[derive(Serialize)]
-    struct Key<'a> {
-        near: &'a Near,
+    struct Key<'a, N> {
+        near: &'a N,
     }
     let mut seq = s.serialize_seq(Some(1))?;
     seq.serialize_element(&Key {
         near: near.as_ref().expect("skipped when None"),
     })?;
     seq.end()
+}
+
+/// Groups the matches and computes per-group numeric aggregates.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Aggregate {
+    /// 0–4 paths; without any there is exactly one group of every match.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<Path>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sum: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub avg: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub min: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub max: Vec<String>,
+}
+
+impl Aggregate {
+    /// One group of every match, counted.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Sets the group key paths (JSON Pointers or `"$id"`).
+    #[must_use]
+    pub fn group_by<I: IntoIterator<Item = P>, P: Into<Path>>(mut self, paths: I) -> Self {
+        self.group_by = paths.into_iter().map(Into::into).collect();
+        self
+    }
+    /// Sums the numbers at these JSON Pointers.
+    #[must_use]
+    pub fn sum<I: IntoIterator<Item = S>, S: Into<String>>(mut self, paths: I) -> Self {
+        self.sum = paths.into_iter().map(Into::into).collect();
+        self
+    }
+    /// Averages the numbers at these JSON Pointers.
+    #[must_use]
+    pub fn avg<I: IntoIterator<Item = S>, S: Into<String>>(mut self, paths: I) -> Self {
+        self.avg = paths.into_iter().map(Into::into).collect();
+        self
+    }
+    /// The smallest number at these JSON Pointers.
+    #[must_use]
+    pub fn min<I: IntoIterator<Item = S>, S: Into<String>>(mut self, paths: I) -> Self {
+        self.min = paths.into_iter().map(Into::into).collect();
+        self
+    }
+    /// The largest number at these JSON Pointers.
+    #[must_use]
+    pub fn max<I: IntoIterator<Item = S>, S: Into<String>>(mut self, paths: I) -> Self {
+        self.max = paths.into_iter().map(Into::into).collect();
+        self
+    }
+    fn validate(&self) -> Result<()> {
+        let bad = |m: &str| Err(Error::InvalidInput(format!("aggregate: {m}")));
+        if self.group_by.len() > 4 {
+            return bad("group_by has at most 4 paths");
+        }
+        let lists = [&self.sum, &self.avg, &self.min, &self.max];
+        if lists.iter().map(|l| l.len()).sum::<usize>() > 16 {
+            return bad("sum/avg/min/max have at most 16 paths in total");
+        }
+        for l in lists {
+            let distinct: std::collections::HashSet<_> = l.iter().collect();
+            if distinct.len() != l.len() {
+                return bad("sum/avg/min/max paths must be distinct");
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A query-v1 request. Every member is optional.
@@ -407,6 +568,18 @@ pub struct Query {
         skip_serializing_if = "Option::is_none"
     )]
     pub near: Option<Near>,
+    /// Geo distance sort, sent as the only `sort` key, with the same limits
+    /// as [`Query::near`].
+    #[serde(
+        rename = "sort",
+        serialize_with = "near_sort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub geo_near: Option<GeoNear>,
+    /// Returns [`QueryPage::groups`] instead of items. Excludes sort,
+    /// project, cursor and count; `limit` bounds the groups.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<Aggregate>,
     /// At most 64 paths, kept with their parent objects.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub project: Vec<String>,
@@ -443,6 +616,18 @@ impl Query {
     #[must_use]
     pub fn near(mut self, near: Near) -> Self {
         self.near = Some(near);
+        self
+    }
+    /// Sorts by meters from a point (the only sort key).
+    #[must_use]
+    pub fn geo_near(mut self, near: GeoNear) -> Self {
+        self.geo_near = Some(near);
+        self
+    }
+    /// Aggregates the matches into groups.
+    #[must_use]
+    pub fn aggregate(mut self, aggregate: Aggregate) -> Self {
+        self.aggregate = Some(aggregate);
         self
     }
     /// Sets the projection.
@@ -482,14 +667,38 @@ impl Query {
         if matches!(self.limit, Some(l) if !(1..=1000).contains(&l)) {
             return Err(Error::InvalidInput("limit must be 1-1000".into()));
         }
-        let Some(n) = &self.near else { return Ok(()) };
+        if let Some(a) = &self.aggregate {
+            a.validate()?;
+            if !self.sort.is_empty()
+                || self.near.is_some()
+                || self.geo_near.is_some()
+                || !self.project.is_empty()
+                || self.cursor.is_some()
+                || self.count
+            {
+                return Err(Error::InvalidInput(
+                    "aggregate: takes no sort, project, cursor or count".into(),
+                ));
+            }
+        }
         let bad = |m: &str| Err(Error::InvalidInput(format!("near: {m}")));
-        if !self.sort.is_empty() || self.cursor.is_some() {
-            return bad("near is the only sort key and takes no cursor");
+        if self.near.is_some() || self.geo_near.is_some() {
+            if !self.sort.is_empty()
+                || self.cursor.is_some()
+                || (self.near.is_some() && self.geo_near.is_some())
+            {
+                return bad("near is the only sort key and takes no cursor");
+            }
+            if self.limit.is_some_and(|l| l > 100) {
+                return bad("limit must be 1-100");
+            }
         }
-        if self.limit.is_some_and(|l| l > 100) {
-            return bad("limit must be 1-100");
+        if let Some(g) = &self.geo_near {
+            if !g.lat.is_finite() || !g.lon.is_finite() {
+                return bad("lat and lon must be finite");
+            }
         }
+        let Some(n) = &self.near else { return Ok(()) };
         if n.vector.is_empty() || n.vector.len() > 4096 || !n.vector.iter().all(|v| v.is_finite()) {
             return bad("vector needs 1-4096 finite numbers");
         }
@@ -520,6 +729,28 @@ pub struct QueryPage<T = Box<RawValue>> {
     /// Set when the query requested a count.
     #[serde(default)]
     pub count: Option<Count>,
+    /// Set when the query requested an aggregate (`items` is then empty).
+    #[serde(default)]
+    pub groups: Option<Vec<Group>>,
+}
+
+/// One aggregate group. Each map holds one entry per requested JSON Pointer,
+/// `None` when the group has no number there (`sum` is then `0`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Group {
+    /// One JSON value per `group_by` path; missing members are `null`.
+    pub key: Vec<serde_json::Value>,
+    /// The group's matching documents.
+    #[serde(with = "u64_string")]
+    pub count: u64,
+    #[serde(default)]
+    pub sum: BTreeMap<String, Option<f64>>,
+    #[serde(default)]
+    pub avg: BTreeMap<String, Option<f64>>,
+    #[serde(default)]
+    pub min: BTreeMap<String, Option<f64>>,
+    #[serde(default)]
+    pub max: BTreeMap<String, Option<f64>>,
 }
 
 impl Collection {

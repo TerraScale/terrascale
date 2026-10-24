@@ -287,7 +287,8 @@ pub struct Document<T = Box<RawValue>> {
     pub id: DocumentId,
     pub version: Version,
     pub state: DocumentState<T>,
-    /// Vector distance; set only on results of a [`super::Near`] query.
+    /// Vector distance on results of a [`super::Near`] query, meters on
+    /// results of a [`super::GeoNear`] query; otherwise `None`.
     pub distance: Option<f64>,
 }
 
