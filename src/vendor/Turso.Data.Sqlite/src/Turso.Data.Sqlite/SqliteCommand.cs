@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
@@ -949,7 +950,25 @@ public class SqliteCommand : DbCommand
               || value.Equals("YES", StringComparison.OrdinalIgnoreCase);
     }
 
+    // TerraScale: whether a command text counts rows affected, by text. Splitting the text on every finished statement was
+    // a fifth of a TerraBase write's allocations; the texts are a small set of statements. Past the bound a text is
+    // classified without being kept.
+    private static readonly ConcurrentDictionary<string, bool> RowsAffectedTexts = new(StringComparer.Ordinal);
+    private const int MaxRowsAffectedTexts = 4096;
+
     internal static bool CountsRowsAffected(string commandText)
+    {
+        if (RowsAffectedTexts.TryGetValue(commandText, out var known))
+            return known;
+
+        var counts = ClassifyRowsAffected(commandText);
+        if (RowsAffectedTexts.Count < MaxRowsAffectedTexts)
+            RowsAffectedTexts.TryAdd(commandText, counts);
+
+        return counts;
+    }
+
+    private static bool ClassifyRowsAffected(string commandText)
     {
         var firstStatement = SplitStatements(commandText).FirstOrDefault();
         if (string.IsNullOrWhiteSpace(firstStatement))

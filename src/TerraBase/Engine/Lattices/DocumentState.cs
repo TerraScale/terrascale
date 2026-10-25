@@ -205,18 +205,19 @@ public sealed class DocumentState : ILattice<DocumentState>, IEquatable<Document
         return new DocumentState(Clear is { } clear && clear.Changed == stamp ? Clear : null, fields.ToImmutable());
     }
 
+    // A state never changes, so its JSON is built once: a write materialized the same state for its row and again for its
+    // digest. Shared with every caller, which only reads it.
+    private byte[]? _materialized;
+
     /// <summary>
     /// The document as compact JSON, or null when it does not exist. Fields are sorted by the UTF-8 bytes of their names,
     /// counters are integers and sets are arrays sorted by the UTF-8 bytes of their elements, so equal states give equal
-    /// bytes on every node.
+    /// bytes on every node. The array is shared: callers must not change it.
     /// </summary>
-    public byte[]? Materialize()
-    {
-        if (!Exists)
-        {
-            return null;
-        }
+    public byte[]? Materialize() => Exists ? _materialized ??= Build() : null;
 
+    private byte[] Build()
+    {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
         {
