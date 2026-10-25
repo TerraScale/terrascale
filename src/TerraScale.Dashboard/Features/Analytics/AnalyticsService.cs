@@ -42,7 +42,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-        { ServiceSloTelemetry.MarkBad(); return new(shell, selection, null, [], "Could not load analytics measurements. Apply the filters to retry."); }
+        { ServiceSloTelemetry.MarkFailure(error); return new(shell, selection, null, [], "Could not load analytics measurements. Apply the filters to retry."); }
     }
 
     public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)

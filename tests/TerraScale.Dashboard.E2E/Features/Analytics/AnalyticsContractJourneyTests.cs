@@ -23,11 +23,13 @@ public sealed class AnalyticsContractJourneyTests(DashboardRootFixture fixture)
             observedPath = http.Request.Path.Value;
             observedQuery = http.Request.QueryString.Value ?? "";
             bearerPresent = http.Request.Headers["Authorization"].ToString().StartsWith("Bearer ", StringComparison.Ordinal);
+            var mode = Volatile.Read(ref responseMode);
+            if (mode >= 400) return Task.FromResult<IResult?>(Results.StatusCode(mode));
             var projectId = http.Request.Path.Value.Split('/', StringSplitOptions.RemoveEmptyEntries).ElementAt(2);
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var to = DateTimeOffset.FromUnixTimeSeconds((now / 60 + 1) * 60);
             var from = to.AddHours(-1);
-            object body = Volatile.Read(ref responseMode) == 0
+            object body = mode == 0
                 ? new { projectId, range = "1h", from, to, bucketSeconds = 60, items = Array.Empty<object>() }
                 : new { projectId = "foreign-project", range = "1h", from, to, bucketSeconds = 60, items = Array.Empty<object>() };
             return Task.FromResult<IResult?>(Results.Json(body));
@@ -80,6 +82,19 @@ public sealed class AnalyticsContractJourneyTests(DashboardRootFixture fixture)
         var observations = await ReadAsync(controls, "/__test/observations");
         await Assert.That(observations.GetProperty("projectReportReads").GetInt32()).IsEqualTo(2);
         await Assert.That(observations.GetProperty("contractFailures").GetInt32()).IsEqualTo(0);
+
+        // Real upstream refusals still render HTTP 200; only server failures burn availability.
+        foreach (var status in new[] { 403, 429, 503 })
+        {
+            var before = await Platform.ServiceSloJourneyTests.ReadAsync(client);
+            Volatile.Write(ref responseMode, status);
+            using var page = await client.GetAsync("/analytics?range=1h");
+            await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Could not load analytics measurements.");
+            await Platform.ServiceSloJourneyTests.CountsAsync(client,
+                before.Good + (status < 500 ? 1 : 0), before.Bad + (status >= 500 ? 1 : 0));
+        }
+        await Assert.That(producerRequests).IsEqualTo(5);
     }
 
     private static async Task<JsonElement> ReadAsync(HttpClient client, string path)
