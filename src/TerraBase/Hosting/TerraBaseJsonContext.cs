@@ -219,6 +219,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(StatusBody))]
 [JsonSerializable(typeof(StoredInvitation))]
 [JsonSerializable(typeof(TenantContext))]
+[JsonSerializable(typeof(OrphanDatabaseFile))]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(SweepEntry))]
 [JsonSerializable(typeof(SwitchOrganizationRequest))]
