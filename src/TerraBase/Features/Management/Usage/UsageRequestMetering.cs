@@ -101,7 +101,7 @@ public static class UsageRequestMetering
                 if (_database is { } database)
                 {
                     _meter.RecordRequest(database, _context.Request.Method, status, elapsed, 0, 0);
-                    if (_context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route }) { _logs.Record(database, _context.Request.Method, route, status, elapsed, operations.Count(database)); }
+                    if (_context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route }) { _logs.Record(database, _context.Request.Method, route, status, elapsed, operations.Count(database), _context.TraceIdentifier); }
                 }
             }
         }

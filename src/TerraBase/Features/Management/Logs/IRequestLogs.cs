@@ -14,7 +14,8 @@ public sealed record DatabaseRequestLog(
     [property: JsonRequired] int Status,
     [property: JsonRequired] double LatencyMs,
     [property: JsonRequired] long Operations,
-    [property: JsonRequired] bool IsQuery);
+    [property: JsonRequired] bool IsQuery,
+    string? RequestId = null);
 
 /// <summary>The newest recorded requests, bounded to 100 entries and 24 hours. Recording is best effort.</summary>
 public sealed record DatabaseRequestLogs(string DatabaseId, IReadOnlyList<DatabaseRequestLog> Items, bool Truncated, bool RecordingLimited);
@@ -40,7 +41,7 @@ public readonly union RequestLogReadResult(RequestLogRead, Unavailable);
 public interface IRequestLogs
 {
     /// <summary>Records only route templates and counters after database authorization.</summary>
-    void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations);
+    void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null);
 
     /// <summary>Reads recent observations, with an optional HTTP status class (2 through 5).</summary>
     ValueTask<RequestLogReadResult> ReadAsync(TenantContext database, int? statusClass, CancellationToken cancellationToken);

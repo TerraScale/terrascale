@@ -131,6 +131,9 @@ public sealed record ExportRow(string Collection, StoredDocument Document);
 /// <summary>JSON document operations for the client API, over <see cref="IStorageEngine"/>, with Documents API v1 failures.</summary>
 public interface IDocumentService
 {
+    /// <summary>Validates one read-only page against a proposed schema; continuation requires the same local frontier.</summary>
+    ValueTask<CollectionSchemaPreviewResult> PreviewCollectionSchemaAsync(TenantContext database, string name, JsonElement schema, string? cursor, CancellationToken cancellationToken);
+
     /// <summary>Reads the replicated end-user access rules.</summary>
     ValueTask<CollectionRulesResult> GetCollectionRulesAsync(TenantContext database, string name, CancellationToken cancellationToken);
 

@@ -9,8 +9,9 @@ internal sealed class PeerCredential
 {
     internal const string EnvironmentVariable = "TERRABASE_PEER_SECRET";
     internal const string HeaderName = "X-TerraBase-Peer-Credential";
-    private readonly string? _value;
     private readonly byte[]? _bytes;
+
+    internal string? CorrelationKey { get; }
 
     internal PeerCredential(string? value)
     {
@@ -19,7 +20,7 @@ internal sealed class PeerCredential
             throw new TerraBaseConfigurationException($"{EnvironmentVariable} must contain 64 hexadecimal characters");
         }
 
-        _value = value;
+        CorrelationKey = value;
         _bytes = value is null ? null : Encoding.ASCII.GetBytes(value);
     }
 
@@ -52,13 +53,13 @@ internal sealed class PeerCredential
 
     internal void Authenticate(HttpRequestMessage request)
     {
-        if (_value is null)
+        if (CorrelationKey is null)
         {
             throw new InvalidOperationException($"{EnvironmentVariable} is required for internal requests");
         }
 
         request.Headers.Remove(HeaderName);
-        request.Headers.Add(HeaderName, _value);
+        request.Headers.Add(HeaderName, CorrelationKey);
     }
 
     internal HttpMessageHandler Wrap(HttpMessageHandler handler) => new CredentialHandler(this) { InnerHandler = handler };

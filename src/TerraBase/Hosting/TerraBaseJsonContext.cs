@@ -52,6 +52,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(WebhookState))]
 [JsonSerializable(typeof(WebhookDispatch))]
 [JsonSerializable(typeof(WebhookDeliveryRecord))]
+[JsonSerializable(typeof(CollectionSchemaPreviewBody))]
 [JsonSerializable(typeof(DatabaseRequestLogs))]
 [JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]

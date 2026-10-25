@@ -81,10 +81,11 @@ public static class App
 
         builder.Services.AddSingleton(TimeProvider.System);
         // All storage traffic uses the configured regional endpoint without remote fallback.
-        builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
+        builder.Services.AddSingleton(services => new HttpClient(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
-            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
+            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]),
+            services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
             BaseAddress = TerraBaseOrigin(options),
@@ -187,6 +188,7 @@ public static class App
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";
 
         var app = builder.Build();
+        app.UseTerraScaleRequestIdentity(AuthStore.NewId, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);
         // Resolved now, so a ts-auth without storage refuses to start (see TerraBaseOrigin); tests may register their own.
         app.Services.GetRequiredService<TerraBaseDatabase>();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.

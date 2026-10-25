@@ -168,7 +168,22 @@ public static class EndpointServiceCollectionExtensions
                 document.Info.Version = options.Version;
                 return Task.CompletedTask;
             })
-            .AddOperationTransformer(AddRequestParametersAsync));
+            .AddOperationTransformer(AddRequestParametersAsync)
+            .AddOperationTransformer((operation, _, _) =>
+            {
+                if (operation.Responses is null)
+                { return Task.CompletedTask; }
+                foreach (var response in operation.Responses.Values.OfType<OpenApiResponse>())
+                {
+                    response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
+                    response.Headers[RequestIdentity.Header] = new OpenApiHeader
+                    {
+                        Description = "Customer request correlation ULID; retained across authenticated first-party hops. Request logs are tenant-scoped and best effort.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 26, MaxLength = 26 },
+                    };
+                }
+                return Task.CompletedTask;
+            }));
     }
 
     // ApiExplorer only sees parameters that RequestDelegateFactory describes, and endpoints map a

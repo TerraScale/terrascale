@@ -108,6 +108,9 @@ public sealed class ErrorHeadersTests
         public ValueTask<CollectionSchemaResult> SetCollectionSchemaAsync(TenantContext database, string name, JsonElement? schema, CancellationToken cancellationToken) =>
             inner.SetCollectionSchemaAsync(database, name, schema, cancellationToken);
 
+        public ValueTask<CollectionSchemaPreviewResult> PreviewCollectionSchemaAsync(TenantContext database, string name, JsonElement schema, string? cursor, CancellationToken cancellationToken) =>
+            inner.PreviewCollectionSchemaAsync(database, name, schema, cursor, cancellationToken);
+
         public ValueTask<CollectionTtlResult> GetCollectionTtlAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
             inner.GetCollectionTtlAsync(database, name, cancellationToken);
 
