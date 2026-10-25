@@ -66,6 +66,7 @@ public sealed class AnalyticsContractJourneyTests(DashboardRootFixture fixture)
         await Assert.That(request.GetProperty("scope").GetString()).IsEqualTo("databases:read");
         await Assert.That(request.GetProperty("tokenClass").GetString()).IsEqualTo("project");
 
+        var sloBefore = await Platform.ServiceSloJourneyTests.ReadAsync(client);
         Volatile.Write(ref responseMode, 1);
         using (var page = await client.GetAsync("/analytics?range=1h"))
         {
@@ -74,6 +75,7 @@ public sealed class AnalyticsContractJourneyTests(DashboardRootFixture fixture)
             await Assert.That(html).Contains("Could not load analytics measurements.");
             await Assert.That(html.Contains("No analytics measurements for these filters.", StringComparison.Ordinal)).IsFalse();
         }
+        await Platform.ServiceSloJourneyTests.CountsAsync(client, sloBefore.Good, sloBefore.Bad + 1);
         await Assert.That(producerRequests).IsEqualTo(2);
         var observations = await ReadAsync(controls, "/__test/observations");
         await Assert.That(observations.GetProperty("projectReportReads").GetInt32()).IsEqualTo(2);

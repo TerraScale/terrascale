@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -54,7 +55,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
     {
         try { result.ActiveCredentials = (await keys.ListAsync(context, cancellationToken)).Count(key => key.IsActive); }
         catch (Exception error) when (error is AccountAccessException || MeasurementFailure(error, cancellationToken))
-        { result.CredentialsError = "Application credentials could not be loaded. Open API keys to retry."; }
+        { ServiceSloTelemetry.MarkFailure(error); result.CredentialsError = "Application credentials could not be loaded. Open API keys to retry."; }
     }
 
     private async Task ActivityAsync(AccountContext context, string range, HomeMeasurement result, CancellationToken cancellationToken)
@@ -119,6 +120,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException or OverflowException or FormatException or KeyNotFoundException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
+            ServiceSloTelemetry.MarkFailure(error);
             result.ActivityNote = "Metered reads and writes could not be loaded. Try again shortly.";
         }
     }
@@ -155,7 +157,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
                 }
             }
             catch (Exception error) when (error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            { result.RegionError = "Could not load region health and latency. Retry this page."; }
+            { ServiceSloTelemetry.MarkFailure(error); result.RegionError = "Could not load region health and latency. Retry this page."; }
         }
         result.Regions = counts.Select(pair => new HomeRegion(pair.Key, measurements.GetValueOrDefault(pair.Key).Status ?? "Not reported", measurements.GetValueOrDefault(pair.Key).Latency ?? "Not reported", pair.Value)).ToArray();
     }

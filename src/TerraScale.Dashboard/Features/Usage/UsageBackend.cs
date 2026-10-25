@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -20,7 +21,7 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
         Uri origin;
         try { origin = await new TerraBaseDiscovery().ResolveAsync(deadline.Token); }
         catch (Exception error) when (Failure(error, cancellationToken))
-        { return new(new(UsageSourceState.Unavailable), selection.Context.Organization!.Projects.Keys.ToDictionary(id => id, _ => new UsageObservation(UsageSourceState.Unavailable))); }
+        { ServiceSloTelemetry.MarkFailure(error); return new(new(UsageSourceState.Unavailable), selection.Context.Organization!.Projects.Keys.ToDictionary(id => id, _ => new UsageObservation(UsageSourceState.Unavailable))); }
         var now = time.GetUtcNow();
         var utc = now.UtcDateTime;
         var month = new DateTimeOffset(utc.Year, utc.Month, 1, 0, 0, 0, TimeSpan.Zero);
@@ -35,7 +36,7 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                 await concurrency.WaitAsync(deadline.Token); acquired = true;
                 return (project.Id, Value: await ReadAsync(project, "", "day", month));
             }
-            catch (Exception error) when (Failure(error, cancellationToken)) { return (project.Id, Value: new UsageObservation(UsageSourceState.Unavailable)); }
+            catch (Exception error) when (Failure(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); return (project.Id, Value: new UsageObservation(UsageSourceState.Unavailable)); }
             finally { if (acquired) concurrency.Release(); }
         }).ToArray();
         var scoped = context.Project is null ? Task.FromResult(new UsageObservation(UsageSourceState.NotMetered)) : ReadAsync(context.Project, selection.DatabaseId, granularity, from);
@@ -90,7 +91,7 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
             { return new(UsageSourceState.Restricted); }
             catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.ErrorCode == "invalid_query")
             { return new(UsageSourceState.QueryTooExpensive); }
-            catch (Exception error) when (Failure(error, cancellationToken)) { return new(UsageSourceState.Unavailable); }
+            catch (Exception error) when (Failure(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); return new(UsageSourceState.Unavailable); }
         }
     }
     private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket)

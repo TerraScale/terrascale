@@ -104,6 +104,7 @@ public sealed class DocumentChangesHttpJourneyTests(DashboardRootFixture fixture
             invalidCheckpoint = "unsafe" + control + "checkpoint";
             Volatile.Write(ref mode, "invalid-before-headers");
             await ProblemAsync(client, route, HttpStatusCode.ServiceUnavailable);
+            var sloBefore = await Platform.ServiceSloJourneyTests.ReadAsync(client);
             release = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref mode, "invalid-after-headers");
             using var deadline = new CancellationTokenSource(client.Timeout);
@@ -127,6 +128,7 @@ public sealed class DocumentChangesHttpJourneyTests(DashboardRootFixture fixture
                 await Assert.That(rejected.Length).IsEqualTo(0);
             }
             finally { release.TrySetResult(); }
+            await Platform.ServiceSloJourneyTests.CountsAsync(client, sloBefore.Good, sloBefore.Bad + 1);
         }
 
         async Task WriteAsync(string documentId)

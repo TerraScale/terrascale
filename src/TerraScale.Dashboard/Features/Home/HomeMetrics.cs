@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 
@@ -17,6 +18,7 @@ public sealed partial class TerraBaseHomeMeasurements
             var batch = await analyticsBackend.ReadAsync(selection, cancellationToken);
             if (batch.State == AnalyticsSourceState.Unavailable)
             {
+                ServiceSloTelemetry.MarkBad();
                 result.AnalyticsError = "Analytics measurements could not be loaded. Retry this page.";
                 return;
             }
@@ -62,6 +64,7 @@ public sealed partial class TerraBaseHomeMeasurements
         }
         catch (Exception error) when (MeasurementFailure(error, cancellationToken))
         {
+            ServiceSloTelemetry.MarkFailure(error);
             result.AnalyticsError = "Analytics measurements could not be loaded. Retry this page.";
         }
     }
@@ -102,6 +105,7 @@ public sealed partial class TerraBaseHomeMeasurements
         }
         catch (Exception error) when (MeasurementFailure(error, cancellationToken))
         {
+            ServiceSloTelemetry.MarkFailure(error);
             result.ReplicationError = "Replication measurements could not be loaded. Retry this page.";
         }
     }

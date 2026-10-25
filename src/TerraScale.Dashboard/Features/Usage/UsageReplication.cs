@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -61,6 +62,7 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
         }
         catch (Exception error) when (Unavailable(error, cancellationToken))
         {
+            ServiceSloTelemetry.MarkFailure(error);
             return new([], [], Error: "Replication data could not be loaded from TerraBase. Try again shortly.");
         }
     }

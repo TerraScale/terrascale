@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Usage;
@@ -85,7 +86,7 @@ public sealed class UsageStorageBackend(AccountService accounts, IDatabaseBacken
         IReadOnlyList<DatabaseRegion> regions = [];
         if (organization.Projects.Values.Any(project => project.Databases.Count > 0))
             try { regions = await databases.RegionsAsync(deadline.Token); }
-            catch (Exception error) when (Unavailable(error, cancellationToken)) { }
+            catch (Exception error) when (Unavailable(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); }
         using var concurrency = new SemaphoreSlim(4);
         var projects = await Task.WhenAll(organization.Projects.Values.Select(async project =>
         {
@@ -106,7 +107,7 @@ public sealed class UsageStorageBackend(AccountService accounts, IDatabaseBacken
                     DatabaseService.ValidateContents(contents);
                     fact = new(project.Id, database.Id, contents.Sum(collection => collection.Bytes), contents.Sum(collection => collection.Documents));
                 }
-                catch (Exception error) when (Unavailable(error, cancellationToken)) { }
+                catch (Exception error) when (Unavailable(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); }
                 finally { if (acquired) concurrency.Release(); }
                 return (database.Id, Fact: fact);
             }));
