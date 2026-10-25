@@ -76,7 +76,7 @@ func ReadFeed(ctx context.Context, r *Region, collection string, idle time.Durat
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+r.token)
+	req.Header.Set("Authorization", "Bearer "+*r.token.Load())
 	req.Header.Set("Accept", "text/event-stream")
 	// The stream stays open; the client's whole-request timeout would cut it, so this request uses its own client.
 	resp, err := (&http.Client{Transport: r.client.Transport}).Do(req)
