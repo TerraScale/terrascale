@@ -1,6 +1,7 @@
 # 0016: A healthy rewrite copies off the writer and holds it only for a short final catch-up
 
-- Status: proposed (RT2d, 2026-10-25; option 1 agreed by COS under Q-REWRITE; awaiting human review before the code PRs).
+- Status: proposed (RT2d, 2026-10-25; option 1 agreed by COS under Q-REWRITE, options (a)–(c) compared at the COS's request;
+  awaiting human review before the code PRs).
 - Scope: `TursoStorageEngine.Rewrite.cs`, `TursoDatabaseStore.Rewrite.cs`, `TursoChangeTap` (log replay),
   `TursoStorageTransaction.SuspendCaptureAsync`; callers in `Features/Management/HistoryErasures.cs`.
 - Prompted by batch 8d production (2026-10-25, 17:25–19:30Z), where `terrabase.storage.writer_held{holder="a healthy rewrite"}`
@@ -55,6 +56,25 @@
    committed during the copy are in the new file's log under the new incarnation. Peers and the backup tap receive them
    after the swap, as they receive any change of a rewritten file (the healthy-predecessor chain). Re-delivery is
    idempotent (lattice joins).
+
+## Options compared
+
+Requirement: every writer hold below 1 s for any database size, with the erasure guarantee kept.
+
+| Option | Longest writer hold | Erasure guarantee | Complexity | Verdict |
+| --- | --- | --- | --- | --- |
+| (a) Off-writer copy, then a full-table diff catch-up | The final diff must compare every row of every table under the writer to be consistent: O(database), for example 30 s for gru's auth file | Kept | Medium: a diff per table, by rowid and content | Rejected: the final round is not bounded |
+| (b) Per-table chunked rewrite, writer released between tables | The largest single table copied under the writer: O(largest table). Tables copied at different times also need change tracking for consistency, which is this decision's replay anyway | Kept only with the same tracking | High | Rejected: not bounded, and not simpler |
+| (c) Batch erasures into one rewrite per database per window | Unchanged per rewrite (up to 30 s); only fewer of them | Kept | Low | Not enough alone; adopted as a complement (below) |
+| **(d) Off-writer copy plus change-log replay catch-up (this decision)** | One bounded final delta (at most 1,024 changes, or a 250 ms round) plus the rename | Kept (below) | Medium: reuses the restore replay, plus capture kept on | **Chosen**: the simplest option that bounds each hold |
+
+**Complement (c):** erasure asks for its rewrites per database at most once per 10 minutes, batching ready erasures, so a
+burst of account deletions costs one copy, not one per account. It changes no receipt: each erasure still waits for a
+rewrite at or after its cut.
+
+**Schema changes during a rewrite:** the replay names schema objects by name, as backup restore does. A collection or
+index created or dropped during the copy is replayed. If a statement the replay does not support is found, the rewrite is
+refused and retried, so the guarantee holds and only the rewrite's latency is affected.
 
 ## The erasure guarantee is kept
 
