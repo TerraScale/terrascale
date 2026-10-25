@@ -107,6 +107,7 @@ public sealed class WriterHoldTests
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         using var release = new ManualResetEventSlim();
         List<Task> busy = [];
+        var started = 0;
         try
         {
             using (StorageWork.Bulk())
@@ -114,15 +115,20 @@ public sealed class WriterHoldTests
                 for (var i = 0; i < 2; i++)
                 {
                     engine.Io.Admit();
-                    busy.Add(engine.Io.RunAsync(release.Wait, CancellationToken.None));
+                    busy.Add(engine.Io.RunAsync(() =>
+                    {
+                        Interlocked.Increment(ref started);
+                        release.Wait();
+                    }, CancellationToken.None));
                 }
             }
 
-            // One bulk call runs and the other waits for it, not for the thread reads need.
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Running == 1 && engine.Io.Queued == 1));
+            // One bulk call starts and the other waits for it, not for the thread reads need. Counted by the calls themselves:
+            // the pool's running count also includes background reads on the free thread.
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref started) == 1));
             var read = await api.GetAsync(id).WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(engine.Io.Running).IsEqualTo(1);
+            await Assert.That(Volatile.Read(ref started)).IsEqualTo(1).Because("the second bulk call still waits for the first");
         }
         finally
         {
