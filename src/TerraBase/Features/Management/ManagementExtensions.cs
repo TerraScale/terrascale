@@ -30,6 +30,8 @@ public static class ManagementExtensions
         services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
         services.AddSingleton(provider => new Lazy<IRemoteDurability>(provider.GetRequiredService<IRemoteDurability>));
         services.AddSingleton(provider => new Lazy<IWebhookErasure>(provider.GetRequiredService<IWebhookErasure>));
+        services.AddSingleton(provider => new Lazy<IEscrowPeers>(provider.GetRequiredService<IEscrowPeers>));
+        services.AddSingleton<IDatabaseEscrow>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddHostedService<CatalogConvergence>();
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());

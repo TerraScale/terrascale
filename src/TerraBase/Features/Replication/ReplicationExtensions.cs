@@ -2,7 +2,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>Registers the inter-node gRPC services on the internal listener: the peer streams.</summary>
+/// <summary>Registers the inter-node gRPC services on the internal listener: the peer streams and allowance escrow transfers.</summary>
 public static class ReplicationExtensions
 {
     /// <summary>
@@ -40,6 +40,7 @@ public static class ReplicationExtensions
             provider.GetService<Engine.Cluster.IMemberDirectory>() is null ? new LocalDurability() : provider.GetRequiredService<PeerStreams>());
         builder.Services.AddHostedService(provider => provider.GetRequiredService<PeerStreams>());
         builder.Services.AddSingleton<IReplicationPressure, NoReplicationPressure>();
+        builder.Services.AddSingleton<Management.IEscrowPeers, EscrowPeers>();
         builder.Services.AddGrpc(grpc =>
         {
             grpc.MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes;
@@ -53,6 +54,7 @@ public static class ReplicationExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
         app.MapGrpcService<PeerStreamReceiver>().WithMetadata(ListenerMetadata.Internal);
+        app.MapGrpcService<EscrowReceiver>().WithMetadata(ListenerMetadata.Internal);
         return app;
     }
 }
