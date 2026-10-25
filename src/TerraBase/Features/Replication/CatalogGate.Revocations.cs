@@ -96,6 +96,8 @@ internal sealed partial class CatalogGate
             }
 
             List<RevocationCut> cuts = [];
+            // The machine whose anchor names each cut: it holds its own cut first-hand (its snapshot exports its local cut).
+            var writers = new Dictionary<ReplicaId, string>();
             var legacy = false;
             foreach (var name in names.Order(StringComparer.Ordinal))
             {
@@ -125,7 +127,9 @@ internal sealed partial class CatalogGate
                         return;
                     }
 
-                    cuts.Add(ReadRevocation(root));
+                    var cut = ReadRevocation(root);
+                    cuts.Add(cut);
+                    writers[cut.Replica] = name;
                 }, cancellationToken).ConfigureAwait(false);
                 // A seeded machine has no own anchor yet and still needs the existing all-holder admission below.
                 // Every other known machine's external witness must be readable; no missing witness grants coverage.
@@ -144,7 +148,8 @@ internal sealed partial class CatalogGate
             }
 
             _revocationStage = "checking external catalog revocation coverage";
-            if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
+            var missing = await MissingRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false);
+            if (missing.Count == 0)
             {
                 (_snapshotRetry, _snapshotBudget) = (TimeSpan.Zero, SnapshotBudget);
                 return true;
@@ -165,15 +170,29 @@ internal sealed partial class CatalogGate
             {
                 try
                 {
-                    foreach (var peer in listed.Where(peer => _verified.Contains(peer.Name)))
+                    // The writers of the missing cuts first: another machine holds a cut only as far as it received it (fra,
+                    // 2026-10-25: gru held sjc's changes to 17:29 while sjc's anchor named 18:58, and every pass tried gru only).
+                    var first = missing.Select(cut => writers.GetValueOrDefault(cut.Replica)).OfType<string>().ToHashSet(StringComparer.Ordinal);
+                    foreach (var peer in listed.Where(peer => _verified.Contains(peer.Name)).OrderBy(peer => first.Contains(peer.Name) ? 0 : 1))
                     {
                         attempted = true;
                         _revocationStage = $"importing catalog revocation snapshot from {peer.Name}";
                         _logger.ZLogInformation($"Importing a catalog revocation snapshot from {peer.Name:@Peer} for {origins.Count} origins");
-                        var imported = await _services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System, peer, origins, budget.Token).ConfigureAwait(false);
+                        bool imported;
+                        try
+                        {
+                            imported = await _services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System, peer, origins, budget.Token).ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (!budget.IsCancellationRequested)
+                        {
+                            // One witness failing must not keep the others from being tried. The type only: provider errors may carry credentials.
+                            _logger.ZLogWarning($"A catalog revocation snapshot from {peer.Name:@Peer} failed ({error.GetType().Name:@Error}); the gate tries the next verified machine");
+                            continue;
+                        }
+
                         _revocationStage = $"checking catalog revocation coverage after snapshot from {peer.Name}";
                         _logger.ZLogInformation($"Catalog revocation snapshot from {peer.Name:@Peer} finished with imported={imported}");
-                        if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
+                        if ((await MissingRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false)).Count == 0)
                         {
                             (_snapshotRetry, _snapshotBudget) = (TimeSpan.Zero, SnapshotBudget);
                             return true;
@@ -210,11 +229,12 @@ internal sealed partial class CatalogGate
         }
     }
 
-    private async Task<bool> CoversRevocationsAsync(IReadOnlyList<RevocationCut> cuts, CancellationToken cancellationToken)
+    // The cuts this catalog does not cover yet; empty when it covers them all.
+    private async Task<IReadOnlyList<RevocationCut>> MissingRevocationsAsync(IReadOnlyList<RevocationCut> cuts, CancellationToken cancellationToken)
     {
         if (cuts.Count == 0)
         {
-            return true;
+            return [];
         }
 
         var store = await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
@@ -234,6 +254,6 @@ internal sealed partial class CatalogGate
                 _logger.ZLogInformation($"Catalog revocation coverage is missing {missing.Length} cuts (replica:held/required): {evidence:@Cuts}");
             }
         }
-        return missing.Length == 0;
+        return missing;
     }
 }
