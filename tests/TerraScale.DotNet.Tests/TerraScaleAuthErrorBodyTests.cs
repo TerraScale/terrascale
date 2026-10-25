@@ -18,6 +18,7 @@ public sealed class TerraScaleAuthErrorBodyTests
             {
                 Content = acquisitionFailure ? new BrokenContent() : new StreamContent(new BrokenStream())
             };
+            response.Headers.TryAddWithoutValidation("X-Request-ID", "01JA0000000000000000000001");
             response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(2));
             return Task.FromResult(response);
         });
@@ -30,7 +31,8 @@ public sealed class TerraScaleAuthErrorBodyTests
             MaxRetryAttempts = 0
         });
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
-        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(error!.RequestId).IsEqualTo("01JA0000000000000000000001");
+        await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
         await Assert.That(error.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(2));
         await Assert.That(error.ErrorCode).IsNull();
     }

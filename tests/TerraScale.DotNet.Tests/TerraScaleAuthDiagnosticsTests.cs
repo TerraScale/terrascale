@@ -1,11 +1,13 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using TerraScale.DotNet.Tests.TerraBase;
 
 namespace TerraScale.DotNet.Tests;
 
 public sealed class TerraScaleAuthDiagnosticsTests
 {
+    private const string RequestId = "01JA0000000000000000000001";
     private const string Secret = "sk_plain_secret_canary_73d9";
 
     [Test]
@@ -26,7 +28,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
         var body = JsonSerializer.Serialize(new { error = new { code = "unauthorized", message = Secret }, extra = Secret });
         using var http = Http(body, HttpStatusCode.Unauthorized);
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
-        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(error.ErrorCode).IsEqualTo("unauthorized");
         await Assert.That(error.Message).IsEqualTo("ts-auth returned HTTP 401.");
         await Assert.That(error.ToString()).DoesNotContain(Secret);
@@ -41,7 +44,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
             var body = JsonSerializer.Serialize(new { error = new { code, message = "Authorization: Bearer " + Secret } });
             using var http = Http(body, HttpStatusCode.Forbidden);
             var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
-            await Assert.That(error!.ErrorCode).IsNull();
+            await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+            await Assert.That(error.ErrorCode).IsNull();
             await Assert.That(error.Message).IsEqualTo("ts-auth returned HTTP 403.");
             await Assert.That(error.ToString()).DoesNotContain(Secret);
         }
@@ -53,7 +57,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
         var body = JsonSerializer.Serialize(new { error = "invalid_client", error_description = Secret });
         using var http = Http(body, HttpStatusCode.Unauthorized);
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Oidc.RequestClientCredentialsTokenAsync("client", Secret));
-        await Assert.That(error!.ErrorCode).IsEqualTo("invalid_client");
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.ErrorCode).IsEqualTo("invalid_client");
         await Assert.That(error.Message).IsEqualTo("ts-auth returned HTTP 401.");
         await Assert.That(error.ToString()).DoesNotContain(Secret);
     }
@@ -63,8 +68,26 @@ public sealed class TerraScaleAuthDiagnosticsTests
     {
         using var http = Http(JsonSerializer.Serialize(new { data = Secret }), HttpStatusCode.OK);
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
-        await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.ErrorCode).IsEqualTo("invalid_response");
         await Assert.That(error.Message).IsEqualTo("ts-auth returned an invalid response body.");
+        await Assert.That(error.ToString()).DoesNotContain(Secret);
+    }
+
+    [Test]
+    [Arguments("null", "application/json")]
+    [Arguments("{}", "text/plain")]
+    public async Task Invalid_success_media_and_null_bodies_retain_response_identity(string body, string mediaType)
+    {
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, mediaType),
+            Headers = { { "X-Request-ID", RequestId } }
+        }));
+        using var http = new HttpClient(handler);
+        var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(error.ToString()).DoesNotContain(Secret);
     }
 
@@ -75,7 +98,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
     {
         using var http = Http(body, HttpStatusCode.Unauthorized);
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
-        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(error.ErrorCode).IsNull();
     }
 
@@ -85,7 +109,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
         var body = JsonSerializer.Serialize(new { error = "invalid_client", extra = new string('x', 65_536) + Secret });
         using var http = Http(body, HttpStatusCode.Unauthorized);
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
-        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(error.ErrorCode).IsNull();
         await Assert.That(error.ToString()).DoesNotContain(Secret);
     }
@@ -107,7 +132,8 @@ public sealed class TerraScaleAuthDiagnosticsTests
 
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Users.ListAsync());
 
-        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(error.ErrorCode).IsEqualTo(overflow ? null : "invalid_client");
         if (overflow) await Assert.That(stream.BytesRead > 65_536 && stream.BytesRead < length).IsTrue();
         else await Assert.That(stream.BytesRead).IsEqualTo(65_536);
@@ -129,14 +155,15 @@ public sealed class TerraScaleAuthDiagnosticsTests
             Task.FromResult(new HttpResponseMessage(status)
             {
                 ReasonPhrase = Secret,
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                Headers = { { "X-Request-ID", RequestId } }
             });
     }
 
     private sealed class StreamHandler(HttpContent content) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = content });
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = content, Headers = { { "X-Request-ID", RequestId } } });
     }
 
     private sealed class CountingBodyStream(byte[] bytes) : Stream

@@ -373,6 +373,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(exception.Message).IsEqualTo("ts-auth returned HTTP 200, but HTTP 204 was required.");
+        await Assert.That(exception.RequestId).IsEqualTo("01JA0000000000000000000001");
     }
 
     // C. Request-construction edges.
@@ -1043,6 +1044,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
+        response.Headers.TryAddWithoutValidation("X-Request-ID", "01JA0000000000000000000001");
         if (retryAfter is { } delay)
         {
             response.Headers.RetryAfter = new RetryConditionHeaderValue(delay);

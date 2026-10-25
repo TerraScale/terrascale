@@ -29,7 +29,7 @@ internal static class TerraScaleAuthErrors
             response.StatusCode,
             $"ts-auth returned HTTP {(int)response.StatusCode}.",
             code,
-            ResolveRetryAfter(response));
+            ResolveRetryAfter(response), response);
     }
 
     /// <summary>Resolves Retry-After in both forms (delta seconds and HTTP

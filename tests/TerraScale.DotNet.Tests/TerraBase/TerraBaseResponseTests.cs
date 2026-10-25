@@ -9,6 +9,61 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 
 public sealed class TerraBaseResponseTests
 {
+    private const string RequestId = "01JA0000000000000000000001";
+
+    [Test]
+    [Arguments(null, false)]
+    [Arguments("", false)]
+    [Arguments("oversized", false)]
+    [Arguments("01JA0000000000000000000001", false)]
+    [Arguments("01JA0000000000000000000001", true)]
+    [Arguments("01ja0000000000000000000001", false)]
+    [Arguments("81JA0000000000000000000001", false)]
+    [Arguments("01JA000000000000000000000I", false)]
+    [Arguments("01JA0000000000000000000001,01JA0000000000000000000001", false)]
+    [Arguments(" 01JA0000000000000000000001", false)]
+    public async Task Request_identity_accepts_only_one_canonical_response_ULID(string? header, bool duplicate)
+    {
+        using var response = TerraBaseIntegrationFixture.Json("{", HttpStatusCode.BadRequest);
+        if (header == "oversized") header = new string('A', 4096);
+        if (header is not null) response.Headers.TryAddWithoutValidation("x-request-id", duplicate ? [header, header] : [header]);
+        var dataError = await TerraBaseException.FromResponseAsync(response, CancellationToken.None);
+        var authError = await TerraScaleAuthErrors.CreateAsync(response, CancellationToken.None);
+        var expected = header == RequestId && !duplicate ? RequestId : null;
+        await Assert.That(dataError.RequestId).IsEqualTo(expected);
+        await Assert.That(authError.RequestId).IsEqualTo(expected);
+        await Assert.That(dataError.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(authError.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    [Arguments("{", false)]
+    [Arguments("null", false)]
+    [Arguments("{}", true)]
+    public async Task Malformed_success_and_oversized_bodies_retain_identity_after_disposal(string body, bool oversized)
+    {
+        var propagated = false;
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            propagated = request.Headers.Contains("X-Request-ID");
+            var response = TerraBaseIntegrationFixture.Json(oversized ? new string(' ', 64 * 1024) + body : body);
+            response.Headers.TryAddWithoutValidation("X-Request-ID", RequestId);
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            Region = "sjc",
+            AccessTokenProvider = _ => ValueTask.FromResult("test-token"),
+            MaxResponseBytes = 64 * 1024,
+        });
+        var error = await Assert.ThrowsAsync<TerraBaseException>(() => client.Database(TerraBaseIntegrationFixture.ProjectId, "app").ListCollectionsAsync());
+        await Assert.That(error!.RequestId).IsEqualTo(RequestId);
+        await Assert.That(error.ResponseHeaders["X-Request-ID"].Single()).IsEqualTo(RequestId);
+        await Assert.That(error.ErrorCode).IsEqualTo("invalid_response");
+        await Assert.That(propagated).IsFalse();
+    }
+
     [Test]
     [Arguments(70)]
     [Arguments(1000)]
@@ -80,7 +135,10 @@ public sealed class TerraBaseResponseTests
         })
         {
             using var content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(json)));
-            var error = await TerraBaseException.FromResponseAsync(new HttpResponseMessage(status) { Content = content }, CancellationToken.None);
+            using var response = new HttpResponseMessage(status) { Content = content };
+            response.Headers.TryAddWithoutValidation("X-Request-ID", RequestId);
+            var error = await TerraBaseException.FromResponseAsync(response, CancellationToken.None);
+            await Assert.That(error.RequestId).IsEqualTo(RequestId);
             await Assert.That(error.GetType()).IsEqualTo(type);
             await Assert.That(error.StatusCode).IsEqualTo(status);
             await Assert.That(error.ErrorCode).IsNull();
