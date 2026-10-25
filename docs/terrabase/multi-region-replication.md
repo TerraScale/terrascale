@@ -56,3 +56,5 @@ elsewhere ("section 15") are the file number prefixes.
 - [24. Log chunks: change groups through the object store](replication/24-log-chunks.md)
 - [Receiver apply progress and the batch inactivity deadline](replication/receiver-apply-progress.md)
 - [Live replay of admitted writes after a cut-log refill](replication/admitted-write-refill-replay.md)
+
+- [TS-1012: catalog admission after collected revocations](replication/ts1012-collected-revocations.md)

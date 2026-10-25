@@ -4,7 +4,8 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Replication;
 
 /// <summary>One bounded page of a single read snapshot. Only the last page carries its applied vector.</summary>
-public sealed record ReplicaSnapshotPage(IReadOnlyList<RepairState> States, IReadOnlyDictionary<ReplicaId, Hlc>? Applied = null, Hlc CollectedBefore = default);
+public sealed record ReplicaSnapshotPage(IReadOnlyList<RepairState> States, IReadOnlyDictionary<ReplicaId, Hlc>? Applied = null,
+    Hlc CollectedBefore = default, ReplicaId Author = default);
 
 /// <summary>Exports whole state and received coverage from the same pinned read transaction.</summary>
 public interface IReplicaSnapshotSource

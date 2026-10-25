@@ -27,6 +27,7 @@ internal sealed partial class PeerStreamReceiver
             var reply = new SnapshotPage { Page = page.Applied is null ? AntiEntropy.Encode(page.States, incarnation) : new StatePage { Incarnation = request.Database.Incarnation }, Complete = page.Applied is not null, CollectedBefore = page.CollectedBefore.Value };
             if (page.Applied is { } applied)
             {
+                reply.AuthorReplica = _self.Id.Value;
                 reply.Applied.AddRange(applied.Select(cut => new SnapshotCut { Replica = cut.Key.Value, Stamp = cut.Value.Value }));
                 complete = true;
             }

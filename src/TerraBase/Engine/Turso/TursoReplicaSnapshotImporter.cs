@@ -1,3 +1,4 @@
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
@@ -40,11 +41,12 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         int[] buckets = [.. Enumerable.Range(0, 4096)];
         BucketCursor? after = null;
         ReplicaSnapshotPage? terminal = null;
-        Engine.Lattices.Hlc? floor = null;
+        Hlc? floor = null;
+        EntryVersion? requiredAuthor = null;
         await foreach (var page in pages.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (terminal is not null || floor is { } previous && previous != page.CollectedBefore
-                || page.Applied is not null && page.States.Count != 0)
+                || page.Applied is not null && page.States.Count != 0 || page.Applied is null && page.Author.Value != 0)
             {
                 throw new InvalidDataException("inconsistent snapshot pages");
             }
@@ -56,9 +58,10 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
                 var cursor = after;
                 do
                 {
-                    // A source's collected absence cannot delete a live local survivor. Refuse the whole import when
-                    // deletion evidence is missing; retained tombstones can be forgotten safely under this writer.
-                    if (await transaction.ReconcileRefillAsync(buckets, cursor, page.States, floor.Value, cancellationToken).ConfigureAwait(false) is not { } result)
+                    // A catalog PUT may be forgotten provisionally only with its author's terminal committed-cut proof.
+                    // Every change still rolls back if the stream, author proof or clean EOF is missing.
+                    if (await transaction.ReconcileRefillAsync(buckets, cursor, page.States, floor.Value, cancellationToken,
+                        database == ChangeGroups.System ? TrackCollectedPut : null).ConfigureAwait(false) is not { } result)
                     {
                         return false;
                     }
@@ -87,6 +90,12 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             return false;
         }
 
+        if (requiredAuthor is { } required && (terminal.Author != required.Node
+            || !terminal.Applied!.TryGetValue(required.Node, out var committed) || committed.Value < required.Stamp.Value))
+        {
+            return false;
+        }
+
         foreach (var cut in terminal.Applied!.Where(cut => origins.Contains(cut.Key.Value)))
         {
             await transaction.RecordAppliedAsync(cut.Key, cut.Value, cancellationToken).ConfigureAwait(false);
@@ -95,5 +104,20 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         await transaction.InheritCollectedBeforeAsync(floor!.Value, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return true;
+
+        bool TrackCollectedPut(DocumentState state)
+        {
+            // Whole PUTs only: no mixed-origin PATCH, counter or set can hide an operation the author never committed.
+            if (state.Clear is not { Deleted: false } clear || clear.Version.Node.Value is 0 or ulong.MaxValue
+                || state.Fields.Values.Any(field => field.Base is not { } value || value.Version != clear.Version
+                    || field.Counters.Count != 0 || field.Dots.Count != 0)
+                || requiredAuthor is { } previous && previous.Node != clear.Version.Node)
+            {
+                return false;
+            }
+
+            requiredAuthor = requiredAuthor is { } held && held.Stamp.Value >= clear.Version.Stamp.Value ? held : clear.Version;
+            return true;
+        }
     }
 }

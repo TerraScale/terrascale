@@ -27,6 +27,8 @@ message SnapshotPage {
   repeated SnapshotCut applied = 2;
   bool complete = 3;
   fixed64 collected_before = 4;
+  // Terminal only: the source's current replica epoch, whose cut is locally committed, not received coverage.
+  fixed64 author_replica = 5;
 }
 
 message SnapshotCut {
