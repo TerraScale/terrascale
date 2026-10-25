@@ -252,6 +252,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     // `database` is a name in the key's project, or project/name for a key that reaches the whole organization.
     private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, CancellationToken cancellationToken)
     {
+        if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
+        {
+            return new PgError("57P03", "this machine's peer topology is not verified; retry");
+        }
+
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         if (TsAuthKeyExchange.IsKey(secret))
         {
@@ -327,6 +332,13 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             {
                 if (type == 'X')
                 {
+                    return;
+                }
+
+                if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
+                {
+                    output.Error("57P03", "this machine's peer topology is not verified; retry", fatal: true);
+                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     return;
                 }
 

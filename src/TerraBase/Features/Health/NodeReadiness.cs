@@ -14,11 +14,11 @@ public interface INodeReadiness
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate) : INodeReadiness
+    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate, IPeerTopology topology) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (!gate.IsOpen || lifetime.ApplicationStopping.IsCancellationRequested)
+        if (!gate.IsOpen || !topology.IsCurrent || lifetime.ApplicationStopping.IsCancellationRequested)
         {
             return false;
         }
@@ -44,6 +44,9 @@ public static class HealthExtensions
     {
         services.AddSingleton<INodeReadiness, NodeReadiness>();
         services.AddSingleton<IReplicationHealth, ReplicationHealth>();
+        services.AddSingleton<PeerTopology>();
+        services.AddSingleton<IPeerTopology>(provider => provider.GetRequiredService<PeerTopology>());
+        services.AddHostedService(provider => provider.GetRequiredService<PeerTopology>());
         return services;
     }
 }

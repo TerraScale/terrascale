@@ -9,6 +9,7 @@ using Turso.Data.Sqlite;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Health;
 using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
@@ -21,6 +22,33 @@ namespace TerraBase.Fast.Documents;
 public sealed class DatabaseChangesTests
 {
     private static readonly Faker Fake = new();
+
+    [Test]
+    public async Task An_established_feed_stops_sending_when_peer_topology_is_refused()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var topology = new ServingTopology();
+        var clock = new HeartbeatClock();
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IPeerTopology>(topology), time: clock);
+        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
+        _ = await stream.NextAsync();
+        _ = await clock.NextIntervalAsync(token);
+        topology.Refuse();
+        clock.Advance(DatabaseChanges.Heartbeat);
+        await Assert.That(async () => await stream.NextAsync()).Throws<IOException>();
+    }
+
+    private sealed class ServingTopology : IPeerTopology
+    {
+        private bool _current = true;
+
+        public bool IsCurrent => Volatile.Read(ref _current);
+
+        public void Refuse() => Volatile.Write(ref _current, false);
+
+        public ValueTask<TopologyStatus> ReadAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new TopologyStatus(IsCurrent ? 0 : 1, 0, 1, "test", []));
+    }
 
     [Test]
     public async Task A_write_after_cursor_now_streams_with_its_document_and_its_id_resumes_after_it()

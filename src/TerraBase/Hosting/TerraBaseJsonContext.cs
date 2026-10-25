@@ -57,6 +57,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(Ulid))]
 [JsonSerializable(typeof(ReplicaRecoveryRequest))]
 [JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
+[JsonSerializable(typeof(TopologyManifest))]
+[JsonSerializable(typeof(TopologyStatus))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
 [JsonSerializable(typeof(CreateImportRequest))]

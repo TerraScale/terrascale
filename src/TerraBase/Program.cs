@@ -76,6 +76,7 @@ builder.Services.AddSingleton(runCompletion);
 builder.Services.AddSingleton<Shutdown>();
 builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
+builder.Services.AddSingleton(new BoundPeerAddress(internalAddress));
 builder.Services.AddSingleton(peerCredential);
 builder.Services.AddSingleton(TimeProvider.System);
 // Outbound clients keep one handler for the host's lifetime and recycle its connections instead (DNS changes still
@@ -164,6 +165,20 @@ try
         return next(context);
     });
     app.UseTerraBaseQosMemory();
+    app.Use(async (context, next) =>
+    {
+        if (!context.RequestServices.GetRequiredService<IPeerTopology>().IsCurrent
+            && (Listeners.ArrivedOn(context) == TerraBaseListener.Client
+                && !ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe)
+                || context.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is not null))
+        {
+            await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "peer_topology_mismatch",
+                "this machine's peer topology is not verified", op: null).ConfigureAwait(false);
+            return;
+        }
+
+        await next(context).ConfigureAwait(false);
+    });
     app.UseTerraBaseCatalogGate();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();
