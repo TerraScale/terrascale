@@ -2057,7 +2057,9 @@ public sealed class DatabaseRecoveryTests
         armed = false;
         using var deleted = await owner.DeleteAsync(Uri(state.Databases + "/" + target));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        // The committed deletion keeps its intent until erasure is verified (no native handle left, which a background
+        // pass may still hold for a moment); convergence then clears it.
+        await TerraBaseTestServer.EventuallyAsync(async _ => (await PendingAsync(api)).Documents.Count == 0, timeout: TimeSpan.FromSeconds(30));
         await state.AssertFilesGoneAsync(target);
         await state.AssertUnregisteredAsync(api, owner, target);
         await state.AssertPreservedAsync(api, owner);
