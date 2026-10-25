@@ -56,7 +56,8 @@ public sealed class RequestIdentityTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
-            foreach (var header in request.Headers) { response.Headers.TryAddWithoutValidation(header.Key, header.Value); }
+            foreach (var header in request.Headers)
+            { response.Headers.TryAddWithoutValidation(header.Key, header.Value); }
             return Task.FromResult(response);
         }
     }
