@@ -39,6 +39,7 @@ public static class ManagementExtensions
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<Platform.IPlatformCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());
+        services.AddSingleton<IDatabaseFileCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();
         services.AddSingleton<ClosureCancellation>();
         services.AddSingleton<IClosureCancellation>(provider => provider.GetRequiredService<ClosureCancellation>());

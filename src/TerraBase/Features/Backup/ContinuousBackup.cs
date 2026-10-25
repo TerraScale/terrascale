@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -76,6 +77,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly ILogger<ContinuousBackup> _logger;
     private readonly IShipperLeases _shippers;
     private readonly ITenantDirectory _tenants;
+    private readonly IDatabaseFileCatalog _fileCatalog;
     private readonly BackupSettings _settings;
     private readonly string _node;
     private readonly string _scratch;
@@ -109,13 +111,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     public ContinuousBackup(
         IWalBackup engine, IStorageEngine storage, BackupTargets targets, TerraBaseOptions options, TimeProvider time,
         IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings, S3ObjectStore bucket,
-        Lazy<ICatalogGate> catalogGate)
+        Lazy<ICatalogGate> catalogGate, IDatabaseFileCatalog fileCatalog)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
         (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
         (_tenants, _settings, _node, _bucket) = (tenants, settings, options.MachineId, bucket);
         _catalogGate = catalogGate;
+        _fileCatalog = fileCatalog;
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
@@ -549,7 +552,16 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         await OpenAsync(null, present, cancellationToken).ConfigureAwait(false);
         await foreach (var database in _storage.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            await OpenAsync(database, present, cancellationToken).ConfigureAwait(false);
+            var registered = await _fileCatalog.RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false);
+            if (registered is true)
+            {
+                await OpenAsync(database, present, cancellationToken).ConfigureAwait(false);
+            }
+            else if (registered is not false)
+            {
+                // An unreadable catalog cannot authorize new taps or discard an existing generation.
+                present.Add(BackupLayout.File(database));
+            }
         }
 
         foreach (var (prefix, file) in _files)
@@ -609,6 +621,20 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         try
         {
+            if (file.Database is { } database)
+            {
+                var registered = await _fileCatalog.RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false);
+                if (registered is false)
+                {
+                    file.Removed = true;
+                    file.Side?.Cancellation.Cancel();
+                    await file.StopSideAsync().ConfigureAwait(false);
+                    await file.Tap.DisposeAsync().ConfigureAwait(false);
+                    return;
+                }
+                // Unknown ownership preserves the existing generation and its normal catalog refusal/retry path.
+            }
+
             if (file.Tap.Ended)
             {
                 // Released before HoldAsync reads the catalog (see ScheduleAsync).
