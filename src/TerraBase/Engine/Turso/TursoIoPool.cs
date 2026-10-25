@@ -20,7 +20,8 @@ namespace TerraBase.Engine.Turso;
 /// bounded by admission; beyond that callers get <see cref="StorageBusyException"/>. One long call
 /// (<c>VACUUM INTO</c> for a branch, a wait on another process's lock) holds a thread for its whole
 /// duration. Scheduling weights apply to calls, not elapsed time: long calls are not preempted. With at least two
-/// workers, Hobby can occupy at most all but one; a one-worker pool cannot isolate running calls.
+/// workers, Hobby can occupy at most all but one, and so can bulk work (<see cref="StorageWork.Bulk"/>); a one-worker pool cannot
+/// isolate running calls.
 /// </remarks>
 internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
 {
@@ -77,7 +78,11 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     private readonly int _maxHobbyRunning;
     private int _runningHobby;
 
-    private sealed record WorkItem(string? Organization, long Finish, bool Hobby, Action Run);
+    // Bulk calls running (StorageWork.Bulk); capped as Hobby's are.
+    private int _runningBulk;
+
+    private sealed record WorkItem(string? Organization, long Finish, bool Hobby, bool Bulk, Action Run);
+
     // ponytail: one short queue lock across storage threads; per-worker queues if contention is measured.
     // LinkedList lets cancellation unlink a node immediately; BlockingCollection retains cancelled closures.
     private readonly object _queueGate = new();
@@ -244,7 +249,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         var tenant = QosContext.Current;
         var context = CaptureContext();
         var weight = tenant is null ? 16 : QosPolicy.For(tenant.Plan).Weight;
-        var node = new LinkedListNode<WorkItem>(new WorkItem(tenant?.OrganizationId, 0, tenant?.Plan == PlanTier.Hobby, Run));
+        var node = new LinkedListNode<WorkItem>(new WorkItem(tenant?.OrganizationId, 0, tenant?.Plan == PlanTier.Hobby, StorageWork.IsBulk, Run));
         using var cancellation = cancellationToken.Register(() =>
         {
             if (Interlocked.CompareExchange(ref state, 2, 0) == 0)
@@ -368,7 +373,8 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                     chosen = null;
                     for (var candidate = _work.First; candidate is not null; candidate = candidate.Next)
                     {
-                        if (candidate.Value.Hobby && _runningHobby >= _maxHobbyRunning)
+                        if (candidate.Value.Hobby && _runningHobby >= _maxHobbyRunning
+                            || candidate.Value.Bulk && _runningBulk >= _maxHobbyRunning)
                         {
                             continue;
                         }
@@ -395,10 +401,8 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                 item = chosen.Value;
                 _virtualTime = Math.Max(_virtualTime, item.Finish);
                 _work.Remove(chosen);
-                if (item.Hobby)
-                {
-                    _runningHobby++;
-                }
+                _runningHobby += item.Hobby ? 1 : 0;
+                _runningBulk += item.Bulk ? 1 : 0;
             }
 
             try
@@ -407,11 +411,12 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             }
             finally
             {
-                if (item.Hobby)
+                if (item.Hobby || item.Bulk)
                 {
                     lock (_queueGate)
                     {
-                        _runningHobby--;
+                        _runningHobby -= item.Hobby ? 1 : 0;
+                        _runningBulk -= item.Bulk ? 1 : 0;
                         Monitor.PulseAll(_queueGate);
                     }
                 }

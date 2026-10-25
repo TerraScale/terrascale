@@ -353,6 +353,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Snapshot copies and log reads of every database: bulk work, which leaves an I/O thread to short reads.
+        using var bulk = StorageWork.Bulk();
         using var timer = new PeriodicTimer(Interval, _time);
         try
         {
