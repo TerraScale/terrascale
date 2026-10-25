@@ -215,6 +215,10 @@ internal sealed partial class TursoDatabaseStore(
     private string? _writerHolder;
     private long _writerTaken;
 
+    // Where the holder began its transaction (caller file and line): a "between storage calls" hold names its caller.
+    private string? _writerFile;
+    private int _writerLine;
+
     // Set by a holder that took the writer through AcquireWriterAsync, cleared when it releases it: what WriterHeld records.
     private long _holdStarted;
 
@@ -262,11 +266,13 @@ internal sealed partial class TursoDatabaseStore(
 
     internal bool RequiresRemoteProof { get; init; }
 
-    public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
-        await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);
+    public async ValueTask<IStorageTransaction> BeginTransactionAsync(
+        bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        await BeginAsync(write, durable: false, cancellationToken, file: file, line: line).ConfigureAwait(false);
 
-    public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
-        await BeginAsync(write: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
+    public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
+        CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        await BeginAsync(write: true, durable: true, cancellationToken, "a durable write transaction", file: file, line: line).ConfigureAwait(false);
 
     /// <summary>
     /// A write transaction of a rebuild's certified refill, salvage or completion barrier: the only writes a copy under
@@ -385,7 +391,8 @@ internal sealed partial class TursoDatabaseStore(
     // writer names a write transaction in the warning about a long wait for the writer. rebuild: a rebuild's own write,
     // which a copy under rebuild accepts.
     private async ValueTask<TursoStorageTransaction> BeginAsync(
-        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool rebuild = false)
+        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool rebuild = false,
+        string? file = null, int line = 0)
     {
         if (write)
         {
@@ -417,7 +424,7 @@ internal sealed partial class TursoDatabaseStore(
             operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken, intent: write)).ConfigureAwait(false);
             if (write)
             {
-                await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
+                await AcquireWriterAsync(writer, cancellationToken, file, line).ConfigureAwait(false);
                 writing = true;
                 // Again under the writer: a fault recorded while this one waited refuses it.
                 ThrowIfRefused(rebuild);
@@ -536,7 +543,7 @@ internal sealed partial class TursoDatabaseStore(
     // Takes the writer, waiting at most 30 s as busy_timeout did before this wait replaced it in-process. A wait of
     // SlowWriterWait or more, whatever its outcome, logs what held the writer, for how long, and whether it was running a
     // storage call or between calls (its caller busy elsewhere): the evidence a busy or cancelled writer needs.
-    private async ValueTask AcquireWriterAsync(string writer, CancellationToken cancellationToken)
+    private async ValueTask AcquireWriterAsync(string writer, CancellationToken cancellationToken, string? file = null, int line = 0)
     {
         var started = Time.GetTimestamp();
         var outcome = "and took it";
@@ -558,9 +565,11 @@ internal sealed partial class TursoDatabaseStore(
             if (logger is not null && Time.GetElapsedTime(started) is var waited && waited >= SlowWriterWait)
             {
                 var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
+                var holderAt = CallSite(Volatile.Read(ref _writerFile), Volatile.Read(ref _writerLine));
+                var writerAt = CallSite(file, line);
                 var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
-                // Counts and kinds only: no database or tenant names in the log.
-                logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} queued behind {holder:@Holder}, which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
+                // Counts, kinds and code locations only: no database or tenant names in the log.
+                logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} ({writerAt:@WriterAt}) queued behind {holder:@Holder} ({holderAt:@HolderAt}), which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
             }
         }
 
@@ -568,8 +577,14 @@ internal sealed partial class TursoDatabaseStore(
         var taken = Time.GetTimestamp();
         Volatile.Write(ref _writerTaken, taken);
         Volatile.Write(ref _writerHolder, writer);
+        Volatile.Write(ref _writerFile, file);
+        Volatile.Write(ref _writerLine, line);
         _holdStarted = taken;
     }
+
+    // A caller's source file name and line, as the compiler recorded them; "an engine caller" when none was passed.
+    private static string CallSite(string? file, int line) =>
+        string.IsNullOrEmpty(file) ? "an engine caller" : $"{Path.GetFileName(file.Replace('\\', '/'))}:{line}";
 
     // Releases _writer. Whoever releases it after the store closed closes the writer connection, so it is closed exactly
     // once, never under a running writer.
@@ -879,8 +894,10 @@ internal sealed partial class TursoDatabaseStore(
         }
     }
 
+    // Group commit: the batch is the holder ("a group commit batch"); its writes' callers are many, so none is named.
     public async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
-        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
+        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         // A queued write holds an admission like a transaction does, so storage-queue still bounds waiting writes.
         var ownsAdmission = !io.HasAdmission;

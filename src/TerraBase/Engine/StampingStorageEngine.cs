@@ -131,19 +131,22 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) =>
             inner.WaitForCommitAsync(sequence, cancellationToken);
 
-        public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
-            new Transaction(engine, database, await inner.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false));
+        public async ValueTask<IStorageTransaction> BeginTransactionAsync(
+            bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+            new Transaction(engine, database, await inner.BeginTransactionAsync(write, cancellationToken, file, line).ConfigureAwait(false));
 
-        public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
-            new Transaction(engine, database, await inner.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false));
+        public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
+            CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+            new Transaction(engine, database, await inner.BeginDurableTransactionAsync(cancellationToken, file, line).ConfigureAwait(false));
 
         public async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
-            Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
+            Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken,
+            [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
         {
             Transaction? stamped = null;
             try
             {
-                return await inner.WriteAsync((transaction, token) => work(stamped = new Transaction(engine, database, transaction), token), keep, cancellationToken)
+                return await inner.WriteAsync((transaction, token) => work(stamped = new Transaction(engine, database, transaction), token), keep, cancellationToken, file, line)
                     .ConfigureAwait(false);
             }
             finally
