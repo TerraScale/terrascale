@@ -80,6 +80,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly IMemoryBudget? _schemaMemory;
     private readonly Counter<long> _schemaEvaluations;
     private readonly Counter<long> _storageReads;
+
+    // A writer held for seconds stalls every write of its database behind it (batch 8, 2026-10-25): how long each holder kept it.
+    private static readonly double[] WriterHeldBuckets = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60];
+    private readonly Histogram<double> _writerHeld;
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -469,6 +473,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented document, feed and shape SELECT executions, by path (point, query, feed, shape, shape_body).");
+        _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
+            "How long a database's writer was held, by holder kind (a bounded set of names).",
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _logger = logger;
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
@@ -976,6 +983,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         Member = Member,
                         Checkpoint = _checkpoint,
                         Ledger = Ledger,
+                        WriterHeld = _writerHeld,
                         CollectionStateWritten = NoteSystemCollectionState,
                     };
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
@@ -1769,6 +1777,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Checkpoint = _checkpoint,
             RequiresRemoteProof = RequiresRemoteProof,
             Ledger = Ledger,
+            WriterHeld = _writerHeld,
         };
         var published = false;
         var admitted = false;
