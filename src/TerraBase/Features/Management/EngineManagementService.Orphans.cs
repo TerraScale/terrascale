@@ -73,7 +73,7 @@ internal sealed partial class EngineManagementService
                 }
                 // Only orphan paths write. Per-pass totals live in the catalog, so arbitrary sidecar ordering and
                 // bounded cache eviction cannot duplicate a warning or require an unbounded in-memory inventory.
-                await WriteAsync<bool>(async transaction =>
+                var recorded = await WriteAsync<bool>(async transaction =>
                 {
                     if (await OwnedFileAsync(transaction, database, cancellationToken).ConfigureAwait(false))
                     {
@@ -92,6 +92,11 @@ internal sealed partial class EngineManagementService
                     await PutAsync(transaction, OrphanFiles, id, next, TerraBaseJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
                     return true;
                 }, _ => { complete = false; return false; }, cancellationToken).ConfigureAwait(false);
+                // The main file names the database on disk: an operator finds it by this path.
+                if (recorded && file.Path.EndsWith(".db", StringComparison.Ordinal))
+                {
+                    logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
+                }
             }
             if (complete && catalogGate.Value.IsOpen)
             {
