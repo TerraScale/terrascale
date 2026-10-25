@@ -252,8 +252,7 @@ internal sealed partial class TursoStorageTransaction
         metadata ??= !store.IsSystem && !IsMetadata(collection) ? CollectionState(collection) : DocumentState.Bottom;
         var generation = CollectionGeneration(metadata);
         // Validate the admitted metadata against its projection; provisional identities must stay unknown.
-        if (generation is not null && (KnownCollection(collection)?.Id
-                ?? Command("SELECT entity_id FROM collections WHERE name = $collection;", collection).ExecuteScalar() as string) != generation)
+        if (generation is not null && Command("SELECT entity_id FROM collections WHERE name = $collection;", collection).ExecuteScalar() as string != generation)
         {
             generation = null;
         }

@@ -104,8 +104,6 @@ internal sealed partial class TursoStorageTransaction
                 deleted = sql == TursoStatements.DeleteCollectionDocuments ? rows : deleted;
             }
 
-            // The purged names leave the store's loaded collection names at commit.
-            ChangedReaderState = true;
             return (long)deleted;
         }, cancellationToken, mutation: true);
 
