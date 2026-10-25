@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
@@ -67,7 +68,9 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     }
 
     /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version (see <see cref="ReadAsync"/>).</summary>
-    public async ValueTask<T> WriteAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken) =>
+    public async ValueTask<T> WriteAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
         await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
         {
             Done => await WriteUncheckedAsync(async transaction =>
@@ -75,7 +78,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
                 {
                     Done => await write(transaction).ConfigureAwait(false),
                     Unavailable refused => unavailable(refused),
-                }, cancellationToken).ConfigureAwait(false),
+                }, cancellationToken, file: file, line: line).ConfigureAwait(false),
             Unavailable refused => unavailable(refused),
         };
 
@@ -84,7 +87,9 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         ReadAsync<CatalogCheck>(static _ => ValueTask.FromResult<CatalogCheck>(new Done()), static error => error, cancellationToken);
 
     /// <summary>Writes catalog state with a disk-synced commit before acknowledging a peer batch.</summary>
-    public async ValueTask<T> WriteDurableAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken) =>
+    public async ValueTask<T> WriteDurableAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
         await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
         {
             Done => await WriteUncheckedAsync(async transaction =>
@@ -92,7 +97,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
                 {
                     Done => await write(transaction).ConfigureAwait(false),
                     Unavailable refused => unavailable(refused),
-                }, cancellationToken, durable: true).ConfigureAwait(false),
+                }, cancellationToken, durable: true, file, line).ConfigureAwait(false),
             Unavailable refused => unavailable(refused),
         };
 
@@ -111,12 +116,14 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     }
 
     /// <summary>Writes without the catalog version check (see <see cref="ReadUncheckedAsync"/>); a failure result simply writes nothing.</summary>
-    public async ValueTask<T> WriteUncheckedAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, bool durable = false)
+    public async ValueTask<T> WriteUncheckedAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, bool durable = false,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var transaction = durable
-            ? await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false)
-            : await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+            ? await store.BeginDurableTransactionAsync(cancellationToken, file, line).ConfigureAwait(false)
+            : await store.BeginTransactionAsync(write: true, cancellationToken, file, line).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var result = await write(transaction).ConfigureAwait(false);

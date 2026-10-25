@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
@@ -19,13 +20,16 @@ public interface IDatabaseStore
     /// a consistent snapshot and refuse all mutations (<see cref="InvalidOperationException"/>). Dispose without
     /// <see cref="IStorageTransaction.CommitAsync"/> to roll back.
     /// </summary>
-    ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken);
+    /// <remarks>The compiler fills <paramref name="file"/> and <paramref name="line"/>: a long writer hold names its caller.</remarks>
+    ValueTask<IStorageTransaction> BeginTransactionAsync(
+        bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
 
     /// <summary>
     /// Starts a write transaction whose commit is synced to disk when <see cref="IStorageTransaction.CommitAsync"/> returns, so
     /// it survives a power loss; other commits are synced at the next checkpoint (docs/decisions/0003, 0010).
     /// </summary>
-    ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken);
+    ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
+        CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
 
     /// <summary>
     /// Runs <paramref name="work"/> in a write transaction it may share with other writes queued at the same time (group
@@ -34,11 +38,12 @@ public interface IDatabaseStore
     /// commit result is empty. A commit or marker-read failure is not retried.
     /// </summary>
     async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
-        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
+        Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         ArgumentNullException.ThrowIfNull(work);
         ArgumentNullException.ThrowIfNull(keep);
-        var transaction = await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        var transaction = await BeginTransactionAsync(write: true, cancellationToken, file, line).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var result = await work(transaction, cancellationToken).ConfigureAwait(false);

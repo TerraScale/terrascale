@@ -253,7 +253,7 @@ public sealed class GroupCommitTests
 
         await Assert.That((await waiting).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(logs.Messages).Contains(
-            "Waited 6 s for a database's writer and took it: a group commit batch queued behind a write transaction, which had held it for 6 s and was between storage calls");
+            "Waited 6 s for a database's writer and took it: a group commit batch (an engine caller) queued behind a write transaction (GroupCommitTests.cs:241), which had held it for 6 s and was between storage calls");
     }
 
     [Test]

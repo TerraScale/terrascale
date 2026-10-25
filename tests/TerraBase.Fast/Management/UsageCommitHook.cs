@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -267,7 +268,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
 
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
-        public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken)
+        public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
+            CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
         {
             if (hook.BeforeCatalogBegin is { } beforeCatalogBegin)
             {
@@ -279,10 +281,11 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
                 await gate.WaitAsync(cancellationToken);
             }
 
-            return new Transaction(await inner.BeginDurableTransactionAsync(cancellationToken), hook);
+            return new Transaction(await inner.BeginDurableTransactionAsync(cancellationToken, file, line), hook);
         }
 
-        public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
+        public async ValueTask<IStorageTransaction> BeginTransactionAsync(
+            bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
         {
             if (hook.BeforeCatalogBegin is { } beforeCatalogBegin)
             {
@@ -294,7 +297,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
                 await gate.WaitAsync(cancellationToken);
             }
 
-            var transaction = await inner.BeginTransactionAsync(write, cancellationToken);
+            var transaction = await inner.BeginTransactionAsync(write, cancellationToken, file, line);
             return write || hook.BeforeList is not null || hook.AfterGet is not null || hook.BeforeGet is not null || hook.AfterRead is not null
                 ? new Transaction(transaction, hook) : transaction;
         }
@@ -309,16 +312,19 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
 
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
-        public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) => inner.BeginDurableTransactionAsync(cancellationToken);
+        public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
+            CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+            inner.BeginDurableTransactionAsync(cancellationToken, file, line);
 
-        public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
+        public async ValueTask<IStorageTransaction> BeginTransactionAsync(
+            bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
         {
             if (hook.BeforeBegin is { } beforeBegin)
             {
                 await beforeBegin(database, cancellationToken);
             }
 
-            return await inner.BeginTransactionAsync(write, cancellationToken);
+            return await inner.BeginTransactionAsync(write, cancellationToken, file, line);
         }
     }
 

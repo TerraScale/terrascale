@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Configuration;
@@ -1250,7 +1251,9 @@ internal sealed partial class EngineManagementService(
     // Commits whatever the callback wrote; a failure result simply wrote nothing. Inside a commit it writes into the
     // commit's transaction, which commits (or rolls back) with every other operation of the commit. A catalog this build
     // cannot use is unavailable(refusal), before anything is written.
-    private async ValueTask<T> WriteAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken)
+    private async ValueTask<T> WriteAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         if (CommitTransaction.Value is { } commit)
         {
@@ -1268,17 +1271,19 @@ internal sealed partial class EngineManagementService(
                 {
                     Done => await write(transaction).ConfigureAwait(false),
                     Unavailable refused => unavailable(refused),
-                }, cancellationToken).ConfigureAwait(false),
+                }, cancellationToken, file: file, line: line).ConfigureAwait(false),
             Unavailable refused => unavailable(refused),
         };
     }
 
     // Commits what the callback wrote, unless keep rejects its result: then the transaction rolls back on disposal.
-    private async ValueTask<T> WriteCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, Func<T, bool>? keep = null)
+    private async ValueTask<T> WriteCatalogAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, Func<T, bool>? keep = null,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         RequireNoCommit();
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        var transaction = await store.BeginTransactionAsync(write: true, cancellationToken, file, line).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             var result = await write(transaction).ConfigureAwait(false);
