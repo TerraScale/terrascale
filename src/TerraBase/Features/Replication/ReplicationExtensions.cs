@@ -34,6 +34,7 @@ public static class ReplicationExtensions
         builder.Services.AddHostedService(provider => provider.GetRequiredService<LogChunks>());
         builder.Services.AddSingleton<PeerStreams>();
         builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<PeerStreams>());
+        builder.Services.AddSingleton<IRuntimePeerTopology>(provider => provider.GetRequiredService<PeerStreams>());
         // Decision 0013: a machine of a cell (it has a member directory, as the membership does) confirms writes remotely.
         builder.Services.AddSingleton<IRemoteDurability>(provider =>
             provider.GetService<Engine.Cluster.IMemberDirectory>() is null ? new LocalDurability() : provider.GetRequiredService<PeerStreams>());

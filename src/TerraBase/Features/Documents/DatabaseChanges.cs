@@ -35,7 +35,7 @@ public interface IDatabaseChanges
 /// commit or the 15 s heartbeat. No per-connection queue: a slow client holds back only its own reads, and one that takes
 /// no bytes for 10 s is dropped.
 /// </summary>
-internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership)
+internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership, TerraBase.Features.Health.IPeerTopology topology)
     : IDatabaseChanges
 {
     /// <summary>Open streams per database on one machine.</summary>
@@ -171,8 +171,13 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
                 answer = next;
             }
         }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested || lifetime.ApplicationStopping.IsCancellationRequested)
+        catch (OperationCanceledException) when (stop.IsCancellationRequested || lifetime.ApplicationStopping.IsCancellationRequested || !topology.IsCurrent)
         {
+            if (!topology.IsCurrent)
+            {
+                RefuseTopology(context);
+            }
+
             // A shared producer can observe host cancellation before this stream's linked-token callback runs.
             // The client left, the lifetime or token ended, or the host stops: the client resumes with Last-Event-ID.
             // Shared producers use ApplicationStopping directly. Their newer cancellation callbacks can finish a
@@ -263,6 +268,11 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         var filter = collections is null ? null : string.Concat(collections.Order(StringComparer.Ordinal).Select(value => $"{value.Length}:{value}"));
         while (true)
         {
+            if (!topology.IsCurrent)
+            {
+                throw new OperationCanceledException("peer topology is not verified");
+            }
+
             if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
             {
                 return null;
@@ -634,8 +644,25 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
         }
     }
 
+    private static void RefuseTopology(HttpContext context)
+    {
+        if (context.Response.HasStarted)
+        {
+            context.Abort();
+        }
+        else
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        }
+    }
+
     private static async Task SendAsync(HttpContext context, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
+        if (!context.RequestServices.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
+        {
+            throw new OperationCanceledException("peer topology is not verified");
+        }
+
         using var timeout = new CancellationTokenSource(SendTimeout);
         using var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try

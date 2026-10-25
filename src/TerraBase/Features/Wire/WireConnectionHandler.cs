@@ -330,6 +330,11 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
         byte[]? answer = null;
         try
         {
+            if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
+            {
+                return answer = Error(frame.Id, new Unavailable("this machine's peer topology is not verified", "peer_topology_mismatch"));
+            }
+
             if (!services.GetRequiredService<ICatalogGate>().IsOpen)
             {
                 return answer = Error(frame.Id, new Unavailable("this machine's catalog is not verified against the other machines yet", "catalog_unverified"));

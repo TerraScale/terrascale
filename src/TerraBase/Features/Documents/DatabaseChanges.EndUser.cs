@@ -48,6 +48,11 @@ internal sealed partial class DatabaseChanges
         {
             while (true)
             {
+                if (!topology.IsCurrent)
+                {
+                    throw new OperationCanceledException("peer topology is not verified");
+                }
+
                 using var results = QosContext.Enter(database, memory);
                 if (await engine.OpenDatabaseAsync(database, stop.Token).ConfigureAwait(false) is not { } store)
                 {
@@ -190,8 +195,12 @@ internal sealed partial class DatabaseChanges
                 }
             }
         }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        catch (OperationCanceledException) when (stop.IsCancellationRequested || !topology.IsCurrent)
         {
+            if (!topology.IsCurrent)
+            {
+                RefuseTopology(context);
+            }
         }
         catch (QosMemoryException) when (!stop.IsCancellationRequested)
         {

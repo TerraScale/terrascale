@@ -96,7 +96,8 @@ public static class Telemetry
                 // Adding a label or value requires increasing the limit or removing the instrument from this list.
                 return instrument.Name switch
                 {
-                    "terrabase_pressure_cpu_util" or "terrabase_pressure_mem_util"
+                    "terrabase_peer_topology_mismatch" or "terrabase_peer_topology_generation_age_seconds"
+                        or "terrabase_pressure_cpu_util" or "terrabase_pressure_mem_util"
                         or "terrabase_pressure_memory_used_bytes" or "terrabase_pressure_memory_budget_bytes"
                         or "terrabase_pressure_disk_used_bytes" or "terrabase_pressure_disk_free_bytes"
                         or "terrabase_pressure_disk_total_bytes" or "terrabase_pressure_request_rate"
