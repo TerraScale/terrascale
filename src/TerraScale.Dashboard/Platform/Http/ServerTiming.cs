@@ -28,11 +28,19 @@ public sealed class ServerTiming
     // Coalesce identical reads only within this GET/HEAD. A mutation invalidates earlier reads;
     // failed reads can be retried and no task or authority survives into another request.
     public static Task<T> ReadAsync<T>(object key, Func<Task<T>> read)
+        => ReadAsync(key, read, false);
+
+    // Public issuer metadata cannot change because this request wrote account or document
+    // state. Share it through those writes, but never into the next request (key rotation).
+    public static Task<T> PublicReadAsync<T>(object key, Func<Task<T>> read)
+        => ReadAsync(key, read, true);
+
+    private static Task<T> ReadAsync<T>(object key, Func<Task<T>> read, bool publicMetadata)
     {
         if (Current.Value is not { reads: true } timing) return read();
         lock (timing.gate)
         {
-            var generation = Volatile.Read(ref timing.writes);
+            var generation = publicMetadata ? -1 : Volatile.Read(ref timing.writes);
             if (timing.readTasks.TryGetValue(key, out var entry) && entry.Writes == generation &&
                 entry.Task is Task<T> pending && !pending.IsFaulted && !pending.IsCanceled) return pending;
             var task = StartAsync();

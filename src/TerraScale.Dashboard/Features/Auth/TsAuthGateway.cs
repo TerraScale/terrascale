@@ -37,10 +37,10 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     private TerraScaleAuthClient Client() => new(http.CreateClient("platform"), new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = Tenant });
 
     private Task<TerraScaleAuthOidcDiscovery> MetadataAsync(TerraScaleAuthClient client, CancellationToken cancellationToken) =>
-        ServerTiming.ReadAsync((this, "oidc-metadata"), () => client.Oidc.GetDiscoveryDocumentAsync(cancellationToken));
+        ServerTiming.PublicReadAsync((this, "oidc-metadata"), () => client.Oidc.GetDiscoveryDocumentAsync(cancellationToken));
 
     private Task<TerraScaleAuthJwkSet> SigningKeysAsync(TerraScaleAuthClient client, CancellationToken cancellationToken) =>
-        ServerTiming.ReadAsync((this, "oidc-keys"), () => client.Oidc.GetJwksAsync(cancellationToken));
+        ServerTiming.PublicReadAsync((this, "oidc-keys"), () => client.Oidc.GetJwksAsync(cancellationToken));
 
     private Task<TerraScaleAuthUserInfo> SessionUserInfoAsync(TerraScaleAuthClient client, SessionRecord session, CancellationToken cancellationToken) =>
         ServerTiming.ReadAsync((this, "oidc-userinfo", session.AccessToken, session.UserId, session.Email),

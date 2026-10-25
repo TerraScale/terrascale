@@ -40,6 +40,11 @@ public sealed class RefreshAuthorityJourneyTests
             using var mutation = await client.PostAsync("https://auth.terrascale.tech/v1/membership", null);
             await gateway.IsActiveAsync(refreshed, CancellationToken.None);
             await Assert.That(wire.Users).IsEqualTo(5);
+            // Account writes invalidate identity, but public signing material is independent.
+            refreshed = await gateway.RefreshAsync(refreshed, CancellationToken.None);
+            await Assert.That(wire.Metadata).IsEqualTo(1);
+            await Assert.That(wire.Keys).IsEqualTo(1);
+            await Assert.That(wire.Users).IsEqualTo(5);
         });
         wire.RotateKey();
         await Page(async () =>
