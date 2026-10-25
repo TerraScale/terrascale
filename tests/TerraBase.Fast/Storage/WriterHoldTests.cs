@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Hosting;
 using TerraBase.Testing;
@@ -92,6 +93,105 @@ public sealed class WriterHoldTests
         }
 
         await Assert.That(holds.Measured("a durable write transaction")).Contains(7);
+    }
+
+    // fra (2026-10-25): 2 I/O threads on a saturated disk, multi-GB tenant files read by backups and anti-entropy, and the
+    // catalog anchor's one-row read waited past its 10 s deadline. Bulk work runs on all but one thread: a read is served
+    // while bulk calls hold every thread they may have.
+    [Test]
+    public async Task Bulk_work_leaves_an_io_thread_to_reads()
+    {
+        await using var api = await DocumentApi.StartAsync(configure: settings => settings["storage-threads"] = "2");
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        using var release = new ManualResetEventSlim();
+        List<Task> busy = [];
+        try
+        {
+            using (StorageWork.Bulk())
+            {
+                for (var i = 0; i < 2; i++)
+                {
+                    engine.Io.Admit();
+                    busy.Add(engine.Io.RunAsync(release.Wait, CancellationToken.None));
+                }
+            }
+
+            // One bulk call runs and the other waits for it, not for the thread reads need.
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Running == 1 && engine.Io.Queued == 1));
+            var read = await api.GetAsync(id).WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(engine.Io.Running).IsEqualTo(1);
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(busy);
+            foreach (var _ in busy)
+            {
+                engine.Io.Release();
+            }
+        }
+    }
+
+    // fra canary (2026-10-25): the continuous backup's snapshot held the writer while its pinned read queued on an I/O pool
+    // that other databases' reads had saturated (33 calls queued), and the catalog anchor missed its 10 s deadline. Inside
+    // the hold the snapshot now runs on the database's own write lane: it releases the writer with every I/O thread busy.
+    [Test]
+    public async Task A_backup_snapshot_releases_the_writer_while_every_io_thread_is_busy()
+    {
+        await using var api = await DocumentApi.StartAsync(configure: settings => settings["storage-threads"] = "2");
+        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var database = await api.TenantOfAsync();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(database, CancellationToken.None))!;
+        var pinned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tap.AfterSnapshotPinned = _ =>
+        {
+            pinned.TrySetResult();
+            return Task.CompletedTask;
+        };
+
+        var directory = Directory.CreateTempSubdirectory("terrabase-snapshot-hold-");
+        using var release = new ManualResetEventSlim();
+        List<Task> busy = [];
+        Task<WalSnapshot>? snapshot = null;
+        try
+        {
+            // Every I/O thread blocked, as slow reads of other databases blocked them in production.
+            for (var i = 0; i < 2; i++)
+            {
+                engine.Io.Admit();
+                busy.Add(engine.Io.RunAsync(release.Wait, CancellationToken.None));
+            }
+
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Running == 2));
+            snapshot = tap.SnapshotAsync(Stream.Null, Path.Combine(directory.FullName, "snapshot.db"), CancellationToken.None).AsTask();
+
+            // The pinned read and the tap's catch-up ran under the writer without a pool thread, and the writer is free again.
+            await pinned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(await store.WithWritersHeldAsync(() => Task.FromResult(true), CancellationToken.None, "a test taking the writer")
+                .WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+            await Assert.That(snapshot.IsCompleted).IsFalse().Because("the copy itself still waits for an I/O thread");
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAll(busy);
+            foreach (var _ in busy)
+            {
+                engine.Io.Release();
+            }
+
+            if (snapshot is not null)
+            {
+                _ = await snapshot;
+            }
+
+            directory.Delete(recursive: true);
+        }
     }
 
     // This server's writer holds; its meter is the factory's one instance of the TerraBase meter.
