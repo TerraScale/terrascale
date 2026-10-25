@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Google.Protobuf;
 using Grpc.Core;
-using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
@@ -68,8 +67,6 @@ internal sealed class AntiEntropy : BackgroundService
 
     private async Task RoundsAsync(bool system, CancellationToken stoppingToken)
     {
-        // Tenant rounds read whole databases: bulk work. The catalog's rounds keep its proofs fresh and stay ordinary.
-        using var bulk = system ? null : StorageWork.Bulk();
         using var timer = new PeriodicTimer(Round, _time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {

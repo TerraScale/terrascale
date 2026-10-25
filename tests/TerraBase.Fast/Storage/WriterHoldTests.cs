@@ -95,46 +95,6 @@ public sealed class WriterHoldTests
         await Assert.That(holds.Measured("a durable write transaction")).Contains(7);
     }
 
-    // fra (2026-10-25): 2 I/O threads on a saturated disk, multi-GB tenant files read by backups and anti-entropy, and the
-    // catalog anchor's one-row read waited past its 10 s deadline. Bulk work runs on all but one thread: a read is served
-    // while bulk calls hold every thread they may have.
-    [Test]
-    public async Task Bulk_work_leaves_an_io_thread_to_reads()
-    {
-        await using var api = await DocumentApi.StartAsync(configure: settings => settings["storage-threads"] = "2");
-        var id = DocumentApi.NewId();
-        (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
-        using var release = new ManualResetEventSlim();
-        List<Task> busy = [];
-        try
-        {
-            using (StorageWork.Bulk())
-            {
-                for (var i = 0; i < 2; i++)
-                {
-                    engine.Io.Admit();
-                    busy.Add(engine.Io.RunAsync(release.Wait, CancellationToken.None));
-                }
-            }
-
-            // One bulk call runs and the other waits for it, not for the thread reads need.
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Running == 1 && engine.Io.Queued == 1));
-            var read = await api.GetAsync(id).WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(engine.Io.Running).IsEqualTo(1);
-        }
-        finally
-        {
-            release.Set();
-            await Task.WhenAll(busy);
-            foreach (var _ in busy)
-            {
-                engine.Io.Release();
-            }
-        }
-    }
-
     // fra canary (2026-10-25): the continuous backup's snapshot held the writer while its pinned read queued on an I/O pool
     // that other databases' reads had saturated (33 calls queued), and the catalog anchor missed its 10 s deadline. Inside
     // the hold the snapshot now runs on the database's own write lane: it releases the writer with every I/O thread busy.

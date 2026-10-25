@@ -529,8 +529,6 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source catalog is unverified"));
         }
 
-        // A peer's tenant anti-entropy reads whole buckets here: bulk work, as its own rounds are.
-        using var bulk = database == ChangeGroups.System ? null : StorageWork.Bulk();
         var incarnation = Incarnation(request.Database);
         if (request.Buckets.Count is 0 or > 4096 || request.Buckets.Any(bucket => bucket >= 4096))
         {

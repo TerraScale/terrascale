@@ -10,8 +10,6 @@ internal sealed partial class TursoChangeGroupSource
     public async IAsyncEnumerable<ReplicaSnapshotPage> SnapshotAsync(
         TenantContext database, Ulid incarnation, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // A tenant copy for a rebuild reads the whole file: bulk work. The catalog's revocation snapshot gates readiness.
-        using var bulk = database == ChangeGroups.System ? null : StorageWork.Bulk();
         if (await BeginAsync(database, incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
             yield break;
