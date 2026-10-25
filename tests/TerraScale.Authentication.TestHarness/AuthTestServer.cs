@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
@@ -57,13 +58,16 @@ public sealed class AuthTestServer : IAsyncDisposable
     /// replaces infrastructure, <paramref name="routes"/> adds test-only routes that exist
     /// only inside this test process, <paramref name="configure"/> edits the host builder, and
     /// <paramref name="beforeStart"/> runs on the built services before the host starts (an operator step, say).
+    /// Set <paramref name="runClosureWorker"/> to false when the test drives closure intents or worker passes itself;
+    /// the worker remains registered for explicit passes, but its hosted timer never starts.
     /// </summary>
     public static async Task<AuthTestServer> StartAsync(
         Action<Dictionary<string, string>>? settings = null,
         Action<IServiceCollection>? services = null,
         Action<WebApplication>? routes = null,
         Action<WebApplicationBuilder>? configure = null,
-        Func<IServiceProvider, Task>? beforeStart = null)
+        Func<IServiceProvider, Task>? beforeStart = null,
+        bool runClosureWorker = true)
     {
         var values = DefaultSettings();
         settings?.Invoke(values);
@@ -77,6 +81,12 @@ public sealed class AuthTestServer : IAsyncDisposable
                 provider.GetRequiredService<Users>(), provider.GetRequiredService<PlatformDirectory>(), provider.GetRequiredService<TimeProvider>(), BootstrapOwnerEmail));
             services?.Invoke(builder.Services);
             configure?.Invoke(builder);
+            if (!runClosureWorker)
+            {
+                var hosted = builder.Services.Single(service => service.ServiceType == typeof(IHostedService)
+                    && service.ImplementationFactory?.Method.ReturnType == typeof(ClosureWorker));
+                _ = builder.Services.Remove(hosted);
+            }
         });
         try
         {

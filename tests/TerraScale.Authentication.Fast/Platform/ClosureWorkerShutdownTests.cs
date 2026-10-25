@@ -16,7 +16,7 @@ public sealed class ClosureWorkerShutdownTests
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         using var storage = new FailingStorage();
-        await using var server = await AuthTestServer.StartAsync(services: services =>
+        await using var server = await AuthTestServer.StartAsync(runClosureWorker: true, services: services =>
         {
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton(new HttpClient(storage));

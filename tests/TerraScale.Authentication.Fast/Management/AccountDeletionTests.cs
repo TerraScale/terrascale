@@ -23,14 +23,14 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         using var interleaving = new InterleavedAccountCommit { InnerHandler = TerraBaseFixture.NewHandler() };
         using var transport = new HttpClient(interleaving);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(transport));
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock, services: services => services.AddSingleton(transport));
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Solo");
         var services = oidc.Server.App.Services;
         var store = services.GetRequiredService<AuthStore>();
         var directory = services.GetRequiredService<PlatformDirectory>();
         var (intent, _) = ClosureJob.New("terrascale", "account", alice.Id, null, alice.Id, clock);
-        // Keep the hosted worker running; this intent becomes due only at the precise interleaving below.
+        // The timer is off; the explicit pass below makes the intent due at the controlled interleaving.
         await store.CreateAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("account", alice.Id),
             JsonSerializer.SerializeToElement(intent with { NextAttemptAt = clock.UtcNow.AddHours(1) }, ClosureJson.Default.ClosureJob));
         interleaving.BeforeCommit = async cancellationToken =>
@@ -67,7 +67,7 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
     [Test]
     public async Task Deleting_an_account_deletes_its_own_organizations_leaves_shared_ones_and_frees_the_email()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var (alice, session, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
         var aliceToken = tokens.GetProperty("access_token").GetString()!;
@@ -111,7 +111,7 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
     [Test]
     public async Task The_last_owner_of_an_organization_with_other_members_cannot_delete_its_account()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (alice, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
         var own = await oidc.CreateOrganizationAsync(aliceToken, "Alone");
