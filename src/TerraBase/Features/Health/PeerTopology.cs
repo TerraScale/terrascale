@@ -54,6 +54,11 @@ internal sealed class PeerTopology : BackgroundService, IPeerTopology
     {
         (_options, _membership, _services, _time) = (options, membership, services, time);
         _bound = bound;
+        if (options.PeersFile is null)
+        {
+            // No cluster identity was supplied: startup admits this immutable one-node cell.
+            _evidence = new(time.GetUtcNow(), 1, "ok", [new(options.MachineId, options.Region, bound.Address.ToString())]);
+        }
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase_peer_topology_mismatch", () => Status().Mismatch,
             description: "One when admitted topology is unknown, stale or differs from the file or runtime membership.");
@@ -66,12 +71,8 @@ internal sealed class PeerTopology : BackgroundService, IPeerTopology
     private TopologyStatus Status()
     {
         var evidence = Volatile.Read(ref _evidence);
-        if (_options.PeersFile is null)
-        {
-            return new(0, -1, 0, "local", []);
-        }
-
-        var age = evidence.At is { } at ? (_time.GetUtcNow() - at).TotalSeconds : -1;
+        // Standalone admission has no external lease to expire; clustered admission always does.
+        var age = _options.PeersFile is null ? 0 : evidence.At is { } at ? (_time.GetUtcNow() - at).TotalSeconds : -1;
         var reason = evidence.Reason == "ok" && (age > 30 || age < -5) ? "stale" : evidence.Reason;
         return new(reason == "ok" ? 0 : 1, age, evidence.Generation, reason, evidence.Peers);
     }

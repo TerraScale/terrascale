@@ -14,6 +14,63 @@ namespace TerraBase.Fast.Platform;
 public sealed class PeerTopologyTests
 {
     [Test]
+    [Arguments("Development")]
+    [Arguments("Production")]
+    public async Task Standalone_starts_with_an_admitted_one_node_topology(string environment)
+    {
+        var bucket = new FakeS3();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var server = await TerraBaseTestServer.StartAsync(bucket.Configure, services =>
+        {
+            bucket.Route(services);
+            services.AddSingleton<TimeProvider>(clock);
+        }, environmentName: environment);
+        using var client = new HttpClient { BaseAddress = server.ClientAddress };
+        await AssertCodeAsync(client, "/readyz", HttpStatusCode.OK);
+        var verdict = await server.Client.GetFromJsonAsync<JsonElement>(new Uri("/v1/health/topology", UriKind.Relative));
+        var options = server.Services.GetRequiredService<TerraBaseOptions>();
+        await Assert.That(verdict.GetProperty("mismatch").GetInt32()).IsEqualTo(0);
+        await Assert.That(verdict.GetProperty("generation").GetInt64()).IsEqualTo(1);
+        var peer = verdict.GetProperty("peers").EnumerateArray().Single();
+        await Assert.That(peer.GetProperty("node").GetString()).IsEqualTo(options.MachineId);
+        await Assert.That(peer.GetProperty("region").GetString()).IsEqualTo(options.Region);
+        await Assert.That(peer.GetProperty("address").GetString()).IsEqualTo("127.0.0.1");
+        // An immutable standalone admission needs no ts-orch heartbeat.
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await AssertCodeAsync(client, "/readyz", HttpStatusCode.OK);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Cluster_identity_requires_admission_even_for_a_single_node(bool multiNode)
+    {
+        var root = Directory.CreateTempSubdirectory("unadmitted-topology-").FullName;
+        try
+        {
+            var file = Path.Combine(root, "peers");
+            await File.WriteAllTextAsync(file, "local test-region 127.0.0.1\n" + (multiNode ? "remote sjc 127.0.0.2\n" : string.Empty));
+            var bucket = new FakeS3();
+            await using var server = await TerraBaseTestServer.StartAsync(bucket.Configure, services =>
+            {
+                bucket.Route(services);
+                var options = (TerraBaseOptions)services.Last(service => service.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
+                services.AddSingleton(options with { PeersFile = file });
+                services.AddSingleton<IMemberDirectory>(provider => new PeersFile(provider.GetRequiredService<TerraBaseOptions>()));
+            }, environmentName: "Production");
+            using var client = new HttpClient { BaseAddress = server.ClientAddress };
+            await AssertCodeAsync(client, "/readyz", HttpStatusCode.ServiceUnavailable);
+            await AssertCodeAsync(client, "/v1/projects/project/databases", HttpStatusCode.ServiceUnavailable);
+            var verdict = await server.Client.GetFromJsonAsync<JsonElement>(new Uri("/v1/health/topology", UriKind.Relative));
+            await Assert.That(verdict.GetProperty("mismatch").GetInt32()).IsEqualTo(1);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     [Arguments("missing")]
     [Arguments("truncated")]
     [Arguments("malformed")]

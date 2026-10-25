@@ -24,8 +24,12 @@ as do new wire operations and PostgreSQL messages. Established ordinary and end-
 feeds recheck before subsequent reads and sends, closing without further data
 when refused. Peer replication and repair, liveness,
 metrics and internal diagnostics remain available, permitting automatic
-recovery when all views agree again. Local standalone processes have no
-cluster manifest to validate.
+recovery when all views agree again. Without a ts-orch cluster identity, startup
+admits an immutable one-node topology containing the bound self identity; this
+local admission has no external heartbeat lease. Supplying `TS_PEERS_FILE`
+always requires a fresh independent manifest, even for a one-node cluster and
+in Development. Regional test fixtures own and renew their independent admitted
+manifests; tests never disable the production gate.
 
 The peer-authenticated internal `GET /v1/health/topology` returns
 `{mismatch,ageSeconds,generation,reason,peers}` with `Cache-Control: no-store`.
