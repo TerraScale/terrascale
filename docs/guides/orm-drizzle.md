@@ -103,7 +103,9 @@ const db = await connect()
 await migrate(db, { migrationsFolder: './drizzle', migrationsTable: 'drizzle_migrations' })
 ```
 
-Each run applies the migrations it has not applied yet, in one transaction. `drizzle-kit push`, `pull` and `studio` read the SQLite catalog, which TerraBase does not expose; use `generate` and `migrate`.
+Each run applies the migrations it has not applied yet, in one transaction.
+
+`drizzle-kit push`, `pull` and `studio` work too: they read the schema back through the SQLite catalog (`sqlite_master` and the catalog pragmas), which TerraBase answers read-only. Set `tablesFilter` in `drizzle.config.ts` when the database also holds tables Drizzle does not manage. A `push` that would change an existing table needs `ALTER TABLE`, which TerraBase refuses; write that change as a migration that creates a new table instead.
 
 ## Queries
 

@@ -148,14 +148,16 @@ The Python package takes positional parameters only and sends integers outside t
 - `CREATE TABLE [IF NOT EXISTS]` and `DROP TABLE [IF EXISTS]`.
 - `CREATE [UNIQUE] INDEX [IF NOT EXISTS] name ON table (columns)` with 1 to 4 columns, and `DROP INDEX [IF EXISTS] name`. A `UNIQUE` index rejects duplicate writes with `SQLITE_CONSTRAINT_UNIQUE` (Postgres `23505`). On a table that already has rows, `CREATE UNIQUE INDEX` checks the existing rows first and fails with the same code, changing nothing, if they hold a duplicate. Partial (`WHERE`) and expression indexes are refused. Reads still scan their tables; see [Limits](#limits).
 - `REFERENCES` and `FOREIGN KEY` are accepted and not enforced, as in SQLite with foreign keys off. `PRAGMA foreign_keys = …` is accepted and changes nothing.
-- `PRAGMA read_uncommitted` and `PRAGMA [main.|temp.]table_info(t)`, which SQLAlchemy runs.
-- Names: plain, `"quoted"` and `` `quoted` `` (without quote characters inside), with an optional `main.` schema.
+- `PRAGMA read_uncommitted`, and the catalog pragmas `PRAGMA [main.]table_info(t)`, `table_xinfo(t)`, `index_list(t)`, `index_info(i)` and `foreign_key_list(t)`.
+- The read-only SQLite catalog that schema tools read (drizzle-kit, SQLAlchemy reflection, Alembic): `sqlite_master` (`sqlite_schema`) with a row per table and index, an empty `sqlite_temp_master`, and the table-valued `pragma_table_info`, `pragma_table_xinfo`, `pragma_index_list`, `pragma_index_info` and `pragma_foreign_key_list`, for example `FROM sqlite_master AS m JOIN pragma_table_xinfo(m.name) AS p`. A pragma function joins with `JOIN` or a comma, not an outer join.
+- `GLOB` and `NOT GLOB`.
+- Names: plain, `"quoted"`, `` `quoted` `` and `[quoted]` (without quote characters inside), with an optional `main.` schema.
 - `BEGIN` (`DEFERRED`, `IMMEDIATE`, `EXCLUSIVE`, `READONLY`), `COMMIT`/`END` and `ROLLBACK`.
 - Parameters: `?`, `?NNN`, `:name`, `@name` and `$name`. Values: null, integer, real and text.
 - Column types follow SQLite affinity (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal `DEFAULT`, `PRIMARY KEY` and `UNIQUE` are enforced.
 - Keys are yours: an `INTEGER` or `TEXT` primary key is the row's key, and composite keys work. An `INTEGER` (or `SERIAL`) primary key left out of an `INSERT` gets a generated positive integer, returned as the last insert rowid.
 
-Refused with an error: partial and expression indexes, `WITH RECURSIVE`, blob values, expressions in `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers, views, other `PRAGMA`s, `ATTACH`, `VACUUM`, savepoints, `CHECK` constraints, `[bracketed]` names, schemas other than `main` and functions outside SQLite's core scalar, aggregate, window, date/time and JSON functions (no table-valued functions).
+Refused with an error: partial and expression indexes, `WITH RECURSIVE`, blob values, expressions in `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers, views, other `PRAGMA`s, writes to the catalog, `SIMILAR TO`, `ATTACH`, `VACUUM`, savepoints, `CHECK` constraints, schemas other than `main` and functions outside SQLite's core scalar, aggregate, window, date/time and JSON functions (no table-valued functions).
 
 ## Limits
 
