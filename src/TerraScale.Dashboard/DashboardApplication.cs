@@ -43,6 +43,8 @@ public static class DashboardApplication
         });
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
         builder.Services.AddSingleton<AssetUrls>();
+        builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = problem =>
+            problem.ProblemDetails.Extensions["requestId"] = problem.HttpContext.TraceIdentifier);
         builder.Services.AddSingleton<ServiceSloTelemetry>();
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
@@ -73,13 +75,16 @@ public static class DashboardApplication
         builder.Services.AddDashboardMcp();
         builder.Services.AddDashboardContracts();
         builder.Services.AddTransient<ServerTiming.Handler>();
+        builder.Services.AddTransient<RequestIdentity.Handler>();
         builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
-            .AddHttpMessageHandler<ServerTiming.Handler>();
+            .AddHttpMessageHandler<ServerTiming.Handler>()
+            .AddHttpMessageHandler<RequestIdentity.Handler>();
         builder.Services.AddTransient<TerraBasePeerCredential>();
         builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
             .AddHttpMessageHandler<ServerTiming.Handler>()
+            .AddHttpMessageHandler<RequestIdentity.Handler>()
             .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
@@ -97,6 +102,7 @@ public static class DashboardApplication
         // proxies) may set the scheme and client IP; a browser's own forwarding headers never reach past the edge.
         app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
         var timingLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ServerTiming");
+        app.Use((context, next) => RequestIdentity.MiddlewareAsync(context, next, timingLogger));
         app.Use((context, next) => ServerTiming.MiddlewareAsync(context, next, timingLogger));
         app.Use(async (context, next) =>
         {

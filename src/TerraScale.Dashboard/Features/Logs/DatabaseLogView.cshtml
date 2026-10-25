@@ -23,10 +23,10 @@
                 @if (Model.Logs.Items.Count == 0) { <p class="ts-empty">No recorded requests match this filter in the recent window.</p> }
                 else {
                 <p class="ts-meta" id="request-operations">Operations counts committed document operations, not billing units.</p>
-                <div class="ts-table-wrap"><table class="ts-table" aria-describedby="request-operations"><caption class="ts-sr-only">Recent requests for @Model.Database.Name</caption><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Route</th><th scope="col">Status</th><th scope="col">Latency</th><th scope="col">Operations</th></tr></thead><tbody>
+                <div class="ts-table-wrap"><table class="ts-table" aria-describedby="request-operations"><caption class="ts-sr-only">Recent requests for @Model.Database.Name</caption><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Route</th><th scope="col">Request ID</th><th scope="col">Status</th><th scope="col">Latency</th><th scope="col">Operations</th></tr></thead><tbody>
                 @foreach (var log in Model.Logs.Items)
                 {
-                    <tr><td><time datetime="@log.Time.ToString("O", CultureInfo.InvariantCulture)">@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time><div class="ts-meta">@log.Region</div></td><td><code>@log.Method @log.Route</code></td><td><span class="ts-badge ts-badge-tone" data-tone="@(log.Status >= 400 ? "danger" : "success")">@log.Status</span></td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td><td>@log.Operations.ToString("N0", CultureInfo.InvariantCulture)</td></tr>
+                    <tr><td><time datetime="@log.Time.ToString("O", CultureInfo.InvariantCulture)">@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time><div class="ts-meta">@log.Region</div></td><td><code>@log.Method @log.Route</code></td><td>@if(log.RequestId is { } requestId){<code>@requestId</code><div><a href="@("/support?relatedRequestId=" + requestId)">Contact support</a></div>}else{<span class="ts-meta">Unavailable</span>}</td><td><span class="ts-badge ts-badge-tone" data-tone="@(log.Status >= 400 ? "danger" : "success")">@log.Status</span></td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td><td>@log.Operations.ToString("N0", CultureInfo.InvariantCulture)</td></tr>
                 }
                 </tbody></table></div>
                 }

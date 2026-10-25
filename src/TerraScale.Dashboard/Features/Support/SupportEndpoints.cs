@@ -17,7 +17,7 @@ public sealed record SupportPage(ShellModel Shell, string Error = "", string Sen
     public SupportDraft Draft { get; init; } = new("", "", "", "normal", "", "", "");
 }
 
-public sealed record SupportDraft(string OrganizationId, string ProjectId, string DatabaseId, string Severity, string Subject, string Message, string RequestId);
+public sealed record SupportDraft(string OrganizationId, string ProjectId, string DatabaseId, string Severity, string Subject, string Message, string RequestId, string RelatedRequestId = "");
 
 public interface ISupportMail
 {
@@ -59,7 +59,7 @@ public static class SupportEndpoints
             var sent = http.Request.Query["sent"].ToString();
             return SupportView.Create(new(ShellModel.For(http, context, "Support"), Sent: sent.Length == 8 && sent.All(char.IsAsciiLetterOrDigit) ? sent : "")
             {
-                Draft = new(context.Organization?.Id ?? "", context.Project?.Id ?? "", "", "normal", "", "", AccountService.NewId())
+                Draft = new(context.Organization?.Id ?? "", context.Project?.Id ?? "", "", "normal", "", "", AccountService.NewId(), TerraScale.DotNet.TerraScaleIds.IsValid(http.Request.Query["relatedRequestId"].ToString()) ? http.Request.Query["relatedRequestId"].ToString() : "")
             });
         });
         endpoints.MapPost("/api/v1/dashboard/support", SendAsync);
@@ -73,7 +73,7 @@ public static class SupportEndpoints
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
         var draft = new SupportDraft(form["organizationId"].ToString(), form["projectId"].ToString(), form["databaseId"].ToString(),
-            form["severity"].ToString(), form["subject"].ToString().Trim(), form["message"].ToString().Trim(), form["requestId"].ToString());
+            form["severity"].ToString(), form["subject"].ToString().Trim(), form["message"].ToString().Trim(), form["requestId"].ToString(), form["relatedRequestId"].ToString());
         try
         {
             var organization = context.Organizations.FirstOrDefault(item => item.Id == draft.OrganizationId && item.RoleFor(context.UserId) != "")
@@ -84,10 +84,11 @@ public static class SupportEndpoints
                 throw new AccountAccessException("Choose a database in the selected project.", 422);
             if (draft.Severity is not ("low" or "normal" or "high" or "urgent")) throw new AccountAccessException("Choose a severity.", 422);
             if (draft.Subject.Length is 0 or > 150 || draft.Subject.Any(char.IsControl)) throw new AccountAccessException("Enter a one-line subject of at most 150 characters.", 422);
-            if (draft.Message.Length is 0 or > 8000) throw new AccountAccessException("Describe the problem in at most 8000 characters.", 422);
+            if (draft.Message.Length == 0 || draft.Message.Length + (draft.RelatedRequestId.Length == 0 ? 0 : 39) > 8000) throw new AccountAccessException("Describe the problem in at most 8000 characters.", 422);
             if (!TerraScale.DotNet.TerraScaleIds.IsValid(draft.RequestId)) throw new AccountAccessException("Reload the page and send again.", 422);
+            if (draft.RelatedRequestId.Length > 0 && !TerraScale.DotNet.TerraScaleIds.IsValid(draft.RelatedRequestId)) throw new AccountAccessException("Enter a 26-character request ULID.", 422);
             var status = await mail.SendAsync(new(draft.RequestId, context.UserId, organization.Id, project?.Id, draft.DatabaseId.Length == 0 ? null : draft.DatabaseId,
-                PlanCatalog.For(organization)?.Key ?? "free", draft.Severity, draft.Subject, draft.Message), http.RequestAborted);
+                PlanCatalog.For(organization)?.Key ?? "free", draft.Severity, draft.Subject, draft.Message + (draft.RelatedRequestId.Length == 0 ? "" : "\nRequest ID: " + draft.RelatedRequestId)), http.RequestAborted);
             if (status != "accepted") throw new AccountAccessException("Your request could not be delivered. Send again, or email support@terrascale.tech.", 503);
             return HttpRedirects.SeeOther("/support?sent=" + draft.RequestId[^8..]);
         }

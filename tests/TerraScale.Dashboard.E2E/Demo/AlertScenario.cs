@@ -110,7 +110,7 @@ internal sealed class FakeLogSource : ILogDrainSource
     public DatabaseLogEntry Record(int status, DateTimeOffset? time = null)
     {
         var at = time ?? DateTimeOffset.UtcNow;
-        var entry = new DatabaseLogEntry(NUlid.Ulid.NewUlid(at).ToString(), at, "sa-saopaulo-1", "POST", "/v1/collections/orders/documents", status, 12.5, 3, false);
+        var entry = new DatabaseLogEntry(NUlid.Ulid.NewUlid(at).ToString(), at, "sa-saopaulo-1", "POST", "/v1/collections/orders/documents", status, 12.5, 3, false, AccountService.NewId());
         entries.Push(entry);
         return entry;
     }
