@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-public sealed class RequestReadBudgetTests
+public sealed class RequestReadBudgetContractTests
 {
     [Test]
     public async Task ParallelPanelsShareCatalogAndNameResolutionOnlyInsideOneGet()

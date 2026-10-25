@@ -27,7 +27,9 @@ public sealed class WorkspaceSwitchCallCountJourneyTests(DashboardRootFixture fi
         var member = source.Members.Values.Single();
         var target = new OrganizationRecord
         {
-            Id = AccountService.NewId(), Name = "Target", Kind = "business",
+            Id = AccountService.NewId(),
+            Name = "Target",
+            Kind = "business",
             Members = new() { [member.UserId] = member }
         };
         var project = new ProjectRecord { Id = AccountService.NewId(), OrganizationId = target.Id, Name = "Target project", IsDefault = true };
@@ -51,7 +53,8 @@ public sealed class WorkspaceSwitchCallCountJourneyTests(DashboardRootFixture fi
         var route = "/api/v1/dashboard/switch-" + (organizationSwitch ? "organization" : "project");
         var form = new Dictionary<string, string>
         {
-            ["_csrf"] = csrf, [organizationSwitch ? "organizationId" : "projectId"] = organizationSwitch ? target.Id : project.Id,
+            ["_csrf"] = csrf,
+            [organizationSwitch ? "organizationId" : "projectId"] = organizationSwitch ? target.Id : project.Id,
             ["returnUrl"] = "/databases/" + AccountService.NewId() + "/documents#rows"
         };
         var key = AccountService.AccountStorageKey(member.UserId);

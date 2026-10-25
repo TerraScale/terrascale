@@ -5,7 +5,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
-public sealed class DocumentBrowseBudgetTests
+public sealed class DocumentBrowseBudgetContractTests
 {
     [Test]
     [Arguments(1, 1, 26, 0)]
