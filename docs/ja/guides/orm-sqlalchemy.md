@@ -154,7 +154,7 @@ The `libsql-experimental` driver under `sqlalchemy-libsql` raises a plain `Value
 
 ## Limits
 
-- Table reflection (`MetaData.reflect`, `inspect(engine).get_columns`) and Alembic autogenerate read SQLite catalog pragmas that TerraBase does not answer. `create_all` works.
+- Table reflection (`MetaData.reflect`, `inspect(engine)`) and Alembic autogenerate work: TerraBase answers the SQLite catalog read-only (tables, columns, indexes, foreign keys and named `UNIQUE` constraints). Migrations that alter an existing table need `ALTER TABLE`, which TerraBase refuses.
 - `LargeBinary` columns cannot hold values: blob values are refused.
 - The [libSQL limits](/ja/guides/libsql-clients#limits) apply: reads scan the tables they reference, and a transaction holds at most 256 statements.
 
