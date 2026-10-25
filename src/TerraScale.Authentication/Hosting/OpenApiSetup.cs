@@ -21,6 +21,9 @@ public static class SecuritySchemes
     /// <summary>Operator bootstrap key for <c>/v1/instances</c>.</summary>
     public const string OperatorBearer = "OperatorBearer";
 
+    /// <summary>ts-alerts noncritical email admission credential.</summary>
+    public const string MailAdmission = "mailAdmission";
+
     /// <summary>OAuth client authentication with HTTP Basic.</summary>
     public const string ClientBasic = "clientBasic";
 
@@ -151,6 +154,7 @@ public static partial class OpenApiSetup
         [SecuritySchemes.SessionCookie] = () => new() { Type = SecuritySchemeType.ApiKey, In = ParameterLocation.Cookie, Name = SecuritySchemes.SessionCookieName },
         [SecuritySchemes.OAuthAccessBearer] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT" },
         [SecuritySchemes.OperatorBearer] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Operator bootstrap key." },
+        [SecuritySchemes.MailAdmission] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Domain-separated ts-alerts admission credential; no dashboard or authentication authority." },
         [SecuritySchemes.ClientBasic] = () => new() { Type = SecuritySchemeType.Http, Scheme = "basic" },
         [SecuritySchemes.BearerAuth] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer" },
         [SecuritySchemes.ProjectApiKey] = () => new()

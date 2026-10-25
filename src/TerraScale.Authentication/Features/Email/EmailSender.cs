@@ -16,6 +16,12 @@ namespace TerraScale.Authentication.Features.Email;
 /// <param name="Html">The HTML body, or <see langword="null"/> for a plain-text message.</param>
 public sealed record EmailMessage(string Subject, string Text, string? Html = null)
 {
+    /// <summary>Server-assigned mail class. Unclassified mail never spends the authentication reserve.</summary>
+    public EmailPurpose Purpose { get; init; } = EmailPurpose.Notification;
+
+    /// <summary>Server-resolved tenant identity for bounded per-tenant admission.</summary>
+    public string Tenant { get; init; } = "platform";
+
     /// <summary>Display name of the From address; the address itself is always the configured one.</summary>
     public string? FromName { get; init; }
 
@@ -110,6 +116,9 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
 
     /// <inheritdoc />
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+        => (await this.DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false)).Outcome;
+
+    internal async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         var outcome = "error";
         try
@@ -128,7 +137,8 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
                 // The response body can quote the recipient, so only the status is logged.
                 outcome = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? "429" : "error";
                 this.LogProviderFailure((int)response.StatusCode);
-                return response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? EmailDeliveryOutcome.Retryable
+                return response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? new EmailProviderResult(EmailDeliveryOutcome.Retryable,
+                    response.Headers.RetryAfter?.Date, response.Headers.RetryAfter?.Delta)
                     : (int)response.StatusCode < 500 ? EmailDeliveryOutcome.Rejected : EmailDeliveryOutcome.Unknown;
             }
 
@@ -229,3 +239,30 @@ internal sealed record CloudflareSender([property: JsonPropertyName("address")] 
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(CloudflareSendRequest))]
 internal sealed partial class CloudflareEmailJson : JsonSerializerContext;
+
+internal sealed record EmailProviderResult(EmailDeliveryOutcome Outcome, DateTimeOffset? Reset = null, TimeSpan? ResetDelay = null)
+{
+    public static implicit operator EmailProviderResult(EmailDeliveryOutcome outcome)
+    {
+        return new(outcome);
+    }
+}
+
+/// <summary>Fixed server-owned mail purposes.</summary>
+public enum EmailPurpose
+{
+    /// <summary>Verification, sign-in, MFA or password recovery.</summary>
+    Authentication = 0,
+    /// <summary>Organization invitation.</summary>
+    Invitation = 1,
+    /// <summary>Usage or operational alert.</summary>
+    Alert = 2,
+    /// <summary>Allowance notification.</summary>
+    Allowance = 3,
+    /// <summary>Support request or acknowledgement.</summary>
+    Support = 4,
+    /// <summary>Template test traffic.</summary>
+    Test = 5,
+    /// <summary>Other noncritical notification.</summary>
+    Notification = 6,
+}

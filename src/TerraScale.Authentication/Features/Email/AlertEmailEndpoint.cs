@@ -152,7 +152,7 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
         var scope = request.DatabaseName is { } database ? $"database {database} in project {project}" : $"project {project}";
         var text = string.Create(CultureInfo.InvariantCulture,
             $"Your alert rule \"{name}\" {(firing ? "is firing" : "has resolved")} for {scope}.\n\n{metric}: {value:0.##}{unit} (threshold {threshold:0.##}{unit}).\n\nView and manage alerts at https://dash.terrascale.tech/notifications/alerts .");
-        return new($"[TerraScale] Alert {(firing ? "firing" : "resolved")}: {name}", text) { FromName = "TerraScale" };
+        return new($"[TerraScale] Alert {(firing ? "firing" : "resolved")}: {name}", text) { FromName = "TerraScale", Purpose = EmailPurpose.Alert, Tenant = request.OrganizationId! };
     }
 
     private static JsonElement Serialize(AlertEmailDelivery delivery) => JsonSerializer.SerializeToElement(delivery, AlertEmailJson.Default.AlertEmailDelivery);

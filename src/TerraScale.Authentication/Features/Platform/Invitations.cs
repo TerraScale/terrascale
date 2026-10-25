@@ -123,6 +123,7 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
                 Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
                 ExpiresIn = Lifetime,
                 Organization = organizationName,
+                Tenant = organizationId,
                 Inviter = caller.Email,
             }, locale);
         }

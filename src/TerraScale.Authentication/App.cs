@@ -145,10 +145,12 @@ public static class App
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
         builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IDocumentStore>(), services.GetRequiredService<TimeProvider>(), options,
             services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development"))));
+        builder.Services.AddSingleton<EmailAdmission>();
         if (options.CloudflareEmail is { } cloudflareEmail)
         {
             builder.Services.AddSingleton(cloudflareEmail);
-            builder.Services.AddHttpClient<IEmailSender, CloudflareEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(30));
+            builder.Services.AddHttpClient<CloudflareEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(30));
+            builder.Services.AddTransient<IEmailSender, AdmittedEmailSender>();
         }
         else
         {
@@ -170,6 +172,12 @@ public static class App
         builder.AddAuthTelemetry(options);
 
         configure?.Invoke(builder);
+
+        // TS-996: hosted auth serves only GRU. Regional LWW writes would lose concurrent mail charges.
+        if (options.CloudflareEmail is not null && (builder.Configuration["TS_REGION"] ?? (options.Development ? "gru" : null)) != "gru")
+        {
+            throw new AuthConfigurationException("Shared email admission requires the GRU authentication authority");
+        }
 
         // A named TerraBase requires a valid peer credential before the first storage request.
         if (options.TerraBaseUrl is not null

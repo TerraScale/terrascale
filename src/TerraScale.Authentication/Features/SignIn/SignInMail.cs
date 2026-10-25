@@ -54,7 +54,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
                 PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
                 _ => AuthEmailKind.SignInCode,
-            }, new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime })
+            }, new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime, Tenant = passcode.Tenant })
             : null, locale);
     }
 

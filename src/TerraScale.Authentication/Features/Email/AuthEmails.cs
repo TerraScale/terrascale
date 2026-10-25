@@ -45,6 +45,9 @@ public enum AuthEmailKind
 /// <param name="Email">The recipient's address.</param>
 public sealed record AuthEmailValues(string Email)
 {
+    /// <summary>Server-resolved organization identity for mail accounting.</summary>
+    public string Tenant { get; init; } = "platform";
+
     /// <summary>The one-time code, shown large.</summary>
     public string? Code { get; init; }
 
@@ -413,7 +416,14 @@ public sealed partial class AuthEmails(AuthOptions options)
 
         await using var html = new StringWriter(CultureInfo.InvariantCulture);
         await AuthEmailLayout.Create(view).RenderAsync(html, Encoder, cancellationToken).ConfigureAwait(false);
-        return new EmailMessage(view.Subject, Text(view), html.ToString()) { FromName = brand.SenderName, ReplyTo = brand.ReplyTo };
+        return new EmailMessage(view.Subject, Text(view), html.ToString())
+        {
+            FromName = brand.SenderName,
+            ReplyTo = brand.ReplyTo,
+            Tenant = values.Tenant,
+            Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode
+                ? EmailPurpose.Authentication : kind == AuthEmailKind.Invitation ? EmailPurpose.Invitation : EmailPurpose.Notification
+        };
     }
 
     /// <summary>The plain-text alternative: the same content in reading order.</summary>
