@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Primitives;
 
 namespace TerraBase.Features.Sql;
@@ -32,8 +33,8 @@ internal sealed class SqlKeys
 }
 
 /// <summary>
-/// The net document bytes a transaction's writes added, measured when the storage quota needs it, and the table
-/// definitions it read, so its statements read each one once.
+/// The net document bytes a transaction's writes added, measured when the storage quota needs it, the rows it wrote and
+/// their operation units, billed once it commits, and the table definitions it read, so its statements read each one once.
 /// </summary>
 /// <param name="Measure">Whether to measure.</param>
 internal sealed class SqlTally(bool Measure)
@@ -41,6 +42,12 @@ internal sealed class SqlTally(bool Measure)
     public bool Measure { get; } = Measure;
 
     public long Delta { get; set; }
+
+    /// <summary>Rows written: each insert, update or delete of one row.</summary>
+    public int Writes { get; set; }
+
+    /// <summary>Operation units of the rows written (<see cref="OperationUnits"/>): a stored row's, one for a delete.</summary>
+    public long WriteUnits { get; set; }
 
     /// <summary>Definitions by table name, null for no SQL table; DDL of the table removes its entry.</summary>
     public Dictionary<string, SqlTableDefinition?> Tables { get; } = [with(StringComparer.Ordinal)];
@@ -510,18 +517,24 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
     // The document service's refusal of one operation, in SQLite's vocabulary, or null when it applied. Each storage call
     // costs a hop to the database's worker, so bytes already known are not read: none before a write to an `absent`
-    // row, none after a delete, and a patch's stored document after it.
+    // row, none after a delete, and a patch's stored document after it. A stored row bills its units, as a document
+    // put does.
     private async ValueTask<SqlError?> ApplyAsync(
         IStorageTransaction transaction, DocumentOperation operation, string id, SqlTally tally, CancellationToken cancellationToken, bool absent = false)
     {
         var before = tally.Measure && !absent ? await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) : 0;
         var outcome = await documents.ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
-        if (outcome is OperationResult result && tally.Measure)
+        if (outcome is OperationResult result)
         {
             var after = operation is DeleteOperation ? 0
                 : result.Document is { } stored ? stored.Length
                 : await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false);
-            tally.Delta += after - before;
+            tally.Writes++;
+            tally.WriteUnits += operation is DeleteOperation ? 1 : OperationUnits.Of(after);
+            if (tally.Measure)
+            {
+                tally.Delta += after - before;
+            }
         }
 
         return Refusal(outcome);

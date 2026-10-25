@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SqlParser;
 using SqlParser.Dialects;
@@ -74,6 +75,8 @@ internal sealed class SqlService(
 /// One connection (section 5 of the design): autocommit statements run alone; a transaction keeps a log of its statements
 /// and result hashes and never holds the database writer between requests. Each request that continues it replays the log
 /// in a fresh storage transaction and checks every hash: a mismatch is a conflict (<c>SQLITE_BUSY</c>), and nothing commits.
+/// Usage (docs/terrabase/operation-allowance.md): a table read bills its returned rows when it answers, never again on
+/// replay; the rows a transaction writes bill once it commits.
 /// </summary>
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IMemoryBudget memory, SqlExecutor executor, TimeProvider time, TenantContext database,
@@ -272,6 +275,7 @@ internal sealed class SqlSession(
 
         _log.Add((command, Hash(result)));
         _logBytes += size;
+        BillRead(statement, result);
         return result;
     }
 
@@ -348,6 +352,11 @@ internal sealed class SqlSession(
         {
             // Autocommit keys are never replayed: a throwaway log.
             var outcome = await RunAsync(request, statement, command, new SqlKeys(), cancellationToken, describe).ConfigureAwait(false);
+            if (outcome is SqlResult result && !describe)
+            {
+                BillRead(statement, result);
+            }
+
             return outcome is SqlResult && request.Lease is { } lease && await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false) is SqlError failed
                 ? failed
                 : outcome;
@@ -428,8 +437,11 @@ internal sealed class SqlSession(
 
             await request.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             lease.Committed(request.Tally.Delta);
-            // shortcut: SQL wire writes bill one unit per logged change, not its 4 KiB; size them once the log records bytes.
-            usage.RecordWrites(database, Math.Max(1, _log.Count), Math.Max(1, _log.Count));
+            if (request.Tally.Writes > 0)
+            {
+                usage.RecordWrites(database, request.Tally.Writes, request.Tally.WriteUnits);
+            }
+
             return Empty;
         }
         catch (Exception error) when (Failure(error) is { } failure)
@@ -449,6 +461,21 @@ internal sealed class SqlSession(
         SqlProgramException program => SqlErrors.Error(program.Message),
         _ => null,
     };
+
+    // A read of tables bills each returned row's started 4 KiB, at least one: its text values as UTF-8, 8 bytes per number.
+    // Catalog and constant reads bill nothing, and neither do the rows an UPDATE, DELETE or INSERT … SELECT reads.
+    private void BillRead(ParsedSql statement, SqlResult result)
+    {
+        if (statement is ReadSql { Tables.Count: > 0 })
+        {
+            usage.RecordRead(database, result.Rows.Sum(row => Math.Max(1, OperationUnits.Of(row.Sum(value => value.Kind switch
+            {
+                SqlValueKind.Text => (long)Encoding.UTF8.GetByteCount(value.Text!),
+                SqlValueKind.Null => 0L,
+                _ => 8L,
+            })))));
+        }
+    }
 
     // Bytes a logged statement holds: its text and arguments, as UTF-16.
     private static long Size(SqlCommand command) =>

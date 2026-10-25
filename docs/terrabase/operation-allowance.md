@@ -24,6 +24,12 @@ One unit is each started 4 KiB (4,096 bytes) of a document successfully read or 
 - A put or patch bills its stored document's units; a delete bills one unit.
 - A get bills the document's units; a not-found get bills none. List, query and export pages bill
   each returned document. SQL query runs bill each returned row's value.
+- SQL over HTTP, libSQL (Hrana) and Postgres wire bill the same way: an inserted or updated row bills
+  its stored document's units and a deleted row one unit, once its transaction commits; a rolled-back
+  or failed transaction bills no writes, and replaying a transaction's statements bills nothing again.
+  A read of tables bills each returned row's started 4 KiB (text as UTF-8, 8 bytes per number, at
+  least one unit) when it answers, inside a transaction too. Catalog and constant reads, DDL, and the
+  rows an `UPDATE`, `DELETE` or `INSERT … SELECT` reads to find its targets bill nothing.
 - Refused, failed and invalid writes bill nothing. Replication (peer stream applies, refills,
   anti-entropy) bills nothing (user decision 2026-10-23), so a write counts once, in the region
   that served it.
@@ -71,9 +77,5 @@ month or runs past 30 seconds answers `503`, and the caller retries. Responses c
   every usage flush tick, adding the units it serves in between. Units another region served reach
   it within about one flush tick plus catalog replication.
 
-## Limits of this version
-
-- SQL wire writes bill one unit per logged change, not its size.
-
-Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs`, `tests/TerraBase.Fast/Qos/PlanAllowanceTests.cs` and
-`tests/TerraBase.Fast/Replication/FreeReplicationUsageTests.cs`.
+Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs`, `tests/TerraBase.Fast/Qos/PlanAllowanceTests.cs`,
+`tests/TerraBase.Fast/Replication/FreeReplicationUsageTests.cs` and `tests/TerraBase.Fast/Sql/SqlMeteringTests.cs`.
