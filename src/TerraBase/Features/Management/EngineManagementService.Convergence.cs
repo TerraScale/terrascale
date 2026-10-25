@@ -17,6 +17,17 @@ internal sealed partial class EngineManagementService
 
         await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
+        if (time.GetUtcNow() >= _nextFileAudit)
+        {
+            try
+            {
+                await AuditFilesAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning(error, $"Database file audit failed; the next scheduled audit retries");
+            }
+        }
 
         // A failed file deletion may have removed the main file already; its durable intent remains discoverable.
         string? after = null;

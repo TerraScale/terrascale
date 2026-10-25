@@ -13,12 +13,15 @@ internal sealed partial class EngineManagementService
 {
     private readonly Meter _recoveryMeter = meters.Create(Telemetry.MeterName);
     private long _unknownDatabaseFiles;
+    private long _unknownDatabaseBytes;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         RegisterPurgeMetrics();
-        _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
-            description: "Files found at startup without a registered database; preserved for operator recovery.");
+        _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => Interlocked.Read(ref _unknownDatabaseFiles),
+            description: "Files without a registered database at the last audit.");
+        _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_bytes", () => Interlocked.Read(ref _unknownDatabaseBytes), "By",
+            "Bytes in files without a registered database at the last audit.");
         // A restored catalog cannot authorize deleting files before it has been verified.
         if (!catalogGate.Value.IsOpen)
         {
@@ -70,7 +73,7 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
+        await AuditFilesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -88,6 +91,7 @@ internal sealed partial class EngineManagementService
     {
         // ponytail: one page of fixed-size ULID keys bounds items/bytes; partition the scan if interleaved files defeat reuse.
         var registrations = new Dictionary<(string Organization, string Project, string Database), bool>();
+        long count = 0, bytes = 0;
         foreach (var file in engine.EnumerateDatabaseFiles(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -112,21 +116,27 @@ internal sealed partial class EngineManagementService
 
             if (!registered)
             {
-                _unknownDatabaseFiles++;
+                count++;
+                var information = new FileInfo(file.Path);
+                bytes += information.Exists && information.LinkTarget is null ? information.Length : 0;
                 logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
             }
         }
+        Interlocked.Exchange(ref _unknownDatabaseFiles, count);
+        Interlocked.Exchange(ref _unknownDatabaseBytes, bytes);
     }
 
     // A database of the project, or a backup snapshot its organization still tracks there (the storage sweep deletes it).
     public ValueTask<RegisteredDatabaseResult> RegisteredFileAsync(TenantContext storage, CancellationToken cancellationToken) =>
         !catalogGate.Value.IsOpen ? ValueTask.FromResult<RegisteredDatabaseResult>(UnreadableCatalog) :
-        ReadAsync<RegisteredDatabaseResult>(async transaction =>
-            await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
+        ReadAsync<RegisteredDatabaseResult>(async transaction => await IsRegisteredAsync(transaction, storage, cancellationToken).ConfigureAwait(false),
+            static error => error, cancellationToken);
+
+    private static async ValueTask<bool> IsRegisteredAsync(IStorageTransaction transaction, TenantContext storage, CancellationToken cancellationToken) =>
+        await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
             && (await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null
                 || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
-                    .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId),
-            static error => error, cancellationToken);
+                    .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId);
 
     private readonly union CleanupRegistration(bool, Done, Unavailable);
 
