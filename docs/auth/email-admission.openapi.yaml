@@ -1,0 +1,63 @@
+openapi: 3.1.0
+info:
+  title: TerraScale infrastructure email admission
+  version: v1
+  description: Scoped relay supplement; see email/capacity-reserve.md for account budgets and rollout.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://auth.terrascale.tech
+security:
+  - mailAdmission: []
+tags:
+  - name: Email
+    description: Shared Cloudflare account capacity admission.
+paths:
+  /v1/terrascale/email/admission:
+    post:
+      operationId: email_admission
+      tags: [Email]
+      summary: Reserve one infrastructure notification attempt
+      description: Only ts-alerts may reserve one noncritical attempt. Fresh ULIDs can receive one ten-second grant; admitted IDs never grant another attempt. Denials, expired grants and ambiguous responses suppress email while preserving push. This endpoint never sends mail.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [attemptId]
+              properties:
+                attemptId:
+                  type: string
+                  pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+                  description: ULID at most five minutes old and no more than one minute ahead.
+      responses:
+        '200':
+          description: Exactly one provider attempt is reserved; the caller must send by the deadline.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, sendBy]
+                properties:
+                  status: { type: string, const: admitted }
+                  sendBy: { type: string, format: date-time }
+        '400': { $ref: 'platform-api.openapi.yaml#/components/responses/BadRequest' }
+        '401': { description: Missing or invalid infrastructure admission credential. }
+        '413': { description: Request exceeds the bounded email API body size. }
+        '415': { description: Send application/json. }
+        '429':
+          description: Capacity unavailable or attempt already admitted; suppress this attempt.
+          headers:
+            Retry-After:
+              description: Seconds before a future distinct notification may try admission.
+              schema: { type: integer, minimum: 1 }
+        '503': { $ref: 'platform-api.openapi.yaml#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    mailAdmission:
+      type: http
+      scheme: bearer
+      description: Lowercase-hex HMAC-SHA256 of UTF-8 terrascale:email-admission:v1:ts-alerts, keyed by the existing Cloudflare token. Admission-only authority; never log it.

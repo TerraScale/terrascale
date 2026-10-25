@@ -13,7 +13,7 @@ public sealed partial class OpenApiTests
     [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
     public required BrowserFixture Chromium { get; init; }
 
-    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "accountDeletionReceipt", "bearerAuth", "clientBasic", "platformUser", "projectApiKey"];
+    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "accountDeletionReceipt", "bearerAuth", "clientBasic", "mailAdmission", "platformUser", "projectApiKey"];
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 
     [Test]
@@ -127,6 +127,8 @@ public sealed partial class OpenApiTests
         await Assert.That(schemes.GetProperty("SessionCookie").GetProperty("name").GetString()).IsEqualTo("tsauth_session");
         await Assert.That(schemes.GetProperty("ManagementBearer").GetProperty("scheme").GetString()).IsEqualTo("bearer");
         await Assert.That(schemes.GetProperty("clientBasic").GetProperty("scheme").GetString()).IsEqualTo("basic");
+        await Assert.That(Scheme(paths.GetProperty("/v1/terrascale/email/admission").GetProperty("post"))).IsEqualTo("mailAdmission");
+        await Assert.That(schemes.GetProperty("mailAdmission").GetProperty("scheme").GetString()).IsEqualTo("bearer");
         await Assert.That(Scheme(paths.GetProperty("/v1/terrascale/account/deletion").GetProperty("get"))).IsEqualTo("accountDeletionReceipt");
         await Assert.That(schemes.GetProperty("accountDeletionReceipt").GetProperty("in").GetString()).IsEqualTo("header");
         await Assert.That(schemes.GetProperty("accountDeletionReceipt").GetProperty("name").GetString()).IsEqualTo("X-TerraScale-Deletion-Receipt");
@@ -143,7 +145,7 @@ public sealed partial class OpenApiTests
             root = root.Parent;
         }
 
-        List<string> contractFiles = ["account-providers.openapi.yaml"];
+        List<string> contractFiles = ["account-providers.openapi.yaml", "email-admission.openapi.yaml"];
 
         // The YAML is read line by line in the layout this repository writes; a line this cannot place fails the test
         // rather than being skipped, so no published operation goes unchecked.

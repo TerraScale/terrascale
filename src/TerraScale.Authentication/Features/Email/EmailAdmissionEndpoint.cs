@@ -25,7 +25,10 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         Produces<EmailAdmissionResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
+        Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status415UnsupportedMediaType);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     /// <inheritdoc />
