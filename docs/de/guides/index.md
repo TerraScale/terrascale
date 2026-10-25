@@ -20,6 +20,7 @@ Use the [quickstart](/de/getting-started/) to establish one working application 
 - [Errors and safe retries](/de/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/de/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/de/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Schema preview and request diagnostics](/de/guides/schema-preview-request-diagnostics) (pending rollout): bounded historical validation and request IDs for support.
 - [Expire documents with TTL](/de/guides/ttl): automatic deletion after a per-document expiry time, with about an hour of lag.
 - [Vector similarity search](/de/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.
 - [Transactions](/de/guides/transactions): atomic multi-document writes with conditional asserts.
