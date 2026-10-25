@@ -1,3 +1,4 @@
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
@@ -40,7 +41,8 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         int[] buckets = [.. Enumerable.Range(0, 4096)];
         BucketCursor? after = null;
         ReplicaSnapshotPage? terminal = null;
-        Engine.Lattices.Hlc? floor = null;
+        Hlc? floor = null;
+        Dictionary<ReplicaId, Hlc> required = [];
         await foreach (var page in pages.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (terminal is not null || floor is { } previous && previous != page.CollectedBefore
@@ -56,9 +58,10 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
                 var cursor = after;
                 do
                 {
-                    // A source's collected absence cannot delete a live local survivor. Refuse the whole import when
-                    // deletion evidence is missing; retained tombstones can be forgotten safely under this writer.
-                    if (await transaction.ReconcileRefillAsync(buckets, cursor, page.States, floor.Value, cancellationToken).ConfigureAwait(false) is not { } result)
+                    // A live catalog state is forgotten provisionally, and only kept forgotten if the terminal cuts prove the
+                    // source applied all of it. Every change still rolls back if that proof or clean EOF is missing.
+                    if (await transaction.ReconcileRefillAsync(buckets, cursor, page.States, floor.Value, cancellationToken,
+                        database == ChangeGroups.System ? TrackCollected : null).ConfigureAwait(false) is not { } result)
                     {
                         return false;
                     }
@@ -87,6 +90,11 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             return false;
         }
 
+        if (required.Any(need => !terminal.Applied!.TryGetValue(need.Key, out var cut) || cut.Value < need.Value.Value))
+        {
+            return false;
+        }
+
         foreach (var cut in terminal.Applied!.Where(cut => origins.Contains(cut.Key.Value)))
         {
             await transaction.RecordAppliedAsync(cut.Key, cut.Value, cancellationToken).ConfigureAwait(false);
@@ -95,5 +103,57 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         await transaction.InheritCollectedBeforeAsync(floor!.Value, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return true;
+
+        // TS-1012: every operation still visible in a state is named by its author and stamped at most MaxStamp (a counter's
+        // Changed is its last increment). A source that applied each of those authors up to MaxStamp holds every operation
+        // of the state, so its collected absence dominates it: the source deleted the document and collected the
+        // tombstone. The production survivors were metering documents written by gru and fra and the drop projections of a
+        // deleted database's collections, not only the source's own writes.
+        bool TrackCollected(DocumentState state)
+        {
+            var newest = state.MaxStamp;
+            foreach (var author in Authors(state))
+            {
+                if (author.Value is 0 or ulong.MaxValue)
+                {
+                    return false;
+                }
+
+                required[author] = required.TryGetValue(author, out var held) && held.Value >= newest.Value ? held : newest;
+            }
+
+            return true;
+        }
+    }
+
+    private static IEnumerable<ReplicaId> Authors(DocumentState state)
+    {
+        if (state.Clear is { } clear)
+        {
+            yield return clear.Version.Node;
+        }
+
+        foreach (var field in state.Fields.Values)
+        {
+            if (field.Base is { } value)
+            {
+                yield return value.Version.Node;
+            }
+
+            // A counter's epoch names the base or clear it counts from, not an operation of its own.
+            foreach (var node in field.Counters.Keys)
+            {
+                yield return node;
+            }
+
+            foreach (var (key, dot) in field.Dots)
+            {
+                yield return key.Version.Node;
+                if (dot.RemovedAt is { } removed)
+                {
+                    yield return removed.Node;
+                }
+            }
+        }
     }
 }

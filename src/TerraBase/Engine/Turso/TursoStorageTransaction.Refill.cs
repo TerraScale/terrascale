@@ -34,7 +34,8 @@ internal sealed partial class TursoStorageTransaction
 
     // One bounded local page only; the caller disposes its transaction before asking for the next one.
     internal async ValueTask<(int Forgotten, BucketCursor? Next)?> ReconcileRefillAsync(
-        IReadOnlyList<int> buckets, BucketCursor? after, IReadOnlyList<RepairState> source, Hlc collectedBefore, CancellationToken cancellationToken)
+        IReadOnlyList<int> buckets, BucketCursor? after, IReadOnlyList<RepairState> source, Hlc collectedBefore, CancellationToken cancellationToken,
+        Func<DocumentState, bool>? trackCollectedPut = null)
     {
         var (local, next) = await ReadBucketStatesAsync(buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
         var present = source.Select(state => (state.Collection, state.Id)).ToHashSet();
@@ -52,7 +53,7 @@ internal sealed partial class TursoStorageTransaction
             if (state.State.MaxStamp.Value < collectedBefore.Value && !present.Contains((state.Collection, state.Id)))
             {
                 // Absence alone cannot distinguish collection from a source that never received this live state.
-                if (state.State.Exists)
+                if (state.State.Exists && trackCollectedPut?.Invoke(state.State) != true)
                 {
                     return null;
                 }
