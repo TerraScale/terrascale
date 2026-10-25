@@ -100,7 +100,7 @@ internal sealed partial class EngineManagementService
                 if (!registrations.TryGetValue(key, out registered))
                 {
                     checkpoint("audit.registration", database);
-                    registered = await IsRegisteredAsync(database, cancellationToken).ConfigureAwait(false);
+                    registered = await RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false) is true;
                     if (registrations.Count == MemberPage)
                     {
                         registrations.Clear();
@@ -119,13 +119,14 @@ internal sealed partial class EngineManagementService
     }
 
     // A database of the project, or a backup snapshot its organization still tracks there (the storage sweep deletes it).
-    private ValueTask<bool> IsRegisteredAsync(TenantContext storage, CancellationToken cancellationToken) =>
-        ReadCatalogAsync(async transaction =>
+    public ValueTask<RegisteredDatabaseResult> RegisteredFileAsync(TenantContext storage, CancellationToken cancellationToken) =>
+        !catalogGate.Value.IsOpen ? ValueTask.FromResult<RegisteredDatabaseResult>(UnreadableCatalog) :
+        ReadAsync<RegisteredDatabaseResult>(async transaction =>
             await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
             && (await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null
                 || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
                     .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId),
-            cancellationToken);
+            static error => error, cancellationToken);
 
     private readonly union CleanupRegistration(bool, Done, Unavailable);
 
