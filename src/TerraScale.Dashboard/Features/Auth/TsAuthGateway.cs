@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Http;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Auth;
@@ -16,11 +17,11 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
             // The owning issuer's userinfo validates signature, access-token
             // type, revocation, the current user epoch and MFA state. ts-auth
             // does not serve an introspection endpoint.
-            var user = await client.Oidc.GetUserInfoAsync(session.AccessToken, cancellationToken);
+            var user = await SessionUserInfoAsync(client, session, cancellationToken);
             return user.Subject == session.UserId && user.EmailVerified == true &&
                 user.Email?.Trim().ToLowerInvariant() == session.Email.Trim().ToLowerInvariant();
         }
-        catch (TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        catch (SignInRejectedException)
         {
             return false;
         }
@@ -34,6 +35,16 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     }
 
     private TerraScaleAuthClient Client() => new(http.CreateClient("platform"), new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = Tenant });
+
+    private Task<TerraScaleAuthOidcDiscovery> MetadataAsync(TerraScaleAuthClient client, CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "oidc-metadata"), () => client.Oidc.GetDiscoveryDocumentAsync(cancellationToken));
+
+    private Task<TerraScaleAuthJwkSet> SigningKeysAsync(TerraScaleAuthClient client, CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "oidc-keys"), () => client.Oidc.GetJwksAsync(cancellationToken));
+
+    private Task<TerraScaleAuthUserInfo> SessionUserInfoAsync(TerraScaleAuthClient client, SessionRecord session, CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "oidc-userinfo", session.AccessToken, session.UserId, session.Email),
+            () => UserInfoAsync(client, session.AccessToken, cancellationToken));
 
     // ts-auth serves one global issuer, https://auth.terrascale.tech/terrascale, from every region.
     private const string Tenant = "terrascale";

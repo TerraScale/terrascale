@@ -47,6 +47,10 @@ public sealed partial class TsAuthGateway
         if (string.IsNullOrWhiteSpace(session.RefreshToken)) throw new SignInRejectedException();
         var credentials = await identity.ReadAsync(cancellationToken);
         var client = Client();
+        var metadataRead = MetadataAsync(client, cancellationToken);
+        var keysRead = SigningKeysAsync(client, cancellationToken);
+        // Observe speculative failures even when refresh fails or returns no ID token.
+        _ = ObservePublicReadsAsync(metadataRead, keysRead);
         TerraScaleAuthTokenResponse tokens;
         try
         {
@@ -60,17 +64,19 @@ public sealed partial class TsAuthGateway
         { throw new RefreshNotStartedException(error); }
         if (tokens.ExpiresIn is <= 0 or > 86400 || !string.Equals(tokens.TokenType, "Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(tokens.AccessToken))
             throw new SignInRejectedException();
+        var userRead = SessionUserInfoAsync(client, session with { AccessToken = tokens.AccessToken }, cancellationToken);
+        _ = ObservePublicReadsAsync(userRead);
         // OIDC allows refresh answers without an ID token. A new ID token must
         // still prove the original subject, and userinfo remains mandatory.
         if (tokens.IdToken is { Length: > 0 })
         {
-            var metadata = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+            var metadata = await metadataRead;
             _ = TrustedIssuer(metadata.Issuer);
             var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, null,
-                await client.Oidc.GetJwksAsync(cancellationToken), time.GetUtcNow());
+                await keysRead, time.GetUtcNow());
             if (claims.Subject != session.UserId) throw new SignInRejectedException();
         }
-        var user = await UserInfoAsync(client, tokens.AccessToken, cancellationToken);
+        var user = await userRead;
         if (user.Subject != session.UserId || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != session.Email) throw new SignInRejectedException();
         var refreshed = session with
         {
@@ -81,9 +87,11 @@ public sealed partial class TsAuthGateway
             RefreshLease = "",
             RefreshLeaseUntil = null
         };
-        if (!await IsActiveAsync(refreshed, cancellationToken)) throw new SignInRejectedException();
         return refreshed;
     }
+
+    private static async Task ObservePublicReadsAsync(params Task[] reads) =>
+        await Task.WhenAll(reads).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // ts-auth ends its own session, shows its hosted "Signed out" page, then continues to the dashboard's /login.
     public async Task<string> EndSessionUrlAsync(string dashboardOrigin, string? idToken, CancellationToken cancellationToken)

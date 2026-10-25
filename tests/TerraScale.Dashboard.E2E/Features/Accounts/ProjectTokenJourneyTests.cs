@@ -17,6 +17,21 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts;
 public sealed class ProjectTokenJourneyTests
 {
     [Test]
+    public async Task ColdProjectExchangeOverlapsDiscoveryAndSigningKeys()
+    {
+        await using var scenario = await TokenScenario.StartAsync();
+        using var client = scenario.Client();
+        using (var login = await HttpJourney.LoginAsync(client)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        scenario.Issuer.RequireOverlap = true;
+        using var page = await client.GetAsync("/analytics?range=24h");
+        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(scenario.Issuer.PublicReads).IsEqualTo(2);
+        await Assert.That(scenario.Issuer.Exchanges).IsEqualTo(1);
+        await Assert.That(scenario.Recorder.Bearers.Count).IsEqualTo(1).Because("all three issuer requests must start before any can finish");
+        await Assert.That(scenario.Issuer.Failures).IsEmpty();
+    }
+
+    [Test]
     public async Task ExpiredOrForeignProjectTokensAreNeverDispatchedToTerraBase()
     {
         await using var scenario = await TokenScenario.StartAsync();
@@ -148,6 +163,11 @@ public sealed class ProjectTokenJourneyTests
         private readonly ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private readonly ConcurrentQueue<string> failures = new();
         private int exchanges;
+        private int arrivals;
+        private int publicReads;
+        private readonly TaskCompletionSource overlap = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool RequireOverlap { get; set; }
+        public int PublicReads => publicReads;
         public string Fault { get; set; } = "";
         public int Exchanges => exchanges;
         public string LastToken { get; private set; } = "";
@@ -156,6 +176,12 @@ public sealed class ProjectTokenJourneyTests
 
         public async Task<HttpResponseMessage> HandleAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (RequireOverlap)
+            {
+                if (request.RequestUri!.AbsolutePath.Contains("/.well-known/", StringComparison.Ordinal)) Interlocked.Increment(ref publicReads);
+                if (Interlocked.Increment(ref arrivals) == 3) overlap.TrySetResult();
+                await overlap.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            }
             switch (request.RequestUri!.AbsolutePath)
             {
                 case "/terrascale/.well-known/openid-configuration":

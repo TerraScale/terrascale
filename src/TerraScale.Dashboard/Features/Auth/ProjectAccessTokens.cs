@@ -59,7 +59,11 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
         var scope = string.Join(' ', scopes.Order(StringComparer.Ordinal));
         var credentials = await identity.ReadAsync(cancellationToken);
         var client = Client();
-        var discovery = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+        // Public verification material and the exchange are independent. Cold scopes share
+        // metadata within this request; all token claims are still checked before dispatch.
+        var discoveryRead = MetadataAsync(client, cancellationToken);
+        var keysRead = SigningKeysAsync(client, cancellationToken);
+        _ = ObservePublicReadsAsync(discoveryRead, keysRead);
         TerraScaleAuthTokenResponse response;
         try
         {
@@ -80,6 +84,7 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
         }
         try
         {
+            var discovery = await discoveryRead;
             var issuer = TrustedIssuer(discovery.Issuer);
             if (response.TokenType != "Bearer" || response.IssuedTokenType != "urn:ietf:params:oauth:token-type:access_token" ||
                 response.ExpiresIn is <= 0 or > 900 ||
@@ -88,7 +93,7 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
                 throw new SignInRejectedException();
             var now = time.GetUtcNow();
             var claims = AuthJwtClaims.Read(response.AccessToken, issuer, TerraBaseAudience,
-                await client.Oidc.GetJwksAsync(cancellationToken), now, "at+jwt");
+                await keysRead, now, "at+jwt");
             if (claims.GetProperty("sub").GetString() != session.UserId ||
                 claims.GetProperty("client_id").GetString() != credentials.AuthClientId ||
                 claims.GetProperty("org_id").GetString() != organizationId || claims.GetProperty("project_id").GetString() != projectId ||
