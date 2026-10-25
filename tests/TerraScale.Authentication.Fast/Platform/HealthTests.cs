@@ -302,36 +302,58 @@ public sealed class HealthTests
     }
 
     [Test]
-    public async Task A_log_provider_that_throws_never_breaks_readiness()
+    public async Task A_log_provider_that_throws_never_breaks_readiness(CancellationToken cancellationToken)
     {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new SettledReadinessClock();
         var health = new ThrowingStorageHealth(new IOException("storage down"));
         var logs = new ThrowingWarningLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
-            services.AddSingleton<TimeProvider>(clock);
+            // Only the readiness loop uses this clock, so another worker's timer cannot signal a pass.
+            services.AddSingleton(provider => new ReadinessProbe(health, clock, provider.GetRequiredService<ILogger<ReadinessProbe>>()));
             services.PostConfigure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(typeof(ThrowingWarningLogs).FullName, null, LogLevel.Debug, null)));
             services.AddSingleton<ILoggerProvider>(logs);
             services.AddSingleton<IStorageHealth>(health);
         });
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await Assert.That(await logs.NextPassAsync(deadline.Token)).IsEqualTo(LogLevel.Warning);
-        using var first = await server.Client.GetAsync("/readyz");
+        await Assert.That(await logs.NextPassAsync(cancellationToken)).IsEqualTo(LogLevel.Warning);
+        using var first = await server.Client.GetAsync("/readyz", cancellationToken);
         // Two more settled passes prove the failed warning did not stop the loop.
         foreach (var pass in new[] { 2, 3 })
         {
-            // The readiness log follows the settled check; a call count can still observe work in flight.
-            clock.Advance(TimeSpan.FromSeconds(5));
-            await Assert.That(await logs.NextPassAsync(deadline.Token)).IsEqualTo(LogLevel.Debug);
+            // Logging happens before Task.Delay registers the next timer. Advancing at the log
+            // alone can miss that timer and leave the loop waiting forever on an unmoving clock.
+            await clock.NextPassAsync(cancellationToken);
+            await Assert.That(await logs.NextPassAsync(cancellationToken)).IsEqualTo(LogLevel.Debug);
             await Assert.That(health.Calls).IsEqualTo(pass);
         }
 
-        using var second = await server.Client.GetAsync("/readyz");
+        using var second = await server.Client.GetAsync("/readyz", cancellationToken);
 
         // Not ready, and still answering: the failed log write did not fault the background loop.
         await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+    }
+
+    private sealed class SettledReadinessClock : FakeTimeProvider
+    {
+        private readonly Channel<TimeSpan> intervals = Channel.CreateUnbounded<TimeSpan>();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            // The other timer is the eight-second probe deadline. Signal only the inter-pass wait,
+            // after the timer exists, so advancing time cannot race its registration.
+            if (dueTime == TimeSpan.FromSeconds(5) && period == Timeout.InfiniteTimeSpan)
+            {
+                this.intervals.Writer.TryWrite(dueTime);
+            }
+
+            return timer;
+        }
+
+        public async Task NextPassAsync(CancellationToken cancellationToken) =>
+            this.Advance(await this.intervals.Reader.ReadAsync(cancellationToken));
     }
 
     private sealed class ThrowingWarningLogs : ILoggerProvider
