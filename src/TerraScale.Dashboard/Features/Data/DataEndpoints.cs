@@ -203,6 +203,11 @@ public static class DataEndpoints
         if (collection.Length == 0) collection = http.Request.Query["collection"].ToString();
         try
         {
+            var countsRead = section == "documents" ? data.CollectionCountsAsync(context, id, http.RequestAborted) : null;
+            // Listing can fail or select no collection. Observe even a later unused counts fault.
+            if (countsRead is not null)
+                _ = countsRead.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             collections = await data.CollectionsAsync(context, id, http.RequestAborted);
             // Default to a collection that exists; a database without collections has none selected.
             if (collection.Length == 0) collection = collections.FirstOrDefault()?.Name ?? "";
@@ -211,9 +216,8 @@ public static class DataEndpoints
             {
                 // Counts are an optional producer measurement. Omit unavailable
                 // counts while retaining independently available document rows; both reads run together.
-                var countsRead = data.CollectionCountsAsync(context, id, http.RequestAborted);
                 var browseRead = data.BrowseAsync(context, id, collection, search, sort, descending, int.TryParse(BrowseValue("page"), out var page) ? page : 1, http.RequestAborted);
-                try { collectionCounts = await countsRead; }
+                try { collectionCounts = await countsRead!; }
                 catch (Exception error) when (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)) { }
                 browse = await browseRead;
                 if (dialog.Length == 0 && (http.Request.Query["edit"].ToString() is { Length: > 0 } edit))
