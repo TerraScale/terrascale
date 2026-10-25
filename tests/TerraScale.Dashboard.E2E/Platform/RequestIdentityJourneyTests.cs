@@ -16,9 +16,14 @@ public sealed class RequestIdentityJourneyTests(DashboardRootFixture fixture)
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
         await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1");
-        app.MapGet("/api/request-forward", async () =>
+        app.MapGet("/api/request-forward", async (HttpContext http) =>
         {
+            if (http.Request.Headers.ContainsKey(RequestIdentity.ProofHeader)) throw new InvalidOperationException("Ingress proof was not consumed.");
             using var outbound = new HttpClient(new RequestIdentity.Handler(new Demo.TestIdentity()) { InnerHandler = new Echo() });
+            using var untrusted = new HttpRequestMessage(HttpMethod.Get, "https://untrusted.example/");
+            untrusted.Headers.Add(RequestIdentity.Header, "caller-supplied");
+            untrusted.Headers.Add(RequestIdentity.ProofHeader, "caller-supplied");
+            using var stripped = await outbound.SendAsync(untrusted);
             return Results.Text(await outbound.GetStringAsync("https://api.terrascale.tech/v1/probe"));
         });
         app.MapGet("/api/request-identity", () => Results.Problem("Safe validation failure.", statusCode: 422));
@@ -60,6 +65,11 @@ public sealed class RequestIdentityJourneyTests(DashboardRootFixture fixture)
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.Host == "untrusted.example")
+            {
+                if (request.Headers.Contains(RequestIdentity.Header) || request.Headers.Contains(RequestIdentity.ProofHeader)) throw new InvalidOperationException("Untrusted headers were not stripped.");
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            }
             var id = request.Headers.GetValues(RequestIdentity.Header).Single();
             var proof = request.Headers.GetValues(RequestIdentity.ProofHeader).Single();
             if (!RequestIdentity.Verify(id, proof, Demo.TestIdentity.PeerSecret)) throw new InvalidOperationException("Invalid outbound proof.");

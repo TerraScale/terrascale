@@ -122,6 +122,7 @@ public sealed class TerraBasePeerCredential(IDashboardIdentity identity, IHostEn
         var credentials = await identity.ReadAsync(cancellationToken);
         request.Headers.Remove(Header);
         request.Headers.Add(Header, credentials.TerraBasePeerSecret);
+        RequestIdentity.Forward(request, credentials.TerraBasePeerSecret);
         return await base.SendAsync(request, cancellationToken);
     }
 }

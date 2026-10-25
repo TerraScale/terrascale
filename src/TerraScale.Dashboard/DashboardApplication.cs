@@ -84,7 +84,6 @@ public static class DashboardApplication
         builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
             .AddHttpMessageHandler<ServerTiming.Handler>()
-            .AddHttpMessageHandler<RequestIdentity.Handler>()
             .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();

@@ -8,7 +8,7 @@
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
 <div class="ts-field"><label class="ts-label" for="preview-collection">Collection</label><input class="ts-input ts-mono" id="preview-collection" name="collection" value="@Model.Collection" maxlength="128" required /></div>
 <div class="ts-field"><label class="ts-label" for="preview-schema">Proposed JSON Schema</label><textarea class="ts-input ts-mono" id="preview-schema" name="schema" rows="12" maxlength="49152" spellcheck="false" required>@Model.Schema</textarea></div>
-<p class="ts-hint">Start again after editing the schema or collection. Writes between pages can make the preview stale. Cancel by leaving this page; no background scan continues.</p>
+<p class="ts-hint">Dashboard schemas are limited to 48 KiB (API: 64 KiB). Start again after editing the schema or collection. Writes between pages can make the preview stale. Cancel by leaving this page; no background scan continues.</p>
 <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit" name="cursor" value="">Start preview</button>@if(Model.Cursor.Length > 0){<button class="ts-btn ts-btn-secondary" type="submit" name="cursor" value="@Model.Cursor">Inspect next page</button>}</div>
 </form>
 @if(Model.Preview is { } result){

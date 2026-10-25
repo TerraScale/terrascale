@@ -20,6 +20,7 @@ public static class RequestIdentity
         var id = supplied.Count == 1 && proof.Count == 1 && TerraScaleIds.IsValid(supplied[0]) &&
             Verify(supplied[0], proof[0], (await http.RequestServices.GetRequiredService<IDashboardIdentity>().ReadAsync(http.RequestAborted)).TerraBasePeerSecret)
             ? supplied[0]! : AccountService.NewId();
+        http.Request.Headers.Remove(ProofHeader);
         var previous = Current.Value;
         Current.Value = id;
         http.TraceIdentifier = id;
@@ -43,8 +44,10 @@ public static class RequestIdentity
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (Id is not null && (request.RequestUri?.Host is "auth.terrascale.tech" or "api.terrascale.tech" or "127.0.0.1" or "localhost" or "::1" ||
-                request.RequestUri?.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal) == true))
+            request.Headers.Remove(Header);
+            request.Headers.Remove(ProofHeader);
+            if (Id is not null && request.RequestUri is { Scheme: "https", IsDefaultPort: true, UserInfo.Length: 0 } uri &&
+                (uri.Host is "auth.terrascale.tech" or "api.terrascale.tech" || uri.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal)))
                 Forward(request, (await identity.ReadAsync(cancellationToken)).TerraBasePeerSecret);
             return await base.SendAsync(request, cancellationToken);
         }
