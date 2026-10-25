@@ -72,10 +72,12 @@ var ErrRegionMismatch = errors.New("served by another region")
 type Region struct {
 	Name     string
 	base     *url.URL
-	token    string
+	token    atomic.Pointer[string]
 	client   *http.Client
 	dbPath   string
 	Mismatch atomic.Int64
+	// Pin, when set, asks the edge for this serving region (X-TerraScale-Region-Pin).
+	Pin string
 }
 
 // NewRegion builds the client of one region of t.
@@ -93,13 +95,14 @@ func NewRegion(name string, t Targets, conns int) (*Region, error) {
 		}
 		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
-	return &Region{
+	region := &Region{
 		Name:   name,
 		base:   base,
-		token:  rt.Token,
 		client: &http.Client{Transport: tr, Timeout: 60 * time.Second},
 		dbPath: "/v1/projects/" + t.Project + "/databases/" + t.Database,
-	}, nil
+	}
+	region.SetToken(rt.Token)
+	return region, nil
 }
 
 // Response is a finished call: status, body and the server's Retry-After, if any.
@@ -109,6 +112,9 @@ type Response struct {
 	RetryAfter    time.Duration
 	HasRetryAfter bool
 }
+
+// SetToken replaces the bearer token for later requests, for clients whose tokens expire.
+func (r *Region) SetToken(token string) { r.token.Store(&token) }
 
 // Do sends one request below the database path. path starts with "/".
 func (r *Region) Do(ctx context.Context, method, path string, body []byte, contentType string) (Response, error) {
@@ -126,7 +132,10 @@ func (r *Region) Do(ctx context.Context, method, path string, body []byte, conte
 	if err != nil {
 		return Response{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+r.token)
+	req.Header.Set("Authorization", "Bearer "+*r.token.Load())
+	if r.Pin != "" {
+		req.Header.Set("X-TerraScale-Region-Pin", r.Pin)
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
