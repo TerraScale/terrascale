@@ -28,7 +28,7 @@ namespace TerraBase.Features.Management.Backups;
 /// <see cref="MaxScheduledBackupsPerPass"/> scheduled backups in turn order.
 /// </remarks>
 internal sealed class EngineManagedBackupService(
-    IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, TimeProvider time,
+    IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, TimeProvider time,
     ILogger<EngineManagedBackupService> logger)
     : IManagedBackupService
 {
@@ -193,6 +193,17 @@ internal sealed class EngineManagedBackupService(
         }
 
         var staging = database with { DatabaseId = EntityIds.New().ToString() };
+        await using var activeRestore = await orphanFiles.ProtectRestoreAsync(staging, cancellationToken).ConfigureAwait(false);
+        // Restore staging belongs to recovery while it is unregistered, including across a crash.
+        var reserved = await catalog.WriteAsync<CatalogCheck>(async transaction =>
+        {
+            await SystemCatalog.PutAsync(transaction, "pending_database_cleanup", staging.DatabaseId!, staging, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (reserved is Unavailable unavailable)
+        {
+            return unavailable;
+        }
         try
         {
             return await pointInTime.RestoreAsync(database, at, staging, cancellationToken, destination).ConfigureAwait(false) switch
@@ -207,6 +218,11 @@ internal sealed class EngineManagedBackupService(
         finally
         {
             await engine.DeleteDatabaseAsync(staging, CancellationToken.None).ConfigureAwait(false);
+            _ = await catalog.WriteAsync<bool>(async transaction =>
+            {
+                await transaction.DeleteAsync("pending_database_cleanup", staging.DatabaseId!, CancellationToken.None).ConfigureAwait(false);
+                return true;
+            }, static _ => false, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

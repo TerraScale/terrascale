@@ -748,7 +748,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     /// ponytail: a transaction already running on the deleted database finishes on the unlinked file (Linux)
     /// and new ones fail; add per-database reference counting if deletes must wait for in-flight work.
     /// </remarks>
-    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
+    public ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null) =>
+        DeleteDatabaseCoreAsync(database, cancellationToken, retainIntentOwnership, incarnation);
+
+    public ValueTask<bool> DeleteAsync(TenantContext database, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> authorize, CancellationToken cancellationToken) =>
+        DeleteDatabaseCoreAsync(database, cancellationToken, authorize: authorize);
+
+    private async ValueTask<bool> DeleteDatabaseCoreAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false,
+        Ulid? incarnation = null, Func<IStorageTransaction, CancellationToken, ValueTask<bool>>? authorize = null)
     {
         var (key, path) = Locate(database);
         if (SystemDatabaseExists)
@@ -756,16 +763,48 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             // Opened outside the creation lock, which its opening takes: the deletion forgets the rebuild record under it.
             _ = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         }
+        else if (authorize is not null)
+        {
+            return false;
+        }
 
         while (true)
         {
             Task initialization;
             TursoDatabaseStore? retired = null;
+            IStorageTransaction? authorization = null;
             await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 RejectDatabaseLinks(path);
+                if (authorize is not null)
+                {
+                    if (_system is null)
+                    {
+                        return false;
+                    }
+                    // Never take over lifecycle, rebuild or salvage ownership.
+                    if (OrphanBusyLocked(key, path))
+                    {
+                        return false;
+                    }
+
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    deadline.CancelAfter(TimeSpan.FromSeconds(1));
+                    authorization = await _system!.BeginTransactionAsync(write: true, deadline.Token).ConfigureAwait(false);
+                    // Read on the held writer's lane: no ledger gate or shared I/O queue under the catalog writer.
+                    var rebuilding = await ((TursoStorageTransaction)authorization).LedgerAsync(command =>
+                    {
+                        using var query = command("SELECT 1 FROM _tb_rebuild WHERE organization = $organization AND project = $project AND database = $database;");
+                        RebuildLedger.Key.Of(database).Bind(query);
+                        return query.ExecuteScalar() is not null;
+                    }, deadline.Token).ConfigureAwait(false);
+                    if (rebuilding || !await Io.WithAdmissionAsync(() => authorize(authorization, deadline.Token)).ConfigureAwait(false))
+                    {
+                        return false;
+                    }
+                }
                 if (incarnation is { } expected && (!_stores.TryGetValue(key, out var open) || open.Incarnation != expected))
                 {
                     return false;
@@ -783,7 +822,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 if (!_initializing.TryGetValue(key, out var pending))
                 {
                     var existed = File.Exists(path);
-                    await Io.RunAsync(() =>
+                    var cleanup = authorize is null ? (TursoRunner)Io : _system!.WriteLane;
+                    await cleanup.RunAsync(() =>
                     {
                         if (_stores.TryRemove(key, out var store))
                         {
@@ -793,7 +833,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
-                    await Io.RunAsync(() =>
+                    if (authorize is not null && Pool.HasOpenHandles(path))
+                    {
+                        retired = null;
+                        return false; // Closed readers and writers finish before a later pass unlinks anything.
+                    }
+                    await cleanup.RunAsync(() =>
                     {
                         RejectLink(path);
                         DeleteFileIfPresent(path);
@@ -831,6 +876,12 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
                     _ = _publishing.TryRemove(key, out _);
+                    if (authorization is not null)
+                    {
+                        await authorization.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                        await authorization.DisposeAsync().ConfigureAwait(false);
+                        authorization = null;
+                    }
                     // Once no file is left: a crash before this keeps a record with nothing to rebuild until the durable deletion
                     // runs again, and a rebuild or fault after it finds the database deleted.
                     _ = await Io.WithAdmissionAsync(async () =>
@@ -849,17 +900,27 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         NotifyReplicationChanged(ChangeGroups.System);
                     }
 
-                    return existed;
+                    return authorize is not null || existed;
                 }
 
                 initialization = pending;
             }
             finally
             {
-                ExitCreation();
-                if (retired is not null)
+                try
                 {
-                    Notify(DatabaseDeleted, retired, key.Database);
+                    if (authorization is not null)
+                    {
+                        await authorization.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    ExitCreation();
+                    if (retired is not null)
+                    {
+                        Notify(DatabaseDeleted, retired, key.Database);
+                    }
                 }
             }
 

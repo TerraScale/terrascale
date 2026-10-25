@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -121,6 +122,12 @@ internal sealed partial class EngineManagementService
                         {
                             continue;
                         }
+                        if (time.GetUtcNow() - record.FirstSeen >= TimeSpan.FromHours(24)
+                            && await DeleteOrphanAsync(record, cancellationToken).ConfigureAwait(false))
+                        {
+                            logger.ZLogInformation($"Deleted orphan database {record.Database.DatabaseId:@Database}: {record.Bytes:@Bytes} bytes, first seen {record.FirstSeen:@FirstSeen}");
+                            continue;
+                        }
                         count += record.Files;
                         bytes += record.Bytes;
                         logger.ZLogWarning($"Preserved database without a catalog registration: {record.Database.DatabaseId:@Database}, {record.Bytes:@Bytes} bytes in {record.Files:@Files} files, first seen {record.FirstSeen:@FirstSeen}");
@@ -151,6 +158,32 @@ internal sealed partial class EngineManagementService
         {
             _nextFileAudit = time.GetUtcNow() + TimeSpan.FromMinutes(15);
             Volatile.Write(ref _fileAudit, 0);
+        }
+    }
+
+    private async ValueTask<bool> DeleteOrphanAsync(OrphanDatabaseFile observation, CancellationToken cancellationToken)
+    {
+        var database = observation.Database;
+        var id = OrphanId(database);
+        try
+        {
+            return await orphanFiles.DeleteAsync(database, async (transaction, token) =>
+            {
+                if (!catalogGate.Value.IsOpen || await CheckReadAsync(transaction, token).ConfigureAwait(false) is not Done
+                    || await OwnedFileAsync(transaction, database, token).ConfigureAwait(false)
+                    || await GetAsync(transaction, OrphanFiles, id, TerraBaseJsonContext.Default.OrphanDatabaseFile, token).ConfigureAwait(false) != observation
+                    || time.GetUtcNow() - observation.FirstSeen < TimeSpan.FromHours(24))
+                {
+                    return false;
+                }
+                await transaction.DeleteAsync(OrphanFiles, id, token).ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is IOException or OperationCanceledException or StorageBusyException)
+        {
+            logger.ZLogDebug($"Orphan cleanup deferred: {error.GetType().Name:@Reason}");
+            return false;
         }
     }
 
