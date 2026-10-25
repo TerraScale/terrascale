@@ -22,7 +22,7 @@ namespace TerraBase.Features.Replication;
 /// groups of every database the peer's region holds, up to <see cref="ReplicationProtocol.Window"/> batches per database in
 /// flight (one with a protocol 1 peer), resumes from the peer's last ack after a reconnect, and heartbeats while idle. Its cursors and lags are the outbound replication status.
 /// </summary>
-internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemoteDurability
+internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemoteDurability, IRuntimePeerTopology
 {
     private static readonly TimeSpan Idle = TimeSpan.FromSeconds(1);
     // A refused batch retries after FirstRetry, doubling up to MaxRetry, each wait jittered.
@@ -1299,6 +1299,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         lock (_gate)
         {
             return _links.GetValueOrDefault(name);
+        }
+    }
+
+    public IReadOnlyList<ClusterMember> ConfiguredPeers()
+    {
+        lock (_gate)
+        {
+            return [.. _links.Values.Select(link => link.Peer)];
         }
     }
 

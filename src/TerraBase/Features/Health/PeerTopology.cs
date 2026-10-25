@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Health;
@@ -124,6 +125,8 @@ internal sealed class PeerTopology : BackgroundService, IPeerTopology
         TopologyPeer[] runtime = [];
         try
         {
+            runtime = Canonical(_services.GetRequiredService<IRuntimePeerTopology>().ConfiguredPeers().Select(Identity)
+                .Append(new TopologyPeer(_options.MachineId, _options.Region, _bound.Address.ToString())));
             var bytes = await ReadBoundedAsync(Path.Combine(Path.GetDirectoryName(_options.PeersFile)!, "topology.json"), cancellationToken).ConfigureAwait(false);
             using var document = JsonDocument.Parse(bytes);
             RejectDuplicateProperties(document.RootElement);
@@ -153,9 +156,10 @@ internal sealed class PeerTopology : BackgroundService, IPeerTopology
             var directory = _services.GetService<IMemberDirectory>() ?? throw new JsonException();
             var listed = Canonical((await directory.ListAsync(cancellationToken).ConfigureAwait(false)).Select(Identity));
             var view = await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
-            runtime = Canonical(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(Identity));
+            var membership = Canonical(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(Identity));
             return new(observed, generation,
-                expected.SequenceEqual(file) && expected.SequenceEqual(listed) && expected.SequenceEqual(runtime) && _membership.HoldsLease
+                expected.SequenceEqual(file) && expected.SequenceEqual(listed) && expected.SequenceEqual(membership)
+                    && expected.SequenceEqual(runtime) && _membership.HoldsLease
                     && expected.Single(peer => peer.Node == _options.MachineId).Address == _bound.Address.ToString() ? "ok" : "mismatch", runtime);
         }
         catch (Exception)

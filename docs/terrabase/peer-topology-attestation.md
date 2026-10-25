@@ -15,12 +15,12 @@ duplicate data closes serving. Observations older than 30 seconds or over
 5 seconds in the future close serving too.
 
 TerraBase compares the manifest with the strict peers-file contents, current
-member directory, loaded runtime membership, and self's address actually bound
-at startup. Changing self's advertised address requires a matching listener.
-Configured membership is
-compared; a temporarily disconnected replication stream does not remove its
-peer. Readiness and client requests fail closed on drift, as do new wire
-operations and PostgreSQL messages. Established ordinary and end-user change
+member directory, loaded membership, actual configured replication links, and
+self's address actually bound at startup. Changing self's advertised address
+requires a matching listener. Link identities are copied under the replication
+lock without refreshing or rewriting links; a temporarily disconnected stream
+does not remove its peer. Readiness and client requests fail closed on drift,
+as do new wire operations and PostgreSQL messages. Established ordinary and end-user change
 feeds recheck before subsequent reads and sends, closing without further data
 when refused. Peer replication and repair, liveness,
 metrics and internal diagnostics remain available, permitting automatic
@@ -29,7 +29,8 @@ cluster manifest to validate.
 
 The peer-authenticated internal `GET /v1/health/topology` returns
 `{mismatch,ageSeconds,generation,reason,peers}` with `Cache-Control: no-store`.
-`peers` is the loaded runtime view. The native `/metrics` exposes scalar
+`peers` contains actual configured replication links plus startup-bound self.
+The native `/metrics` exposes scalar
 `terrabase_peer_topology_mismatch` (0 agrees, 1 unknown/drift) and
 `terrabase_peer_topology_generation_age_seconds` (-1 if unknown). Generation is
 the desired service generation, not a storage format or a membership revision.

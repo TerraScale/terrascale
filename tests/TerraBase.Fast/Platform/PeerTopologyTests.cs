@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
+using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -20,6 +21,7 @@ public sealed class PeerTopologyTests
     [Arguments("stale")]
     [Arguments("future")]
     [Arguments("runtime")]
+    [Arguments("runtime-links")]
     [Arguments("duplicate-property")]
     [Arguments("regions")]
     [Arguments("oversized")]
@@ -37,6 +39,7 @@ public sealed class PeerTopologyTests
         var ownAddress = "127.0.0.1";
         var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var hang = false;
+        var links = new ConfiguredLinks();
         var bucket = new FakeS3();
         const string complete = "local test-region 127.0.0.1\n";
         try
@@ -58,6 +61,10 @@ public sealed class PeerTopologyTests
                 {
                     services.AddSingleton<IMembership>(provider => new DirectoryMembership(new PeersFile(options with { PeersFile = runtimeFile }), options,
                         clock, provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DirectoryMembership>>()));
+                }
+                if (damage == "runtime-links")
+                {
+                    services.AddSingleton<IRuntimePeerTopology>(links);
                 }
             });
             using var client = new HttpClient { BaseAddress = server.ClientAddress };
@@ -86,6 +93,14 @@ public sealed class PeerTopologyTests
                     await WriteManifestAsync();
                     clock.Advance(TimeSpan.FromSeconds(6));
                     break;
+                case "runtime-links":
+                    await File.WriteAllTextAsync(file, complete + "remote sjc 127.0.0.2\n");
+                    await WriteManifestAsync(remote: true);
+                    clock.Advance(TimeSpan.FromSeconds(6));
+                    var view = await server.Services.GetRequiredService<IMembership>().RefreshAsync(CancellationToken.None);
+                    await Assert.That(view.Elsewhere.Single().Name).IsEqualTo("remote");
+                    await Assert.That(new Uri(view.Elsewhere.Single().PeerAddress).Host).IsEqualTo("127.0.0.2");
+                    break;
                 case "drain":
                     await File.WriteAllTextAsync(file, complete + "remote sjc 127.0.0.2\n");
                     await WriteManifestAsync(remote: true);
@@ -96,7 +111,7 @@ public sealed class PeerTopologyTests
                     break;
             }
 
-            await AssertVerdictAsync(1, expectedAddress: damage is "self-address" or "runtime" ? "127.0.0.2" : null);
+            await AssertVerdictAsync(1, expectedAddress: damage is "self-address" or "runtime" ? "127.0.0.1" : null);
             await AssertCodeAsync(client, "/readyz", HttpStatusCode.ServiceUnavailable);
             await AssertCodeAsync(client, "/v1/projects/project/databases", HttpStatusCode.ServiceUnavailable);
             await AssertCodeAsync(server.Client, "/healthz", HttpStatusCode.OK);
@@ -107,13 +122,24 @@ public sealed class PeerTopologyTests
             await Assert.That(metrics).Contains("terrabase_peer_topology_generation_age_seconds");
             await Assert.That(metrics.Split('\n').Single(line => line.StartsWith("terrabase_peer_topology_mismatch{", StringComparison.Ordinal)).Split(' ')[1]).IsEqualTo("1");
 
+            if (damage == "runtime-links")
+            {
+                var verdict = await server.Client.GetFromJsonAsync<JsonElement>(new Uri("/v1/health/topology", UriKind.Relative));
+                await Assert.That(verdict.GetProperty("peers").GetArrayLength()).IsEqualTo(1);
+                // Only configured links change: file, directory and membership already agree with the manifest.
+                links.Replace([new("remote", "http://127.0.0.2:8081/", "sjc", string.Empty)]);
+                await AssertVerdictAsync(0, 2);
+                await AssertCodeAsync(client, "/readyz", HttpStatusCode.OK);
+                links.Replace([]);
+            }
+
             if (damage != "runtime")
             {
                 Volatile.Write(ref hang, false);
                 stalled.TrySetResult();
                 ownAddress = "127.0.0.1";
                 await File.WriteAllTextAsync(file, complete);
-                if (damage is "drain" or "self-address")
+                if (damage is "drain" or "self-address" or "runtime-links")
                 {
                     generation++;
                     clock.Advance(TimeSpan.FromSeconds(6));
@@ -179,5 +205,14 @@ public sealed class PeerTopologyTests
             await beforeRead(); // Deliberately ignores cancellation to prove the outer comparison budget.
             return await directory.ListAsync(cancellationToken);
         }
+    }
+
+    private sealed class ConfiguredLinks : IRuntimePeerTopology
+    {
+        private ClusterMember[] _peers = [];
+
+        public IReadOnlyList<ClusterMember> ConfiguredPeers() => [.. Volatile.Read(ref _peers)];
+
+        public void Replace(ClusterMember[] peers) => Volatile.Write(ref _peers, peers);
     }
 }
