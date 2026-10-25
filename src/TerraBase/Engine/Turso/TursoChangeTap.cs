@@ -172,9 +172,12 @@ internal sealed class TursoChangeTap : IWalTap
         ArgumentException.ThrowIfNullOrEmpty(snapshotPath);
         return await AdmittedAsync(async () =>
         {
+            // Inside the hold every call runs on the database's own write lane, idle while the writer is held, never on the
+            // shared I/O pool: a pool starved by other databases' reads would keep this writer held (batch 8, 2026-10-25).
+            var lane = _store.WriteLane;
             var snapshot = await _store.WithWritersHeldAsync(async () =>
             {
-                var read = await ReadCoreAsync(destination, long.MaxValue, cancellationToken).ConfigureAwait(false);
+                var read = await ReadCoreAsync(destination, long.MaxValue, cancellationToken, lane).ConfigureAwait(false);
                 await _store.OnWriterAsync(writer =>
                 {
                     // Nothing commits meanwhile: the anchor is the newest row, and after a hole the next generation starts here.
@@ -182,7 +185,7 @@ internal sealed class TursoChangeTap : IWalTap
                     return Truncate(writer);
                 }, cancellationToken).ConfigureAwait(false);
                 // The read transaction the copy is made in, pinned at the anchor.
-                await _io.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
+                await lane.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
                 try
                 {
                     if (AfterSnapshotBegin is { } begun)
@@ -190,7 +193,7 @@ internal sealed class TursoChangeTap : IWalTap
                         await begun(cancellationToken).ConfigureAwait(false);
                     }
 
-                    await _io.RunAsync(() => Execute("SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
+                    await lane.RunAsync(() => Execute("SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -199,7 +202,7 @@ internal sealed class TursoChangeTap : IWalTap
                     throw;
                 }
 
-                return await _io.RunAsync(() =>
+                return await lane.RunAsync(() =>
                 {
                     using var command = _reader.CreateCommand();
                     command.CommandText = "SELECT incarnation, value FROM commit_offset WHERE id = 1;";
@@ -316,11 +319,12 @@ internal sealed class TursoChangeTap : IWalTap
     }
 
     // Appends the records committed after the anchor, up to the first commit past `budget` bytes, and moves the anchor to
-    // the last of them.
-    private async Task<WalRead> ReadCoreAsync(Stream destination, long budget, CancellationToken cancellationToken)
+    // the last of them. Its calls run on `runner`: the I/O pool, or the write lane of a caller that holds the writer.
+    private async Task<WalRead> ReadCoreAsync(Stream destination, long budget, CancellationToken cancellationToken, TursoRunner? runner = null)
     {
         ObjectDisposedException.ThrowIf(_store.Closed, _store);
-        var (end, started) = await _io.RunAsync(() =>
+        runner ??= _io;
+        var (end, started) = await runner.RunAsync(() =>
         {
             // Every commit that completed before this time is visible to the query below.
             var now = _time.GetUtcNow();
@@ -343,7 +347,7 @@ internal sealed class TursoChangeTap : IWalTap
         var spent = false;
         while (after < end && !spent)
         {
-            var (next, placed, stop) = await _io.RunAsync(() => ReadPage(after, end, budget - bytes, schema, buffer), cancellationToken).ConfigureAwait(false);
+            var (next, placed, stop) = await runner.RunAsync(() => ReadPage(after, end, budget - bytes, schema, buffer), cancellationToken).ConfigureAwait(false);
             if (!placed)
             {
                 return new(0, false, false, null);
