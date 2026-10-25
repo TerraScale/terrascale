@@ -24,6 +24,7 @@ internal sealed partial class TursoChangeGroupSource
             var collected = await transaction.GetCollectedBeforeAsync(cancellationToken).ConfigureAwait(false);
             var applied = new Dictionary<ReplicaId, Hlc>(await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false));
             var local = await transaction.GetLocalSnapshotCutAsync(_engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            // A row received for this replica is no proof of what it committed: only its own local cut is.
             _ = applied.Remove(_engine.ReplicaId);
             if (local.Value > 0)
             {
@@ -48,7 +49,7 @@ internal sealed partial class TursoChangeGroupSource
             }
             while (after is not null);
 
-            yield return new ReplicaSnapshotPage([], applied, collected, _engine.ReplicaId);
+            yield return new ReplicaSnapshotPage([], applied, collected);
         }
     }
 }

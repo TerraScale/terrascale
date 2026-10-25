@@ -40,7 +40,7 @@ internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IRepli
             {
                 var page = call.ResponseStream.Current;
                 if (complete || page.Page is null || page.Applied.Count > 1024 || !page.Complete && page.Applied.Count != 0
-                    || page.CollectedBefore > long.MaxValue || !page.Complete && page.AuthorReplica != 0)
+                    || page.CollectedBefore > long.MaxValue)
                 {
                     throw new InvalidDataException("invalid snapshot terminal frame");
                 }
@@ -68,7 +68,7 @@ internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IRepli
                     complete = true;
                 }
 
-                yield return new ReplicaSnapshotPage(values, applied, new Hlc(page.CollectedBefore), new ReplicaId(page.AuthorReplica));
+                yield return new ReplicaSnapshotPage(values, applied, new Hlc(page.CollectedBefore));
             }
         }
     }

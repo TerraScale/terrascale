@@ -11,10 +11,14 @@ namespace TerraBase.Fast.Backup;
 
 public sealed class CatalogGateCollectedRevocationTests
 {
+    // TS-1012 (prod, 2026-10-25): sjc deleted and collected catalog rows that gru and fra still held, most of them written by
+    // gru or fra, not sjc. byPeer has the stale region write the revoked row and the writer delete it.
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_collected_revocation_recovers_a_restarted_or_stale_seeded_catalog(bool fresh)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task A_collected_revocation_recovers_a_restarted_or_stale_seeded_catalog(bool fresh, bool byPeer)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         var bucket = new FakeS3();
@@ -34,7 +38,15 @@ public sealed class CatalogGateCollectedRevocationTests
                 Peer(peer),
                 new HashSet<ulong> { peer.Api.Server.Services.GetRequiredService<LocalReplica>().Id.Value }, token)).IsTrue();
         }
-        var revoked = await writer.Api.CreateOrganizationAsync("deleted before the revocation cut");
+        var revoked = await (byPeer ? stale : writer).Api.CreateOrganizationAsync("deleted before the revocation cut");
+        if (byPeer)
+        {
+            // The writer applies the stale region's catalog, the row included, before deleting it.
+            await Assert.That(await writer.Api.Server.Services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System,
+                Peer(stale),
+                new HashSet<ulong> { stale.Api.Server.Services.GetRequiredService<LocalReplica>().Id.Value }, token)).IsTrue();
+        }
+
         await PullAsync(stale, writer, token);
         await PullAsync(original, writer, token);
         var origin = writer.Api.Server.Services.GetRequiredService<LocalReplica>().Id;

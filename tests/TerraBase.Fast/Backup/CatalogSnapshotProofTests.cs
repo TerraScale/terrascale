@@ -33,12 +33,13 @@ public sealed class CatalogSnapshotProofTests
         }
     }
 
+    // TS-1012: the target forgets a live catalog state the source deleted and collected only when the source's terminal cuts
+    // cover every author of that state, and the stream ends cleanly. 0 is the untampered snapshot.
     [Test]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
-    [Arguments(4)]
     public async Task A_live_catalog_survivor_requires_its_author_cut_and_clean_EOF(int failure)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -53,6 +54,11 @@ public sealed class CatalogSnapshotProofTests
         var origins = new HashSet<ulong> { origin.Value };
         await Assert.That(await importer.ImportAsync(ChangeGroups.System, targetStore.Incarnation,
             exporter.SnapshotAsync(ChangeGroups.System, sourceStore.Incarnation, token), origins, token)).IsTrue();
+        // The source applies the target's own catalog: only the ghost's author cut decides the import below.
+        var self = target.Server.Services.GetRequiredService<LocalReplica>().Id;
+        await Assert.That(await source.Server.Services.GetRequiredService<IReplicaSnapshotImporter>().ImportAsync(ChangeGroups.System,
+            sourceStore.Incarnation, target.Server.Services.GetRequiredService<IReplicaSnapshotSource>().SnapshotAsync(ChangeGroups.System,
+                targetStore.Incarnation, token), new HashSet<ulong> { self.Value }, token)).IsTrue();
         await using (var write = (TursoStorageTransaction)await sourceStore.BeginDurableTransactionAsync(token))
         {
             _ = await write.DeleteAsync("organizations", ghost, token);
@@ -70,10 +76,10 @@ public sealed class CatalogSnapshotProofTests
         }
         else
         {
-            await Assert.That(await ImportAsync()).IsFalse();
+            await Assert.That(await ImportAsync()).IsEqualTo(failure == 0);
         }
         await using var read = await targetStore.BeginTransactionAsync(write: false, token);
-        await Assert.That(await read.GetAsync("organizations", ghost, token)).IsNotNull();
+        await Assert.That(await read.GetAsync("organizations", ghost, token) is { Deleted: false }).IsEqualTo(failure != 0);
 
         Task<bool> ImportAsync()
         {
@@ -84,12 +90,10 @@ public sealed class CatalogSnapshotProofTests
         {
             await foreach (var page in exporter.SnapshotAsync(ChangeGroups.System, sourceStore.Incarnation, cancellationToken))
             {
-                yield return page.Applied is null ? page : failure switch
+                yield return page.Applied is not { } applied ? page : failure switch
                 {
-                    0 => page with { Author = default },
-                    1 => page with { Author = ReplicaId.Of(99, 1, 0) },
-                    4 => page with { Author = new ReplicaId(origin.Value ^ 1) },
-                    2 => page with { Applied = new Dictionary<ReplicaId, Hlc> { [origin] = new(1) } },
+                    1 => page with { Applied = applied.Where(cut => cut.Key != origin).ToDictionary() },
+                    2 => page with { Applied = applied.ToDictionary(cut => cut.Key, cut => cut.Key == origin ? new Hlc(1) : cut.Value) },
                     _ => page,
                 };
             }

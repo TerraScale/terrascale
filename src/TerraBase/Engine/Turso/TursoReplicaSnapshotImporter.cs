@@ -42,11 +42,11 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         BucketCursor? after = null;
         ReplicaSnapshotPage? terminal = null;
         Hlc? floor = null;
-        EntryVersion? requiredAuthor = null;
+        Dictionary<ReplicaId, Hlc> required = [];
         await foreach (var page in pages.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (terminal is not null || floor is { } previous && previous != page.CollectedBefore
-                || page.Applied is not null && page.States.Count != 0 || page.Applied is null && page.Author.Value != 0)
+                || page.Applied is not null && page.States.Count != 0)
             {
                 throw new InvalidDataException("inconsistent snapshot pages");
             }
@@ -58,10 +58,10 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
                 var cursor = after;
                 do
                 {
-                    // A catalog PUT may be forgotten provisionally only with its author's terminal committed-cut proof.
-                    // Every change still rolls back if the stream, author proof or clean EOF is missing.
+                    // A live catalog state is forgotten provisionally, and only kept forgotten if the terminal cuts prove the
+                    // source applied all of it. Every change still rolls back if that proof or clean EOF is missing.
                     if (await transaction.ReconcileRefillAsync(buckets, cursor, page.States, floor.Value, cancellationToken,
-                        database == ChangeGroups.System ? TrackCollectedPut : null).ConfigureAwait(false) is not { } result)
+                        database == ChangeGroups.System ? TrackCollected : null).ConfigureAwait(false) is not { } result)
                     {
                         return false;
                     }
@@ -90,8 +90,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             return false;
         }
 
-        if (requiredAuthor is { } required && (terminal.Author != required.Node
-            || !terminal.Applied!.TryGetValue(required.Node, out var committed) || committed.Value < required.Stamp.Value))
+        if (required.Any(need => !terminal.Applied!.TryGetValue(need.Key, out var cut) || cut.Value < need.Value.Value))
         {
             return false;
         }
@@ -105,19 +104,56 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return true;
 
-        bool TrackCollectedPut(DocumentState state)
+        // TS-1012: every operation still visible in a state is named by its author and stamped at most MaxStamp (a counter's
+        // Changed is its last increment). A source that applied each of those authors up to MaxStamp holds every operation
+        // of the state, so its collected absence dominates it: the source deleted the document and collected the
+        // tombstone. The production survivors were metering documents written by gru and fra and the drop projections of a
+        // deleted database's collections, not only the source's own writes.
+        bool TrackCollected(DocumentState state)
         {
-            // Whole PUTs only: no mixed-origin PATCH, counter or set can hide an operation the author never committed.
-            if (state.Clear is not { Deleted: false } clear || clear.Version.Node.Value is 0 or ulong.MaxValue
-                || state.Fields.Values.Any(field => field.Base is not { } value || value.Version != clear.Version
-                    || field.Counters.Count != 0 || field.Dots.Count != 0)
-                || requiredAuthor is { } previous && previous.Node != clear.Version.Node)
+            var newest = state.MaxStamp;
+            foreach (var author in Authors(state))
             {
-                return false;
+                if (author.Value is 0 or ulong.MaxValue)
+                {
+                    return false;
+                }
+
+                required[author] = required.TryGetValue(author, out var held) && held.Value >= newest.Value ? held : newest;
             }
 
-            requiredAuthor = requiredAuthor is { } held && held.Stamp.Value >= clear.Version.Stamp.Value ? held : clear.Version;
             return true;
+        }
+    }
+
+    private static IEnumerable<ReplicaId> Authors(DocumentState state)
+    {
+        if (state.Clear is { } clear)
+        {
+            yield return clear.Version.Node;
+        }
+
+        foreach (var field in state.Fields.Values)
+        {
+            if (field.Base is { } value)
+            {
+                yield return value.Version.Node;
+            }
+
+            // A counter's epoch names the base or clear it counts from, not an operation of its own.
+            foreach (var node in field.Counters.Keys)
+            {
+                yield return node;
+            }
+
+            foreach (var (key, dot) in field.Dots)
+            {
+                yield return key.Version.Node;
+                if (dot.RemovedAt is { } removed)
+                {
+                    yield return removed.Node;
+                }
+            }
         }
     }
 }
