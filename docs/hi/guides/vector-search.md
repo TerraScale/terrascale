@@ -77,7 +77,7 @@ api -H 'Content-Type: application/json' \
 - `fields` holds exactly one dotted member path to the embedding array, and `dimensions` is its length (1 to 4096).
 - On a collection that already has documents, the response says `"state": "building"`. Existing documents are added in the background; new writes are indexed as they happen, and a write waits at most for one small batch of the build. Until the index lists as `"active"` (`GET $DB/indexes?collection=chunks`), `near` queries keep scanning.
 - A `near` query whose `path` and vector length match an active index uses it, with either metric. Nothing else changes in the request or response.
-- Results are approximate. The index shortlists candidates by a compact sign-bit code of each vector, then ranks the shortlist with exact distances. In our benchmark on 100,000 real 768-dimension text embeddings, 99.65% of the exact top 10 came back.
+- Results are approximate. The index shortlists candidates by a compact sign-bit code of each vector, then ranks the shortlist with exact distances. In our production benchmark on 100,000 real 768-dimension text embeddings, 98.5% to 99.6% of the exact top 10 came back, with a median query time of about 34 ms end to end.
 - With a `filter`, the filter applies to the 4,096 closest candidates only. A very selective filter can return fewer than `limit` documents; brute force (no index) never misses.
 - Documents whose `path` is not an array of exactly `dimensions` numbers are not in the index and are never returned by indexed queries.
 - Reads restricted by [collection access rules](/hi/guides/end-user-authentication) do not use the index.
