@@ -25,7 +25,8 @@ public sealed class PreviewCollectionSchemaEndpoint(IDocumentService documents, 
         Metadata(new RequestBodyMetadata(typeof(JsonElement), DocumentRoute.JsonMediaType));
         Metadata(new OpenApiParameter
         {
-            Name = "cursor", In = ParameterLocation.Query,
+            Name = "cursor",
+            In = ParameterLocation.Query,
             Description = "Opaque next_cursor from the preceding page; repeat the same schema on the same node.",
             Schema = new OpenApiSchema { Type = JsonSchemaType.String, MaxLength = 2048 },
         });
