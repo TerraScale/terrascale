@@ -24,7 +24,7 @@ var document = Model.Browse.Documents[index];
 @if(grid.HiddenColumns > 0){<p class="ts-hint">@grid.HiddenColumns more fields are not shown; the list view has every field.</p>}
 }
 
-@if(Model.Browse.Matched > 0){<nav class="ts-pager" aria-label="Document pages"><span class="ts-meta">@Model.Summary</span><div class="ts-row">@if(Model.Browse.Page > 1){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.BrowsePath(("page",(Model.Browse.Page-1).ToString()))">Previous</a>}@if(Model.Browse.Page < Model.Browse.PageCount){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.BrowsePath(("page",(Model.Browse.Page+1).ToString()))">Next</a>}</div></nav>}
+@if(Model.Browse.Matched > 0 || Model.Browse.More){<nav class="ts-pager" aria-label="Document pages"><span class="ts-meta">@Model.Summary</span><div class="ts-row">@if(Model.Browse.Page > 1){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.BrowsePath(("page",(Model.Browse.Page-1).ToString()))">Previous</a>}@if(Model.Browse.Page < Model.Browse.PageCount){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.BrowsePath(("page",(Model.Browse.Page+1).ToString()))">Next</a>}</div></nav>}
 </div></section>
 }
 </div></div>

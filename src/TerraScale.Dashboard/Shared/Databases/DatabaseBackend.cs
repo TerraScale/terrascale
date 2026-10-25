@@ -76,7 +76,10 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     // TerraBase's anonymous GET /v1/regions answers {"regions":[...]}: the id of every region it serves now, from any region,
     // so a new region appears without a change here. gru, fra and sjc keep their display order; others follow by id. While
     // that route is not deployed, or answers anything but a valid list, the one verified region is the healthz region.
-    public async Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "regions"), () => ReadRegionsAsync(cancellationToken));
+
+    private async Task<IReadOnlyList<DatabaseRegion>> ReadRegionsAsync(CancellationToken cancellationToken)
     {
         try { return await CatalogAsync(cancellationToken); }
         catch (Exception error) when (error is HttpRequestException or JsonException) { return await AnsweringRegionAsync(cancellationToken); }
@@ -115,7 +118,11 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         return [serving];
     }
 
-    public async Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "databases", scope.UserId, scope.AccessToken, scope.OrganizationId, scope.ProjectId, home.Api, home.Id),
+            () => ReadDatabasesAsync(scope, home, cancellationToken));
+
+    private async Task<IReadOnlyList<ManagedDatabase>> ReadDatabasesAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
     {
         var sdk = await ClientAsync(scope, home, "databases:read", cancellationToken);
         var result = new List<ManagedDatabase>();

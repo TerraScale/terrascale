@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Home;
@@ -27,8 +28,20 @@ public static class HomeEndpoints
             if (context.Project is null) return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization?newOrganization=payment" : "/organization?tab=projects&newProject=1");
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
             var tab = http.Request.Query["tab"] == "connect" ? "connect" : "overview";
-            var data = tab == "overview" ? await measurements.ReadAsync(context, range, http.RequestAborted) : new HomeMeasurement();
+            var data = tab == "overview" ? await measurements.ReadPageAsync(context, range, http.RequestAborted) : new HomeMeasurement();
             return HomeView.Create(new(ShellModel.For(http, context, "Overview"), tab, range, data));
+        });
+        endpoints.MapGet("/overview/regions", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return Results.Unauthorized();
+            if (!http.Request.Query.ContainsKey("organizationId") || !http.Request.Query.ContainsKey("projectId"))
+                return Results.BadRequest("Workspace identity is required.");
+            if (!context.Account.OnboardingCompleted || context.Organization is null || context.Project is null)
+                return Results.Problem("Selected workspace is unavailable.", statusCode: 403);
+            var data = await measurements.ReadRegionsAsync(context, http.RequestAborted);
+            await DatastarEvents.PatchElementsAsync(http, HomeRegionsView.Create(new(ShellModel.For(http, context, "Overview"), "overview", "24h", data)));
+            return Results.Empty;
         });
         return endpoints;
     }

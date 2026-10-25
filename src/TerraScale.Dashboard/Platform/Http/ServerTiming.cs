@@ -11,6 +11,7 @@ public sealed class ServerTiming
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly Lock gate = new();
     private readonly Dictionary<string, (int Calls, double Ms)> upstreams = new(StringComparer.Ordinal);
+    private readonly Dictionary<object, (int Writes, object Task)> readTasks = [];
     private int writes;
     private bool reads;
 
@@ -23,6 +24,23 @@ public sealed class ServerTiming
 
     // Only page loads (GET and HEAD) reuse reads; a form post always re-reads what it changes.
     public static Mark? Now() => Current.Value is { reads: true } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
+
+    // Coalesce identical reads only within this GET/HEAD. A mutation invalidates earlier reads;
+    // failed reads can be retried and no task or authority survives into another request.
+    public static Task<T> ReadAsync<T>(object key, Func<Task<T>> read)
+    {
+        if (Current.Value is not { reads: true } timing) return read();
+        lock (timing.gate)
+        {
+            var generation = Volatile.Read(ref timing.writes);
+            if (timing.readTasks.TryGetValue(key, out var entry) && entry.Writes == generation &&
+                entry.Task is Task<T> pending && !pending.IsFaulted && !pending.IsCanceled) return pending;
+            var task = StartAsync();
+            timing.readTasks[key] = (generation, task);
+            return task;
+        }
+        async Task<T> StartAsync() => await read();
+    }
 
     // Token exchange and refresh grants change no account, organization or billing state.
     private static bool Mutates(HttpRequestMessage request) =>

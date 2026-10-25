@@ -427,29 +427,34 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         { logger.LogWarning("Audit event was not recorded ({ErrorType})", error.GetType().Name); }
     }
 
-    public async Task SwitchOrganizationAsync(SessionRecord session, string id, CancellationToken cancellationToken)
+    public async Task<AccountContext> SwitchOrganizationAsync(SessionRecord session, string id, CancellationToken cancellationToken)
     {
-        var context = await GetContextAsync(session, cancellationToken);
-        var org = context.Organizations.FirstOrDefault(item => item.Id == id) ?? throw new AccountAccessException("Organization is unavailable.", 404);
+        var context = await GetContextAsync(session, cancellationToken, organizationId: id);
+        var org = context.Organization!;
+        var selected = context.Account;
         await UpdateAccountAsync(session, account =>
         {
             account.ActiveOrganizationId = org.Id;
-            account.ActiveProjectId = DefaultProject(org)?.Id ?? "";
+            account.ActiveProjectId = context.Project?.Id ?? "";
             if (!account.OrganizationIds.Contains(org.Id)) account.OrganizationIds.Add(org.Id);
+            selected = account;
         }, cancellationToken);
+        return context with { Account = selected, Loaded = null };
     }
 
-    public async Task SwitchProjectAsync(SessionRecord session, string id, CancellationToken cancellationToken)
+    public async Task<AccountContext> SwitchProjectAsync(SessionRecord session, string id, CancellationToken cancellationToken)
     {
-        var context = await GetContextAsync(session, cancellationToken);
-        var org = context.Organizations.FirstOrDefault(item => item.Projects.TryGetValue(id, out var project) && project.OrganizationId == item.Id)
-            ?? throw new AccountAccessException("Project is unavailable.", 404);
+        var context = await GetContextAsync(session, cancellationToken, projectId: id);
+        var org = context.Organization!;
+        var selected = context.Account;
         await UpdateAccountAsync(session, account =>
         {
             account.ActiveOrganizationId = org.Id;
             account.ActiveProjectId = id;
             if (!account.OrganizationIds.Contains(org.Id)) account.OrganizationIds.Add(org.Id);
+            selected = account;
         }, cancellationToken);
+        return context with { Account = selected, Loaded = null };
     }
 
     public async Task<OrganizationRecord> CreateBusinessAsync(SessionRecord session, string name, CancellationToken cancellationToken)

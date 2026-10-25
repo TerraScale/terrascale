@@ -27,9 +27,9 @@ public static class AccountEndpoints
             if (session is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
+            AccountContext selected;
+            try { selected = await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            var selected = await accounts.GetContextAsync(session, http.RequestAborted, organizationId: form["organizationId"].ToString());
             return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
             .WithSummary("Select an organization the current user can access")
@@ -42,9 +42,9 @@ public static class AccountEndpoints
             if (session is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
+            AccountContext selected;
+            try { selected = await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            var selected = await accounts.GetContextAsync(session, http.RequestAborted, projectId: form["projectId"].ToString());
             return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
             .WithSummary("Select a project the current user can access")
