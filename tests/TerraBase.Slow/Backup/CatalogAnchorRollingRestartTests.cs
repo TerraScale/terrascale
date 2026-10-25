@@ -10,11 +10,12 @@ namespace TerraBase.Slow.Backup;
 /// Batch 8 (2026-10-25): after a roll, a writer held idle for 23.5 s made every catalog anchor time out
 /// (<see cref="CatalogGate.AnchorTimeout"/>), and ts-auth saw TerraBase unavailable in all three regions. Here two regions
 /// keep writing and anchoring their catalogs while the third restarts twice, as a rolling deploy does: every anchor, the
-/// restarted region's included, is written well within its deadline.
+/// restarted region's included, is written within its deadline.
 /// </summary>
 public sealed class CatalogAnchorRollingRestartTests
 {
-    private static readonly TimeSpan Within = TimeSpan.FromSeconds(5);
+    // The anchor's own deadline: an anchor past it is answered catalog_anchor_unavailable, which ts-auth sees as Unavailable.
+    private static readonly TimeSpan Within = CatalogGate.AnchorTimeout;
     private static readonly TimeSpan GateOpens = TimeSpan.FromMinutes(3);
 
     [Test]
