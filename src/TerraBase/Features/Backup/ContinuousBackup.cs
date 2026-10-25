@@ -622,18 +622,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             if (file.Database is { } database)
             {
                 var registered = await _fileCatalog.RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false);
-                if (registered is not true)
+                if (registered is false)
                 {
-                    if (registered is false)
-                    {
-                        file.Removed = true;
-                        file.Side?.Cancellation.Cancel();
-                        await file.StopSideAsync().ConfigureAwait(false);
-                        await file.Tap.DisposeAsync().ConfigureAwait(false);
-                    }
-
+                    file.Removed = true;
+                    file.Side?.Cancellation.Cancel();
+                    await file.StopSideAsync().ConfigureAwait(false);
+                    await file.Tap.DisposeAsync().ConfigureAwait(false);
                     return;
                 }
+                // Unknown ownership preserves the existing generation and its normal catalog refusal/retry path.
             }
 
             if (file.Tap.Ended)

@@ -9,7 +9,9 @@ using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Turso;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Backup;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -247,6 +249,16 @@ public sealed class ContinuousBackupTests
         foreach (var member in members.Values)
         {
             await member.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(database, CancellationToken.None);
+            var system = await member.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            await using var registration = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+            await SystemCatalog.PutAsync(registration, "catalog", "version", ManagementCatalog.Version, TerraBaseJsonContext.Default.String, CancellationToken.None);
+            await SystemCatalog.PutAsync(registration, "organizations", database.OrganizationId,
+                new Organization(database.OrganizationId, "Shipping", database.OrganizationId, time.GetUtcNow()), TerraBaseJsonContext.Default.Organization, CancellationToken.None);
+            await SystemCatalog.PutAsync(registration, $"organizations/{database.OrganizationId}/projects", database.ProjectId!,
+                new Project(database.ProjectId!, database.OrganizationId, "Shipping", time.GetUtcNow()), TerraBaseJsonContext.Default.Project, CancellationToken.None);
+            await SystemCatalog.PutAsync(registration, $"projects/{database.ProjectId}/databases", database.DatabaseId!,
+                new ManagedDatabase(database.DatabaseId!, database.ProjectId!, "main", null, time.GetUtcNow()), TerraBaseJsonContext.Default.ManagedDatabase, CancellationToken.None);
+            await registration.CommitAsync(CancellationToken.None);
         }
 
         // The database's primary on the ring ships it once its first term began: a lease fence after it saw the members.
