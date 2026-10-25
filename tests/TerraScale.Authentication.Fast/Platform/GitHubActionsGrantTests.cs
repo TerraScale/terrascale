@@ -498,7 +498,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     public async Task The_explicit_command_contract_is_idempotent_and_deleted_projects_stop_issuance()
     {
         using var github = new FakeGitHubActions();
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: github.Route);
         var services = oidc.Server.App.Services;
         var deadline = Deadline(oidc);
         var (organization, project, _) = await BindAsync(oidc, deadline);

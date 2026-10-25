@@ -142,7 +142,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
     public HttpClient Client => this.Server.Client;
 
     public static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, Action<Dictionary<string, string>>? settings = null, CapturingEmailSender? email = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null)
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         email ??= new CapturingEmailSender();
@@ -151,7 +151,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
         {
             values["master-key"] = masterKey;
             settings?.Invoke(values);
-        }, logs, clock, services);
+        }, logs, clock, services, runClosureWorker);
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 
@@ -164,19 +164,19 @@ public sealed partial class OidcHarness : IAsyncDisposable
     }
 
     /// <summary>Another replica on this harness's database and master key; the caller disposes it.</summary>
-    public Task<AuthTestServer> StartReplicaAsync(Action<Dictionary<string, string>>? settings = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null) =>
+    public Task<AuthTestServer> StartReplicaAsync(Action<Dictionary<string, string>>? settings = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true) =>
         StartServerAsync(this.fixture ?? throw new InvalidOperationException("Regional replicas are started through their regional fixture."), this.Tenant, this.Email, values =>
         {
             values["master-key"] = this.masterKey;
             settings?.Invoke(values);
-        }, clock: clock, replace: services);
+        }, clock: clock, replace: services, runClosureWorker: runClosureWorker);
 
     /// <summary>
     /// Another replica bound to the same database, returned once its signing-ring bootstrap completed. The platform
     /// issuer's keys are provisioned first, as an operator does (idempotent: replicas find the existing keys).
     /// </summary>
     public static async Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null)
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null, bool runClosureWorker = true)
     {
         var server = await AuthTestServer.StartAsync(values =>
         {
@@ -199,7 +199,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
             }
 
             replace?.Invoke(services);
-        }, beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None));
+        }, beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None), runClosureWorker: runClosureWorker);
         try
         {
             await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));

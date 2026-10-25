@@ -5,7 +5,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
@@ -28,7 +27,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_project_is_removed_only_after_terrabase_accepts_and_a_lost_answer_is_retried_with_the_same_closure()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (owner, token) = await oidc.SignInUserAsync("owner@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var first = await oidc.CreateProjectAsync(token, organization, "First");
@@ -55,10 +54,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     {
         using var legacy = new LegacyClosureEvidence { InnerHandler = TerraBaseFixture.NewHandler() };
         using var transport = new HttpClient(legacy);
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services =>
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services =>
             services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
                 new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
-        await oidc.Server.App.Services.GetRequiredService<ClosureWorker>().StopAsync(CancellationToken.None);
         var (_, token) = await oidc.SignInUserAsync("owner@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Retained");
@@ -83,12 +81,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         using var legacy = new LegacyErasureContract(unsupported, nonempty) { InnerHandler = TerraBaseFixture.NewHandler() };
         using var transport = new HttpClient(legacy);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services =>
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock, services: services =>
             services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
                 new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
         var services = oidc.Server.App.Services;
         var worker = services.GetRequiredService<ClosureWorker>();
-        await worker.StopAsync(CancellationToken.None);
         var (owner, token) = await oidc.SignInUserAsync("owner@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Retained");
@@ -121,12 +118,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
             LoseFirstErasureAnswer = true,
         };
         using var transport = new HttpClient(legacy);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services =>
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock, services: services =>
             services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
                 new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
         var services = oidc.Server.App.Services;
         var worker = services.GetRequiredService<ClosureWorker>();
-        await worker.StopAsync(CancellationToken.None);
         var (owner, token) = await oidc.SignInUserAsync("owner@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Retained");
@@ -225,7 +221,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Arguments("binding")]
     public async Task A_terrabase_refusal_changes_nothing_and_keeps_every_right_of_the_project(string refusal)
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (_, token) = await oidc.SignInUserAsync("owner@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
@@ -257,7 +253,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Arguments("unreachable")]
     public async Task An_unproven_answer_keeps_the_project_and_its_intent_until_a_restart_finishes_it(string fault)
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, fault));
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, fault));
         var (_, token) = await oidc.SignInUserAsync("owner@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
@@ -277,7 +273,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.Server.DisposeAsync();
         // Restarted past the one-minute retry delay the failed attempt recorded.
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(2) };
-        await using var restarted = await oidc.StartReplicaAsync(clock: clock);
+        await using var restarted = await oidc.StartReplicaAsync(runClosureWorker: false, clock: clock);
         await SettleAsync(restarted, clock, async () => await restarted.App.Services.GetRequiredService<PlatformDirectory>().ClosureAsync("project", project, CancellationToken.None) is null);
         await Assert.That(await restarted.App.Services.GetRequiredService<PlatformDirectory>().ProjectAsync(project, CancellationToken.None)).IsNull();
         await Assert.That(await restarted.App.Services.GetRequiredService<PlatformDirectory>().ClosureAsync("project", project, CancellationToken.None)).IsNull();
@@ -288,7 +284,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task An_account_closure_is_durable_before_terrabase_and_resumes_after_a_restart()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, "unreachable"));
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "unreachable"));
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, _) = await oidc.SignInUserAsync("bob@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
@@ -332,7 +328,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         {
             InnerHandler = TerraBaseFixture.NewHandler(),
         };
-        await using var restarted = await oidc.StartReplicaAsync(clock: clock, services: services => services.AddSingleton(new HttpClient(completion)));
+        await using var restarted = await oidc.StartReplicaAsync(runClosureWorker: false, clock: clock, services: services => services.AddSingleton(new HttpClient(completion)));
         var directory = restarted.App.Services.GetRequiredService<PlatformDirectory>();
         async Task<bool> DoneAsync() => await directory.ClosureAsync("account", alice.Id, CancellationToken.None) is null;
         var settling = SettleAsync(restarted, clock, DoneAsync);
@@ -374,7 +370,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_late_last_owner_ends_the_account_intent_finishes_started_closures_and_keeps_everything_else()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, "unreachable"));
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "unreachable"));
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
         var (carol, _) = await oidc.SignInUserAsync("carol@example.test");
@@ -395,7 +391,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.Server.DisposeAsync();
         // Restarted past the one-minute retry delay the failed attempt recorded.
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(2) };
-        await using var restarted = await oidc.StartReplicaAsync(clock: clock);
+        await using var restarted = await oidc.StartReplicaAsync(runClosureWorker: false, clock: clock);
         var directory = restarted.App.Services.GetRequiredService<PlatformDirectory>();
         await SettleAsync(restarted, clock, async () => await directory.ClosureAsync("account", alice.Id, CancellationToken.None) is null);
         await Assert.That(await directory.ClosureAsync("account", alice.Id, CancellationToken.None)).IsNull();
@@ -432,7 +428,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_refusal_after_an_accepted_project_closure_ends_the_account_intent_without_stranding_anything()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var solo = await oidc.CreateOrganizationAsync(token, "Solo");
@@ -468,7 +464,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     public async Task Account_owned_intents_without_their_account_intent_are_never_created_and_always_recovered()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, _) = await oidc.SignInUserAsync("bob@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Solo");
@@ -513,7 +509,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Arguments(true)]
     public async Task A_refusal_cancels_only_an_intent_that_never_showed_the_fence(bool fenceSeenMeanwhile)
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Org");
         var project = await oidc.CreateProjectAsync(token, organization, "Refused");
@@ -553,14 +549,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     public async Task An_existing_account_intent_handles_late_last_owner_through_its_refusal_path(bool committed)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services =>
-        {
-            // HTTP drives this refusal, then the committed case resumes explicitly. A hosted pass could start
-            // cancelling the seeded intent first, so the request would correctly report cancellation in progress (202).
-            var hosted = services.Single(service => service.ServiceType == typeof(IHostedService)
-                && service.ImplementationFactory?.Method.ReturnType == typeof(ClosureWorker));
-            _ = services.Remove(hosted);
-        });
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, _) = await oidc.SignInUserAsync("bob@example.test");
         var shared = await oidc.CreateOrganizationAsync(token, "Shared");
@@ -604,7 +593,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     public async Task A_refusal_deletes_the_account_intent_first_or_pauses_it_when_a_concurrent_pass_committed(bool committedMeanwhile)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, _) = await oidc.SignInUserAsync("bob@example.test");
         // alice is the last owner of an organization with another member: every pass refuses with last_owner.
@@ -662,7 +651,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_stale_pass_never_removes_or_cleans_a_project_whose_intent_was_recreated()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Org");
@@ -694,7 +683,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_pending_closure_refuses_new_access_but_lets_access_be_taken_away()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, "unreachable"));
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "unreachable"));
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
         var (carol, _) = await oidc.SignInUserAsync("carol@example.test");
@@ -726,15 +715,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task Closure_ids_are_random_persisted_once_per_project_and_reused_by_later_intents()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services =>
-        {
-            Misroute(services, "unreachable");
-            // This test cancels and recreates intents itself. A hosted retry can defer the unreachable intent
-            // between its read and cancellation, correctly rejecting the stale version instead of testing ID reuse.
-            var hosted = services.Single(service => service.ServiceType == typeof(IHostedService)
-                && service.ImplementationFactory?.Method.ReturnType == typeof(ClosureWorker));
-            _ = services.Remove(hosted);
-        });
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "unreachable"));
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Org");
         var project = await oidc.CreateProjectAsync(token, organization, "Project");
@@ -770,7 +751,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_fence_answer_after_the_intent_vanished_promises_nothing_and_a_retry_finishes()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Org");
         var project = await oidc.CreateProjectAsync(token, organization, "Vanished");
@@ -794,7 +775,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     public async Task Leftover_cleanup_leaves_a_newer_account_closures_intents_alone()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var solo = await oidc.CreateOrganizationAsync(token, "Solo");
         var project = await oidc.CreateProjectAsync(token, solo, "Solo project");
@@ -845,7 +826,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task Receipts_require_authentication_to_bind_and_never_certify_unknown_or_malformed_requests()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, "listener"));
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "listener"));
         const string password = "correct horse battery";
         var alice = (await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync("terrascale", "alice@example.test", Passwords.Hash(password), CancellationToken.None))!;
         var session = await oidc.SignInAsync(alice.Email);
@@ -912,8 +893,8 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         return ((int)response.StatusCode, response.IsSuccessStatusCode ? null : await OidcHarness.EnvelopeCodeAsync(response));
     }
 
-    // The restarted replica's own hosted pass runs too, and either pass may meet the other's deferral (one minute). Pass a
-    // bounded number of times, moving the clock past each retry delay, until the expected end state; the assertions follow.
+    // Only explicit passes run on these hosts. Advance past retry delays between bounded recovery passes;
+    // each test checks the resulting persisted state.
     private static async Task SettleAsync(AuthTestServer server, StoreTestClock clock, Func<Task<bool>> done)
     {
         var worker = server.App.Services.GetRequiredService<ClosureWorker>();
