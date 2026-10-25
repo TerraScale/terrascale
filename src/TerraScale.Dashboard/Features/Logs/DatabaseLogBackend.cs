@@ -8,7 +8,7 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Dashboard.Features.Logs;
 
 public sealed record DatabaseLogEntry(string Id, DateTimeOffset Time, string Region, string Method, string Route,
-    int Status, double LatencyMs, long Operations, bool IsQuery);
+    int Status, double LatencyMs, long Operations, bool IsQuery, string? RequestId = null);
 public sealed record DatabaseLogBatch(string DatabaseId, IReadOnlyList<DatabaseLogEntry> Items, bool Truncated, bool RecordingLimited);
 
 public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAccessTokens tokens, IDatabaseBackend databases, TimeProvider time)
@@ -73,7 +73,7 @@ public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAcces
     internal static void Validate(DatabaseLogBatch batch, string databaseId, string status)
     {
         if (batch.DatabaseId != databaseId || batch.Items is null || batch.Items.Count > 100 ||
-            batch.Items.Any(item => item is null || !TerraScaleIds.IsValid(item.Id) || item.Time == default ||
+            batch.Items.Any(item => item is null || !TerraScaleIds.IsValid(item.Id) || item.RequestId is not null && !TerraScaleIds.IsValid(item.RequestId) || item.Time == default ||
                 DatabaseRegion.FromId(item.Region) is null || item.Method is not ("GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD" or "OPTIONS" or "OTHER") ||
                 item.Route is not { Length: > 0 and <= 512 } || !item.Route.StartsWith('/') || item.Route.Contains('?') || item.Route.Any(char.IsControl) ||
                 item.Status is < 100 or > 599 || !double.IsFinite(item.LatencyMs) || item.LatencyMs < 0 || item.Operations < 0 ||

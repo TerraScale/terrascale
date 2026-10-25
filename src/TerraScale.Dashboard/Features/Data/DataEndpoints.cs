@@ -12,6 +12,7 @@ public static class DataEndpoints
     public static IEndpointRouteBuilder MapDataFeatures(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapDocumentChanges();
+        endpoints.MapSchemaPreview();
         Features.Webhooks.WebhookEndpoints.MapChangeWebhooks(endpoints);
         foreach (var section in new[] { "documents", "sql", "schema", "indexes", "history" })
         {

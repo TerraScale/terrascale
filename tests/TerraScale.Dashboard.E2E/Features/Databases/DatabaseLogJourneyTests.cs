@@ -59,7 +59,7 @@ public sealed class DatabaseLogJourneyTests(DashboardRootFixture fixture)
             var now = DateTimeOffset.UtcNow;
             var route = "/v1/projects/{project}/databases/{database}/";
             object Entry(string id, int back, string method, string path, int status, double latency, bool query) => new
-            { id, time = now.AddSeconds(-back), region = "gru", method, route = route + path, status, latencyMs = latency, operations = 1, isQuery = query };
+            { id, requestId = id, time = now.AddSeconds(-back), region = "gru", method, route = route + path, status, latencyMs = latency, operations = 1, isQuery = query };
             var entries = new[]
             {
                 Entry("01JA0000000000000000000013", 1, "POST", "sql", 500, 100, true),
@@ -160,12 +160,13 @@ public sealed class DatabaseLogJourneyTests(DashboardRootFixture fixture)
     {
         const string database = "01JA0000000000000000000004";
         var row = new DatabaseLogEntry("01JA0000000000000000000013", DateTimeOffset.UtcNow, "gru", "GET",
-            "/v1/projects/{project}/databases/{database}/collections", 200, 1, 1, false);
+            "/v1/projects/{project}/databases/{database}/collections", 200, 1, 1, false, "01JA0000000000000000000014");
         foreach (var batch in new[]
         {
             new DatabaseLogBatch("01JA0000000000000000000005", [row], false, false),
             new DatabaseLogBatch(database, [row, row], false, false),
             new DatabaseLogBatch(database, [row with { Id = "not-a-ulid" }], false, false),
+            new DatabaseLogBatch(database, [row with { RequestId = "private?token=value" }], false, false),
             new DatabaseLogBatch(database, [row with { LatencyMs = double.NaN }], false, false),
             new DatabaseLogBatch(database, [row with { Operations = -1 }], false, false),
             new DatabaseLogBatch(database, [row with { Route = "/route?private=value" }], false, false)

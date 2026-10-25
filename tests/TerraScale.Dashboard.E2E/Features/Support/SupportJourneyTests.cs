@@ -13,7 +13,9 @@ public sealed class SupportJourneyTests(DashboardE2EFixture fixture)
         using var client = fixture.CreateClient();
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        var page = await client.GetStringAsync("/support");
+        var related = AccountService.NewId();
+        var page = await client.GetStringAsync("/support?relatedRequestId=" + related);
+        await Assert.That(page).Contains("value=\"" + related + "\"");
         await Assert.That(page).Contains("Contact support").And.Contains("support@terrascale.tech");
         var csrf = Field(page, "_csrf");
         var requestId = Field(page, "requestId");
@@ -23,6 +25,7 @@ public sealed class SupportJourneyTests(DashboardE2EFixture fixture)
         {
             ["_csrf"] = csrf,
             ["requestId"] = requestId,
+            ["relatedRequestId"] = related,
             ["organizationId"] = organizationId,
             ["projectId"] = "",
             ["databaseId"] = "",
@@ -43,6 +46,7 @@ public sealed class SupportJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(sent.Headers.Location!.OriginalString).IsEqualTo("/support?sent=" + requestId[^8..]);
         var request = mail.Sent.Single(item => item.RequestId == requestId);
         await Assert.That(request.OrganizationId).IsEqualTo(organizationId);
+        await Assert.That(request.Message).Contains("Request ID: " + related);
         await Assert.That(request.Severity).IsEqualTo("urgent");
         await Assert.That(request.ProjectId).IsNull();
         await Assert.That(await client.GetStringAsync("/support?sent=" + requestId[^8..])).Contains("Request " + requestId[^8..] + " sent");

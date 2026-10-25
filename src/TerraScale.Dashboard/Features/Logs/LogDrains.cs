@@ -135,7 +135,7 @@ public sealed partial class LogDrains(IDashboardState state, ILogDrainSource sou
                             {
                                 Text("http.request.method", entry.Method), Text("http.route", entry.Route), Integer("http.response.status_code", entry.Status),
                                 new { key = "terrascale.latency_ms", value = new { doubleValue = entry.LatencyMs } }, Integer("terrascale.operations", entry.Operations),
-                                Text("terrascale.region", entry.Region), new { key = "terrascale.is_query", value = new { boolValue = entry.IsQuery } }
+                                Text("terrascale.request_id", entry.RequestId ?? ""), Text("terrascale.region", entry.Region), new { key = "terrascale.is_query", value = new { boolValue = entry.IsQuery } }
                             }
                         }).ToArray()
                     }
