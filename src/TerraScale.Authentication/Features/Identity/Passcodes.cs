@@ -29,6 +29,9 @@ public enum PasscodePurpose
 /// <param name="Purpose">What the code does.</param>
 public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset ExpiresAt, PasscodePurpose Purpose = PasscodePurpose.SignIn)
 {
+    /// <summary>Server-resolved instance identity for mail accounting.</summary>
+    public string Tenant { get; init; } = "platform";
+
     /// <summary>Omits the code and address, so formatting or logging the record never discloses them.</summary>
     public override string ToString() => nameof(IssuedPasscode);
 }
@@ -281,7 +284,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         }
 
         return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null
-            ? new IssuedPasscode(email, code, passcode.ExpiresAt, purpose) : null;
+            ? new IssuedPasscode(email, code, passcode.ExpiresAt, purpose) { Tenant = instanceId } : null;
     }
 
     /// <summary>

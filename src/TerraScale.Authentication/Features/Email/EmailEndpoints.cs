@@ -509,8 +509,12 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
         }
 
         var message = await emails.RenderAsync(kind, locale, EmailApi.Sample(kind, to, options, clock.GetUtcNow()), config, cancellationToken: cancellationToken);
-        message = message with { Subject = "[Test] " + message.Subject };
-        await email.SendAsync(to, message, cancellationToken);
+        message = message with { Subject = "[Test] " + message.Subject, Purpose = EmailPurpose.Test };
+        if (await email.DeliverAsync(to, message, cancellationToken) == EmailDeliveryOutcome.Retryable)
+        {
+            this.HttpContext.Response.Headers.RetryAfter = "60";
+            return EmailApi.Error(StatusCodes.Status429TooManyRequests, "rate_limited", "Email capacity is reserved for authentication; try later.");
+        }
         return TypedResults.Json(new EmailTestResponse(to, message.Subject), statusCode: StatusCodes.Status202Accepted);
     }
 }

@@ -119,13 +119,15 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         var details = new EmailMessage($"[{request.Severity}] {subject} ({reference})", this.Details(request, user.Email, organizationName, projectName, subject, message))
         {
             FromName = "TerraScale support form",
+            Purpose = EmailPurpose.Support,
+            Tenant = request.OrganizationId!,
             ReplyTo = user.Email,
         };
         var outcome = await sender.DeliverAsync(SupportAddress, details, cancellationToken).ConfigureAwait(false);
         if (outcome == EmailDeliveryOutcome.Accepted)
         {
             // The acknowledgement is best effort: the request already reached support.
-            _ = await sender.DeliverAsync(user.Email, Acknowledgement(request, reference, subject, message), cancellationToken).ConfigureAwait(false);
+            _ = await sender.DeliverAsync(user.Email, Acknowledgement(request, reference, subject, message) with { Purpose = EmailPurpose.Support, Tenant = request.OrganizationId! }, cancellationToken).ConfigureAwait(false);
         }
         var status = outcome switch
         {

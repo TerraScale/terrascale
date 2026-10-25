@@ -159,7 +159,7 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
         var subject = $"{name} allowance: {request.Threshold}% reached";
         var text = string.Create(CultureInfo.InvariantCulture,
             $"Your organization has reached {request.Threshold}% of its {name.ToLowerInvariant()} allowance for {request.BillingMonth}. Observed usage: {request.Used:N0} of {request.Allowance:N0}. Review usage and plans at https://dash.terrascale.tech/usage?organizationId={request.OrganizationId} .");
-        return new(subject, text) { FromName = "TerraScale" };
+        return new(subject, text) { FromName = "TerraScale", Purpose = EmailPurpose.Allowance, Tenant = request.OrganizationId! };
     }
 
     private async Task<(AllowanceEmailDelivery Delivery, string Version)> ReadAsync(string key, AllowanceEmailRequest request, CancellationToken cancellationToken)
