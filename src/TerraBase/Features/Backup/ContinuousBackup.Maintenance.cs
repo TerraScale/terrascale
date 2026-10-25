@@ -319,49 +319,64 @@ internal sealed partial class ContinuousBackup
         return complete;
     }
 
+    // One rebuild of the file up to `stored`, compared with `live`; throws with the reason on any mismatch.
+    private async Task DrillOnceAsync(ShippedFile file, SnapshotKey stored, byte[] live, CancellationToken cancellationToken)
+    {
+        var source = stored;
+        await foreach (var snapshot in file.Target.Reader.SnapshotsAsync(file.Prefix, cancellationToken).ConfigureAwait(false))
+        {
+            if (snapshot.Generation == stored.Generation && snapshot.Position < stored.Position)
+            {
+                source = snapshot;
+            }
+        }
+
+        var (restored, reached) = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            if (reached != stored.Position)
+            {
+                throw new InvalidDataException("the backup ends before the snapshot it is checked against");
+            }
+
+            var rebuilt = await _engine.ChecksumAsync(restored, cancellationToken).ConfigureAwait(false);
+            if (!live.AsSpan().SequenceEqual(rebuilt))
+            {
+                throw new InvalidDataException("the restored database differs from the live one");
+            }
+        }
+        finally
+        {
+            BackupReader.Delete(restored);
+        }
+    }
+
     // Rebuilds the file from the bucket up to the snapshot just stored, from the generation's previous snapshot when it has
     // one, and compares it with `live`, the checksum of that snapshot's local copy: the live file at the same log position.
     // Runs beside the file's shipping, one drill at a time on a node (StartSide).
     private async Task DrillAsync(ShippedFile file, SnapshotKey stored, byte[] live, CancellationToken cancellationToken)
     {
         var started = _time.GetTimestamp();
-        string? error = null;
-        try
+        string? error;
+        // The file's shipping runs beside the drill and may replace an object it listed: rebuild once from a fresh listing.
+        for (var attempt = 1; ; attempt++)
         {
-            var source = stored;
-            await foreach (var snapshot in file.Target.Reader.SnapshotsAsync(file.Prefix, cancellationToken).ConfigureAwait(false))
-            {
-                if (snapshot.Generation == stored.Generation && snapshot.Position < stored.Position)
-                {
-                    source = snapshot;
-                }
-            }
-
-            var (restored, reached) = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
-                .ConfigureAwait(false);
+            error = null;
             try
             {
-                if (reached != stored.Position)
-                {
-                    error = "the backup ends before the snapshot it is checked against";
-                }
-                else
-                {
-                    var rebuilt = await _engine.ChecksumAsync(restored, cancellationToken).ConfigureAwait(false);
-                    if (!live.AsSpan().SequenceEqual(rebuilt))
-                    {
-                        error = "the restored database differs from the live one";
-                    }
-                }
+                await DrillOnceAsync(file, stored, live, cancellationToken).ConfigureAwait(false);
             }
-            finally
+            catch (BackupHistoryIncompleteException) when (attempt == 1 && !cancellationToken.IsCancellationRequested)
             {
-                BackupReader.Delete(restored);
+                continue;
             }
-        }
-        catch (Exception failure) when (!cancellationToken.IsCancellationRequested)
-        {
-            error = failure.Message;
+            catch (Exception failure) when (!cancellationToken.IsCancellationRequested)
+            {
+                error = failure.Message;
+            }
+
+            break;
         }
 
         var drill = new BackupDrill(_time.GetUtcNow(), error is null, _time.GetElapsedTime(started).TotalSeconds, error);
