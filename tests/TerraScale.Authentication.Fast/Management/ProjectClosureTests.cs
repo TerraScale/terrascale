@@ -726,7 +726,15 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task Closure_ids_are_random_persisted_once_per_project_and_reused_by_later_intents()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, "unreachable"));
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: services =>
+        {
+            Misroute(services, "unreachable");
+            // This test cancels and recreates intents itself. A hosted retry can defer the unreachable intent
+            // between its read and cancellation, correctly rejecting the stale version instead of testing ID reuse.
+            var hosted = services.Single(service => service.ServiceType == typeof(IHostedService)
+                && service.ImplementationFactory?.Method.ReturnType == typeof(ClosureWorker));
+            _ = services.Remove(hosted);
+        });
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var organization = await oidc.CreateOrganizationAsync(token, "Org");
         var project = await oidc.CreateProjectAsync(token, organization, "Project");
