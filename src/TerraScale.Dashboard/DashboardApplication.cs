@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -42,6 +43,7 @@ public static class DashboardApplication
         });
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
         builder.Services.AddSingleton<AssetUrls>();
+        builder.Services.AddSingleton<ServiceSloTelemetry>();
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
         builder.Services.AddSingleton<IDashboardState, TerraBaseDashboardState>();
@@ -81,6 +83,15 @@ public static class DashboardApplication
             .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
+
+        var slo = app.Services.GetRequiredService<ServiceSloTelemetry>();
+        var privateScrapeKey = new object();
+        app.Use((context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/metrics"))
+                context.Items[privateScrapeKey] = ServiceSloTelemetry.PrivateScrape(context);
+            return slo.ObserveAsync(context, next);
+        });
 
         // ts-orch's TLS edge on the same host proxies over loopback. Only loopback peers (the default known
         // proxies) may set the scheme and client IP; a browser's own forwarding headers never reach past the edge.
@@ -191,6 +202,9 @@ public static class DashboardApplication
                 await ((IResult)view).ExecuteAsync(context);
             }
         });
+        app.Use((context, next) => context.Request.Path.StartsWithSegments("/metrics")
+            ? slo.ScrapeAsync(context, context.Request.Path == "/metrics" && HttpMethods.IsGet(context.Request.Method) && context.Items[privateScrapeKey] is true)
+            : next(context));
         // Bodiless failures (401 from an expired session, unknown API routes) still tell JSON clients the status and cause.
         app.UseStatusCodePages(status => AcceptsJson(status.HttpContext)
             ? Results.Problem(status.HttpContext.Response.StatusCode == StatusCodes.Status401Unauthorized ? "Sign in to TerraScale to use this API." : ReasonPhrases.GetReasonPhrase(status.HttpContext.Response.StatusCode) + ".",

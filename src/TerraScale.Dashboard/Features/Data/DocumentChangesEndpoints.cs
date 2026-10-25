@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
@@ -44,12 +45,12 @@ public static class DocumentChangesEndpoints
                 await http.Response.Body.FlushAsync(http.RequestAborted);
             }
         }
-        catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { ServiceSloTelemetry.MarkBad(http); }
         catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
         {
             // Before the first event keep deterministic failures visible as HTTP errors.
             // After headers are sent terminate the stream; the reader retains its last checkpoint.
-            if (http.Response.HasStarted) http.Abort();
+            if (http.Response.HasStarted) { ServiceSloTelemetry.MarkBad(http); http.Abort(); }
             else await DatabaseEndpoints.Failure(error).ExecuteAsync(http);
         }
     }

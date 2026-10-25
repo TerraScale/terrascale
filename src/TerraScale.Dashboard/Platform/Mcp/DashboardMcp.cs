@@ -1,5 +1,7 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Net.Http.Headers;
 using System.Reflection;
+using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -56,9 +58,16 @@ public static class DashboardMcp
         }).WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
             .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, cancellationToken) =>
             {
-                try { return await next(request, cancellationToken); }
+                var http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
+                try
+                {
+                    var result = await next(request, cancellationToken);
+                    if (result.IsError == true) ServiceSloTelemetry.MarkBad(http);
+                    return result;
+                }
                 catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
                 {
+                    if (error is AccountAccessException { StatusCode: >= 500 }) ServiceSloTelemetry.MarkBad(http);
                     return Failure(error.Message);
                 }
                 // Upstream refusals (missing collection, duplicate ID, stale version) and outages keep the
@@ -66,14 +75,18 @@ public static class DashboardMcp
                 catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or DatabaseWrongRegionException or DocumentWriteOutcomeUnknownException ||
                                               error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
+                    if (DatabaseResults.Status(error) >= 500 || DatabaseResults.Status(error) == 408) ServiceSloTelemetry.MarkBad(http);
                     Log(request.Services).LogWarning(error, "MCP tool {Tool} failed upstream with {Status}", request.Params?.Name, DatabaseResults.Status(error));
                     return Failure(DatabaseResults.Message(error));
                 }
                 catch (Stripe.StripeException error)
                 {
+                    ServiceSloTelemetry.MarkBad(http);
                     Log(request.Services).LogWarning(error, "MCP tool {Tool} failed at the billing provider", request.Params?.Name);
                     return Failure("The billing provider could not complete the request. Return to billing to reconcile before trying again.");
                 }
+                catch (McpProtocolException error) when (error.ErrorCode is McpErrorCode.InvalidParams or McpErrorCode.MethodNotFound or McpErrorCode.ParseError) { throw; }
+                catch { ServiceSloTelemetry.MarkBad(http); throw; }
             }))
             .WithTools(CachedTools.Value);
     }

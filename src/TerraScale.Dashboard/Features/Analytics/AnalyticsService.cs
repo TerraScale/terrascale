@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.UI;
@@ -32,7 +33,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         try
         {
             var batch = await backend.ReadAsync(selection, cancellationToken);
-            if (batch.State == AnalyticsSourceState.Unavailable) return new(shell, selection, null, [], Empty: "Analytics measurements are unavailable.");
+            if (batch.State == AnalyticsSourceState.Unavailable) { ServiceSloTelemetry.MarkBad(); return new(shell, selection, null, [], Empty: "Analytics measurements are unavailable."); }
             if (batch.State == AnalyticsSourceState.NotMetered)
                 return new(shell, selection, null, [], Empty: "TerraBase has no analytics for this project or database yet. They start with its first database.");
             if (batch.Points.Count == 0) return new(shell, selection, null, []);
@@ -41,7 +42,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-        { return new(shell, selection, null, [], "Could not load analytics measurements. Apply the filters to retry."); }
+        { ServiceSloTelemetry.MarkFailure(error); return new(shell, selection, null, [], "Could not load analytics measurements. Apply the filters to retry."); }
     }
 
     public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
