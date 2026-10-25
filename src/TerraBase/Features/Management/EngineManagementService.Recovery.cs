@@ -13,28 +13,58 @@ internal sealed partial class EngineManagementService
 {
     private readonly Meter _recoveryMeter = meters.Create(Telemetry.MeterName);
     private long _unknownDatabaseFiles;
+    private readonly TaskCompletionSource _recoveryStopping = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _deferredRecovery;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         RegisterPurgeMetrics();
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
-        // A restored catalog cannot authorize deleting files before it has been verified.
-        if (!catalogGate.Value.IsOpen)
+        if (catalogGate.Value.IsOpen)
         {
+            await RecoverAsync(only: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
+        // A restored catalog cannot authorize deleting files before it has been verified, and a cell's gate opens only once
+        // its peers verified the catalog, after this start: recover then. Skipping it left every abandoned creation's file
+        // on disk and audited none (TS-994). Only intents naming a file here now: no creation starts before the gate opens,
+        // and a peer's creation intent, replicated here, names no local file.
+        HashSet<string> local = [.. engine.EnumerateDatabaseFiles(cancellationToken).Select(file => file.Database?.DatabaseId).OfType<string>()];
+        _deferredRecovery = RecoverOnceOpenAsync(local);
+    }
+
+    // Bounded as the recovery at start is; a stop before the gate opened leaves it to the next start.
+    private async Task RecoverOnceOpenAsync(IReadOnlySet<string> local)
+    {
+        try
+        {
+            if (await Task.WhenAny(catalogGate.Value.Opened, _recoveryStopping.Task).ConfigureAwait(false) == catalogGate.Value.Opened)
+            {
+                await RecoverAsync(local, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error)
+        {
+            logger.ZLogError(error, $"Recovering database cleanup intents after the catalog gate opened failed; the next start tries again");
+        }
+    }
+
+    // Finishes the cleanup intents (all, or those of `only`) and audits the files, once the catalog is verified.
+    private async Task RecoverAsync(IReadOnlySet<string>? only, CancellationToken cancellationToken)
+    {
         // Only the current catalog owns cleanup intents; older formats are refused.
         var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         var retried = false;
+        string? after = null;
         if (version == CatalogVersion)
         {
             while (!retried)
             {
                 // One bounded page at a time; release the catalog connection before deleting storage.
                 var page = await ReadCatalogAsync(transaction => transaction.ListAsync(
-                    PendingDatabaseCleanup, afterId: null, MemberPage, MaxPageBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
+                    PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
                 if (page.Documents.Count == 0)
                 {
                     break;
@@ -48,6 +78,11 @@ internal sealed partial class EngineManagementService
                     {
                         // Inconsistent metadata cannot authorize deletion of registered data.
                         throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
+                    }
+
+                    if (only is not null && !only.Contains(storage.DatabaseId))
+                    {
+                        continue;
                     }
 
                     checkpoint("recovery.intent", storage);
@@ -67,13 +102,27 @@ internal sealed partial class EngineManagementService
                         break;
                     }
                 }
+
+                if (!page.HasMore)
+                {
+                    break;
+                }
+
+                after = page.Documents[^1].Id;
             }
         }
 
         await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _recoveryStopping.TrySetResult();
+        if (_deferredRecovery is { } deferred)
+        {
+            await deferred.ConfigureAwait(false);
+        }
+    }
 
     private async ValueTask<(bool HasCatalog, string? Version)> CatalogStateAsync(CancellationToken cancellationToken)
     {

@@ -24,6 +24,9 @@ public interface ICatalogGate
     /// <summary>Whether the catalog is verified (or bootstrapped as a new cluster's): requests that read it for authorization run.</summary>
     bool IsOpen { get; }
 
+    /// <summary>Completes once <see cref="IsOpen"/> is true; an open gate never closes again.</summary>
+    Task Opened { get; }
+
     /// <summary>
     /// Whether this catalog is known not to be a restored older copy: open, or its restore anchor read and not ahead of it.
     /// Another machine's gate counts a pull from this one only then (a closed, restored machine verifies nobody).
@@ -109,6 +112,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
     private readonly SemaphoreSlim _pass = new(1, 1);
     private readonly SemaphoreSlim _anchoring = new(1, 1);
     private volatile bool _open;
+    private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // The catalog's change log head at this start, before any pull: what the restore anchor is compared with.
     private long _startHead;
@@ -148,6 +152,8 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
     }
 
     public bool IsOpen => _open;
+
+    public Task Opened => _opened.Task;
 
     public bool Trusted => _open || (_restored == false && !_anchorMissing);
 
@@ -263,6 +269,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             if (_fresh && listed.Count == 0 && _restored == false && !_anchorMissing)
             {
                 _open = true;
+                _opened.TrySetResult();
                 Pending = [];
                 await WriteAnchorAsync(cancellationToken).ConfigureAwait(false);
                 return true;
@@ -304,6 +311,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
                 // Pulled from every machine needed (or a majority, see above), at least one of them, and not restored; or a
                 // single machine by configuration.
                 _open = true;
+                _opened.TrySetResult();
                 _logger.ZLogInformation($"The catalog is verified against {_verified.Count} of {machines - 1} other machines; this machine serves");
             }
 
