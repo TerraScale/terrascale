@@ -32,19 +32,21 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         var home = await databases.HomeAsync(context, database, cancellationToken);
         var path = sort.Length == 0 ? "$id" : "/" + sort.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
         if (sort.Length > 128) throw new AccountAccessException("Sort field is too long.", 422);
+        page = Math.Clamp(page, 1, 40);
+        search = search.Trim();
+        var budget = search.Length == 0 ? Math.Min(1000, page * 25 + 1) : 1000;
         var rows = new List<TerraBaseDocument>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var query = new TerraBaseQuery { Sort = [new(path, descending ? "desc" : "asc")], Limit = 1000 };
+        var query = new TerraBaseQuery { Sort = [new(path, descending ? "desc" : "asc")] };
         string? cursor = null;
         do
         {
             // TerraBase refuses one 1000-document page of real documents as "query too expensive"; 100 per page stays well inside its budget.
-            var result = await documents.DocumentsAsync(DatabaseService.Scope(context), home, database.Name, collection, query with { Limit = Math.Min(100, 1000 - rows.Count), Cursor = cursor }, cancellationToken);
+            var result = await documents.DocumentsAsync(DatabaseService.Scope(context), home, database.Name, collection, query with { Limit = Math.Min(100, budget - rows.Count), Cursor = cursor }, cancellationToken);
             rows.AddRange(result.Items);
             cursor = result.NextCursor;
             if (!string.IsNullOrEmpty(cursor) && !seen.Add(cursor)) throw new HttpRequestException("Document pagination did not advance.");
-        } while (!string.IsNullOrEmpty(cursor) && rows.Count < 1000);
-        search = search.Trim();
+        } while (!string.IsNullOrEmpty(cursor) && rows.Count < budget);
         var matches = search.Length == 0 ? rows : rows.Where(row => (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase)).ToList();
         var pages = Math.Max(1, (matches.Count + 24) / 25);
         page = Math.Clamp(page, 1, pages);

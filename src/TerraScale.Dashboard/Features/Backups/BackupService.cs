@@ -11,7 +11,9 @@ public sealed class BackupService(AccountService accounts, DatabaseService datab
         var database = DatabaseService.Database(context, databaseId);
         var scope = DatabaseService.Scope(context);
         var home = await databases.HomeAsync(context, database, ct);
-        var backups = await backend.ListAsync(scope, home, databaseId, ct);
+        var backupsRead = backend.ListAsync(scope, home, databaseId, ct);
+        var policyRead = backend.PolicyAsync(scope, home, databaseId, ct);
+        var backups = await backupsRead;
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var backup in backups)
         {
@@ -20,7 +22,7 @@ public sealed class BackupService(AccountService accounts, DatabaseService datab
         }
         BackupPolicyView? policy = null;
         var policyUnavailable = "";
-        try { policy = Policy(await backend.PolicyAsync(scope, home, databaseId, ct)); }
+        try { policy = Policy(await policyRead); }
         catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
             (error is not OperationCanceledException || !ct.IsCancellationRequested))
         { policyUnavailable = "Provider backup scheduling is unavailable."; }

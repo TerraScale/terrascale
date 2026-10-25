@@ -32,7 +32,8 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
         return path + (query.Count == 0 ? "" : "?" + string.Join('&', query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value))));
     }
     public string SortPath(string field) => BrowsePath(("sort", field), ("order", Sort == field && !Descending ? "desc" : ""), ("page", ""));
-    public string Summary => $"{(Browse.Page - 1) * 25 + 1}–{(Browse.Page - 1) * 25 + Browse.Documents.Count} of {Browse.Matched} documents · page {Browse.Page} of {Browse.PageCount}";
+    public string Summary => $"{(Browse.Documents.Count == 0 ? 0 : (Browse.Page - 1) * 25 + 1)}–{(Browse.Page - 1) * 25 + Browse.Documents.Count} of {(Browse.More ? "at least " : "")}{Browse.Matched} documents · page {Browse.Page}"
+        + (Browse.More ? (Search.Trim().Length > 0 ? " · partial search: first 1,000 documents" : " · partial results") : $" of {Browse.PageCount}");
 }
 
 public sealed record DataGridColumn(string Name, bool Numeric, bool Root)
