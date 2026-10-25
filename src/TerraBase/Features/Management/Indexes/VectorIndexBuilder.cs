@@ -10,7 +10,7 @@ namespace TerraBase.Features.Management.Indexes;
 /// (docs/terrabase/vector-index.md). Creating an index here starts its build; each node also resumes builds at start and
 /// every hour, which covers restarts and indexes that arrived by replication.
 /// </summary>
-internal sealed class VectorIndexBuilder(IStorageEngine engine, TimeProvider time, ILogger<VectorIndexBuilder> logger) : BackgroundService
+internal sealed class VectorIndexBuilder(IStorageEngine engine, IDatabaseFileCatalog files, TimeProvider time, ILogger<VectorIndexBuilder> logger) : BackgroundService
 {
     // A full queue drops the signal: the hourly pass builds that database.
     private readonly Channel<TenantContext> _pending = Channel.CreateBounded<TenantContext>(
@@ -38,7 +38,10 @@ internal sealed class VectorIndexBuilder(IStorageEngine engine, TimeProvider tim
             {
                 try
                 {
-                    if (await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } read)
+                    // A file the catalog does not register is never opened here: an abandoned 1.5 GB copy's index build would
+                    // read all of it (TS-994).
+                    if (await files.RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false) is not true
+                        || await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } read)
                     {
                         continue;
                     }
