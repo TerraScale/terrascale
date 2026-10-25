@@ -29,6 +29,9 @@ public class TerraBaseException : HttpRequestException
     /// <summary>The region that answered (<c>X-TerraBase-Region</c>), when it said; TerraBase names it on every response.</summary>
     public string? Region { get; internal set; }
 
+    /// <summary>The response's canonical ULID from X-Request-ID; null when absent, invalid or ambiguous.</summary>
+    public string? RequestId { get; private set; }
+
     /// <summary>Server Retry-After when present; no request is automatically retried.</summary>
     public TimeSpan? RetryAfter { get; private set; }
 
@@ -120,12 +123,18 @@ public class TerraBaseException : HttpRequestException
         exception.Machine = machine;
         exception.OutcomeRegion = outcomeRegion;
         exception.Details = details.AsReadOnly();
-        exception.ResponseHeaders = response.Headers.ToDictionary(header => header.Key,
-            header => (IReadOnlyList<string>)Array.AsReadOnly(header.Value.ToArray()), StringComparer.OrdinalIgnoreCase).AsReadOnly();
-        exception.Region = RegionHeader(response, "X-TerraBase-Region");
-        exception.RetryAfter = response.Headers.RetryAfter?.Delta
-            ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);
+        exception.CaptureResponse(response);
         return exception;
+    }
+
+    internal void CaptureResponse(HttpResponseMessage response)
+    {
+        RequestId = ResponseRequestId.Read(response);
+        ResponseHeaders = response.Headers.ToDictionary(header => header.Key,
+            header => (IReadOnlyList<string>)Array.AsReadOnly(header.Value.ToArray()), StringComparer.OrdinalIgnoreCase).AsReadOnly();
+        Region = RegionHeader(response, "X-TerraBase-Region");
+        RetryAfter = response.Headers.RetryAfter?.Delta
+            ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);
     }
 
     // A single header value that is a well-formed region id (or, for a list, a comma-separated value), else null.

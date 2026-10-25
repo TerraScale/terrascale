@@ -387,7 +387,7 @@ public sealed class TerraScaleAuthClient
 
         if (response.StatusCode != expected)
         {
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected success status.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected success status.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
         }
     }
 
@@ -436,7 +436,7 @@ public sealed class TerraScaleAuthClient
                 response.StatusCode,
                 $"ts-auth returned HTTP {(int)response.StatusCode}, but HTTP {(int)HttpStatusCode.NoContent} was required.",
                 errorCode: null,
-                retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response));
+                retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response), response: response);
         }
     }
 
@@ -597,15 +597,15 @@ public sealed class TerraScaleAuthClient
         if (!string.Equals(media?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase)
             || media?.CharSet is { } charset && !string.Equals(charset.Trim('"'), "utf-8", StringComparison.OrdinalIgnoreCase))
         {
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected response media type.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected response media type.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
         }
 
         // Bound successful bodies before deserialization, including unknown-length responses.
         using var destination = new BoundedHttpBodyStream(MaxOperationBytes,
-            () => new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response)), cancellationToken);
+            () => new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response), cancellationToken);
         if (response.Content.Headers.ContentLength > MaxOperationBytes)
         {
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
         }
         try
         {
@@ -614,7 +614,7 @@ public sealed class TerraScaleAuthClient
         catch (Exception exception) when (exception is IOException or HttpRequestException)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response body could not be read.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response body could not be read.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
         }
         cancellationToken.ThrowIfCancellationRequested();
         TResponse? payload;
@@ -630,14 +630,14 @@ public sealed class TerraScaleAuthClient
                 response.StatusCode,
                 "ts-auth returned an invalid response body.",
                 errorCode: "invalid_response",
-                retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response));
+                retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response), response: response);
         }
 
         return payload ?? throw new TerraScaleAuthException(
             response.StatusCode,
             "ts-auth returned an empty response body.",
             errorCode: null,
-            retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response));
+            retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response), response: response);
     }
 
     private readonly record struct RequestAuthentication(RequestAuthenticationKind Kind, AuthenticationHeaderValue? Header = null)

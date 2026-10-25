@@ -125,15 +125,7 @@ internal sealed class TerraBaseConnection
             using var body = new BoundedHttpBodyStream(
                 maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than MaxResponseBytes.", "invalid_response", null), token);
             await response.Content.CopyToAsync(body, token).ConfigureAwait(false);
-            try
-            {
-                value = ReadResponse(body.Written.Span, typeInfo, response.StatusCode);
-            }
-            catch (TerraBaseException error)
-            {
-                error.Region = TerraBaseException.RegionHeader(response, "X-TerraBase-Region");
-                throw;
-            }
+            value = ReadResponse(body.Written.Span, typeInfo, response.StatusCode);
         }, cancellationToken).ConfigureAwait(false);
         return (value!, status);
     }
@@ -173,6 +165,11 @@ internal sealed class TerraBaseConnection
             }
             return opened.Response.StatusCode;
         }
+        catch (TerraBaseException error)
+        {
+            error.CaptureResponse(opened.Response);
+            throw;
+        }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && opened.Token.IsCancellationRequested)
         {
             throw new TimeoutException("TerraBase did not answer within the request deadline.", error);
@@ -209,6 +206,11 @@ internal sealed class TerraBaseConnection
             {
                 opened.Token.ThrowIfCancellationRequested();
             }
+        }
+        catch (TerraBaseException error)
+        {
+            error.CaptureResponse(opened.Response);
+            throw;
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && opened.Token.IsCancellationRequested)
         {
