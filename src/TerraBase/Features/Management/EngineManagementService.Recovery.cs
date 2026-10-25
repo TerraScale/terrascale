@@ -13,14 +13,17 @@ internal sealed partial class EngineManagementService
 {
     private readonly Meter _recoveryMeter = meters.Create(Telemetry.MeterName);
     private long _unknownDatabaseFiles;
+    private long _unknownDatabaseBytes;
     private readonly TaskCompletionSource _recoveryStopping = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _deferredRecovery;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         RegisterPurgeMetrics();
-        _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
-            description: "Files found at startup without a registered database; preserved for operator recovery.");
+        _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => Interlocked.Read(ref _unknownDatabaseFiles),
+            description: "Unowned files preserved for operator recovery.");
+        _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_bytes", () => Interlocked.Read(ref _unknownDatabaseBytes),
+            unit: "By", description: "Bytes in unowned files preserved for operator recovery.");
         if (catalogGate.Value.IsOpen)
         {
             await RecoverAsync(only: null, cancellationToken).ConfigureAwait(false);
@@ -55,7 +58,7 @@ internal sealed partial class EngineManagementService
     private async Task RecoverAsync(IReadOnlySet<string>? only, CancellationToken cancellationToken)
     {
         // Only the current catalog owns cleanup intents; older formats are refused.
-        var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
+        var (_, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         var retried = false;
         string? after = null;
         if (version == CatalogVersion)
@@ -112,7 +115,7 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
+        await AuditFilesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -132,50 +135,17 @@ internal sealed partial class EngineManagementService
             : null);
     }
 
-    // Counts and logs files without a registered database; they are preserved for operator recovery.
-    private async ValueTask AuditFilesAsync(bool hasCatalog, string? version, CancellationToken cancellationToken)
-    {
-        // ponytail: one page of fixed-size ULID keys bounds items/bytes; partition the scan if interleaved files defeat reuse.
-        var registrations = new Dictionary<(string Organization, string Project, string Database), bool>();
-        foreach (var file in engine.EnumerateDatabaseFiles(cancellationToken))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var registered = false;
-            // Future catalogs may change row schemas; preserve their files without interpreting those rows.
-            if (hasCatalog && version == CatalogVersion
-                && file.Database is { } database)
-            {
-                var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-                if (!registrations.TryGetValue(key, out registered))
-                {
-                    checkpoint("audit.registration", database);
-                    registered = await RegisteredFileAsync(database, cancellationToken).ConfigureAwait(false) is true;
-                    if (registrations.Count == MemberPage)
-                    {
-                        registrations.Clear();
-                    }
-
-                    registrations.Add(key, registered);
-                }
-            }
-
-            if (!registered)
-            {
-                _unknownDatabaseFiles++;
-                logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
-            }
-        }
-    }
-
-    // A database of the project, or a backup snapshot its organization still tracks there (the storage sweep deletes it).
+    // A database of the project, or a backup snapshot its organization still tracks there.
     public ValueTask<RegisteredDatabaseResult> RegisteredFileAsync(TenantContext storage, CancellationToken cancellationToken) =>
         !catalogGate.Value.IsOpen ? ValueTask.FromResult<RegisteredDatabaseResult>(UnreadableCatalog) :
-        ReadAsync<RegisteredDatabaseResult>(async transaction =>
-            await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
-            && (await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null
-                || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
-                    .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId),
+        ReadAsync<RegisteredDatabaseResult>(async transaction => await IsRegisteredAsync(transaction, storage, cancellationToken).ConfigureAwait(false),
             static error => error, cancellationToken);
+
+    private static async ValueTask<bool> IsRegisteredAsync(IStorageTransaction transaction, TenantContext storage, CancellationToken cancellationToken) =>
+        await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
+        && (await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null
+            || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
+                .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId);
 
     private readonly union CleanupRegistration(bool, Done, Unavailable);
 

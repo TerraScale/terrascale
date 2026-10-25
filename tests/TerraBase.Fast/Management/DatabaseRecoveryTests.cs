@@ -20,7 +20,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
-public sealed class DatabaseRecoveryTests
+public sealed partial class DatabaseRecoveryTests
 {
     [Test]
     [Arguments(false)]
@@ -675,22 +675,28 @@ public sealed class DatabaseRecoveryTests
         var otherUnknown = System.IO.Path.Combine(other.Directory, other.Organization, other.Project, "notes.txt");
         await File.WriteAllBytesAsync(otherUnknown, other.Faker.Random.Bytes(17));
         await using var otherApi = await other.StartAsync();
+        DateTimeOffset? firstSeen = null;
         for (var restart = 0; restart < 2; restart++)
         {
             var logs = new CapturedLogs();
             await using var api = await state.StartAsync(services => services.AddSingleton<ILoggerProvider>(logs));
             using var owner = api.As(state.User);
+            var observation = (await ObservationAsync(api, new TenantContext(state.Organization, PlanTier.Hobby, state.Project, unregistered)))!;
+            firstSeen ??= observation.FirstSeen;
+            await Assert.That(observation.FirstSeen).IsEqualTo(firstSeen.Value);
+            var metrics = await api.Server.Client.GetStringAsync(Uri("/metrics"));
+            await Assert.That(double.Parse(metrics.Split('\n').Single(line => line.StartsWith("terrabase_storage_unknown_bytes{", StringComparison.Ordinal)).Split(' ')[1], CultureInfo.InvariantCulture)).IsGreaterThan(0);
             foreach (var (path, bytes) in before)
             {
                 await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(bytes)).IsTrue();
-                await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path);
+                await AssertFileLoggedAsync(api, logs, path);
             }
 
             foreach (var directory in directories)
             {
                 await Assert.That(System.IO.Directory.Exists(directory)).IsTrue();
                 await Assert.That(System.IO.Directory.EnumerateFileSystemEntries(directory)).IsEmpty();
-                await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + directory);
+                await AssertFileLoggedAsync(api, logs, directory);
             }
 
             await Assert.That(System.IO.Directory.Exists(ordinaryDirectory)).IsTrue();
@@ -1094,8 +1100,7 @@ public sealed class DatabaseRecoveryTests
                 foreach (var (path, bytes) in before)
                 {
                     await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(bytes)).IsTrue();
-                    await Assert.That(logs.Messages.Count(message => message == "Warning: Preserved database file without a catalog registration: " + path))
-                        .IsEqualTo(1);
+                    await AssertFileLoggedAsync(api, logs, path);
                 }
             }
 
@@ -1579,8 +1584,7 @@ public sealed class DatabaseRecoveryTests
             foreach (var (path, bytes) in before)
             {
                 await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(bytes)).IsTrue();
-                await Assert.That(logs.Messages.Count(message => message == "Warning: Preserved database file without a catalog registration: " + path))
-                    .IsEqualTo(1);
+                await AssertFileLoggedAsync(api, logs, path);
             }
 
             await AssertUnknownCountAsync(api, paths.Length);
@@ -1620,8 +1624,8 @@ public sealed class DatabaseRecoveryTests
         var logs = new CapturedLogs();
         await using var restarted = await state.StartAsync(registered => registered.AddSingleton<ILoggerProvider>(logs));
         await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(bytes)).IsTrue();
-        await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path);
-        await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path + ".key");
+        await AssertFileLoggedAsync(restarted, logs, path);
+        await AssertFileLoggedAsync(restarted, logs, path + ".key");
         await AssertUnknownCountAsync(restarted, 2);
         await AssertReadyAsync(restarted);
         await Assert.That((await PendingAsync(restarted)).Documents).IsEmpty();
@@ -1695,9 +1699,7 @@ public sealed class DatabaseRecoveryTests
             await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
             await AssertArtifactPreservedAsync();
             await AssertReadyAsync(api);
-            await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path);
-            await Assert.That(logs.Messages.Count(message => message == "Warning: Preserved database file without a catalog registration: " + path))
-                .IsEqualTo(1);
+            await AssertFileLoggedAsync(api, logs, path);
             await AssertUnknownCountAsync(api, 1);
             using var owner = api.As(state.User);
             await state.AssertUnregisteredAsync(api, owner, target);
