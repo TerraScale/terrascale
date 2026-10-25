@@ -58,6 +58,7 @@ public static class EngineExtensions
                 RequiresRemoteProof = provider.GetService<IMemberDirectory>() is not null,
             };
         });
+        services.AddSingleton<IOrphanDatabaseFiles>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IRebuildStorage>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IHealthyRewrite>(provider => provider.GetRequiredService<TursoStorageEngine>());
