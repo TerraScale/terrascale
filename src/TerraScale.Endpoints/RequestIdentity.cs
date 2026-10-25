@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using Microsoft.Extensions.Logging;
 
 namespace TerraScale.Endpoints;
 
@@ -56,13 +55,18 @@ public static class RequestIdentity
     /// <summary>Install only on first-party transports; never on webhooks or third-party HTTP clients.</summary>
     public static HttpMessageHandler Wrap(HttpMessageHandler inner, string? secret) => new Propagation(secret) { InnerHandler = inner };
 
-    private sealed class Propagation(string? secret) : DelegatingHandler
+    /// <summary>Creates a factory-managed handler restricted to one configured service origin.</summary>
+    public static DelegatingHandler CreatePropagationHandler(string? secret, Uri origin) => new Propagation(secret, origin);
+
+    private sealed class Propagation(string? secret, Uri? origin = null) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             request.Headers.Remove(Header);
             request.Headers.Remove(ProofHeader);
-            if (Current.Value is { } id && secret is { Length: > 0 })
+            if (Current.Value is { } id && secret is { Length: > 0 }
+                && (origin is null || origin.Scheme == Uri.UriSchemeHttps && request.RequestUri is { } destination
+                    && Uri.Compare(origin, destination, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0))
             {
                 request.Headers.Add(Header, id);
                 request.Headers.Add(ProofHeader, Sign(id, secret));

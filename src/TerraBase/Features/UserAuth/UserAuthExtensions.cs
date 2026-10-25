@@ -2,10 +2,13 @@ using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
+using TerraScale.Endpoints;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -36,6 +39,9 @@ public static class UserAuthExtensions
         })
             // Discovery and JWKS are fetched where auth-issuer and jwks_uri say, never where a redirect points.
             .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
+            .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
+                provider.GetRequiredService<PeerCredential>().CorrelationKey,
+                new Uri(provider.GetRequiredService<TerraBaseOptions>().AuthIssuer ?? "about:blank")))
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();
         services.AddSingleton<ValidatedTokens>();

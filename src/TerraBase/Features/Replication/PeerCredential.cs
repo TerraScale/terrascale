@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Configuration;
+using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replication;
 
@@ -62,7 +63,7 @@ internal sealed class PeerCredential
         request.Headers.Add(HeaderName, CorrelationKey);
     }
 
-    internal HttpMessageHandler Wrap(HttpMessageHandler handler) => new CredentialHandler(this) { InnerHandler = handler };
+    internal HttpMessageHandler Wrap(HttpMessageHandler handler) => RequestIdentity.Wrap(new CredentialHandler(this) { InnerHandler = handler }, CorrelationKey);
 
     private sealed class CredentialHandler(PeerCredential credential) : DelegatingHandler
     {
