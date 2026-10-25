@@ -67,6 +67,11 @@ public sealed class WriterHoldTests
         await Assert.That(holds.Holders).Contains("a group commit batch");
         await Assert.That(holds.Holders).Contains("a durable write transaction");
         await Assert.That(holds.Longest).IsLessThan(2);
+
+        // Both reach the scrape: how long writers were held, and how many calls wait for an I/O thread.
+        var scraped = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
+        await Assert.That(scraped).Contains("terrabase_storage_writer_held_seconds_bucket");
+        await Assert.That(scraped).Contains("terrabase_storage_queued");
     }
 
     [Test]
