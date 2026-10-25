@@ -442,13 +442,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return inner.PutAsync(collection, id, json, cancellationToken);
         }
 
-        public ValueTask<(long Version, ReadOnlyMemory<byte> Stored)> PutAdmittedAsync(
-            string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
-        {
-            _intercepted |= hook._intercepts(collection, id, json);
-            return inner.PutAdmittedAsync(collection, id, json, cancellationToken);
-        }
-
         public async ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken)
         {
             if (_intercepted && hook._commits.TryDequeue(out var gate))

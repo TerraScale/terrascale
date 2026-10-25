@@ -745,9 +745,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     // Validate before normalization so removing identity cannot conceal invalid input.
                     _ = DocumentJson.Read(put.Json, requireObject: true);
                     var json = EntityPayload.WithoutId(put.Json, put.Id);
-                    var (version, stored) = await transaction.PutAdmittedAsync(put.Collection, put.Id, json, cancellationToken).ConfigureAwait(false);
+                    var version = await transaction.PutAsync(put.Collection, put.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(put.Id, version, current is not { Deleted: false }, null,
-                        ETags.Version(transaction.Scope, put.Collection, put.Id, version, stored));
+                        StoredETag(transaction, put.Collection, put.Id, version, json));
                 }
 
             case PatchOperation patch:
@@ -928,6 +928,14 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
 
     // The precondition failure, or null when it holds.
+    // The ETag a read of the written document answers with: a PUT replaces the whole state, so the database stores the
+    // canonical JSON of its body (fields in name order).
+    private static string StoredETag(IStorageTransaction transaction, string collection, string id, long version, ReadOnlyMemory<byte> json)
+    {
+        using var parsed = JsonDocument.Parse(json, DocumentState.JsonOptions);
+        return ETags.Version(transaction.Scope, collection, id, version, DocumentState.Bottom.Put(default, parsed.RootElement).Materialize());
+    }
+
     private static async ValueTask<PreconditionFailed?> CheckAsync(
         IStorageTransaction transaction, Precondition precondition, string collection, string id, DocumentVersion? current,
         CancellationToken cancellationToken, ReadOnlyMemory<byte>? json = null)

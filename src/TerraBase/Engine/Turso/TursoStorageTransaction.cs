@@ -171,24 +171,19 @@ internal sealed partial class TursoStorageTransaction(
     // Worker-only; runs inside a mutation, so a rejected document also makes the transaction roll back only. The private
     // system catalog also stores scalars (name indexes, sequences): a document state holds objects only, so a system
     // scalar is stored as the object {"\u0000": value} and read back as the value (SystemValue). A system object that
-    // holds that field itself is refused. An admitted client document (PutAdmittedAsync) was read by its caller already.
-    private ReadOnlyMemory<byte> Admit(ReadOnlyMemory<byte> json, bool admitted)
+    // holds that field itself is refused.
+    private string Admit(ReadOnlyMemory<byte> json)
     {
-        if (admitted && !store.IsSystem)
-        {
-            return json;
-        }
-
         var body = DocumentJson.Read(json, requireObject: store.Tenant is not null);
         if (!store.IsSystem)
         {
-            return json;
+            return body;
         }
 
-        using var parsed = JsonDocument.Parse(json, DocumentState.JsonOptions);
-        return parsed.RootElement.ValueKind != JsonValueKind.Object ? Encoding.UTF8.GetBytes($"{{{ScalarField}{body}}}")
+        using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
+        return parsed.RootElement.ValueKind != JsonValueKind.Object ? $"{{{ScalarField}{body}}}"
             : parsed.RootElement.TryGetProperty("\0", out _) ? throw new InvalidDataException("a system document field is named \\u0000")
-            : json;
+            : body;
     }
 
     private const string ScalarField = "\"\\u0000\":";
@@ -200,17 +195,7 @@ internal sealed partial class TursoStorageTransaction(
 
     public async ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
     {
-        return await RunAsync(() => Put(collection, id, json, cancellationToken).Version, cancellationToken, mutation: true).ConfigureAwait(false);
-    }
-
-    public async ValueTask<(long Version, ReadOnlyMemory<byte> Stored)> PutAdmittedAsync(
-        string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
-    {
-        return await RunAsync<(long, ReadOnlyMemory<byte>)>(() =>
-        {
-            var (version, state) = Put(collection, id, json, cancellationToken, admitted: true);
-            return (version, state.Materialize());
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
+        return await RunAsync(() => Put(collection, id, json, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
     // One call for the whole run: each put otherwise costs two hops through the write lane and back.
@@ -228,7 +213,7 @@ internal sealed partial class TursoStorageTransaction(
                 cancellationToken.ThrowIfCancellationRequested();
                 var (collection, id, json) = puts[i];
                 var previous = ReadVersion(collection, id);
-                results.Span[i] = (Put(collection, id, json, cancellationToken).Version, previous);
+                results.Span[i] = (Put(collection, id, json, cancellationToken), previous);
             }
 
             return true;
@@ -239,16 +224,14 @@ internal sealed partial class TursoStorageTransaction(
         string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operations);
-        return await RunAsync(() => Put(collection, id, json, cancellationToken, operations).Version, cancellationToken, mutation: true).ConfigureAwait(false);
+        return await RunAsync(() => Put(collection, id, json, cancellationToken, operations), cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
     // Worker-only, inside a mutation. A PATCH writes `patch` to a client document's state; `json` is what it leaves.
-    private (long Version, DocumentState State) Put(
-        string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken, IReadOnlyList<FieldOperation>? patch = null,
-        bool admitted = false)
+    private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken, IReadOnlyList<FieldOperation>? patch = null)
     {
         ThrowIfReadOnly();
-        var body = Admit(json, admitted);
+        var body = Admit(json);
         long? metadataBytes = null;
         using var schemaReservation = IsClient ? ReserveCollectionMetadata(collection, out metadataBytes) : null;
         var exists = HasTable(collection);
@@ -300,7 +283,7 @@ internal sealed partial class TursoStorageTransaction(
         Offset();
         var version = Store(collection, id, next, at, materialized, state, metadata);
         ReconcileUnique(collection, affected, cancellationToken);
-        return (version, next);
+        return version;
     }
 
     // A register removed without a trace would come back with the next late delta: every deletion is a tombstone.

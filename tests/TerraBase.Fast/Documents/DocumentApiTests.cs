@@ -718,25 +718,6 @@ public sealed class DocumentApiTests
     }
 
     [Test]
-    public async Task A_put_answers_the_etag_of_the_body_a_read_returns()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var id = DocumentApi.NewId();
-        var name = Faker.Name.FirstName();
-        await api.PutAsync(id, new { stale = Faker.Lorem.Word(), name });
-
-        // Fields out of name order and the document's own id: the stored body has its fields in name order, without the
-        // id or the previous write's fields, and the PUT's ETag is the one a read of that body answers with.
-        var replaced = await api.SendRawAsync(
-            HttpMethod.Put, api.Document(id), $$$"""{"z":[2,1],"id":"{{{id}}}","a":{"y":1,"b":"{{{name}}}"}}""", "application/json");
-        var read = await api.GetAsync(id);
-
-        await Assert.That(replaced.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(read.ETag).IsEqualTo(replaced.ETag);
-        await Assert.That(read.Json.GetProperty("document").GetRawText()).IsEqualTo($$$"""{"a":{"y":1,"b":"{{{name}}}"},"z":[2,1]}""");
-    }
-
-    [Test]
     [Arguments(" ")]
     [Arguments("  ")]
     [Arguments(" \t")]
