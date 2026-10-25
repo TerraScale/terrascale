@@ -44,8 +44,9 @@ public static partial class Telemetry
 
         // First: it clears the default providers, so the providers added below are kept. Framework
         // categories stay at Warning because their Information lines log query strings (codes, tokens,
-        // states). OpenIddict stays at Information: it writes raw tokens only at Trace and Debug.
-        builder.Logging.AddTerraScaleLogging("ts-auth", ("OpenIddict", LogLevel.Information));
+        // states). Suppress protocol chatter to preserve the production log window; hosting lifecycle
+        // messages remain at Information through the shared logger.
+        builder.Logging.AddTerraScaleLogging("ts-auth", ("OpenIddict", LogLevel.Warning), ("Microsoft", LogLevel.Warning));
 
         // Every provider sees exceptions only as type names and stack traces.
         builder.Services.AddSafeLogging();

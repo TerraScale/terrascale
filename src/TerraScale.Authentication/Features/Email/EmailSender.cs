@@ -1,5 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
@@ -72,6 +74,7 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
     {
         ArgumentNullException.ThrowIfNull(recipient);
         ArgumentNullException.ThrowIfNull(message);
+        EmailOutcomeLog.Write(logger, recipient, "error");
         if (cancellationToken.IsCancellationRequested)
         {
             return Task.FromCanceled(cancellationToken);
@@ -108,6 +111,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
     /// <inheritdoc />
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
+        var outcome = "error";
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.cloudflare.com/client/v4/accounts/{email.AccountId}/email/sending/send")
@@ -122,7 +126,8 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
             {
                 AuthMetrics.Email("failed");
                 // The response body can quote the recipient, so only the status is logged.
-                logger.ZLogError($"Email delivery failed: Cloudflare answered {(int)response.StatusCode:@Status}");
+                outcome = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? "429" : "error";
+                this.LogProviderFailure((int)response.StatusCode);
                 return response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? EmailDeliveryOutcome.Retryable
                     : (int)response.StatusCode < 500 ? EmailDeliveryOutcome.Rejected : EmailDeliveryOutcome.Unknown;
             }
@@ -138,11 +143,13 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
                 && result.TryGetProperty("permanent_bounces", out var bounces) && bounces.ValueKind == JsonValueKind.Array && bounces.GetArrayLength() > 0)
             {
                 AuthMetrics.Email("bounced");
-                logger.ZLogError($"Email delivery failed: Cloudflare reported a permanent bounce");
+                outcome = "bounced";
+                this.LogProviderFailure(null);
                 return EmailDeliveryOutcome.Rejected;
             }
 
             AuthMetrics.Email("sent");
+            outcome = "queued";
             return EmailDeliveryOutcome.Accepted;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -163,6 +170,46 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
                 _ = logFailure;
             }
             return EmailDeliveryOutcome.Unknown;
+        }
+        finally
+        {
+            EmailOutcomeLog.Write(logger, recipient, outcome);
+        }
+    }
+
+    private void LogProviderFailure(int? status)
+    {
+        try
+        {
+            if (status is { } code)
+            {
+                logger.ZLogError($"Email delivery failed: Cloudflare answered {code:@Status}");
+            }
+            else
+            {
+                logger.ZLogError($"Email delivery failed: Cloudflare reported a permanent bounce");
+            }
+        }
+        catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+        {
+            _ = logFailure;
+        }
+    }
+}
+
+/// <summary>Best-effort outcomes contain only a recipient digest and a fixed outcome label.</summary>
+internal static class EmailOutcomeLog
+{
+    public static void Write(ILogger logger, string recipient, string outcome)
+    {
+        try
+        {
+            var recipientHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(recipient)));
+            logger.ZLogInformation($"Email send outcome: {outcome:@Outcome} (recipient SHA256 {recipientHash:@RecipientHash})");
+        }
+        catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+        {
+            _ = logFailure;
         }
     }
 }
