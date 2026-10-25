@@ -15,6 +15,7 @@ namespace TerraBase.Slow.Backup;
 public sealed class CatalogAnchorRollingRestartTests
 {
     private static readonly TimeSpan Within = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan GateOpens = TimeSpan.FromMinutes(3);
 
     [Test]
     public async Task Anchors_stay_within_their_deadline_while_a_region_restarts_under_catalog_writes()
@@ -69,7 +70,16 @@ public sealed class CatalogAnchorRollingRestartTests
                 var missed = Volatile.Read(ref writes) + 50;
                 await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref writes) >= missed), timeout: TimeSpan.FromSeconds(60));
                 await fra.StartAsync();
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(fra.Gate.IsOpen), timeout: TimeSpan.FromSeconds(30));
+                // The peers anchored markers fra missed: its gate opens once a revocation snapshot or their streams cover them,
+                // which a loaded runner takes longer than a minute for. Only the anchors are bounded here.
+                try
+                {
+                    await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(fra.Gate.IsOpen), timeout: GateOpens);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    Assert.Fail($"restart {restart}: fra's catalog gate stayed closed, waiting for: {string.Join("; ", fra.Gate.Waiting)}");
+                }
                 await Task.WhenAll(peers, AnchorAsync(fra, "fra", 50), WriteCountAsync(fra, 50));
             }
         }
