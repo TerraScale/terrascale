@@ -742,6 +742,55 @@ public sealed class RemoteAckTests
         }
     }
 
+    // Batch 8 (2026-10-25): with ts-auth writing remote_durable in three regions, writers were held for seconds. A write that
+    // waits for another region's ack holds neither its database's writer nor a transaction: the writer, another write of the
+    // same database and the system database's durable writes all proceed while its ack is held.
+    [Test]
+    public async Task A_write_waiting_for_its_remote_ack_holds_no_writer_while_others_commit()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        var promptly = TimeSpan.FromSeconds(5);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+
+            // The writer is free: taking it does not wait for the held ack.
+            var store = await pair.OriginTursoAsync();
+            await Assert.That(await store.WithWritersHeldAsync(() => Task.FromResult(true), pair.Token, "a test taking the writer").WaitAsync(promptly, pair.Token))
+                .IsTrue();
+
+            // Another write of the same database commits and answers. (Its ack, like every later ack on this link, would wait
+            // behind the held one: the gate stalls the peer's receiver, which applies in order.)
+            using (var local = await pair.LocalClient.PutAsJsonAsync(pair.Document(EntityIds.New().ToString()), new { n = 2 }, pair.Token).WaitAsync(promptly, pair.Token))
+            {
+                await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                await Assert.That((await local.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("local_durable");
+            }
+
+            // As the catalog anchor writes: a durable system write.
+            var system = await pair.OriginServer.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(pair.Token);
+            await using (var transaction = await system.BeginDurableTransactionAsync(pair.Token).AsTask().WaitAsync(promptly, pair.Token))
+            {
+                _ = await transaction.PutAsync("remote_wait_probe", id, Encoding.UTF8.GetBytes("""{"anchor":1}"""), pair.Token);
+                _ = await transaction.CommitAsync(pair.Token).AsTask().WaitAsync(promptly, pair.Token);
+            }
+
+            await Assert.That(pending.IsCompleted).IsFalse().Because("the first write still waits for its held ack");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+        }
+
+        using var response = await pending.WaitAsync(pair.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
+    }
+
     [Test]
     public async Task An_ack_confirms_and_the_link_ships_on_while_the_sender_writer_is_held()
     {

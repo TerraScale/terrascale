@@ -215,6 +215,12 @@ internal sealed partial class TursoDatabaseStore(
     private string? _writerHolder;
     private long _writerTaken;
 
+    // Set by a holder that took the writer through AcquireWriterAsync, cleared when it releases it: what WriterHeld records.
+    private long _holdStarted;
+
+    /// <summary>Records how long each holder kept the writer, by holder (a bounded set of names); null outside an engine.</summary>
+    internal Histogram<double>? WriterHeld { get; init; }
+
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
     internal TursoWriteLane WriteLane { get; } = new(name, io);
 
@@ -559,8 +565,10 @@ internal sealed partial class TursoDatabaseStore(
         }
 
         // Only this holder writes these until it releases the writer.
-        Volatile.Write(ref _writerTaken, Time.GetTimestamp());
+        var taken = Time.GetTimestamp();
+        Volatile.Write(ref _writerTaken, taken);
         Volatile.Write(ref _writerHolder, writer);
+        _holdStarted = taken;
     }
 
     // Releases _writer. Whoever releases it after the store closed closes the writer connection, so it is closed exactly
@@ -583,6 +591,12 @@ internal sealed partial class TursoDatabaseStore(
         }
         finally
         {
+            if (_holdStarted is var started and not 0)
+            {
+                _holdStarted = 0;
+                WriterHeld?.Record(Time.GetElapsedTime(started).TotalSeconds, new KeyValuePair<string, object?>("holder", _writerHolder));
+            }
+
             _writer.Release();
         }
     }

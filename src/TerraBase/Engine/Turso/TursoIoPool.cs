@@ -107,6 +107,8 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             "terrabase.storage.admitted", () => Volatile.Read(ref _admitted), description: "Storage transactions and maintenance calls admitted.");
         meter.CreateObservableGauge(
             "terrabase.storage.running", () => Volatile.Read(ref _running), description: "Turso calls running on the I/O threads.");
+        // A saturated disk shows here first: reads queue for a thread while writers wait on what queued them (batch 8).
+        meter.CreateObservableGauge("terrabase.storage.queued", () => Queued, description: "Turso calls waiting for an I/O thread.");
         _rejected = meter.CreateCounter<long>("terrabase.storage.rejected", description: "Storage work rejected as busy (HTTP 503).");
         // Allocate bookkeeping before any launch: even a later allocation failure can join every started worker.
         _threads = new Task[threads];
