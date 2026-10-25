@@ -1,4 +1,4 @@
-# 0016: A healthy rewrite copies off the writer and holds it only for a short final catch-up
+# 0017: A healthy rewrite copies off the writer and holds it only for a short final catch-up
 
 - Status: proposed (RT2d, 2026-10-25; option 1 agreed by COS under Q-REWRITE, options (a)–(c) compared at the COS's request;
   awaiting human review before the code PRs).
