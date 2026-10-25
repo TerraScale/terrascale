@@ -123,6 +123,14 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
 
     /// <summary>
+    /// <see cref="PutAsync"/> for a client document whose <paramref name="json"/> the caller already admitted with
+    /// <c>DocumentJson.Read(json, requireObject: true)</c>. Answers the version and the body a read of the document
+    /// returns (canonical JSON, fields in name order), so the document is parsed once per write.
+    /// </summary>
+    ValueTask<(long Version, ReadOnlyMemory<byte> Stored)> PutAdmittedAsync(
+        string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Writes a PATCH of an existing document that leaves it as <paramref name="json"/>. A client database writes
     /// <paramref name="operations"/>, in order, to the document's state, so a concurrent write of another field survives the
     /// merge and concurrent increments and set operations converge (docs/terrabase/multi-region-replication.md section 4);

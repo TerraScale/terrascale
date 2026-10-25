@@ -197,6 +197,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PutAsync(collection, id, json, cancellationToken), cancellationToken);
 
+        public ValueTask<(long Version, ReadOnlyMemory<byte> Stored)> PutAdmittedAsync(
+            string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
+            WriteAsync(collection, id, () => inner.PutAdmittedAsync(collection, id, json, cancellationToken), cancellationToken);
+
         public ValueTask<long> PatchAsync(
             string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, operations, cancellationToken), cancellationToken);
