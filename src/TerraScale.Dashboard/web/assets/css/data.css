@@ -6,9 +6,15 @@
   overflow-x: auto;
 }
 
-/* An open row menu must not be clipped by the scroll container. */
-.ts-table-wrap:has(details.ts-menu[open]) {
-  overflow: visible;
+/* The shared placement helper lifts open row panels out of scroll clipping. */
+.ts-table-wrap details.ts-menu[open] > .ts-menu-panel {
+  position: fixed;
+  animation: none;
+  inset: auto;
+  margin: 0;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
 }
 
 .ts-table {
