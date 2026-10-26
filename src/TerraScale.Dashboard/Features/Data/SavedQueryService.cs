@@ -9,17 +9,24 @@ namespace TerraScale.Dashboard.Features.Data;
 public sealed record SavedQuery(string Id, string Name, string Sql, string DatabaseId, DateTimeOffset CreatedAt);
 public sealed record SavedQueryRecord(string OrganizationId, string ProjectId, IReadOnlyList<SavedQuery> Queries);
 
-public sealed class SavedQueryService(IDashboardState state, TimeProvider time)
+public sealed class SavedQueryService(IDashboardState state, TimeProvider time, AccountService accounts)
 {
     private const string Collection = "dashboard_saved_queries";
     public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
     {
+        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
-        var queries = await ListAsync(context, cancellationToken);
+        var queries = await ReadAsync(context, cancellationToken);
         return databaseId.Length == 0 ? queries : queries.Where(query => query.DatabaseId.Length == 0 || query.DatabaseId == databaseId).ToArray();
     }
 
     public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, CancellationToken cancellationToken)
+    {
+        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
+        return await ReadAsync(context, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<SavedQuery>> ReadAsync(AccountContext context, CancellationToken cancellationToken)
     {
         var document = await state.GetAsync(Collection, Key(context), cancellationToken);
         if (document is null) return [];
@@ -29,8 +36,9 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time)
 
     public async Task<SavedQuery> SaveAsync(AccountContext context, string databaseId, string name, string sql, CancellationToken cancellationToken)
     {
+        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
-        if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         name = name.Trim();
         if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > 128) throw new AccountAccessException("Saved query names use 1–128 characters.", 422);
         sql = sql.Trim();
@@ -42,7 +50,9 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time)
 
     public async Task DeleteAsync(AccountContext context, string databaseId, string id, CancellationToken cancellationToken)
     {
-        if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
+        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
+        if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         await UpdateAsync(context, queries =>
         {
             var query = queries.FirstOrDefault(query => query.Id == id) ?? throw new AccountAccessException("Saved query is unavailable.", 404);

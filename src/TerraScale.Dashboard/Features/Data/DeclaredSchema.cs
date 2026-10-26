@@ -32,6 +32,7 @@ public static class DeclaredSchemaEndpoints
                 bodyLimit.MaxRequestBodySize = MaxSchemaBytes + 4096;
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);
+            context = await databases.CurrentAsync(context, http.RequestAborted);
             DatabaseRecord database;
             try { database = DatabaseService.Database(context, databaseId); }
             catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }

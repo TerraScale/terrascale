@@ -7,6 +7,11 @@ namespace TerraScale.Dashboard.Features.Profile;
 
 public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null, AccountMfaStatus? Mfa = null)
 {
+    public string OrganizationRoleLabel => Shell.Context.Role is { Length: > 0 } role ? role : "No organization membership";
+    public string? SelectedProjectRole => Shell.Context.Project is not { } project ? null
+        : PlatformDatabases.IsPlatform(Shell.Context.Organization?.Id) ? "viewer"
+        : project.Role is "viewer" or "member" or "admin" ? project.Role : null;
+    public int ScopeRoleCount => (Shell.Context.Role.Length > 0 ? 1 : 0) + (SelectedProjectRole is not null ? 1 : 0);
     public string? DraftName { get; init; }
     public string? DraftPhone { get; init; }
     public string? InvalidField { get; init; }
@@ -20,7 +25,7 @@ public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", strin
             if (Shell.Context.Project is not null)
             {
                 result.Add("Access selected project");
-                if (Shell.Context.CanWrite) result.Add("Write selected project data");
+                if (Shell.Context.CanWriteProjectData) result.Add("Write selected project data");
             }
             if (Shell.Context.CanManage) result.Add("Manage organization resources");
             if (Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true) result.Add("Provision organization resources");

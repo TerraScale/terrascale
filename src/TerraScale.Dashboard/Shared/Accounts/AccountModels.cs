@@ -234,6 +234,14 @@ public sealed record AccountContext(SessionRecord Session, AccountRecord Account
     public string Role => Organization?.RoleFor(UserId) ?? "";
     public bool CanManage => Organization?.CanManage(UserId) ?? false;
     public bool CanWrite => Organization?.CanWrite(UserId) ?? false;
+    // Only the exact live project projection carries data authority; it grants no organization privileges.
+    public bool CanWriteProjectData => UserId == Session.UserId && !string.IsNullOrWhiteSpace(UserId) &&
+        !string.IsNullOrWhiteSpace(Session.AccessToken) && Session.ExpiresAt > DateTimeOffset.UtcNow &&
+        Organization is { Status: "active", Archived: false, DeletionRequested: false, MfaRequired: false } organization &&
+        !PlatformDatabases.IsPlatform(organization.Id) && Organizations.Any(item => ReferenceEquals(item, organization)) &&
+        TerraScale.DotNet.TerraScaleIds.IsValid(organization.Id) &&
+        Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.DotNet.TerraScaleIds.IsValid(project.Id) &&
+        project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
     // When this request loaded the context from ts-auth; AccountScope reuses it while nothing has changed since.
     [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
 }
