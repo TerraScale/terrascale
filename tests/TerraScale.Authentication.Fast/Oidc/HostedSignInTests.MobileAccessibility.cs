@@ -265,14 +265,14 @@ public sealed partial class HostedSignInTests
         await Assert.That(await page.GetByRole(AriaRole.Heading, new() { Level = 1 }).CountAsync()).IsEqualTo(1);
         await Assert.That(await page.Locator("#submission-status").GetAttributeAsync("aria-live")).IsEqualTo("polite");
         var viewport = page.ViewportSize!;
-        await page.SetViewportSizeAsync(new() { Width = viewport.Width, Height = 360 });
+        await page.SetViewportSizeAsync(viewport.Width, 360);
         var control = page.Locator("input:not([type=hidden])").First;
         if (await control.CountAsync() > 0)
         {
             await control.ScrollIntoViewIfNeededAsync();
             await Assert.That(await control.EvaluateAsync<bool>("el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }")).IsTrue();
         }
-        await page.SetViewportSizeAsync(new() { Width = viewport.Width, Height = viewport.Height });
+        await page.SetViewportSizeAsync(viewport.Width, viewport.Height);
         await Assert.That(await page.EvaluateAsync<bool>("""
             () => {
               const forms = [...document.forms], fields = [...document.querySelectorAll('input:not([type=hidden])')];
