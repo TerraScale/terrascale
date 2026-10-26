@@ -34,7 +34,7 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(faults));
         });
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -86,7 +86,10 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         public Task InitializeAsync(CancellationToken ct) => state.InitializeAsync(ct);
         public Task CheckReadyAsync(CancellationToken ct) => state.CheckReadyAsync(ct);
         public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct) => state.GetAsync(collection, id, ct);
+        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct) => state.ReadPageAsync(collection, filter, limit, cursor, ct);
+        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct) => state.TransactAsync(operations, ct);
         public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct) => state.ListAsync(collection, ct);
+        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct) => state.QueryPageAsync(collection, query, ct);
         public Task DeleteAsync(string collection, string id, string version, CancellationToken ct) => state.DeleteAsync(collection, id, version, ct);
         public Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken ct)
         {
@@ -130,7 +133,7 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         var origin = new Uri(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 390, Height = 844 } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 390, Height = 844 } });
         var behavior = clipboard switch
         {
             "missing" => "undefined",
