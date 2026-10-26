@@ -23,6 +23,7 @@ internal static class TestHttps
         // These tests override HTTP Host to exercise the loopback TLS edge's public origins.
         names.AddDnsName("dash.terrascale.tech");
         names.AddDnsName("dashboard.terrascale.tech");
+        names.AddDnsName("mcp.terrascale.tech");
         names.AddIpAddress(IPAddress.Loopback);
         names.AddIpAddress(IPAddress.IPv6Loopback);
         request.CertificateExtensions.Add(names.Build());
