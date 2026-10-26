@@ -17,12 +17,15 @@ public static class AccountScope
         if (fresh.UserId != context.UserId) throw new AccountAccessException("Account identity does not match.", 401);
         var organization = fresh.Organizations.SingleOrDefault(item => item.Id == context.Organization?.Id)
             ?? throw new AccountAccessException("Organization is unavailable.", 404);
-        if (organization.RoleFor(fresh.UserId).Length == 0) throw new AccountAccessException("Organization membership is required.");
-        if (organization.Id != fresh.Organization?.Id) await accounts.HydrateAccessAsync(organization, fresh.Session, cancellationToken);
         var project = context.Project is null ? null : organization.Projects.GetValueOrDefault(context.Project.Id);
         if (requireProject && project is null || context.Project is not null && project is null ||
-            project is not null && project.OrganizationId != organization.Id)
+            project is not null && (project.OrganizationId != organization.Id || project.Status != "active"))
             throw new AccountAccessException("Project is unavailable.", 404);
+        if (organization.RoleFor(fresh.UserId).Length == 0 && !(requireProject && !organization.MfaRequired &&
+            organization.Status == "active" && !organization.Archived && (project?.Role is "viewer" or "member" or "admin")))
+            throw new AccountAccessException("Organization membership is required.");
+        if (organization.ContainsMember(fresh.UserId) && organization.Id != fresh.Organization?.Id)
+            await accounts.HydrateAccessAsync(organization, fresh.Session, cancellationToken);
         return fresh with { Organization = organization, Project = project };
     }
 }

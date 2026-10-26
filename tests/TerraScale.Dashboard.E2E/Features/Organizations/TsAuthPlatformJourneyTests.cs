@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
@@ -19,6 +20,151 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations;
 // the corrected exported ts-dotnet auth fixtures before this counts as parity.
 public sealed class TsAuthPlatformJourneyTests
 {
+    [Test]
+    [Arguments("viewer")]
+    [Arguments("member")]
+    [Arguments("admin")]
+    public async Task ProjectCollaboratorsReadOnlyTheirLiveProjectsWithoutOrganizationAuthority(string role)
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var user = platform.Principal("project-" + role);
+        var owner = platform.Principal("project-owner");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, user.Email, user.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var ownOrganization = (await Me(client)).GetProperty("organizationId").GetString()!;
+        var csrf = await HttpJourney.CsrfAsync(client, "/profile");
+        var org = platform.Producer.AddOrganization("Shared projects", owner.Subject);
+        var project = platform.Producer.AddProject(org, "Granted", owner.Subject);
+        var sibling = platform.Producer.AddProject(org, "Hidden sibling", owner.Subject);
+        platform.Producer.AddCollaborator(org, user.Subject, project, role);
+        var database = AccountService.NewId();
+        platform.SeedDatabase(new(database, project, "granted-db", DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
+        var scope = "?organizationId=" + org + "&projectId=" + project;
+        using (var first = await client.GetAsync("/api/v1/dashboard/context" + scope))
+        {
+            await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            using var body = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
+            var visible = body.RootElement.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("id").GetString() == org);
+            await Assert.That(visible.GetProperty("projects").EnumerateObject().Select(item => item.Name).ToArray()).IsEquivalentTo(new[] { project });
+            foreach (var unknown in new[] { "role", "kind", "members", "invitations", "ownerUserId", "pendingOwnerUserId", "planId", "billingStatus", "paymentMethodValidated", "archived", "deletionRequested" })
+                await Assert.That(visible.GetProperty(unknown).ValueKind).IsEqualTo(JsonValueKind.Null);
+            await Assert.That(visible.GetProperty("projects").GetProperty(project).GetProperty("role").GetString()).IsEqualTo(role);
+            await Assert.That(visible.GetProperty("projects").GetProperty(project).GetProperty("operationLimits").ValueKind).IsEqualTo(JsonValueKind.Null);
+        }
+        using (var discoveredWithoutState = await client.GetAsync("/api/v1/dashboard/databases" + scope))
+        {
+            await Assert.That(discoveredWithoutState.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await discoveredWithoutState.Content.ReadAsStringAsync()).Contains(database);
+        }
+        await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, org)).IsFalse();
+
+        var saved = new OrganizationRecord
+        {
+            Id = org,
+            Kind = "business",
+            PlanId = "private-plan",
+            BillingStatus = "private-billing",
+            PaymentMethodValidated = true,
+            SpendCapCents = 987654,
+            PaidExcess = true
+        };
+        saved.AuditEvents.Add(new(AccountService.NewId(), "private-owner", "private-audit", "private-target", "project", DateTimeOffset.UtcNow));
+        saved.Projects[project] = new() { Id = project, Region = "GRU", SpendCapCents = 987654 };
+        saved.Projects[project].Databases[database] = new() { Id = database, ProjectId = project, Name = "granted-db", Region = "GRU", SpendCapCents = 987654 };
+        saved.Projects[sibling] = new() { Id = sibling, Region = "GRU" };
+        await platform.StoreAsync(saved);
+        var version = await platform.VersionAsync(org);
+        var discovered = AccountService.NewId();
+        platform.SeedDatabase(new(discovered, project, "discovered-db", DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
+        platform.SeedDatabase(new(AccountService.NewId(), sibling, "private-sibling-db", DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
+        using (var probe = await client.GetAsync("/__test/project-context" + scope + "&refresh=project"))
+        {
+            await Assert.That(probe.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            using var body = JsonDocument.Parse(await probe.Content.ReadAsStringAsync());
+            await Assert.That(body.RootElement.GetProperty("role").GetString()).IsEqualTo(role);
+            await Assert.That(body.RootElement.GetProperty("restricted").GetBoolean()).IsTrue();
+            await Assert.That(body.RootElement.GetProperty("roleStored").GetBoolean()).IsFalse();
+            var json = body.RootElement.GetRawText();
+            foreach (var secret in new[] { "private-", sibling, "987654" }) await Assert.That(json).DoesNotContain(secret);
+        }
+        using (var listed = await client.GetAsync("/api/v1/dashboard/databases" + scope))
+        {
+            await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            using var body = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
+            await Assert.That(body.RootElement.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray())
+                .IsEquivalentTo(new string?[] { database, discovered });
+            foreach (var record in body.RootElement.EnumerateArray())
+                foreach (var field in new[] { "spendCapCents", "operationLimits", "backupRetentionDays", "branchedFrom" })
+                    await Assert.That(record.GetProperty(field).ValueKind).IsEqualTo(JsonValueKind.Null);
+        }
+        using (var page = await client.GetAsync("/databases" + scope))
+            await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-project",
+            new() { ["_csrf"] = csrf, ["projectId"] = project, ["returnUrl"] = "/databases" }))
+        {
+            await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(switched.Headers.Location!.OriginalString).Contains("projectId=" + project);
+        }
+        await Assert.That((await Me(client)).GetProperty("projectId").GetString()).IsEqualTo(project);
+        using (var refused = await client.GetAsync("/__test/project-context" + scope + "&refresh=organization"))
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        foreach (var invalid in new[] { "?organizationId=" + org + "&projectId=" + sibling,
+            "?organizationId=" + ownOrganization + "&projectId=" + project })
+            using (var refused = await client.GetAsync("/databases" + invalid))
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        foreach (var tab in new[] { "organization", "projects", "members", "invitations", "billing", "audit", "sso", "danger" })
+            using (var refused = await client.GetAsync("/organization" + scope + "&tab=" + tab))
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        foreach (var action in new[] { "rename", "projects", "members/invite", "mfa-policy", "deletion" })
+            using (var refused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/" + action + scope,
+                new() { ["_csrf"] = csrf, ["name"] = "Unchanged", ["email"] = "invite@example.test", ["role"] = "member", ["region"] = "GRU" }))
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        using (var write = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections" + scope,
+            new() { ["_csrf"] = csrf, ["databaseId"] = database, ["collection"] = "denied" }))
+            await Assert.That(write.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        foreach (var resource in new[] { "members", "ownership-transfer", "invitations", "audit-events" })
+            await Assert.That(platform.Producer.Count("GET", "/v1/terrascale/organizations/" + org + "/" + resource, user.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.Mutations(org, user.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.PlanPublications(org)).IsEqualTo(0);
+        await Assert.That(await platform.VersionAsync(org)).IsEqualTo(version);
+
+        platform.Producer.RequireMfa(org);
+        using (var blocked = await client.GetAsync("/databases" + scope))
+            await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var blocked = await client.GetAsync("/__test/project-context?organizationId=" + org))
+        {
+            await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(await blocked.Content.ReadAsStringAsync()).DoesNotContain(sibling).And.DoesNotContain("private-");
+        }
+        platform.Producer.Enroll(user.Subject, 10);
+        platform.Producer.RemoveGrant(org, user.Subject, project);
+        using (var revoked = await client.GetAsync("/databases" + scope))
+            await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-project",
+            new() { ["_csrf"] = csrf, ["projectId"] = project, ["returnUrl"] = "/databases" }))
+            await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That((await Context(client)).GetProperty("organizations").EnumerateArray().Any(item => item.GetProperty("id").GetString() == org)).IsFalse();
+        await Assert.That(await platform.VersionAsync(org)).IsEqualTo(version);
+        platform.Producer.AddCollaborator(org, user.Subject, project, role);
+        await platform.ProjectionAsync(org, current => current.Projects[project].Status = "inactive");
+        using (var inactive = await client.GetAsync("/__test/project-context" + scope + "&refresh=project"))
+            await Assert.That(inactive.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var inactive = await client.GetAsync("/databases" + scope))
+            await Assert.That(inactive.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await platform.ProjectionAsync(org, current => current.Projects[project].Status = "active");
+        await platform.ProjectionAsync(org, current => current.Archived = true);
+        using (var archived = await client.GetAsync("/databases" + scope))
+            await Assert.That(archived.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await platform.ProjectionAsync(org, current => { current.Archived = false; current.Projects.Remove(project); current.DeletedProjectIds.Add(project); });
+        using (var deleted = await client.GetAsync("/databases" + scope))
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await platform.FenceAsync(org);
+        using (var erased = await client.GetAsync("/databases" + scope))
+            await Assert.That(erased.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
     [Test]
     public async Task FirstSignInOnTwoReplicasCreatesOnePersonalWorkspaceAndFollowsTsAuthMembership()
     {
@@ -45,6 +191,7 @@ public sealed class TsAuthPlatformJourneyTests
         platform.Producer.AddMember(business, user.Subject, user.Email, "admin");
         var collaboration = platform.Producer.AddOrganization("Collaboration only", platform.Principal("platform-other").Subject);
         platform.Producer.AddCollaborator(collaboration, user.Subject);
+        var paged = platform.Producer.AddOrganization("Paged membership", user.Subject);
         for (var index = 0; index < 3; index++) platform.Producer.AddOrganization("Unrelated " + index, platform.Principal("platform-unrelated-" + index).Subject);
         var context = await Context(second);
         var organizations = context.GetProperty("organizations").EnumerateArray().ToArray();
@@ -54,9 +201,12 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(personal.GetProperty("projects").EnumerateObject().Select(item => item.Name).Order().ToArray())
             .IsEquivalentTo(new[] { projectId, outside }.Order().ToArray());
         var shared = organizations.Single(org => org.GetProperty("id").GetString() == business);
+        await Assert.That(organizations.Any(org => org.GetProperty("id").GetString() == paged)).IsTrue();
+        await Assert.That(shared.GetProperty("role").GetString()).IsEqualTo("admin");
+        await Assert.That(personal.GetProperty("projects").GetProperty(projectId).GetProperty("role").GetString()).IsEqualTo("admin");
         await Assert.That(shared.GetProperty("members").GetProperty(user.Subject).GetProperty("role").GetString()).IsEqualTo("admin");
         await Assert.That(organizations.Any(org => org.GetProperty("id").GetString() == collaboration)).IsFalse()
-            .Because("a project collaborator has no organization role and no organization view");
+            .Because("a collaborator without a live project grant has no workspace access");
 
         platform.Producer.RemoveMember(business, user.Subject);
         await Assert.That((await Context(first)).GetProperty("organizations").EnumerateArray().Any(org => org.GetProperty("id").GetString() == business)).IsFalse();
@@ -600,6 +750,7 @@ public sealed class TsAuthPlatformJourneyTests
         private readonly ConcurrentDictionary<string, Principal> principals = new();
         private TestAuth? auth;
         private IDashboardState? state;
+        private TestDatabases? databases;
         public PlatformProducer Producer { get; private set; } = null!;
         private Uri origin = null!;
         private Uri replica = null!;
@@ -623,11 +774,30 @@ public sealed class TsAuthPlatformJourneyTests
             {
                 auth ??= (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                 state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
+                databases ??= (TestDatabases)builder.Services.Last(service => service.ServiceType == typeof(IDatabaseBackend)).ImplementationInstance!;
                 Producer ??= new(auth.ResolveAccessToken);
                 var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(Producer, fallback)));
                 // The production transport, not the in-memory platform used by other journeys.
                 builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform, TsAuthGateway>());
+            });
+            app.MapGet("/__test/project-context", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databaseService) =>
+            {
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                if (context is null) return Results.Unauthorized();
+                if (http.Request.Query["refresh"].Count > 0)
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: http.Request.Query["refresh"] == "project");
+                await databaseService.SyncAsync(context, http.RequestAborted);
+                var org = context.Organization!;
+                return Results.Json(new
+                {
+                    role = context.Project?.Role,
+                    restricted = !context.CanManage && !context.CanWrite && !org.CanProvision(context.UserId) && org.Members.Count == 0 &&
+                        org.Invitations.Count == 0 && org.AuditEvents.Count == 0 && org.OwnerUserId == "" && org.PendingOwnerUserId == "" && org.InternalBilling is null,
+                    roleStored = JsonSerializer.SerializeToElement(context.Project).TryGetProperty("Role", out _),
+                    projection = JsonSerializer.Serialize(org),
+                    view = TerraScale.Dashboard.Features.Accounts.AccountContextView.From(context)
+                });
             });
             hosts.Add(app);
             await app.StartAsync();
@@ -642,6 +812,11 @@ public sealed class TsAuthPlatformJourneyTests
         });
 
         public async Task<bool> StoredAsync(string collection, string key) => await state!.GetAsync(collection, key, default) is not null;
+        public Task StoreAsync(OrganizationRecord org) => state!.PutAsync(AccountService.OrganizationsCollection, org.Id,
+            JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, default);
+        public async Task<string?> VersionAsync(string org) => (await state!.GetAsync(AccountService.OrganizationsCollection, org, default))?.Version;
+        public Task FenceAsync(string org) => AccountService.FenceOrganizationDeletionAsync(state!, org, AccountService.NewId(), default);
+        public void SeedDatabase(ManagedDatabase database) => databases!.SeedFixtureDatabase(database);
         public async Task<bool> ErasedAccountAsync(string key) => AccountService.IsDeletionFence((await state!.GetAsync(AccountService.AccountsCollection, key, default))!);
         public async Task<bool> ErasedOrganizationAsync(string key) => AccountService.IsDeletionFence((await state!.GetAsync(AccountService.OrganizationsCollection, key, default))!);
 
@@ -679,17 +854,18 @@ public sealed class TsAuthPlatformJourneyTests
 
     private sealed class Factory(PlatformProducer producer, IHttpClientFactory fallback) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => name == TerraBaseDashboardState.ClientName
-            ? fallback.CreateClient(name)
-            : new(new Router(producer, fallback.CreateClient(name)), disposeHandler: true);
+        public HttpClient CreateClient(string name) => new(new Router(producer, fallback.CreateClient(name)), disposeHandler: true);
     }
 
     private sealed class Router(PlatformProducer producer, HttpClient fallback) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            request.RequestUri is { Host: "auth.terrascale.tech" } uri && uri.AbsolutePath.StartsWith("/v1/terrascale/", StringComparison.Ordinal)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            producer.ObservePlan(request);
+            return request.RequestUri is { Host: "auth.terrascale.tech" } uri && uri.AbsolutePath.StartsWith("/v1/terrascale/", StringComparison.Ordinal)
                 ? producer.HandleAsync(request, cancellationToken)
                 : HttpForwarding.SendAsync(fallback, request, cancellationToken);
+        }
         protected override void Dispose(bool disposing) { if (disposing) fallback.Dispose(); base.Dispose(disposing); }
     }
 
@@ -704,6 +880,7 @@ public sealed class TsAuthPlatformJourneyTests
         private readonly Dictionary<string, int> enrolled = [];
         private readonly ConcurrentQueue<(string Method, string Path, string User, string Body)> calls = new();
         private readonly ConcurrentQueue<string> failures = new();
+        private readonly ConcurrentQueue<string> plans = new();
         private (string Method, string Path, HttpStatusCode Status, string Code, string Message)? refusal;
         private int pagedRequests;
         private readonly Dictionary<string, string> deletionReceipts = [];
@@ -725,6 +902,9 @@ public sealed class TsAuthPlatformJourneyTests
         public int PagedRequests => pagedRequests;
 
         public int Count(string method, string path, string user) => calls.Count(call => call.Method == method && call.Path == path && call.User == user);
+        public int Mutations(string org, string user) => calls.Count(call => call.User == user && call.Method != "GET" && call.Path.StartsWith("/v1/terrascale/organizations/" + org, StringComparison.Ordinal));
+        public void ObservePlan(HttpRequestMessage request) { if (request.Method == HttpMethod.Put) plans.Enqueue(request.RequestUri!.AbsolutePath); }
+        public int PlanPublications(string org) => plans.Count(path => path == "/admin/organizations/" + org + "/plan");
         public IReadOnlyList<string> Bodies(string method, string path) => calls.Where(call => call.Method == method && call.Path == path).Select(call => call.Body).ToArray();
         public void RefuseNext(string method, string path, HttpStatusCode status, string code, string message) { lock (gate) refusal = (method, path, status, code, message); }
 
@@ -742,11 +922,14 @@ public sealed class TsAuthPlatformJourneyTests
         public void RemoveProject(string organizationId, string projectId) { lock (gate) Find(organizationId)!.Projects.RemoveAll(project => project.Id == projectId); }
         public bool Exists(string organizationId) { lock (gate) return Find(organizationId) is not null; }
         public string AddProject(string organizationId, string name, string creator)
-        { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); return project.Id; } }
+        { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); AddCollaborator(organizationId, creator, project.Id, "admin"); return project.Id; } }
         public void AddMember(string organizationId, string userId, string email, string role) { lock (gate) Find(organizationId)!.Members[userId] = new(email, role, DateTimeOffset.UtcNow); }
-        public void AddCollaborator(string organizationId, string userId) { lock (gate) Find(organizationId)!.Collaborators.Add(userId); }
+        public void AddCollaborator(string organizationId, string userId, string? projectId = null, string role = "viewer")
+        { lock (gate) { var org = Find(organizationId)!; if (!org.Collaborators.ContainsKey(userId)) org.Collaborators[userId] = []; if (projectId is not null) org.Collaborators[userId][projectId] = role; } }
+        public void RemoveGrant(string org, string user, string project) { lock (gate) Find(org)!.Collaborators[user].Remove(project); }
+        public void RequireMfa(string org) { lock (gate) Find(org)!.RequireMfa = true; }
         public void Enroll(string userId, int recoveryCodes) { lock (gate) enrolled[userId] = recoveryCodes; }
-        public void RemoveMember(string organizationId, string userId) { lock (gate) Find(organizationId)!.Members.Remove(userId); }
+        public void RemoveMember(string organizationId, string userId) { lock (gate) { var org = Find(organizationId)!; org.Members.Remove(userId); org.Collaborators.Remove(userId); } }
         public string? Role(string organizationId, string userId) { lock (gate) return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role; }
         public string InvitationId(string organizationId, string token) { lock (gate) return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id; }
         public string? InvitationStatus(string organizationId, string invitationId) { lock (gate) return Find(organizationId)!.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId)?.Status; }
@@ -819,7 +1002,8 @@ public sealed class TsAuthPlatformJourneyTests
             string Field(string name) => json?.RootElement.TryGetProperty(name, out var value) == true ? value.GetString() ?? "" : "";
             if (parts is ["account"] && method == "DELETE") return new(HttpStatusCode.Accepted);
             if (parts is ["organizations"] && method == "GET")
-                return Page(organizations.Where(org => org.Members.ContainsKey(caller.UserId) || org.Collaborators.Contains(caller.UserId)).Select(org => Wire(org, caller.UserId)), query);
+                return Page(organizations.Where(org => org.Members.ContainsKey(caller.UserId) || org.Collaborators.TryGetValue(caller.UserId, out var grants) &&
+                    org.Projects.Any(project => grants.ContainsKey(project.Id))).Select(org => Wire(org, caller.UserId)), query);
             if (parts is ["organizations"] && method == "POST")
             {
                 var created = new Organization(ids.NewId(), caller.UserId, DateTimeOffset.UtcNow) { Name = Field("name") };
@@ -844,11 +1028,25 @@ public sealed class TsAuthPlatformJourneyTests
             }
             Require(parts.Length >= 2 && parts[0] == "organizations", "Unknown platform route.");
             var organization = Find(parts[1]);
-            if (organization is null || !organization.Members.TryGetValue(caller.UserId, out var self))
+            var self = organization?.Members.GetValueOrDefault(caller.UserId);
+            var granted = organization?.Collaborators.GetValueOrDefault(caller.UserId);
+            if (organization is null || self is null && (granted is null || !organization.Projects.Any(project => granted.ContainsKey(project.Id))))
                 return Error(HttpStatusCode.NotFound, "not_found", "Organization not found.");
-            var admin = self.Role is "owner" or "admin";
             if (organization.RequireMfa && !enrolled.ContainsKey(caller.UserId))
                 return Error(HttpStatusCode.Forbidden, "mfa_required", "This organization requires two-factor authentication.");
+            if (self is null)
+            {
+                if (method == "GET" && parts[2..] is ["projects"])
+                    return Page(organization.Projects.Where(project => granted!.ContainsKey(project.Id)).Select(project => Wire(organization, project, caller.UserId)), query);
+                if (method == "GET" && parts[2..] is ["projects", var requested])
+                {
+                    var found = organization.Projects.SingleOrDefault(project => project.Id == requested && granted!.ContainsKey(project.Id));
+                    return found is null ? Error(HttpStatusCode.NotFound, "not_found", "Project not found.") : Json(Wire(organization, found, caller.UserId));
+                }
+                if (method == "GET" && parts.Length == 2) return Json(Wire(organization, caller.UserId));
+                return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs organization membership.");
+            }
+            var admin = self.Role is "owner" or "admin";
             switch (parts[2..], method)
             {
                 case ([], "GET"):
@@ -886,6 +1084,7 @@ public sealed class TsAuthPlatformJourneyTests
                     if (organization.Projects.Any(project => project.Name == Field("name"))) return Error(HttpStatusCode.Conflict, "name_taken", "Name taken.");
                     var created = new Project(ids.NewId(), Field("name"), caller.UserId, DateTimeOffset.UtcNow);
                     organization.Projects.Add(created);
+                    AddCollaborator(organization.Id, caller.UserId, created.Id, "admin");
                     return Json(Wire(organization, created, caller.UserId), HttpStatusCode.Created);
                 case (["invitations"], "POST"):
                     if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
@@ -950,7 +1149,7 @@ public sealed class TsAuthPlatformJourneyTests
             role = org.Members.GetValueOrDefault(userId)?.Role,
             require_mfa = org.RequireMfa
         };
-        // The creator holds project admin; otherwise the organization role implies the project role (owner → admin).
+        // Current organization membership and explicit grants alone authorize (owner implies project admin).
         private static object Wire(Organization org, Project project, string userId) => new
         {
             id = project.Id,
@@ -959,8 +1158,16 @@ public sealed class TsAuthPlatformJourneyTests
             issuer = "https://auth.terrascale.tech/" + project.Id,
             created_by = project.CreatedBy,
             created_at = project.CreatedAt,
-            role = project.CreatedBy == userId || org.Members.GetValueOrDefault(userId)?.Role is "owner" or "admin" ? "admin" : org.Members.GetValueOrDefault(userId)?.Role
+            role = EffectiveRole(org, project, userId)
         };
+        private static string? EffectiveRole(Organization org, Project project, string user)
+        {
+            var implied = org.Members.GetValueOrDefault(user)?.Role == "owner"
+                ? "admin" : org.Members.GetValueOrDefault(user)?.Role;
+            var granted = org.Collaborators.GetValueOrDefault(user)?.GetValueOrDefault(project.Id);
+            static int Rank(string? role) => role switch { "admin" => 3, "member" => 2, "viewer" => 1, _ => 0 };
+            return Rank(implied) >= Rank(granted) ? implied : granted;
+        }
         private Organization? Find(string id) => organizations.FirstOrDefault(org => org.Id == id);
         private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status)
         { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, new MediaTypeHeaderValue("application/json")) };
@@ -975,7 +1182,7 @@ public sealed class TsAuthPlatformJourneyTests
             public string CreatedBy { get; } = createdBy;
             public DateTimeOffset CreatedAt { get; } = createdAt;
             public Dictionary<string, Member> Members { get; } = [];
-            public HashSet<string> Collaborators { get; } = [];
+            public Dictionary<string, Dictionary<string, string>> Collaborators { get; } = [];
             public List<Project> Projects { get; } = [];
             public List<Invitation> Invitations { get; } = [];
             public List<object> Audit { get; } = [];

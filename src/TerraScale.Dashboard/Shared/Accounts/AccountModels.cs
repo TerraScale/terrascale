@@ -98,6 +98,8 @@ public sealed class MemberRecord
 public sealed class ProjectRecord
 {
     public string Id { get; set; } = "";
+    // The caller's effective project role, replaced from ts-auth on each request; never stored authority.
+    [JsonIgnore] public string? Role { get; set; }
     [JsonIgnore] public string OrganizationId { get; set; } = "";
     [JsonIgnore] public string Name { get; set; } = "";
     [JsonIgnore] public string Slug { get; set; } = "";
