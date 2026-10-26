@@ -1,0 +1,23 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "2f3b6a6cea84bcac20444f4b2104b3a89e04cee2",
+  "inputs": {
+    "src/TerraBase/Features/Documents/ExportDatabaseEndpoint.cs": "1e8fd378c96a1b332495ec0a3305cf3c71e2ddf28435e9e066a6f9579acd28cc",
+    "src/TerraBase/Features/Documents/DocumentRoute.cs": "6add2f7cc95edd8ddb54be992ffc2999ec22e05d91d1837c1f3643e791d2b6e8",
+    "docs/terrabase/export.md": "085fe3d4eac18abf969e4fe239ef42ef55bed62d42e79c91c19c950aa508bc56"
+  },
+  "operation": "exportDatabase",
+  "method": "GET",
+  "path": "/v1/projects/{project}/databases/{database}/export",
+  "security": "Bearer with documents:read, exact project/database authorization retained",
+  "mediaType": "application/x-ndjson",
+  "success": 200,
+  "parameters": {
+    "after_collection": "Optional with after_id; collection name from last delivered export line",
+    "after_id": "Optional with after_collection; stored key, 1..256 UTF-16 code units without char.IsControl; opaque, never normalized"
+  },
+  "ordering": "collection then id; resume strictly after last delivered line in a new snapshot",
+  "errors": "400 malformed cursor, 401/403 authorization, 404 unknown_database, 503 unavailable; incomplete stream is not completion",
+  "retry": "No automatic restart or replay; caller resumes explicitly from last whole line",
+  "scope": "Cursor validation only. Document point-operation inputs remain canonical uppercase ULIDs. No new operation or generated-contract completeness claim."
+}

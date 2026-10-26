@@ -437,7 +437,8 @@
       "client": "documents",
       "operation": "exportDatabase",
       "method": "GET",
-      "path": "/v1/projects/{project}/databases/{database}/export"
+      "path": "/v1/projects/{project}/databases/{database}/export",
+      "contract": "export-cursors.json"
     },
     {
       "client": "documents",

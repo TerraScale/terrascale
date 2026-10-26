@@ -110,3 +110,9 @@ Root version stays `0.0.2` here; I5 selects the next `0.0.X` candidate after acc
 ## Function catalog extension
 
 `functions.json` pins the four catalog operations to producer `1d823d8534fc5035859a47e263691d0c7cb7b744`, including exact source hashes, scope and replacement semantics. Both SDK route manifests include these scoped additions; their older root producer pins still describe the historical base inventory. `function-invocations.json` extends this with invoke/log/delivery operations pinned to `2cc348ec75a11079aa20547c09203e581ce70cb8`, preserving arbitrary response bytes/status, bounded observations and no mutation replay. HTTP route/DTO fixtures establish no production qualification or complete current-contract parity.
+
+Export continuation keys follow [the scoped export cursor contract](export-cursors.json):
+use the last complete line's collection and stored id unchanged. SQL primary keys are
+valid export cursors (1 to 256 characters without control characters), including keys
+that require URL encoding. Document point operations still require canonical ULIDs;
+resuming an export does not authorize using SQL keys with those operations.

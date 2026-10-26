@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
@@ -71,11 +72,82 @@ public sealed class TerraBaseExportTests
     }
 
     [Test]
-    public async Task An_invalid_resume_id_is_rejected_before_any_request()
+    [Arguments("42", "42")]
+    [Arguments("customer/key ?&=+#%", "customer%2Fkey%20%3F%26%3D%2B%23%25")]
+    [Arguments("[42,\"customer\"]", "%5B42%2C%22customer%22%5D")]
+    [Arguments("客户", "%E5%AE%A2%E6%88%B7")]
+    public async Task A_returned_sql_key_can_resume_export_verbatim(string id, string encodedId)
+    {
+        var body = JsonSerializer.Serialize(new { collection = "items", id, document = new { value = 1 } }) + "\n";
+        var sends = 0;
+        string? query = null;
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            sends++;
+            if (sends == 1)
+                return Task.FromResult(Ndjson(new FragmentedStream(Encoding.UTF8.GetBytes(body), 3)));
+            query = request.RequestUri!.Query;
+            return Task.FromResult(Ndjson(new MemoryStream()));
+        });
+        using var http = new HttpClient(handler);
+        TerraBaseExportCursor? cursor = null;
+        await foreach (var line in Database(http).ExportAsync())
+        {
+            await Assert.That(line.Id).IsEqualTo(id);
+            await Assert.That(line.Document.GetProperty("value").GetInt32()).IsEqualTo(1);
+            cursor = line.Cursor;
+        }
+        await Assert.That(cursor).IsNotNull();
+        await DrainAsync(Database(http).ExportAsync(cursor));
+        await Assert.That(query).IsEqualTo("?after_collection=items&after_id=" + encodedId);
+        await Assert.That(sends).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(256)]
+    public async Task Stored_resume_key_length_boundaries_are_accepted(int length)
+    {
+        var id = new string('x', length);
+        string? query = null;
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            query = request.RequestUri!.Query;
+            return Task.FromResult(Ndjson(new MemoryStream()));
+        });
+        using var http = new HttpClient(handler);
+        await DrainAsync(Database(http).ExportAsync(new TerraBaseExportCursor("items", id)));
+        await Assert.That(query).IsEqualTo("?after_collection=items&after_id=" + id);
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments("")]
+    [Arguments("a\nb")]
+    [Arguments("a\0b")]
+    [Arguments("a\u007fb")]
+    [Arguments("a\u0085b")]
+    public async Task Invalid_resume_keys_are_rejected_before_any_request(string? id)
     {
         using var handler = new TerraBaseTestHandler((_, _) => throw new InvalidOperationException("No request expected"));
         using var http = new HttpClient(handler);
-        await Assert.ThrowsAsync<ArgumentException>(() => DrainAsync(Database(http).ExportAsync(new TerraBaseExportCursor("items", "not-a-ulid"))));
+        await Assert.ThrowsAsync<ArgumentException>(() => DrainAsync(Database(http).ExportAsync(new TerraBaseExportCursor("items", id!))));
+    }
+
+    [Test]
+    public async Task An_oversized_resume_key_is_rejected_before_any_request()
+    {
+        using var handler = new TerraBaseTestHandler((_, _) => throw new InvalidOperationException("No request expected"));
+        using var http = new HttpClient(handler);
+        await Assert.ThrowsAsync<ArgumentException>(() => DrainAsync(Database(http).ExportAsync(new TerraBaseExportCursor("items", new string('x', 257)))));
+    }
+
+    [Test]
+    public async Task A_sql_key_still_cannot_address_a_document_point_operation()
+    {
+        using var handler = new TerraBaseTestHandler((_, _) => throw new InvalidOperationException("No request expected"));
+        using var http = new HttpClient(handler);
+        await Assert.ThrowsAsync<ArgumentException>(() => Database(http).GetDocumentAsync("items", "42"));
     }
 
     [Test]

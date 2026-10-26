@@ -8,7 +8,7 @@ namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>One exported live document.</summary>
 /// <param name="Collection">Collection name.</param>
-/// <param name="Id">Document id, a ULID.</param>
+/// <param name="Id">Stored document id: a ULID or a SQL primary key.</param>
 /// <param name="Document">The stored document.</param>
 public sealed record TerraBaseExportLine(string Collection, string Id, JsonElement Document)
 {
@@ -18,7 +18,7 @@ public sealed record TerraBaseExportLine(string Collection, string Id, JsonEleme
 
 /// <summary>Resumes an export after this document (<c>after_collection</c>, <c>after_id</c>).</summary>
 /// <param name="Collection">Collection of the last line received.</param>
-/// <param name="Id">Id of the last line received.</param>
+/// <param name="Id">Stored id of the last line received; 1 to 256 characters without control characters.</param>
 public sealed record TerraBaseExportCursor(string Collection, string Id);
 
 public sealed partial class TerraBaseDatabase
@@ -38,7 +38,9 @@ public sealed partial class TerraBaseDatabase
         if (after is not null)
         {
             ArgumentException.ThrowIfNullOrEmpty(after.Collection, nameof(after));
-            query = TerraBaseConnection.Query(("after_collection", after.Collection), ("after_id", TerraScaleIds.Validate(after.Id, nameof(after))));
+            if (after.Id is not { Length: > 0 and <= 256 } || after.Id.Any(char.IsControl))
+                throw new ArgumentException("An export cursor id must contain 1 to 256 characters without control characters.", nameof(after));
+            query = TerraBaseConnection.Query(("after_collection", after.Collection), ("after_id", after.Id));
         }
         using var opened = await connection.OpenExportAsync(path + "/export" + query, cancellationToken).ConfigureAwait(false);
         var response = opened.Response;
