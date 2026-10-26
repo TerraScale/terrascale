@@ -56,6 +56,9 @@ public sealed class TerraScaleAuthIntegrationContractTests
     [Arguments("cancel_ownership_transfer")]
     [Arguments("confirm_ownership_transfer")]
     [Arguments("list_audit_events")]
+    [Arguments("set_project_allowed_cidrs")]
+    [Arguments("set_project_api_key_allowed_cidrs")]
+    [Arguments("set_organization_api_key_allowed_cidrs")]
     public async Task SourcePinnedPlatformAndHeadlessRoutesMatch(string operation)
     {
         var ids = new TerraScaleIdGenerator();
@@ -77,6 +80,9 @@ public sealed class TerraScaleAuthIntegrationContractTests
         var cancellationToken = CancellationToken.None;
         Task call = operation switch
         {
+            "set_project_allowed_cidrs" => client.Platform.SetProjectAllowedCidrsAsync("fixture-sign-in", organizationId, projectId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAllowedCidrs)!, cancellationToken),
+            "set_project_api_key_allowed_cidrs" => client.Platform.SetProjectApiKeyAllowedCidrsAsync("fixture-sign-in", organizationId, projectId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAllowedCidrs)!, cancellationToken),
+            "set_organization_api_key_allowed_cidrs" => client.Platform.SetOrganizationApiKeyAllowedCidrsAsync("fixture-sign-in", organizationId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAllowedCidrs)!, cancellationToken),
             "create_organization" => client.Platform.CreateOrganizationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName)!, cancellationToken: cancellationToken),
             "list_organizations" => client.Platform.ListOrganizationsAsync("fixture-sign-in", limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "get_organization" => client.Platform.GetOrganizationAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
@@ -326,6 +332,86 @@ public sealed class TerraScaleAuthIntegrationContractTests
         await Assert.That(request.ToString()).DoesNotContain(token);
         await Assert.That(created.ToString()).DoesNotContain(token);
     }
+
+    [Test]
+    [Arguments("project")]
+    [Arguments("project_api_key")]
+    [Arguments("organization_api_key")]
+    public async Task CidrSettersPreserveNullInvalidAndScopeErrorsWithoutReplay(string target)
+    {
+        foreach (var (cidrs, status, code) in new (IReadOnlyList<string>?, int, string)[]
+        {
+            (null, 400, "invalid_request"), (["invalid-cidr"], 400, "invalid_request"),
+            ([], 401, "unauthorized"), ([], 403, "forbidden_role"), ([], 404, "not_found"), ([], 503, "temporarily_unavailable")
+        })
+        {
+            using var handler = new CaptureHandler((HttpStatusCode)status, $$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""");
+            using var http = new HttpClient(handler);
+            var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => SetCidrs(Client(http), target, new(cidrs)));
+            await Assert.That(error!.StatusCode).IsEqualTo((HttpStatusCode)status);
+            await Assert.That(error.ErrorCode).IsEqualTo(code);
+            await Assert.That(handler.Body).IsEqualTo(JsonSerializer.Serialize(new { allowed_cidrs = cidrs }));
+            await Assert.That(handler.Calls).IsEqualTo(1);
+        }
+        using var untouched = new CaptureHandler(HttpStatusCode.OK, "{}");
+        using var unusedHttp = new HttpClient(untouched);
+        await Assert.ThrowsAsync<ArgumentNullException>(() => SetCidrs(Client(unusedHttp), target, null!));
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => SetCidrs(Client(unusedHttp), target, new([]), cancelled.Token));
+        await Assert.That(untouched.Calls).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CreateKeyCidrsRoundTripAndAbsentRequestMeansUnrestricted(bool project)
+    {
+        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
+        var operation = project ? "create_project_api_key" : "create_organization_api_key";
+        var response = JsonNode.Parse(fixtures.RootElement.GetProperty(operation).GetProperty("response").GetRawText())!;
+        response["api_key"]!["allowed_cidrs"] = new JsonArray("192.0.2.0/24");
+        using var handler = new CaptureHandler(HttpStatusCode.Created, response.ToJsonString());
+        using var http = new HttpClient(handler);
+        var platform = Client(http).Platform;
+        var request = new TerraScaleAuthPlatformCreateApiKey("CIDR key", ["documents:read"], AllowedCidrs: ["192.0.2.129/24"]);
+        var result = project ? await platform.CreateProjectApiKeyAsync("fixture-sign-in", CidrId, CidrId, request)
+            : await platform.CreateOrganizationApiKeyAsync("fixture-sign-in", CidrId, request);
+        await Assert.That(handler.Body).IsEqualTo("""{"name":"CIDR key","scopes":["documents:read"],"database":null,"expires_at":null,"allowed_cidrs":["192.0.2.129/24"]}""");
+        await Assert.That(result.ApiKey.AllowedCidrs.Single()).IsEqualTo("192.0.2.0/24");
+        await Assert.That(handler.Calls).IsEqualTo(1);
+        var metadata = TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey;
+        var absent = JsonSerializer.Deserialize("""{"name":"CIDR key","scopes":["documents:read"]}""", metadata)!;
+        await Assert.That(absent.AllowedCidrs).IsNull();
+        await Assert.That(JsonSerializer.Serialize(absent with { AllowedCidrs = [] }, metadata)).EndsWith("\"allowed_cidrs\":[]}");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ProjectAndKeyResultsRequireNonNullCidrCollections(bool key)
+    {
+        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
+        foreach (var missing in new[] { false, true })
+        {
+            var body = JsonNode.Parse(fixtures.RootElement.GetProperty(key ? "get_organization_api_key" : "get_project").GetProperty("response").GetRawText())!.AsObject();
+            if (missing) body.Remove("allowed_cidrs"); else body["allowed_cidrs"] = null;
+            using var handler = new CaptureHandler(HttpStatusCode.OK, body.ToJsonString());
+            using var http = new HttpClient(handler);
+            var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => key
+                ? (Task)Client(http).Platform.GetOrganizationApiKeyAsync("fixture-sign-in", CidrId, CidrId)
+                : Client(http).Platform.GetProjectAsync("fixture-sign-in", CidrId, CidrId));
+            await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+        }
+    }
+
+    private const string CidrId = "01JA0000000000000000000001";
+    private static Task SetCidrs(TerraScaleAuthClient client, string target, TerraScaleAuthPlatformAllowedCidrs request, CancellationToken token = default) => target switch
+    {
+        "project" => client.Platform.SetProjectAllowedCidrsAsync("fixture-sign-in", CidrId, CidrId, request, token),
+        "project_api_key" => client.Platform.SetProjectApiKeyAllowedCidrsAsync("fixture-sign-in", CidrId, CidrId, CidrId, request, token),
+        _ => client.Platform.SetOrganizationApiKeyAllowedCidrsAsync("fixture-sign-in", CidrId, CidrId, request, token)
+    };
 
     private static async Task AssertFixtureShapeAsync(JsonElement fixture, JsonElement dtos, string dtoName)
     {

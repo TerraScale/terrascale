@@ -167,6 +167,8 @@ internal static class TerraScaleAuthErrors
         "invitation_not_pending",
         "membership_changed",
         "membership_not_found",
+        "mfa_not_enrolled",
+        "mfa_required",
         "no_customer",
         "not_found",
         "organization_changed",
