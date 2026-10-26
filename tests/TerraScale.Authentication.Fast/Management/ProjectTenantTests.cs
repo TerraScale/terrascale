@@ -23,6 +23,98 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     private readonly Faker faker = new();
 
     [Test]
+    public async Task Served_project_schemas_match_snake_case_HTTP_bodies_and_camel_case_is_rejected()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, token, project, root) = await this.ProjectAsync(oidc);
+        using var response = await oidc.Client.GetAsync("/openapi/v1.json");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var document = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
+        var schemas = document.GetProperty("components").GetProperty("schemas");
+        foreach (var (name, fields) in new (string, string)[]
+        {
+            ("CreateClientRequest", "name type redirect_uris"),
+            ("ClientBody", "client_id name type redirect_uris created_at client_secret"),
+            ("ClientPageBody", "items next"),
+            ("SettingsBody", "project_id issuer discovery_url sign_in_url methods branding counts providers configuration"),
+            ("UpdateSettingsRequest", "methods branding configuration"),
+            ("MethodsBody", "passcode password sign_up"),
+            ("MethodsPatch", "passcode password sign_up"),
+            ("BrandingBody", "name logo_url theme_color title_size default_theme footer_links background_color text_color email_message"),
+            ("FooterLinkBody", "label url"),
+            ("ConfigurationBody", "redirect_urls session_lifetime_seconds"),
+            ("CountsBody", "users clients"),
+            ("ProviderBody", "provider configured client_id issuer team_id key_id callback_url"),
+            ("SetProviderRequest", "client_id client_secret issuer team_id key_id"),
+            ("ProjectUserBody", "id email created_at disabled"),
+            ("ProjectUserPageBody", "items next"),
+            ("ProjectSessionBody", "id user_id email created_at expires_at"),
+            ("ProjectSessionPageBody", "items next"),
+            ("DirectoryPageBody", "items next created_before"),
+            ("DirectoryUserBody", "id email email_verified created_at disabled linked_providers"),
+            ("DirectoryProviderBody", "provider client_id subject"),
+            // Other auth wire conventions must stay intact.
+            ("EmailAdmissionResponse", "status sendBy"),
+            ("TokenBody", "access_token token_type expires_in scope id_token refresh_token"),
+        })
+        {
+            var schema = schemas.GetProperty(name);
+            await Assert.That(schema.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray())
+                .IsEquivalentTo(fields.Split(' '));
+            if (schema.TryGetProperty("required", out var required))
+            {
+                await Assert.That(required.EnumerateArray().All(field => schema.GetProperty("properties").TryGetProperty(field.GetString()!, out _))).IsTrue();
+            }
+        }
+
+        var paths = document.GetProperty("paths");
+        var create = paths.GetProperty("/v1/{project}/clients").GetProperty("post");
+        var request = new { name = "Customer app", type = "confidential", redirect_uris = new[] { "https://app.example.test/callback" } };
+        await SchemaMatchesAsync(schemas, create.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema"),
+            JsonSerializer.SerializeToElement(request));
+        var client = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token, request, HttpStatusCode.Created);
+        await SchemaMatchesAsync(schemas, ResponseSchema(create, "201"), client);
+        await Assert.That(client.GetProperty("redirect_uris")[0].GetString()).IsEqualTo(request.redirect_uris[0]);
+        await Assert.That(client.GetProperty("client_secret").GetString()).IsNotNull();
+        await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token,
+            new { request.name, request.type, request.redirect_uris, redirectUris = request.redirect_uris })).IsEqualTo((400, "invalid_request"));
+
+        // A renamed parent (linked_providers) must not leave its nested provider schema in camelCase.
+        await oidc.Server.App.Services.GetRequiredService<Users>().FromProviderAsync(project,
+            new LinkedProvider("oidc", "public-client", "verified-subject"), this.Email(2), true, default);
+        var directory = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export", token);
+        await Assert.That(directory.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(directory.GetProperty("items")[0].GetProperty("linked_providers")[0].GetProperty("client_id").GetString()).IsEqualTo("public-client");
+        await SchemaMatchesAsync(schemas, ResponseSchema(paths.GetProperty("/v1/{project}/users/export").GetProperty("get"), "200"), directory);
+
+        var update = new
+        {
+            methods = new { sign_up = false },
+            branding = new { logo_url = "https://assets.example.test/logo.svg", theme_color = "#a1b2c3", footer_links = new[] { new { label = "Privacy", url = "https://example.test/privacy" } } },
+            configuration = new { redirect_urls = request.redirect_uris, session_lifetime_seconds = 3600 },
+        };
+        var settingsPath = paths.GetProperty("/v1/{project}/settings");
+        await SchemaMatchesAsync(schemas, settingsPath.GetProperty("put").GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema"),
+            JsonSerializer.SerializeToElement(update));
+        var changed = await oidc.OkAsync(HttpMethod.Put, $"{root}/settings", token, update);
+        await SchemaMatchesAsync(schemas, ResponseSchema(settingsPath.GetProperty("put"), "200"), changed);
+        var settings = await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", token);
+        await SchemaMatchesAsync(schemas, ResponseSchema(settingsPath.GetProperty("get"), "200"), settings);
+        await Assert.That(settings.GetProperty("methods").GetProperty("sign_up").GetBoolean()).IsFalse();
+        await Assert.That(settings.GetProperty("branding").GetProperty("logo_url").GetString()).IsEqualTo(update.branding.logo_url);
+        await Assert.That(settings.GetProperty("configuration").GetProperty("session_lifetime_seconds").GetInt32()).IsEqualTo(3600);
+        foreach (var invalid in new object[]
+        {
+            new { methods = new { signUp = true } },
+            new { branding = new { logoUrl = update.branding.logo_url } },
+            new { configuration = new { redirect_urls = request.redirect_uris, sessionLifetimeSeconds = 3600 } },
+        })
+        {
+            await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/settings", token, invalid)).IsEqualTo((400, "invalid_request"));
+        }
+    }
+
+    [Test]
     public async Task Directory_export_is_bounded_resumable_admin_only_and_audited_without_credentials()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
@@ -124,8 +216,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         var (_, token, project, root) = await this.ProjectAsync(oidc);
-        var body = new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = new[] { "https://app.example.test/callback", "http://localhost:3000/cb" } };
+        var body = new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = new[] { "https://app.example.test/callback", "http://localhost:3000/cb", "http://127.0.0.1:3000/cb", "http://[::1]:3000/cb" } };
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token, body, HttpStatusCode.Created);
+        await Assert.That(created.GetProperty("redirect_uris").EnumerateArray().Select(uri => uri.GetString()!).ToArray()).IsEquivalentTo(body.redirect_uris);
         var clientId = created.GetProperty("client_id").GetString()!;
         var secret = created.GetProperty("client_secret").GetString()!;
         await Assert.That(secret.Length).IsEqualTo(48);
@@ -138,6 +231,15 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(stored!.Document.GetRawText()).DoesNotContain(secret);
         await Assert.That(stored.Document.GetProperty("instanceId").GetString()).IsEqualTo(project);
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token, body with { redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
+        foreach (var invalid in new[]
+        {
+            "https://user@example.test/callback", "https://user:password@example.test/callback",
+            "http://user@localhost:3000/cb", "http://user@127.0.0.1:3000/cb", "http://user@[::1]:3000/cb",
+        })
+        {
+            await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token,
+                body with { redirect_uris = [invalid] })).IsEqualTo((400, "invalid_request"));
+        }
 
         var settings = await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", token);
         await Assert.That(settings.GetProperty("methods").GetProperty("sign_up").GetBoolean()).IsTrue();
@@ -245,6 +347,46 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(untouched.GetProperty("branding").GetProperty("title_size").ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Null);
         await Assert.That(untouched.GetProperty("configuration").GetProperty("session_lifetime_seconds").GetInt32()).IsEqualTo(1209600);
         await Assert.That((await oidc.Server.App.Services.GetRequiredService<ProjectAuthSettings>().GetAsync(project)).TitleSize).IsEqualTo(30);
+    }
+
+    private static JsonElement ResponseSchema(JsonElement operation, string status) =>
+        operation.GetProperty("responses").GetProperty(status).GetProperty("content").GetProperty("application/json").GetProperty("schema");
+
+    // Follow the served references, including nullable nested DTOs and array elements.
+    private static async Task SchemaMatchesAsync(JsonElement schemas, JsonElement schema, JsonElement body)
+    {
+        if (body.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (schema.TryGetProperty("$ref", out var reference))
+        {
+            schema = schemas.GetProperty(reference.GetString()!.Split('/')[^1]);
+        }
+
+        if (schema.TryGetProperty("oneOf", out var alternatives))
+        {
+            await SchemaMatchesAsync(schemas, alternatives.EnumerateArray().Single(item => !item.TryGetProperty("type", out var type) || type.GetString() != "null"), body);
+            return;
+        }
+
+        if (body.ValueKind == JsonValueKind.Object)
+        {
+            var properties = schema.GetProperty("properties");
+            foreach (var property in body.EnumerateObject())
+            {
+                await Assert.That(properties.TryGetProperty(property.Name, out _)).IsTrue();
+                await SchemaMatchesAsync(schemas, properties.GetProperty(property.Name), property.Value);
+            }
+        }
+        else if (body.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in body.EnumerateArray())
+            {
+                await SchemaMatchesAsync(schemas, schema.GetProperty("items"), item);
+            }
+        }
     }
 
     private string Email(int index) =>
