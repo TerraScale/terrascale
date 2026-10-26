@@ -13,8 +13,8 @@ from . import _spec, models
 from ._spec import Call, TransactionBuilder
 from ._version import __version__
 from .auth import AsyncAPIKeyTokenSource
-from .client import _error, _parse_response, _settings
-from .errors import CommitUncertainError, TerraScaleError
+from .client import _error, _settings
+from .errors import CommitUncertainError, InvalidResponseError, TerraScaleError
 
 __all__ = ["AsyncTerraScale", "AsyncDatabase", "AsyncCollection", "AsyncTransaction"]
 
@@ -88,17 +88,19 @@ class AsyncTerraScale:
             try:
                 response = await self._http.request(call.method, url, params=call.params or None, headers=headers,
                                               content=content)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
                 if not call.replay_safe:
                     raise CommitUncertainError(0, "commit_uncertain", "transport failure; the write may have committed") from exc
+                if isinstance(exc, httpx.DecodingError):
+                    raise InvalidResponseError(0, "invalid_response", "invalid response encoding") from exc
                 if attempt >= self._max_attempts:
                     raise TerraScaleError(f"{call.method} failed: {type(exc).__name__}") from exc
                 await asyncio.sleep(_spec.backoff(attempt, None))
                 continue
-            if response.status_code < 300:
-                return _parse_response(call, response)
-            err = _error(response)
+            if 200 <= response.status_code < 300:
+                return call.decode(response)
+            err = _error(response, mutation=not call.replay_safe)
             if response.status_code == 401 and self._source is not None and not refreshed:
                 # An expired or revoked token was never processed: refresh once.
                 self._source.invalidate(token)
@@ -203,14 +205,14 @@ class AsyncTransaction(TransactionBuilder):
         self.result: models.TransactionResult | None = None
 
     async def commit(self) -> models.TransactionResult:
-        self.result = await self._db._c._send(_spec.transaction(*self._db._p, self.ops))
+        self.result = await self._db._c._send(self._prepare(*self._db._p))
         return self.result
 
     async def __aenter__(self) -> AsyncTransaction:
         return self
 
     async def __aexit__(self, exc_type: object, *_: object) -> None:
-        if exc_type is None:
+        if exc_type is None and not self._consumed:
             await self.commit()
 
 

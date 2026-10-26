@@ -89,7 +89,8 @@ class _Requests:
     def _call(self, method: str, suffix: list[str], parse: Callable[[dict[str, Any]], Any], *,
               body: dict[str, Any] | None = None, params: dict[str, str] | None = None) -> Call:
         return Call(method, [*self._path, *suffix], lambda r: parse(r.json()), body=body,
-                    params=params or {}, replay_safe=method == "GET" or suffix == ["point-in-time", "plan"])
+                    params=params or {}, replay_safe=method == "GET" or suffix == ["point-in-time", "plan"],
+                    success=(201,) if method == "POST" and suffix != ["point-in-time", "plan"] else (200,))
 
     def _list(self, limit: int | None, cursor: str | None) -> Call:
         params = {} if cursor is None else {"after": cursor}

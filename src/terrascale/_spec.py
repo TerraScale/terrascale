@@ -13,6 +13,7 @@ from urllib.parse import quote
 import httpx
 
 from . import models
+from .errors import CommitUncertainError, InvalidResponseError, TerraScaleError, response_request_id
 from .ids import validate_id
 
 DEFAULT_BASE_URL = "https://api.terrascale.tech"
@@ -31,8 +32,28 @@ class Call:
     headers: dict[str, str] = field(default_factory=dict)
     body: Any = None
     content_type: str = "application/json"
-    # A replay cannot apply twice: reads, queries and conditional writes.
+    # Only reads and read-only queries can be replayed.
     replay_safe: bool = False
+    success: tuple[int, ...] = (200,)
+
+    def decode(self, response: httpx.Response) -> Any:
+        try:
+            if response.status_code not in self.success:
+                raise ValueError("unexpected success status")
+            if self.parse is _none and response.content:
+                raise ValueError("unexpected body on a bodyless response")
+            if self.parse is not _none:
+                body = response.json()
+                if not isinstance(body, dict) or not body or "error" in body:
+                    raise ValueError("expected a nonempty object")
+            result = self.parse(response)
+            if isinstance(result, models.WriteResult) and self.params.get("id", result.id) != result.id:
+                raise ValueError("acknowledgement identity mismatch")
+            return result
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError, OverflowError):
+            cls = InvalidResponseError if self.replay_safe else CommitUncertainError
+            raise cls(response.status_code, "invalid_response", "invalid response; reconcile writes before retrying",
+                      request_id=response_request_id(response.headers)) from None
 
     def url(self, base_url: str) -> str:
         return base_url.rstrip("/") + "/" + "/".join(quote(s, safe="") for s in self.path)
@@ -66,6 +87,17 @@ def _json(r: httpx.Response) -> Any:
 
 def _none(_: httpx.Response) -> None:
     return None
+
+
+def _discard(_: Any) -> None:
+    return None
+
+
+def _ttl(r: httpx.Response, expected: object = ...) -> str | None:
+    path = r.json()["path"]
+    if path is not None and (not isinstance(path, str) or not path.startswith("/")) or expected is not ... and path != expected:
+        raise ValueError("invalid TTL acknowledgement")
+    return path
 
 
 def _write(r: httpx.Response) -> models.WriteResult:
@@ -112,7 +144,8 @@ def list_databases(project: str, limit: int | None, cursor: str | None) -> Call:
 def create_database(project: str, db: str, home_region: str | None, replica_regions: Sequence[str] | None,
                     all_regions: bool | None) -> Call:
     body = {"name": name(db, "database"), **_placement(home_region, replica_regions, all_regions)}
-    return Call("POST", ["v1", "projects", project, "databases"], lambda r: models.Database.from_json(r.json()), body=body)
+    return Call("POST", ["v1", "projects", project, "databases"],
+                lambda r: models.Database.from_json(r.json()), body=body, success=(201,))
 
 
 def get_database(project: str, db: str) -> Call:
@@ -126,16 +159,16 @@ def update_database(project: str, db: str, home_region: str | None, replica_regi
     if not body:
         raise ValueError("update needs home_region, replica_regions or all_regions")
     return Call("PATCH", ["v1", "projects", project, "databases", db], lambda r: models.Database.from_json(r.json()),
-                body=body, replay_safe=True)
+                body=body)
 
 
 def delete_database(project: str, db: str) -> Call:
-    return Call("DELETE", ["v1", "projects", project, "databases", db], _none)
+    return Call("DELETE", ["v1", "projects", project, "databases", db], _none, success=(204,))
 
 
 def branch_database(project: str, db: str, branch: str) -> Call:
     return Call("POST", ["v1", "projects", project, "databases", db, "branches"],
-                lambda r: models.Database.from_json(r.json()), body={"name": name(branch, "branch")})
+                lambda r: models.Database.from_json(r.json()), body={"name": name(branch, "branch")}, success=(201,))
 
 
 # Collections -------------------------------------------------------------
@@ -146,7 +179,7 @@ def _db(project: str, db: str, *extra: str) -> list[str]:
 
 def create_collection(project: str, db: str, collection: str) -> Call:
     return Call("POST", _db(project, db, "collections"), lambda r: models.Collection.from_json(r.json()),
-                body={"name": name(collection, "collection")})
+                body={"name": name(collection, "collection")}, success=(201,))
 
 
 def list_collections(project: str, db: str, limit: int | None, cursor: str | None) -> Call:
@@ -160,23 +193,23 @@ def get_collection(project: str, db: str, collection: str) -> Call:
 
 
 def drop_collection(project: str, db: str, collection: str) -> Call:
-    return Call("DELETE", _db(project, db, "collections", collection), _none)
+    return Call("DELETE", _db(project, db, "collections", collection),
+                lambda r: _discard(models.Collection.from_json(r.json())))
 
 
 def get_ttl(project: str, db: str, collection: str) -> Call:
-    return Call("GET", _db(project, db, "collections", collection, "ttl"), lambda r: r.json().get("path"),
-                replay_safe=True)
+    return Call("GET", _db(project, db, "collections", collection, "ttl"), lambda r: _ttl(r), replay_safe=True)
 
 
 def set_ttl(project: str, db: str, collection: str, path: str) -> Call:
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError("ttl path must be a JSON Pointer such as '/expiresAt'")
-    return Call("PUT", _db(project, db, "collections", collection, "ttl"), lambda r: r.json().get("path"),
-                body={"path": path}, replay_safe=True)
+    return Call("PUT", _db(project, db, "collections", collection, "ttl"), lambda r: _ttl(r, path),
+                body={"path": path})
 
 
 def delete_ttl(project: str, db: str, collection: str) -> Call:
-    return Call("DELETE", _db(project, db, "collections", collection, "ttl"), _none, replay_safe=True)
+    return Call("DELETE", _db(project, db, "collections", collection, "ttl"), lambda r: _discard(_ttl(r, None)))
 
 
 # Documents ---------------------------------------------------------------
@@ -197,14 +230,13 @@ def get_document(project: str, db: str, collection: str, doc_id: str) -> Call:
 
 
 def create_document(project: str, db: str, collection: str, document: Any) -> Call:
-    return Call("POST", _docs(project, db, collection), _write, body=_check_body(document))
+    return Call("POST", _docs(project, db, collection), _write, body=_check_body(document), success=(201,))
 
 
 def put_document(project: str, db: str, collection: str, doc_id: str, document: Any, if_match: str | None,
                  if_none_match_any: bool) -> Call:
     return Call("PUT", _docs(project, db, collection, "by-key"), _write, params={"id": validate_id(doc_id)},
-                headers=_conditions(if_match, if_none_match_any), body=_check_body(document),
-                replay_safe=bool(if_match))
+                headers=_conditions(if_match, if_none_match_any), body=_check_body(document), success=(200, 201))
 
 
 def patch_document(project: str, db: str, collection: str, doc_id: str, merge: dict[str, Any] | None,
@@ -218,13 +250,12 @@ def patch_document(project: str, db: str, collection: str, doc_id: str, merge: d
             raise ValueError("ops needs at least one operation")
         body, content_type = {"ops": list(ops)}, "application/vnd.terrabase.ops+json"
     return Call("PATCH", _docs(project, db, collection, "by-key"), _write, params={"id": validate_id(doc_id)},
-                headers=_conditions(if_match, False), body=body, content_type=content_type,
-                replay_safe=bool(if_match))
+                headers=_conditions(if_match, False), body=body, content_type=content_type)
 
 
 def delete_document(project: str, db: str, collection: str, doc_id: str, if_match: str | None) -> Call:
     return Call("DELETE", _docs(project, db, collection, "by-key"), _write, params={"id": validate_id(doc_id)},
-                headers=_conditions(if_match, False), replay_safe=bool(if_match))
+                headers=_conditions(if_match, False))
 
 
 def list_documents(project: str, db: str, collection: str, limit: int | None, cursor: str | None) -> Call:
@@ -288,9 +319,40 @@ def statement(sql_text: str, args: Sequence[Any] | dict[str, Any] | None) -> dic
 def transaction(project: str, db: str, ops: Sequence[dict[str, Any]]) -> Call:
     if not ops:
         raise ValueError("a transaction needs at least one op")
-    safe = all(o["op"] in ("assert", "assert_count") or o.get("if_match") for o in ops)
-    return Call("POST", _db(project, db, "transactions"), lambda r: models.TransactionResult.from_json(r.json()),
-                body={"ops": list(ops)}, replay_safe=safe)
+    snapshot = json.dumps(ops, allow_nan=False)  # Immutable, detached from caller-owned lists and nested documents.
+    return Call("POST", _db(project, db, "transactions"),
+                lambda r: models.TransactionResult.from_json(_transaction_ack(r.json(), json.loads(snapshot))),
+                body={"ops": json.loads(snapshot)}, replay_safe=all(o["op"] in ("assert", "assert_count") for o in ops))
+
+
+def _transaction_ack(body: dict[str, Any], ops: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    _result_count(body, len(ops))
+    for op, result in zip(ops, body["results"], strict=True):
+        if not isinstance(result, dict):
+            raise ValueError("invalid transaction result")
+        if op["op"] in ("assert", "assert_count"):
+            if result.get("asserted") is not True:
+                raise ValueError("missing successful assertion")
+            count = result.get("count")
+            if op["op"] == "assert_count":
+                if not isinstance(count, str) or not count.isascii() or not count.isdecimal():
+                    raise ValueError("invalid assertion count")
+                value = int(count)
+                if str(value) != count or not op.get("gte", 0) <= value <= min(op.get("lte", (1 << 64) - 1), (1 << 64) - 1):
+                    raise ValueError("assertion count outside submitted bounds")
+            elif count is not None:
+                raise ValueError("unexpected assertion count")
+        else:
+            models.WriteResult.from_json({**result, "offset": body["offset"], "durability": body["durability"]})
+            if op.get("id", result["id"]) != result["id"]:
+                raise ValueError("transaction acknowledgement identity mismatch")
+    return body
+
+
+def _result_count(body: dict[str, Any], count: int) -> dict[str, Any]:
+    if not isinstance(body["results"], list) or len(body["results"]) != count:
+        raise ValueError("acknowledgement result count mismatch")
+    return body
 
 
 class TransactionBuilder:
@@ -298,8 +360,21 @@ class TransactionBuilder:
 
     def __init__(self) -> None:
         self.ops: list[dict[str, Any]] = []
+        self._consumed = False
+
+    def _pending(self) -> None:
+        if self._consumed:
+            raise TerraScaleError("transaction already submitted; create a new transaction")
+
+    def _prepare(self, project: str, db: str) -> Call:
+        self._pending()
+        call = transaction(project, db, self.ops)
+        call.content()  # Local validation must succeed before consuming the transaction.
+        self._consumed = True
+        return call
 
     def _add(self, op: dict[str, Any]) -> TransactionBuilder:
+        self._pending()
         if len(self.ops) >= 1024:
             raise ValueError("a transaction holds at most 1024 ops")
         self.ops.append(op)

@@ -12,6 +12,7 @@ __all__ = [
     "TokenError",
     "APIError",
     "InvalidRequestError",
+    "InvalidResponseError",
     "AuthenticationError",
     "PermissionDeniedError",
     "NotFoundError",
@@ -81,6 +82,10 @@ class APIError(TerraScaleError):
         super().__init__(text)
 
 
+class InvalidResponseError(APIError):
+    """The server response could not be decoded according to the API contract."""
+
+
 class InvalidRequestError(APIError):
     """400: the request, query, patch or cursor is invalid."""
 
@@ -142,7 +147,7 @@ _BY_STATUS: dict[int, type[APIError]] = {
 }
 
 
-def error_for(status: int, body: Any, headers: Any = None) -> APIError:
+def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = False) -> APIError:
     """Build the typed error for a response status and decoded JSON body."""
     err = body.get("error") if isinstance(body, dict) else None
     if not isinstance(err, dict):
@@ -151,7 +156,7 @@ def error_for(status: int, body: Any, headers: Any = None) -> APIError:
     code: str = raw_code if isinstance(raw_code, str) and raw_code else f"http_{status}"
     op = err.get("op")
     try:
-        op = int(op) if op is not None else None
+        op = int(op) if isinstance(op, (int, str)) and not isinstance(op, bool) else None
     except (TypeError, ValueError, OverflowError):
         op = None
     retry_after = None
@@ -162,6 +167,8 @@ def error_for(status: int, body: Any, headers: Any = None) -> APIError:
         if raw_etag:
             etag = raw_etag.removeprefix("W/").strip('"')
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
+    if mutation and status >= 500:
+        cls = CommitUncertainError
     return cls(
         status,
         code,

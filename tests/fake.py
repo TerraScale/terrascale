@@ -104,7 +104,7 @@ class Fake:
                 self.ttl[coll] = body["path"]
             elif request.method == "DELETE":
                 self.ttl[coll] = None
-                return httpx.Response(204)
+                return httpx.Response(200, json={"path": None})
             return httpx.Response(200, json={"path": self.ttl.get(coll)})
         if sub == "/query":
             return self._query(coll, body)
@@ -273,6 +273,8 @@ class Fake:
                 if op.get("absent") and op["id"] in coll:
                     return httpx.Response(409, json={"error": {"code": "assertion_failed", "op": i}})
                 results.append({"asserted": True})
+            elif op["op"] == "assert_count":
+                results.append({"asserted": True, "count": str(len(coll))})
             else:
                 results.append({})
         return httpx.Response(200, json={"offset": str(self.offset), "durability": "local", "results": results})
