@@ -4,8 +4,6 @@
 // The page embeds the catalog and the first diagnostics as JSON scripts, so
 // opening the console makes no extra request.
 
-import './results.js';
-
 const checkDelay = 400;
 const lineBreaks = new Set(['SELECT', 'FROM', 'WHERE', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION']);
 

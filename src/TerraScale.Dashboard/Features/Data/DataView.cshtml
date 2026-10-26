@@ -51,6 +51,9 @@ var catalog = Model.Catalog ?? new SqlCatalog([],[]);
 @if(Model.Section is "documents" or "sql" or "schema"){
 <script type="module" src="@Assets.Url("js/code-editor.js")" nonce="@Model.Shell.Nonce"></script>
 }
+@if(Model.Section == "sql"){
+<script type="module" src="@Assets.Url("js/sql-results.js")" nonce="@Model.Shell.Nonce"></script>
+}
 @if(Model.Section == "documents"){
 <script type="module" src="@Assets.Url("js/document-changes.js")" nonce="@Model.Shell.Nonce"></script>
 }
