@@ -176,7 +176,7 @@ func TestImportFileStagesConfirmsAndWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := importFile(t.Context(), c.Database(project, "app"), "postgres_plain", path, "", &out); err != nil {
+	if err := importFile(t.Context(), c.Database(project, "app"), "postgres_plain", path, "", func(*v1.ImportJob) error { return nil }, &out); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"POST ", "POST /app/import", "PUT /app/import/source", "GET /app/import",
@@ -241,7 +241,7 @@ func TestImportNDJSONSendsCollection(t *testing.T) {
 	}
 	s := &session{tb: c, project: project}
 	var out bytes.Buffer
-	if err := s.dispatch(t.Context(), "import", functionFlags{}, "people", []string{"app", "ndjson", path}, commandInput{}, &out); err != nil {
+	if err := s.dispatch(t.Context(), "import", functionFlags{}, "people", []string{"app", "ndjson", path}, commandInput{yes: true}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if declarations != 1 || !strings.Contains(out.String(), "Imported 1 rows into app") {

@@ -181,7 +181,7 @@ func helpOptions(name string) map[string]string {
 		options["-allow-cidr <CIDR>,..."] = "restrict source networks; default any address"
 	case name == "import":
 		options["-collection <name>"] = "destination collection for plain document NDJSON"
-		options["-yes"] = "consent to the inspected import preview for unattended execution"
+		options["-yes"] = "consent to the inspected preview; database creation/upload happen before consent"
 	case name == "db delete" || name == "collection drop" || name == "functions delete" || name == "orgs delete" || name == "projects delete":
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "functions deploy":

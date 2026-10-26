@@ -78,7 +78,7 @@ func TestJSONImportReturnsFinalJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	err := importFile(t.Context(), s.tb.Database(s.project, "app"), "ndjson", path, "people", &jsonOutput{Writer: &buf})
+	err := importFile(t.Context(), s.tb.Database(s.project, "app"), "ndjson", path, "people", nil, &jsonOutput{Writer: &buf})
 	if err != nil || !json.Valid(buf.Bytes()) || !strings.Contains(buf.String(), `"state":"completed"`) {
 		t.Fatalf("import JSON: %v", err)
 	}
