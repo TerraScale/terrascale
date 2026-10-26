@@ -34,27 +34,26 @@ const (
 // RegionCode is a TerraScale region identifier.
 type RegionCode string
 
-// Launch regions.
+// Named region codes. The live catalog determines serving availability.
 const (
 	RegionGRU RegionCode = "GRU"
 	RegionSJC RegionCode = "SJC"
+	RegionFRA RegionCode = "FRA"
 )
 
-// IsRegionCode reports whether s is a known region code (case-insensitive).
+// IsRegionCode checks the producer region-id format after case/space normalization.
+// It does not establish serving availability; use Client.ListRegions for placement.
 func IsRegionCode(s string) bool {
-	switch RegionCode(strings.ToUpper(strings.TrimSpace(s))) {
-	case RegionGRU, RegionSJC:
-		return true
-	default:
-		return false
-	}
+	_, valid := normalizeRegionCode(s)
+	return valid
 }
 
-// ParseRegionCode normalizes s to a canonical RegionCode or returns an error.
+// ParseRegionCode normalizes a well-formed id to the SDK uppercase convention.
+// Wire catalog ids stay lowercase; this does not check serving availability.
 func ParseRegionCode(s string) (RegionCode, error) {
-	code := RegionCode(strings.ToUpper(strings.TrimSpace(s)))
-	if !IsRegionCode(string(code)) {
-		return "", fmt.Errorf("sdk: region must be exactly one of GRU, SJC, got %q", s)
+	code, valid := normalizeRegionCode(s)
+	if !valid {
+		return "", fmt.Errorf("sdk: region must be a letter followed by letters, digits or inner hyphens, at most 63 ASCII characters, got %q", s)
 	}
 	return code, nil
 }
