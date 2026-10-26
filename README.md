@@ -1,64 +1,34 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` implements the current C# TerraBase ULID project, ULID document and HTTP SQL contracts routed through the public `https://api.terrascale.tech` origin. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
+`terrascale::v1` provides typed document and SQL APIs through `https://api.terrascale.tech`.
+Start with the [current API guide](docs/current-api.md). The [document walkthrough](docs/csharp-api.md)
+covers ULID identities, conditional writes, pagination and errors.
+
+Use an existing database name and a new collection name for this example:
 
 ```rust,no_run
-use terrascale::v1::{ulid_for, Client};
-# async fn example(project: &str, access_token: &str) -> terrascale::v1::Result<()> {
+use terrascale::v1::{Client, WriteOptions};
+# pub async fn example(project: &str, access_token: &str, database_name: &str, collection_name: &str) -> terrascale::v1::Result<()> {
 let client = Client::for_project(project, access_token).build()?;
-let items = client.database("main").collection("items");
-let document = items.get::<serde_json::Value>(ulid_for("items", "customer/a+b")).await?;
-# let _ = document;
+let database = client.database(database_name);
+database.create_collection(collection_name).await?;
+let items = database.collection(collection_name);
+let written = items.create(&serde_json::json!({"quantity": 1}), WriteOptions::new()).await?;
+let document = items.get::<serde_json::Value>(written.id).await?;
+assert_eq!(document.value().unwrap()["quantity"], 1);
+items.delete(written.id, WriteOptions::new().if_match(written.version)).await?;
+items.drop_collection().await?;
 # Ok(())
 # }
 ```
 
-Project requests use an already exchanged ts-auth bearer token and go straight to `https://api.terrascale.tech` with no configuration; the public edge routes them to the owning region. Direct endpoint/region overrides are restricted to reviewed isolated tests or
-producer qualification; they remain implementation inventory, not production
-onboarding. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
+The project must be a canonical uppercase ULID. Customer API keys must first be exchanged
+for a project access token through ts-auth. The project client accepts that bearer token;
+it does not currently acquire or refresh tokens. Construct a new client with a fresh token
+when it expires. Never embed credentials in source.
 
-`scripts/terrabase/run.py` still targets the older SHA-256-pinned C# producer `263598b47ffc79398db394550e3c074acf4fc57d`, with UUID project IDs and legacy bootstrap credentials. It cannot qualify this current client. Updating that release pin and provisioning a current project-token test fixture is a release dependency; this draft does not claim live qualification.
-
-The SDK speaks TerraBase's native JSON document protocol. Native paths carry UUID tenant, database, collection and document identities and a canonical full-range decimal shard. Numeric field IDs and tagged values preserve missing/null, signed 64-bit integers, bytes, maps and arrays. Point reads retain observed context, tombstones and all concurrent siblings. Native values have at most 16 levels, arrays cannot occur under an ancestor array, and the entire encoded document is capped at 1 MiB.
-
-```rust,no_run
-use terrascale::{ClientConfig, DatabaseScope, TerraScaleClient};
-# async fn example(native_key: &str) -> terrascale::Result<()> {
-let client = TerraScaleClient::new(ClientConfig::builder()
-    .api_key(native_key)
-    .build()?);
-let scope = DatabaseScope::new(
-    "00000000-0000-0000-0000-000000000001".parse()?,
-    "00000000-0000-0000-0000-000000000002".parse()?,
-    u64::MAX,
-);
-let point = client.documents().get(&scope,
-    "00000000-0000-0000-0000-000000000003".parse()?,
-    "00000000-0000-0000-0000-000000000004".parse()?,
-).await?;
-let _fields = point.live_fields()?;
-# Ok(())
-# }
-```
-
-`PreparedTransaction` freezes scope, transaction identity, authority, effect digest and exact request bytes. `Condition::Absent` requires no retained state; a deleted point must use its `state_version`. `Condition::Version` is a producer state token, and observed context alone is not compare-and-set. A caller must retain the prepared operation after `CommitOutcome::Uncertain`, resolve it with `transactions().status()`, or explicitly retry the same frozen operation. Pending, unknown and expired statuses do not prove an abort. Receipt and status validation binds the original identity, effect digest, authority and database/shard event.
-
-`subscriptions().snapshot()` pages a native predicate view and yields a poll cursor. `subscriptions().poll()` returns complete ordered groups; a null effect removes a document from the view. `SubscriptionView` binds tenant/database/shard, collection and predicate, requires the actual request cursor to match its snapshot/poll phase, and validates a complete page before publishing groups and the next cursor. Cursors stay opaque and are bound by the producer to scope and predicate.
-
-Default native routing sends an authenticated scoped GET only to `https://atlas.terrascale.tech/api/v1/discovery`, using one canonical native `tbk1` credential. Atlas verifies signed current serving publications; the SDK validates the closed response and chooses the first receiver-ranked direct endpoint supporting the operation and residency. Existing `RegionRtt` hints are measured ranking inputs, not region activation.
-Custom Atlas origins fail before native credentials are sent. Direct origin
-overrides are restricted to reviewed isolated tests and real producer qualification. There is no global API fallback.
-
-Discovery caches at most 128 scopes without evicting their authority/revision floors. Floors survive lease expiry within the client instance; deployment/cell moves and generation/revision regressions fail closed. A lease is at most ten seconds, clamped down by absolute expiry and transport time, and checked with wall and monotonic clocks. The client does not persist floors across process restart; the receiver owns durable floors. Clock failures/regressions fail closed. Runtime acceptance still requires independently measured healthy clock bounds and provenance. Safe native retries refresh expired routing; mutations are never automatically replayed.
-
-Point needs `client_v1 + read`, query additionally needs `query`, and snapshot/poll additionally need `subscriptions`. Transaction status needs `client_v1 + write`, including reconciliation after a capability downshift. Single unconditional commit needs `client_v1 + write`; conditional/multiple commits require additional capabilities which remain false in this v1 Atlas response. Direct admitted native fixture capabilities are unchanged. A caller-supplied single-writer identity is rejected until signed durable admission and commit fencing are qualified; leaderless writes do not establish security authority.
-
-Authentication remains a separate `auth_idp()` client. First-party issuer and
-service credential acquisition must be automatic under the
-[operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
-The current auth client still requires origin/credential inputs; automatic
-acquisition remains a runtime implementation gap. Customer issuer trust and
-consumer authorization remain necessary. TerraBase credentials and routing selectors never reach ts-auth. Authentication mutations are never automatically replayed. The canonical issuer is unchanged by regional endpoint selection.
+Project requests use the public origin automatically. Customer credentials determine
+project, database and operation access; an endpoint does not grant authorization.
 
 ### Relational SQL
 
@@ -67,20 +37,23 @@ consumer authorization remain necessary. TerraBase credentials and routing selec
 statement commits or none does, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused.
 
 ```rust,no_run
-# async fn demo(client: terrascale::v1::Client) -> terrascale::v1::Result<()> {
+# pub async fn demo(client: terrascale::v1::Client, database_name: &str, table_name: &str) -> terrascale::v1::Result<()> {
 use terrascale::v1::{SqlStatement, SqlValue};
 #[derive(serde::Deserialize)]
 struct User { id: i64, name: String }
 
-let sql = client.database("main").sql();
-sql.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)", &[]).await?;
-let inserted = sql.execute("INSERT INTO users(name) VALUES (?)", &["Ada".into()]).await?;
-let users: Vec<User> = sql.query("SELECT id, name FROM users WHERE id = ?", &[inserted.last_insert_rowid.into()]).await?;
+let sql = client.database(database_name).sql();
+// Quote the caller's new table name as an SQL identifier; bind all data values.
+let table = format!("\"{}\"", table_name.replace('"', "\"\""));
+sql.execute(&format!("CREATE TABLE {table} (id INTEGER PRIMARY KEY, name TEXT)"), &[]).await?;
+sql.execute(&format!("INSERT INTO {table}(id, name) VALUES (?, ?)"), &[1.into(), "Ada".into()]).await?;
+let users: Vec<User> = sql.query(&format!("SELECT id, name FROM {table} WHERE id = ?"), &[1.into()]).await?;
 let results = sql.batch(vec![
-    SqlStatement::new("UPDATE users SET name = :name WHERE id = :id").named("name", "Grace").named("id", 1),
-    SqlStatement::new("SELECT count(*) FROM users"),
+    SqlStatement::new(format!("UPDATE {table} SET name = :name WHERE id = :id")).named("name", "Grace").named("id", 1),
+    SqlStatement::new(format!("SELECT count(*) FROM {table}")),
 ]).await?;
-assert!(matches!(results[1].rows[0][0], SqlValue::Integer(_)));
+assert!(matches!(results[1].rows[0][0], SqlValue::Integer(1)));
+sql.execute(&format!("DROP TABLE {table}"), &[]).await?;
 # let _ = users; Ok(()) }
 ```
 
@@ -90,13 +63,12 @@ by column name. Booleans bind as `1`/`0`. Integers are JSON numbers: this client
 JavaScript peers lose precision beyond 2^53. SQL failures (`sql_error`, `forbidden_scope`,
 `sql_conflict`, `sql_too_large`) are `Error::Sql`, available through `Error::sql()` with `code`,
 `message`, `statement` and `sqlite_code`; other failures keep the generic error variants. The
-older read-only `run_sql` route below is deprecated: dashboard keys get 403 there.
+read-only `run_sql` route queries document collections through a separate SELECT subset.
 
-Current project SQL uses the implemented HTTP `sql`, `sql/check` and `sql/explain` routes through `Database::run_sql`, `check_sql` and `explain_sql`. The optional PostgreSQL consumer in `src/postgres.rs` belongs to the older producer; it does not qualify the current C# server. Its Cargo feature remains inventoried for removal. Actual admitted-listener and packaged qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
+Use `Database::sql()` for parameterized relational SQL. Use `Database::run_sql`,
+`check_sql` and `explain_sql` for the read-only document SELECT subset; these methods
+do not provide parameter binding.
 
-Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.
-
-Project-scoped collection shapes are documented in [docs/shape-reads.md](docs/shape-reads.md):
-snapshot pages, sealed chunks, live polling, safe cursor resume, and TBS1
-conformance. Object-storage redirects and manifests remain deferred to FR-22.
-Shape qualification uses HTTP fakes and upstream vectors only.
+Project-scoped collection shapes are documented in [shape reads](docs/shape-reads.md).
+Database-wide changes are available through `Database::changes` (typed events) and
+`Database::change_bytes` (raw SSE). Keep the access token lifetime in mind when resuming streams.
