@@ -1,0 +1,32 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+  "inputs": {
+    "src/TerraScale.Authentication/Features/Oidc/EndUserAccessTokens.cs": "20d184e1fe7acc170e13995c3d1fa08de23fff90c8700f745b7f898192dbbf97",
+    "src/TerraScale.Authentication/Features/Oidc/EndUserTokenEndpoint.cs": "f5c68eaf3a29bd9f4e5bebf0842b26112eb42207d0bcf2981a3447763ba6d66a",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "fa5545b08a71dab828a8ad448bfea9723aa305ce8524d5da1c24ea0f8d71b0e2",
+    "docs/auth/scoped-end-user-tokens.md": "67fafad89e90936202969ae5491b65a594e8f7db19c732208f710480fee21e27",
+    "docs/auth/scoped-end-user-tokens.openapi.yaml": "74366b52c0dd924d9a732251837a03a91aabd3752d5cc490a60b6fcd0563d672"
+  },
+  "generatedContract": "docs/auth/scoped-end-user-tokens.openapi.yaml",
+  "operation": {
+    "operationId": "mintEndUserToken",
+    "method": "POST",
+    "path": "/v1/terrascale/projects/{project}/end-user-tokens",
+    "security": "projectApiKey HTTP Bearer: whole live exact-project key with BOTH documents:read and documents:write and no database restriction; not organization key/JWT/cookie",
+    "requestMedia": "application/json UTF-8; max16384 bytes; depth4",
+    "request": "{user_id: canonical uppercase ULID, claims?: {roles?: string[]|null}|null}; no unknown members at either level",
+    "roles": "0..64 entries; nonblank; <=128 UTF-16 code units; no char.IsControl; ordinal deduplication by producer",
+    "success": "200 application/json {access_token:string ASCII compact JWT <=8192 bytes, token_type:Bearer, expires_in:int64 1..900}; capped at key expiry; no refresh/lifetime request parameter",
+    "errors": {
+      "400": "nested error invalid_request; malformed/unknown/oversized request or signed JWT",
+      "401": "nested error unauthorized; missing/foreign/org/narrowed/insufficient/revoked/expired/tampered key or broken linkage; WWW-Authenticate: Bearer realm=\"ts-auth\"",
+      "429": "OAuth flat error rate_limited; Retry-After seconds; shared token IP budget plus1000/minute per key",
+      "503": "nested error storage admission unavailable"
+    },
+    "cache": "no-store",
+    "retry": "none; every mint sent once even if Retry-After is present",
+    "revocation": "key revocation stops future issuance; offline JWTs survive until expiry plus validation clock skew",
+    "claims": "server fixes typ at+jwt, ES256, iss/aud, token_kind=end_user, sub=user_id, project_id=instance_id=route project and roles; no scope/database/org_id/platform_role grant; no account provisioning"
+  }
+}
