@@ -41,9 +41,26 @@ public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)
         using var connect = await client.GetAsync("/?tab=connect");
         await Assert.That(connect.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var html = WebUtility.HtmlDecode(await connect.Content.ReadAsStringAsync());
+        await Assert.That(html).Contains("Create your first database to get connection snippets.");
+        await Assert.That(html).DoesNotContain("id=\"connect-js\"");
+        await Assert.That(html).Contains("<title>Connect");
+        using var producer = scenario.CreateProviderClient();
+        foreach (var name in new[] { "app", "warehouse" })
+        {
+            using var added = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-add-database", name });
+            await Assert.That(added.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        }
+        html = WebUtility.HtmlDecode(await client.GetStringAsync("/?tab=connect&database=warehouse"));
+        await Assert.That(html).Contains("for=\"connect-database\"");
+        await Assert.That(html).Contains($"name=\"projectId\" value=\"{projectId}\"");
+        await Assert.That(html).Contains("/databases/warehouse/collections");
+        var fallback = WebUtility.HtmlDecode(await client.GetStringAsync("/?tab=connect&database=not-in-this-project"));
+        await Assert.That(fallback).Contains("/databases/app/collections");
+        await Assert.That(fallback).DoesNotContain("/databases/not-in-this-project/");
         var js = html[html.IndexOf("id=\"connect-js\"", StringComparison.Ordinal)..];
         js = js[..js.IndexOf("</pre>", StringComparison.Ordinal)];
         await Assert.That(js).Contains("createTerraBaseV1Client");
+        await Assert.That(js).Contains("client.database(\"warehouse\")");
         await Assert.That(js).Contains($"project: \"{projectId}\"");
         await Assert.That(js).Contains("baseUrl: \"https://api.terrascale.tech\"");
         foreach (var id in new[] { "connect-token", "connect-curl", "connect-csharp", "connect-go", "connect-rust" })

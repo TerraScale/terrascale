@@ -29,7 +29,7 @@ public static class HomeEndpoints
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
             var tab = http.Request.Query["tab"] == "connect" ? "connect" : "overview";
             var data = tab == "overview" ? await measurements.ReadPageAsync(context, range, http.RequestAborted) : new HomeMeasurement();
-            return HomeView.Create(new(ShellModel.For(http, context, "Overview"), tab, range, data));
+            return HomeView.Create(new(ShellModel.For(http, context, tab == "connect" ? "Connect" : "Overview"), tab, range, data));
         });
         endpoints.MapGet("/overview/regions", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
         {
