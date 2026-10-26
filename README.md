@@ -453,9 +453,10 @@ The platform management API, API key tokens and headless sign-in are in
 
 Schema and SQL builders construct and validate statements locally and do not
 execute SQL over HTTP. The pgx-backed PostgreSQL client connects to
-`pg.terrascale.tech:5432` using the dashboard API key directly as its password.
-`PostgresConfig.Database` is the database name for a project key, or
-`<project ULID>/<name>` for an organization key; do not URL-encode the slash.
+`pg.terrascale.tech:5432` using a project-scoped dashboard API key as its password.
+`PostgresConfig.Database` is the database name, optionally qualified as
+`<key's project ULID>/<name>`; do not URL-encode the slash. The pinned producer's
+exchange requires a project claim, so use a key issued for that project.
 The optional `KeyID` must match the password's key ID; otherwise it is derived.
 TLS uses PostgreSQL SSLRequest negotiation, verifies the hostname and trusts
 system certificate roots. Custom deployments can supply `Host`, `Port`,
