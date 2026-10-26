@@ -245,8 +245,11 @@ public sealed class PostgresWireTests
         await ExecuteAsync(connection, "ALTER TABLE t ADD extra TEXT");
         var changed = await Assert.ThrowsAsync<PostgresException>(async () => await select.ExecuteScalarAsync());
         await Assert.That(changed!.SqlState).IsEqualTo("0A000");
-        var rows = await ReadAsync(connection, "SELECT id, extra FROM t");
-        await Assert.That(rows[0]).IsEquivalentTo(["1", null]);
+        await using var current = new NpgsqlCommand("SELECT id, extra FROM t", connection);
+        await using var row = await current.ExecuteReaderAsync();
+        await Assert.That(await row.ReadAsync()).IsTrue();
+        await Assert.That(row.GetInt64(0)).IsEqualTo(1);
+        await Assert.That(row.IsDBNull(1)).IsTrue();
     }
 
     // Needs SQ1-d (writes) and SQ1-e (transactions).

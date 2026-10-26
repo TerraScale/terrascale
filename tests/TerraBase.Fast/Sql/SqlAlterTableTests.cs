@@ -85,4 +85,24 @@ public sealed class SqlAlterTableTests
         var after = await SqlApi.OkAsync(api, "PRAGMA table_info(t)");
         await Assert.That(after[0].GetProperty("rows").GetArrayLength()).IsEqualTo(4);
     }
+
+    [Test]
+    public async Task The_column_limit_is_enforced_and_an_existing_document_field_becomes_visible()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var columns = string.Join(", ", Enumerable.Range(0, 255).Select(i => $"c{i} TEXT"));
+        await SqlApi.OkAsync(api, $"CREATE TABLE wide ({columns})", "ALTER TABLE wide ADD last TEXT");
+        var tooWide = await SqlApi.ExecuteAsync(api, "ALTER TABLE wide ADD excess TEXT");
+        await Assert.That(tooWide.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        var catalog = await SqlApi.OkAsync(api, "PRAGMA table_info(wide)");
+        await Assert.That(catalog[0].GetProperty("rows").GetArrayLength()).IsEqualTo(256);
+
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id TEXT PRIMARY KEY)");
+        var id = TerraBase.Primitives.EntityIds.New().ToString();
+        var written = await api.SendAsync(HttpMethod.Put, $"{api.Collections}/t/documents/{id}", JsonContent.Create(new { extra = "existing" }));
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+        await SqlApi.OkAsync(api, "ALTER TABLE t ADD extra TEXT");
+        var values = await SqlApi.OkAsync(api, "SELECT extra FROM t");
+        await Assert.That(values[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("existing");
+    }
 }
