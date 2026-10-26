@@ -15,6 +15,7 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [Errors and safe retries](/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Generate TypeScript document models](/guides/schema-validation#generate-typescript-document-models) (upcoming): Node tooling for declared collection schemas.
 - [Schema preview and request diagnostics](/guides/schema-preview-request-diagnostics) (pending rollout): bounded historical validation and request IDs for support.
 - [Expire documents with TTL](/guides/ttl): automatic deletion after a per-document expiry time, with about an hour of lag.
 - [Vector similarity search](/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.

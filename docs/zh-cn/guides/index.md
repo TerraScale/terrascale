@@ -20,6 +20,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/zh-cn/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/zh-cn/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Generate TypeScript document models](/zh-cn/guides/schema-validation#generate-typescript-document-models) (upcoming): Node tooling for declared collection schemas.
 - [Schema preview and request diagnostics](/zh-cn/guides/schema-preview-request-diagnostics) (pending rollout): bounded historical validation and request IDs for support.
 - [Expire documents with TTL](/zh-cn/guides/ttl): automatic deletion after a per-document expiry time, with about an hour of lag.
 - [Vector similarity search](/zh-cn/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.
