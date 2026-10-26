@@ -120,6 +120,9 @@ internal interface ISqlSession : IAsyncDisposable
     /// <summary>Whether no transaction is open.</summary>
     bool IsAutocommit { get; }
 
+    /// <summary>Starts a transport request whose statements, including scripts, share one deadline.</summary>
+    void BeginRequest();
+
     /// <summary>
     /// Runs one statement; <c>BEGIN</c>, <c>COMMIT</c> and <c>ROLLBACK</c> change the session.
     /// The adapter accepts a result's <see cref="SqlResult.ReadCharge"/> only at its protocol success boundary.

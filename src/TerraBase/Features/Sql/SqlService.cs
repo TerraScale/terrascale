@@ -86,7 +86,6 @@ internal sealed class SqlSession(
 {
     private const int MaxStatements = 256;
     private const long MaxLogBytes = 1024 * 1024;
-    private static readonly TimeSpan MaxRequestTime = TimeSpan.FromSeconds(5);
 
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
@@ -95,6 +94,7 @@ internal sealed class SqlSession(
     private readonly List<(SqlCommand Command, byte[] Hash)> _log = [];
     private long _logBytes;
     private long? _scriptStarted;
+    private long? _transportStarted;
     private IMemoryReservation? _logMemory;
     private SqlKeys _keys = new();
     private bool? _readOnly;
@@ -103,6 +103,8 @@ internal sealed class SqlSession(
     private SqlParseResult _parsed;
 
     public bool IsAutocommit => _readOnly is null;
+
+    public void BeginRequest() => _transportStarted = time.GetTimestamp();
 
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken)
     {
@@ -173,6 +175,12 @@ internal sealed class SqlSession(
         {
             foreach (var statement in statements)
             {
+                // Transaction controls bypass RunAsync; an expired script must not commit its earlier writes.
+                if (time.GetElapsedTime(Math.Min(_scriptStarted.Value, _transportStarted ?? long.MaxValue)) > SqlLimits.MaxRequestTime)
+                {
+                    return SqlErrors.Interrupt;
+                }
+
                 last = await ExecuteAsync(new SqlCommand(statement.ToSql(), [], new Dictionary<string, SqlValue>()), cancellationToken).ConfigureAwait(false);
                 if (last is SqlError)
                 {
@@ -434,7 +442,7 @@ internal sealed class SqlSession(
     {
         // Each statement has its own work budget; a request's statements (and a replay) also share one deadline, so a
         // request that holds the writer cannot hold it for 256 budgets.
-        if (time.GetElapsedTime(Math.Min(request.Started, _scriptStarted ?? long.MaxValue)) > MaxRequestTime)
+        if (time.GetElapsedTime(Math.Min(request.Started, Math.Min(_scriptStarted ?? long.MaxValue, _transportStarted ?? long.MaxValue))) > SqlLimits.MaxRequestTime)
         {
             return SqlErrors.Interrupt;
         }

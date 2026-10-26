@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Hrana;
 
 /// <summary><c>POST …/databases/{database}/libsql/{v2|v3}/pipeline</c>: Hrana over HTTP for libSQL clients.</summary>
-internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStreams streams, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
+internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStreams streams, IMemoryBudget memory, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private static readonly string[] Versions = ["v2", "v3"];
 
@@ -52,7 +52,8 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStre
             return refused!;
         }
 
-        var executor = new HranaExecutor(stream, memory, HranaExecutor.Statements(body.Requests));
+        stream.Session.BeginRequest();
+        var executor = new HranaExecutor(stream, memory, HranaExecutor.Statements(body.Requests), time);
         var results = new List<HranaResult>(body.Requests.Count);
         var closed = false;
         try

@@ -11,8 +11,9 @@ internal readonly union HranaCommand(SqlCommand, HranaError);
 /// <summary>Runs one HTTP request's stream requests against its stream, bounding the response it builds.</summary>
 /// <param name="stream">The request's stream.</param>
 /// <param name="memory">Admits stored statements.</param>
+/// <param name="time">The request deadline clock.</param>
 /// <param name="statements">What <see cref="Statements"/> counted for the request; a sequence may run the rest of the allowance.</param>
-internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements)
+internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements, TimeProvider time)
 {
     /// <summary>
     /// SQL statements (execute requests and batch steps) per HTTP request, the core's per-request limit; the core bounds a
@@ -25,7 +26,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
 
     private static readonly HranaError Protocol = new("the request is not a valid Hrana request", "PROTOCOL_ERROR");
 
+    private readonly long _started = time.GetTimestamp();
+
     private long _responseBytes;
+
+    private bool Expired => time.GetElapsedTime(_started) > SqlLimits.MaxRequestTime;
 
     // Statements a sequence may run beyond its own count; the first sequence of a request takes all of them.
     private int _spare = Math.Max(0, MaxStatements - statements);
@@ -49,6 +54,8 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
                 return await SequenceAsync(request, cancellationToken).ConfigureAwait(false) is { } failure
                     ? HranaResult.Failed(failure)
                     : HranaResult.Ok(new HranaResponse("sequence"));
+            case "describe" when Expired:
+                return HranaResult.Failed(HranaError.From(SqlErrors.Interrupt));
             case "describe":
                 return Command(new HranaStmt(request.Sql, request.SqlId), bind: false) switch
                 {
@@ -141,6 +148,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
     /// <summary>Runs one statement into a wire result, refusing results past the response bound.</summary>
     public async ValueTask<HranaStmtOutcome> ExecuteAsync(HranaStmt stmt, CancellationToken cancellationToken)
     {
+        if (Expired)
+        {
+            return HranaError.From(SqlErrors.Interrupt);
+        }
+
         // Past the bound nothing runs: a statement that ran and then reported an error would invite a duplicate retry.
         if (_responseBytes > MaxResponseBytes)
         {
@@ -180,6 +192,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
     // The core splits the text and runs its statements in order, stopping at the first failure.
     private async ValueTask<HranaError?> SequenceAsync(HranaRequest request, CancellationToken cancellationToken)
     {
+        if (Expired)
+        {
+            return HranaError.From(SqlErrors.Interrupt);
+        }
+
         var text = request switch
         {
             { Sql: { } sql, SqlId: null } => sql,
