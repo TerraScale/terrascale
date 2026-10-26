@@ -491,6 +491,11 @@ Webhook dead-letter replay uses the documented `endpointId:eventId` delivery
 selector; both references must be canonical ULIDs. Entity pages reject null and
 primitive records; recovery-code pages contain strings.
 
+Hosted identity and OIDC network methods accept a final `{ signal }` argument;
+list methods keep it in their existing options. Failures retain `kind: "transport"`:
+`request_aborted` identifies caller cancellation, `request_timeout` the SDK deadline,
+and `transport_error` an ordinary transport failure. Abort details carry a sanitized cause.
+
 `@terrascale/sdk/local` (including `terrascale-local`) and `@terrascale/sdk/postgres` are
 **deprecated legacy entrypoints**. The operating contract confines fake/local
 stores to test code and test binaries. Their current exported runtime paths
