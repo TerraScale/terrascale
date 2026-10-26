@@ -45,6 +45,27 @@ public sealed class TerraBaseDatabaseRenameTests
     }
 
     [Test]
+    public async Task Reading_by_id_exposes_the_conflict_name_and_winner_without_changing_identity()
+    {
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            if (request.Method != HttpMethod.Get || !request.RequestUri!.AbsolutePath.EndsWith("/" + DatabaseId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("expected one metadata read by immutable id");
+            }
+            return Task.FromResult(TerraBaseIntegrationFixture.Json(Renamed.Replace("\"name\":\"production\"",
+                "\"name\":\"production-conflict-000004\",\"previousName\":\"production\",\"conflictOf\":\"01JA0000000000000000000003\"", StringComparison.Ordinal)));
+        });
+        using var http = new HttpClient(handler);
+        var result = await TerraBaseIntegrationFixture.Client(http).Project(TerraBaseIntegrationFixture.ProjectId).GetDatabaseAsync(DatabaseId);
+        await Assert.That(result.Id).IsEqualTo(DatabaseId);
+        await Assert.That(result.Name).IsEqualTo("production-conflict-000004");
+        await Assert.That(result.PreviousName).IsEqualTo("production");
+        await Assert.That(result.ConflictOf).IsEqualTo("01JA0000000000000000000003");
+        await Assert.That(result.HomeRegion).IsEqualTo("gru");
+    }
+
+    [Test]
     [Arguments(400, typeof(TerraBaseValidationException), "invalid_request")]
     [Arguments(403, typeof(TerraBaseForbiddenException), "forbidden_scope")]
     [Arguments(404, typeof(TerraBaseNotFoundException), "not_found")]
