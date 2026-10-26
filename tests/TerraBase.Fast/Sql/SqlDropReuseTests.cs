@@ -48,6 +48,8 @@ public sealed class SqlDropReuseTests
             "INSERT INTO transient VALUES (2, 'new')",
             "SELECT * FROM absent");
         await Assert.That(failed.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(failed.Json.GetProperty("error").GetProperty("statement").GetInt32()).IsEqualTo(3);
+        await Assert.That(failed.Json.GetProperty("error").GetProperty("message").GetString()).Contains("no such table");
         var rows = await SqlApi.OkAsync(api, "SELECT id, value FROM transient");
         await Assert.That(rows[0].GetProperty("rows").GetRawText()).IsEqualTo("""[[1,"old"]]""");
     }

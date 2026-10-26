@@ -25,7 +25,8 @@ public sealed class SqlWriteReplicationTests
         await OkAsync(cell.Gru,
             Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"),
             Statement("INSERT INTO people VALUES (1, 'old', 1)"),
-            Statement("DROP TABLE people"),
+            Statement("DROP TABLE people"));
+        await OkAsync(cell.Gru,
             Statement("CREATE TABLE barrier (id INTEGER PRIMARY KEY)"),
             Statement("INSERT INTO barrier VALUES (1)"));
         // Each origin's change groups arrive in order; observing this later table fences the preceding drop.
