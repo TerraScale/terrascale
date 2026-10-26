@@ -107,7 +107,10 @@ internal static class ReferenceFixtures
 
     internal static async Task<JsonDocument> ReadManifestAsync(string root)
     {
-        var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(ManifestPath(root)));
+        // Keep the archived Go capture intact; bind its obsolete region values to today's demo catalog
+        // when constructing test inputs and expectations. This never changes production routing.
+        var source = await File.ReadAllTextAsync(ManifestPath(root));
+        var manifest = JsonDocument.Parse(source.Replace("\"SFO\"", "\"SJC\"", StringComparison.Ordinal));
         if (manifest.RootElement.GetProperty("version").GetInt32() == 1) return manifest;
         manifest.Dispose();
         throw new InvalidDataException("Unsupported reference workspace fixture version.");

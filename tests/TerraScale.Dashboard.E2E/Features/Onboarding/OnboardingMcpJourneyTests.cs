@@ -95,7 +95,7 @@ public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
             Check(resumed.StatusCode == HttpStatusCode.OK && (await resumed.Content.ReadAsStringAsync()).Contains("Create your first project", StringComparison.Ordinal),
                 "Only the confirmed native receipt opens the project step");
         Progress(await Tool(replica, secret, "get_onboarding", new { }), "project", 2);
-        var finished = await Tool(replica, secret, "save_onboarding_step", new { step = "project", name = "Paid MCP project", region = "SFO" });
+        var finished = await Tool(replica, secret, "save_onboarding_step", new { step = "project", name = "Paid MCP project", region = "SJC" });
         Check(finished.GetProperty("completed").GetBoolean() && finished.GetProperty("step").GetString() == "", "The paid project completes through the same feature service");
         var completed = await Identity(browser);
         Check(completed.GetProperty("projectId").GetString() == original.GetProperty("projectId").GetString() && completed.GetProperty("onboardingCompleted").GetBoolean(),
