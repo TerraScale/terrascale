@@ -9,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
@@ -110,6 +111,47 @@ public sealed class PeerStreamTests
             await AssertAuthenticatedAsync(machine);
         }
     }
+
+    [Test]
+    public async Task Senders_count_the_delta_batches_and_repair_pages_their_receivers_count()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var id = EntityIds.New().ToString();
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+        // gru counts each batch as it writes it, sjc once it applies it: every applied batch was sent, by the same measure.
+        await TerraBaseTestServer.EventuallyAsync(async _ =>
+        {
+            var received = await ReplicationBytesAsync(sjc, "gru", "delta:received");
+            return received > 0 && await ReplicationBytesAsync(gru, "sjc", "delta:sent") >= received;
+        }, timeout: Deadline);
+
+        // A document only sjc holds: gru's forced pull reads its bucket, and sjc counts the pages it answers with.
+        using (var body = JsonDocument.Parse("""{"only":"sjc"}"""))
+        {
+            var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc(stamp + 1), ReplicaId.Of(99, 1, 0)), body.RootElement);
+            await Assert.That(await sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(cluster.Database,
+                await sjc.IncarnationAsync(), [new RepairState("items", EntityIds.New().ToString(), state)], token)).IsEqualTo(1);
+        }
+
+        var peer = (await cluster.Members.ListAsync(token)).Single(member => member.Name == sjc.Name);
+        await Assert.That(await gru.AntiEntropy.PullAsync(cluster.Database, peer, token)).IsNotNull();
+        var pages = await ReplicationBytesAsync(sjc, "gru", "anti_entropy:sent");
+        // gru also counts the digest reply, which only the requester knows a differing round from.
+        await Assert.That(pages).IsGreaterThan(0);
+        await Assert.That(await ReplicationBytesAsync(gru, "sjc", "anti_entropy:received")).IsGreaterThan(pages);
+    }
+
+    // A machine's replication byte readings of the cluster database with a peer region, by kind and direction.
+    private static async Task<long> ReplicationBytesAsync(Machine machine, string peer, string kind) =>
+        await machine.Api.Server.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(machine.Cluster.Database,
+            new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1), CancellationToken.None) is UsageCounts counts
+            ? counts.Lifetime.Meters?.Values.Where(reading => reading.Dimension.Meter == "replication_bytes" && reading.Dimension.Region == machine.Region
+                && reading.Dimension.PeerRegion == peer && reading.Dimension.Kind == kind).Sum(reading => reading.Count) ?? 0
+            : 0;
 
     [Test]
     public async Task A_restarted_machine_catches_up_from_its_last_ack()

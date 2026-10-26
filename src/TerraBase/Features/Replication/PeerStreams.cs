@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -62,6 +63,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly Histogram<double> _remoteAckDelay;
     private readonly ReplicationTimings _timings;
     private readonly LogChunks _chunks;
+    private readonly IUsageMeter _usage;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Link> _links = [with(StringComparer.Ordinal)];
 
@@ -70,9 +72,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, RemoteAckWaiter acks, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
         TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential, IReplicaCopyFaults faults, IRebuildStorage storage,
-        ReplicationTimings timings, DatabaseLifecycleCheckpoint checkpoint, LogChunks chunks)
+        ReplicationTimings timings, DatabaseLifecycleCheckpoint checkpoint, LogChunks chunks, IUsageMeter usage)
     {
         _chunks = chunks;
+        _usage = usage;
         _credential = credential;
         _timings = timings;
         (_membership, _source, _acks, _states, _tenants, _self, _options, _time, _logger) =
@@ -995,18 +998,21 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 cursor.Head = Math.Max(cursor.Head, last);
                 cursor.Flights.Add(new Flight(last, from, groups.Count, _time.GetTimestamp(), Stamps(groups), Refill: false));
             }
-            await stream.WriteAsync(new PushFrame
+            var batch = new Batch
             {
-                Batch = new Batch
-                {
-                    Database = ChangeGroups.Wire(database, incarnation),
-                    LastChangeId = checked((ulong)last),
-                    Groups = envelope,
-                    Chunk = chunk,
-                    After = link.Protocol >= 2 ? checked((ulong)from) : 0,
-                    Expect = cursor.Stable.Value,
-                },
-            }, cancellationToken).ConfigureAwait(false);
+                Database = ChangeGroups.Wire(database, incarnation),
+                LastChangeId = checked((ulong)last),
+                Groups = envelope,
+                Chunk = chunk,
+                After = link.Protocol >= 2 ? checked((ulong)from) : 0,
+                Expect = cursor.Stable.Value,
+            };
+            await stream.WriteAsync(new PushFrame { Batch = batch }, cancellationToken).ConfigureAwait(false);
+            // A client database's batch goes to its replication analytics as the receiver measures it, on every attempt.
+            if (database != ChangeGroups.System)
+            {
+                _usage.RecordReplicationBytes(database, link.Peer.Region, "delta", sent: true, batch.CalculateSize());
+            }
 
             // A full page leaves more behind: with room in the window the next pass reads on, not waiting for the ack.
             // shortcut: a page cut by bytes, not groups, waits for its ack (or the next commit); count bytes if that matters.

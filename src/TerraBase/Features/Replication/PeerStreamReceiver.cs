@@ -568,7 +568,14 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
                 after = next;
                 if (states.Count > 0)
                 {
-                    await responseStream.WriteAsync(AntiEntropy.Encode(states, incarnation), context.CancellationToken).ConfigureAwait(false);
+                    var page = AntiEntropy.Encode(states, incarnation);
+                    await responseStream.WriteAsync(page, context.CancellationToken).ConfigureAwait(false);
+                    // A client database's repair page goes to its replication analytics as the requester measures it. Only
+                    // anti-entropy names its region; a rebuild's certification reads are not replication traffic there either.
+                    if (database != ChangeGroups.System && context.RequestHeaders.GetValue(AntiEntropy.RegionHeader) is { } requester)
+                    {
+                        _usage.RecordReplicationBytes(database, requester, "anti_entropy", sent: true, page.CalculateSize());
+                    }
                 }
             }
             while (after is not null);

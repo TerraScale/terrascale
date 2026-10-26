@@ -54,9 +54,12 @@ Each point contains:
 
 - `start`, request counts by HTTP method, operation counts (`read`, `put`,
   `patch`, `delete`), and errors (HTTP status 400 or above, or an unhandled error).
-- `latency`: approximate `p50Ms`, `p95Ms`, `p99Ms` from merged fixed histogram
-  bins, summed in 128-bit integers. Empty request buckets return null percentiles. The highest bin includes
-  requests above 65,536 ms and reports that boundary.
+- `latency`: approximate `p50Ms`, `p95Ms`, `p99Ms` from merged power-of-two histogram
+  bins (0.25 ms to 65,536 ms), summed in 128-bit integers. As Prometheus'
+  `histogram_quantile`, a percentile is interpolated linearly by rank between the
+  bounds of the bin holding it (0 below the first). Empty request buckets return
+  null percentiles. The highest bin includes requests above 65,536 ms; a
+  percentile there reports its lower bound, 32,768 ms.
 - `storageBytes`: the average sampled physical database size, including the
   engine's sidecars; null before any sample. Each node samples once per minute:
   the next 128 databases in owner order after the last one sampled, wrapping,
@@ -72,6 +75,10 @@ Each point contains:
   Endpoints that resolve their database themselves, such as SQL EXPLAIN, attribute
   the request to it without counting a document operation.
   Requests naming an unknown database record nothing.
+  A PostgreSQL wire exchange (a simple query, or extended-protocol messages up to
+  their Sync) counts as one `other` request once a statement in it resolved the
+  authorized database, with its latency, an error when any of its messages
+  failed, and its protocol message bytes in each direction.
 
 Failed writes do not become committed operation counts. Client request counts,
 errors and latency still include failed requests that resolved their database.
@@ -89,7 +96,11 @@ item contains `status`, period `replicatedOps`, `lagMs`, `divergence`,
 `sourceRegion`, `destinationRegion`, `kind`, `bytesSent`, `bytesReceived`;
 series points have `start`, `replicatedOps` and the same bandwidth breakdown.
 An observing sender increments `bytesSent`; an observing receiver increments
-`bytesReceived`. When combining regional rows, sum sent and received separately:
+`bytesReceived`. A sender counts each `delta` batch it writes to a peer stream
+and each `anti_entropy` repair page it answers a peer's bucket read with, by
+the same encoded size the receiver counts. A receiver counts only the batches it
+applies, so a refused batch counts as sent alone; digest replies count only at
+the requester, which alone knows whether its round differed. When combining regional rows, sum sent and received separately:
 the two observations describe the same directed transfer.
 
 The own usage meter is `replication_bytes`, separate from `client_bytes`.
