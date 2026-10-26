@@ -20,6 +20,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseFileUpload))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseFileBucket>))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseStoredFile>))]
+[JsonSerializable(typeof(IReadOnlyList<TerraBaseFunctionLog>))]
 [JsonSerializable(typeof(TerraBaseFunction))]
 [JsonSerializable(typeof(TerraBaseFunction[]))]
 [JsonSerializable(typeof(TerraBaseDeployFunctionRequest))]

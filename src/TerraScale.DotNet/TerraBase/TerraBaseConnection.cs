@@ -192,10 +192,15 @@ internal sealed class TerraBaseConnection
     /// request deadline. <paramref name="origin"/> pins the request to a previously validated origin instead of
     /// resolving one.
     /// </summary>
-    internal async Task<T> ExchangeAsync<T>(string path, Uri? origin, Action<HttpRequestHeaders>? headers,
-        Func<OpenResponse, Task<T>> read, CancellationToken cancellationToken)
+    internal Task<T> ExchangeAsync<T>(string path, Uri? origin, Action<HttpRequestHeaders>? headers,
+        Func<OpenResponse, Task<T>> read, CancellationToken cancellationToken) =>
+        ExchangeAsync(HttpMethod.Get, path, null, origin, headers, read, cancellationToken);
+
+    /// <summary>Sends once and handles every status with the existing deadline, bounds and response ownership.</summary>
+    internal async Task<T> ExchangeAsync<T>(HttpMethod method, string path, HttpContent? content, Uri? origin,
+        Action<HttpRequestHeaders>? headers, Func<OpenResponse, Task<T>> read, CancellationToken cancellationToken)
     {
-        using var opened = await OpenAsync(HttpMethod.Get, path, null, headers, "application/json", streaming: false, cancellationToken, origin, throwOnError: false).ConfigureAwait(false);
+        using var opened = await OpenAsync(method, path, content, headers, "application/json", streaming: false, cancellationToken, origin, throwOnError: false).ConfigureAwait(false);
         try
         {
             try
