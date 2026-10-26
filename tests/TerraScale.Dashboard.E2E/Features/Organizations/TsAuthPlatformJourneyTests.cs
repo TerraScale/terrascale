@@ -192,6 +192,7 @@ public sealed class TsAuthPlatformJourneyTests
         platform.Producer.AddMember(business, user.Subject, user.Email, "admin");
         var collaboration = platform.Producer.AddOrganization("Collaboration only", platform.Principal("platform-other").Subject);
         platform.Producer.AddCollaborator(collaboration, user.Subject);
+        var paged = platform.Producer.AddOrganization("Paged membership", user.Subject);
         for (var index = 0; index < 3; index++) platform.Producer.AddOrganization("Unrelated " + index, platform.Principal("platform-unrelated-" + index).Subject);
         var context = await Context(second);
         var organizations = context.GetProperty("organizations").EnumerateArray().ToArray();
@@ -201,6 +202,7 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(personal.GetProperty("projects").EnumerateObject().Select(item => item.Name).Order().ToArray())
             .IsEquivalentTo(new[] { projectId, outside }.Order().ToArray());
         var shared = organizations.Single(org => org.GetProperty("id").GetString() == business);
+        await Assert.That(organizations.Any(org => org.GetProperty("id").GetString() == paged)).IsTrue();
         await Assert.That(shared.GetProperty("role").GetString()).IsEqualTo("admin");
         await Assert.That(personal.GetProperty("projects").GetProperty(projectId).GetProperty("role").GetString()).IsEqualTo("admin");
         await Assert.That(shared.GetProperty("members").GetProperty(user.Subject).GetProperty("role").GetString()).IsEqualTo("admin");
