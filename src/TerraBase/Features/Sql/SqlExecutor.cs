@@ -61,8 +61,15 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
     public async ValueTask<SqlOutcome> ExecuteAsync(
         IStorageTransaction transaction, ParsedSql statement, SqlCommand command, SqlKeys keys, SqlTally tally, bool describe,
-        CancellationToken cancellationToken) =>
-        statement switch
+        CancellationToken cancellationToken)
+    {
+        // All transports share this boundary, before parameters reach the engine or any document is written.
+        if (command.Args.Concat(command.Named.Values).Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
+        {
+            return SqlErrors.NonFinite;
+        }
+
+        return statement switch
         {
             ReadSql read => await ReadAsync(transaction, read, command, tally, describe, null, cancellationToken).ConfigureAwait(false),
             PragmaSql pragma => await PragmaAsync(transaction, pragma, tally, cancellationToken).ConfigureAwait(false),
@@ -77,6 +84,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             DropIndexSql drop => await DropIndexAsync(transaction, drop, tally, cancellationToken).ConfigureAwait(false),
             _ => SqlErrors.Error("this statement is not supported here"),
         };
+    }
 
     private async ValueTask<SqlOutcome> CreateAsync(IStorageTransaction transaction, CreateTableSql create, SqlTally tally, CancellationToken cancellationToken)
     {
@@ -245,6 +253,8 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                     case long integer:
                         values[i] = SqlValue.Of(integer);
                         break;
+                    case double real when !double.IsFinite(real):
+                        return SqlErrors.NonFinite;
                     case double real:
                         values[i] = SqlValue.Of(real);
                         break;
@@ -317,6 +327,12 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             targets.Add(column);
         }
 
+        // DEFAULT VALUES has no input columns: every column takes its default or generated key.
+        if (insert.Source is null)
+        {
+            targets.Clear();
+        }
+
         IReadOnlyList<IReadOnlyList<SqlValue>> rows = [[]];
         if (insert.Source is { } source)
         {
@@ -361,6 +377,12 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 var index = targets.IndexOf(column);
                 var value = index >= 0 ? row[index] : column.Default is { } fallback ? SqlWrite.Default(fallback) : SqlValue.Null;
                 values[column.Name] = SqlWrite.Apply(column.Affinity, value);
+            }
+
+            // Defaults bypass the engine read; validate the final values before key or document serialization.
+            if (values.Values.Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
+            {
+                return SqlErrors.NonFinite;
             }
 
             if (integerKey is not null)
@@ -472,6 +494,11 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                     var (_, op, by) = change.Assignments[i];
                     var path = "/" + columns[i].Name;
                     var set = op is "set" or "inc" ? SqlWrite.Apply(columns[i].Affinity, row[value++]) : SqlValue.Null;
+                    if (set.Kind == SqlValueKind.Real && !double.IsFinite(set.Real))
+                    {
+                        return SqlErrors.NonFinite;
+                    }
+
                     after?[columns[i].Name] = set;
                     // Only an INTEGER NOT NULL column is a counter; elsewhere c = c + 1 is the computed value (NULL stays NULL).
                     if (op == "inc" && columns[i] is { Affinity: SqlAffinity.Integer, NotNull: true })

@@ -17,12 +17,15 @@ Design: [`docs/terrabase/sql/relational-sql.md`](../../../docs/terrabase/sql/rel
 
 - `LIBSQL_URL`: `https://api.terrascale.tech/v1/projects/{project}/databases/{database}/libsql/`
   (keep the trailing slash; @libsql/client resolves `v2/pipeline` relative to it).
-- `LIBSQL_TOKEN_FILE`: path to a file holding a project data API key. The scripts read the key from the file and
-  never print it or take it on the command line.
+- `LIBSQL_TOKEN_FILE`: path to a mode-0600 file holding a current project access JWT minted through
+  `client_credentials` from a dashboard API key with database read/write access. A raw API key is not a
+  libSQL auth token. The scripts read the JWT from the file and never print it or take it on the command line.
+  Mint immediately before each proof and use the token response's `expires_in` (currently 60 seconds);
+  never retry an uncertain write merely because a token expired.
 
 ```sh
 export LIBSQL_URL=https://api.terrascale.tech/v1/projects/<project>/databases/<database>/libsql/
-export LIBSQL_TOKEN_FILE=$HOME/.config/terrascale/data-key   # chmod 600
+export LIBSQL_TOKEN_FILE=$HOME/.config/terrascale/libsql-access-token   # chmod 600
 ```
 
 ## Run

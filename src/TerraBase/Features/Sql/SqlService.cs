@@ -194,7 +194,7 @@ internal sealed class SqlSession(
         {
             SqlError error => error,
             // Columns come from the statement run with no rows: names and declared types exactly as execution reports them.
-            ReadSql read => await AutocommitAsync(read, command with { Args = [], Named = new Dictionary<string, SqlValue>() }, describe: true, cancellationToken)
+            ReadSql read => await DescribeResultAsync(read, command, cancellationToken)
                 .ConfigureAwait(false) switch
             {
                 SqlResult result => new SqlDescription(read.Params, result.Columns, IsExplain: false, IsReadOnly: true),
@@ -202,7 +202,7 @@ internal sealed class SqlSession(
             },
             // A write's RETURNING columns come from the table definition, read without writing.
             ParsedSql statement and (InsertSql { Returning: not null } or ChangeSql { Returning: not null } or PragmaSql { Kind: not PragmaKind.ForeignKeys }) =>
-                await AutocommitAsync(statement, command with { Args = [], Named = new Dictionary<string, SqlValue>() }, describe: true, cancellationToken)
+                await DescribeResultAsync(statement, command, cancellationToken)
                     .ConfigureAwait(false) switch
                 {
                     SqlResult result => new SqlDescription(statement.Params, result.Columns, IsExplain: false, IsReadOnly: !statement.IsWrite),
@@ -210,6 +210,29 @@ internal sealed class SqlSession(
                 },
             ParsedSql statement => new SqlDescription(statement.Params, [], IsExplain: false, IsReadOnly: !statement.IsWrite),
         };
+    }
+
+    // Describe sees uncommitted DDL after replay, without logging or billing a user statement, or committing writes.
+    private async ValueTask<SqlOutcome> DescribeResultAsync(ParsedSql statement, SqlCommand command, CancellationToken cancellationToken)
+    {
+        command = command with { Args = [], Named = new Dictionary<string, SqlValue>() };
+        if (IsAutocommit)
+        {
+            return await AutocommitAsync(statement, command, describe: true, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
+        {
+            return refused;
+        }
+
+        var outcome = await RunAsync(_request!, statement, command, new SqlKeys(), cancellationToken, describe: true).ConfigureAwait(false);
+        if (outcome is SqlError)
+        {
+            await EndRequestAsync().ConfigureAwait(false);
+        }
+
+        return outcome;
     }
 
     public async ValueTask EndRequestAsync()

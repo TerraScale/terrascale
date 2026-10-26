@@ -115,6 +115,8 @@ internal static class SqlErrors
 {
     public static SqlError Error(string message) => new("SQLITE_ERROR", message);
 
+    public static SqlError NonFinite { get; } = Error("nonfinite numbers are not supported");
+
     public static SqlError Auth { get; } = new("SQLITE_AUTH", "writes and schema changes need the documents:write scope");
 
     public static SqlError Busy(string message) => new("SQLITE_BUSY", message);
