@@ -7,6 +7,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
@@ -490,7 +491,8 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     [Test]
     public async Task Users_exchange_their_sign_in_for_organization_and_project_tokens_their_role_allows()
     {
-        await using var oidc = await StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock);
         var (alice, _, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
         var aliceToken = tokens.GetProperty("access_token").GetString()!;
         var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
@@ -550,6 +552,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(tokens.GetProperty("id_token").GetString()!, new() { ["organization"] = organization }))).Status).IsEqualTo(400);
 
         // A sign-in never carries TerraBase or billing scopes, although the dashboard holds their permissions.
+        clock.Advance(HostedAuth.MailCooldown);
         var (_, challenge) = OidcHarness.Pkce();
         using (var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid documents:write"), await oidc.SignInAsync("bob@example.test")))
         {
@@ -615,7 +618,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(new DateTimeOffset(shortToken.ValidTo, TimeSpan.Zero)).IsLessThanOrEqualTo(expires);
     }
 
-    private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience);
+    private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
 
     private Task<AuthTestServer> StartReplicaAsync(OidcHarness oidc, ManualClock clock) =>
         OidcHarness.StartServerAsync(fixture, oidc.Tenant, oidc.Email, values =>

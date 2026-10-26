@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Tests;
@@ -826,7 +827,8 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     [Test]
     public async Task Receipts_require_authentication_to_bind_and_never_certify_unknown_or_malformed_requests()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "listener"));
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: services => Misroute(services, "listener"), clock: clock);
         const string password = "correct horse battery";
         var alice = (await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync("terrascale", "alice@example.test", Passwords.Hash(password), CancellationToken.None))!;
         var session = await oidc.SignInAsync(alice.Email);
@@ -854,6 +856,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         using var passwordAttempt = await oidc.PostFormAsync("/ui/terrascale/sign-in/password", new() { ["email"] = alice.Email, ["password"] = password });
         await Assert.That(passwordAttempt.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(OidcHarness.SessionCookie(passwordAttempt)).IsNull();
+        clock.Advance(HostedAuth.MailCooldown);
         using var requested = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = alice.Email });
         var code = await oidc.Email.NextCodeAsync(alice.Email);
         using var verified = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = alice.Email, ["code"] = code });

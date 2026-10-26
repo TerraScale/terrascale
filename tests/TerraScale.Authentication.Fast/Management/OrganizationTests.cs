@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
@@ -64,7 +65,8 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     [Test]
     public async Task Signing_out_everywhere_closes_the_api_to_every_token_issued_before()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var (user, token) = await oidc.SignInUserAsync("alice@example.test");
         await oidc.OkAsync(HttpMethod.Get, Organizations, token);
 
@@ -72,6 +74,7 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<TerraScale.Authentication.Features.Identity.Sessions>().RevokeAllAsync("terrascale", user.Id)).IsTrue();
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, Organizations, token)).IsEqualTo((401, "unauthorized"));
 
+        clock.Advance(HostedAuth.MailCooldown);
         var session = await oidc.SignInAsync("alice@example.test");
         var (verifier, challenge) = OidcHarness.Pkce();
         using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);

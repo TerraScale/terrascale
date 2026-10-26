@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Management;
@@ -18,7 +19,8 @@ public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
     public async Task A_verified_domain_signs_members_in_through_the_provider_and_owners_keep_codes()
     {
         using var idp = new FakeSsoIdp();
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: idp.Route);
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: idp.Route);
         var (organization, token) = await ConnectAsync(oidc, idp);
 
         using var email = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = "bob@acme.test" });
@@ -35,6 +37,7 @@ public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
             && member.GetProperty("role").GetString() == "viewer")).IsTrue();
 
         // Break-glass: the organization's owner still signs in with an emailed code.
+        clock.UtcNow += HostedAuth.MailCooldown;
         await Assert.That(await oidc.SignInAsync("owner@acme.test")).IsNotEmpty();
     }
 

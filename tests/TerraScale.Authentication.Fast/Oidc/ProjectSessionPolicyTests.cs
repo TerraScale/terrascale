@@ -8,6 +8,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Tests;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
@@ -104,6 +105,7 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
             .Single(item => item.Document.GetProperty("instanceId").GetString() == project).Document;
         await Assert.That(authorization.GetProperty("status").GetString()).IsEqualTo("revoked");
 
+        clock.UtcNow += HostedAuth.MailCooldown;
         ownerToken = await RenewOwnerAsync(oidc, ownerToken);
         await ConfigureAsync(oidc, ownerToken, project, 1200);
         using var replay = await oidc.PostTokenAsync(grant, null, null, tenant: project);

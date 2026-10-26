@@ -8,6 +8,7 @@ using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
@@ -23,7 +24,8 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     public async Task End_users_sign_in_to_a_project_client_and_get_tokens_only_the_project_issuer_accepts()
     {
         var faker = new Faker();
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var owner = faker.Internet.Email().ToLowerInvariant();
         var (_, ownerToken) = await oidc.SignInUserAsync(owner);
         var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), faker.Commerce.ProductName());
@@ -41,6 +43,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         // platform session cookie is not the project's.
         var (verifier, challenge) = OidcHarness.Pkce();
         var authorize = OidcHarness.AuthorizePath(challenge, redirectUri: Callback, clientId: clientId).Replace($"/{OidcIssuer.Slug}/", $"/{project}/", StringComparison.Ordinal);
+        clock.Advance(HostedAuth.MailCooldown);
         using var anonymous = await oidc.AuthorizeAsync(authorize, await oidc.SignInAsync(owner));
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         await Assert.That(anonymous.Headers.Location!.OriginalString).StartsWith($"/ui/{project}/sign-in?next=");
