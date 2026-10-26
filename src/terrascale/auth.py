@@ -20,7 +20,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from .errors import TokenError, parse_retry_after, response_request_id
+from .errors import TerraScaleError, TokenError, parse_retry_after, response_request_id
 from .ids import validate_id
 
 __all__ = ["DEFAULT_ISSUER", "SCOPES", "APIKeyTokenSource", "AsyncAPIKeyTokenSource"]
@@ -59,16 +59,21 @@ class _Exchange:
         self._auth = "Basic " + base64.b64encode(pair).decode()
         self.token: str | None = None
         self.refresh_at = 0.0
+        self.refusal: TerraScaleError | None = None
 
     def headers(self) -> dict[str, str]:
         return {"Authorization": self._auth, "Accept": "application/json"}
 
     def cached(self) -> str | None:
+        if self.refusal is not None:
+            raise self.refusal
         if self.token and time.monotonic() < self.refresh_at:
             return self.token
         return None
 
     def accept(self, response: httpx.Response, started: float) -> str:
+        if self.refusal is not None:
+            raise self.refusal
         if response.status_code != 200:
             try:
                 body: Any = response.json()
@@ -76,13 +81,17 @@ class _Exchange:
                 body = {}
             if not isinstance(body, dict):
                 body = {}
-            raise TokenError(
+            error = TokenError(
                 response.status_code,
                 str(body.get("error") or ""),
                 str(body.get("error_description") or ""),
                 parse_retry_after(response.headers.get("retry-after")),
                 request_id=response_request_id(response.headers),
             )
+            if error.code == "invalid_client":
+                self.refusal = error
+                self.token = None
+            raise error
         try:
             body = response.json()
             token = body["access_token"]
@@ -104,6 +113,10 @@ class _Exchange:
     def invalidate(self, token: str) -> None:
         if self.token == token:
             self.token = None
+
+    def reject(self, error: TerraScaleError) -> None:
+        self.token = None
+        self.refusal = error
 
 
 class APIKeyTokenSource:
@@ -133,6 +146,11 @@ class APIKeyTokenSource:
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 raise TokenError(0, "token_transport_error", "token exchange failed") from exc
             return self._x.accept(response, started)
+
+    def reject(self, error: TerraScaleError) -> None:
+        """Drop a permanently refused token and stop exchanging this key."""
+        with self._lock:
+            self._x.reject(error)
 
     def invalidate(self, token: str) -> None:
         """Drop token after a resource server refused it (401)."""
@@ -168,6 +186,10 @@ class AsyncAPIKeyTokenSource:
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 raise TokenError(0, "token_transport_error", "token exchange failed") from exc
             return self._x.accept(response, started)
+
+    def reject(self, error: TerraScaleError) -> None:
+        """Drop a permanently refused token and stop exchanging this key."""
+        self._x.reject(error)
 
     def invalidate(self, token: str) -> None:
         self._x.invalidate(token)

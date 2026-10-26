@@ -20,7 +20,9 @@ DEFAULT_BASE_URL = "https://api.terrascale.tech"
 USER_AGENT_PREFIX = "terrascale-python/"
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
-TRANSIENT = frozenset({"rate_limited", "capacity", "storage_unavailable", "dependencies_unavailable", "changes_busy"})
+TRANSIENT = frozenset({
+    "rate_limited", "capacity", "storage_unavailable", "dependencies_unavailable", "changes_busy", "auth_unavailable",
+})
 
 
 @dataclass
