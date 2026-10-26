@@ -23,7 +23,7 @@ internal sealed partial class EngineManagementService
                 && await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
                 && await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
                 && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                    .ConfigureAwait(false) is { } record && record.Id == tenant.DatabaseId && record.ProjectId == projectId && record.Name == database
+                    .ConfigureAwait(false) is { } record && record.Id == tenant.DatabaseId && record.ProjectId == projectId
                     ? new ResolvedProjectDatabase(tenant, record.Placement(options.Region))
                     : ManagementErrors.NotFound,
             static error => error, cancellationToken);
@@ -571,7 +571,7 @@ internal sealed partial class EngineManagementService
         }
 
         var cachedRecord = found is ManagedDatabase database ? database : null;
-        var validKey = EntityIds.IsValid(projectId) && DatabaseName.TryParse(name, out _);
+        var validKey = EntityIds.IsValid(projectId) && (EntityIds.IsValid(name) || DatabaseName.TryParse(name, out _));
         if (validKey && (cachedRecord is null || Admits((cachedRecord.Name, cachedRecord.Placement(options.Region)))))
         {
             Cache(_records, key, sequence, cachedRecord);
@@ -680,7 +680,9 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<TenantContext?> FindDatabaseAsync(
         IStorageTransaction transaction, string organizationId, string projectId, string database, CancellationToken cancellationToken) =>
         await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } project
-        && await NameHolderAsync(transaction, projectId, database, cancellationToken).ConfigureAwait(false) is { } databaseId
+        && (EntityIds.IsValid(database) ? database : await NameHolderAsync(transaction, projectId, database, cancellationToken).ConfigureAwait(false)) is { } databaseId
+        && await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } record
+        && record.ProjectId == projectId && (record.Id == database || record.Name == database)
         && !await DatabasePurge.IsDeletedAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false)
             ? project with { DatabaseId = databaseId }
             : null;

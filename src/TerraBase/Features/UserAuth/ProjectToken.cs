@@ -4,7 +4,7 @@ namespace TerraBase.Features.UserAuth;
 
 /// <summary>Project grants from an already validated ts-auth access token; never populated from request headers.</summary>
 /// <param name="ProjectId">The token's project_id claim, if present.</param>
-/// <param name="Database">Optional database name restriction.</param>
+/// <param name="Database">Optional database ULID or name restriction.</param>
 /// <param name="Scope">Space-separated granted scopes.</param>
 /// <param name="ExpiresAt">The signed token's expiration, without clock skew.</param>
 /// <param name="Allowlists">The IP allowlists the client address must fall in, every one; empty for none.</param>

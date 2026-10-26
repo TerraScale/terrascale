@@ -49,7 +49,7 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
         var project = HttpContext.Request.RouteValues["project"] as string;
         var name = HttpContext.Request.RouteValues["database"] as string;
         var token = HttpContext.Features.Get<ProjectToken>();
-        if (!DatabaseName.TryParse(name, out _) || token is null || !token.Reaches(project!, name!))
+        if ((!Primitives.EntityIds.IsValid(name) && !DatabaseName.TryParse(name, out _)) || token is null || token.ProjectId != project)
         {
             return ErrorResponse.From(new NotFound());
         }
@@ -75,6 +75,11 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             }
 
             var database = resolved.Database;
+            if (HttpContext.Features.Get<ProjectAccess>() is not { } access
+                || access.DatabaseName is not null && access.DatabaseId != database.DatabaseId)
+            {
+                return ErrorResponse.From(new NotFound());
+            }
             if (!resolved.Placement.Includes(options.Region))
             {
                 return DatabaseRegions.WrongRegion(resolved.Placement.Home, resolved.Placement.Regions);

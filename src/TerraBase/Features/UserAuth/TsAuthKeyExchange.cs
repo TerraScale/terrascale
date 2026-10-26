@@ -209,7 +209,15 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return new NotFound();
         }
 
+        if (jwt.TryGetPayloadValue<object>("database", out var restriction) && restriction is not string)
+        {
+            return new NotFound();
+        }
         var database = jwt.TryGetPayloadValue<string>("database", out var name) ? name : null;
+        if (database is not null && !EntityIds.IsValid(database) && !Engine.DatabaseName.TryParse(database, out _))
+        {
+            return new NotFound();
+        }
         var scopes = jwt.TryGetPayloadValue<string>("scope", out var scope) && scope.Length <= 4096
             ? scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal)
             : [];

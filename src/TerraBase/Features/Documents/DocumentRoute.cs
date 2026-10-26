@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
@@ -30,7 +29,7 @@ internal readonly union BodyResult(byte[], Validation, PayloadTooLarge, Unsuppor
 /// <summary>Route, header and body handling shared by the document endpoints (Documents API v1).</summary>
 internal static class DocumentRoute
 {
-    /// <summary>Route of one database: a project of the API key's organization, and a database name unique in it.</summary>
+    /// <summary>Route of one database: a project of the API key's organization, and its database ULID or current name.</summary>
     public const string DatabaseRoute = "/v1/projects/{project}/databases/{database}";
 
     /// <summary>Base route of one database's collections.</summary>
@@ -61,12 +60,8 @@ internal static class DocumentRoute
 
     public static string Project(HttpContext context) => (string)context.Request.RouteValues["project"]!;
 
-    /// <summary>The route's database name, which the tenant check already validated.</summary>
-    public static DatabaseName Database(HttpContext context) => CheckDatabase(context) switch
-    {
-        DatabaseName name => name,
-        Validation => throw new UnreachableException("the tenant check validates the database name first"),
-    };
+    /// <summary>The route's database ULID or current name, which the tenant check already validated.</summary>
+    public static string Database(HttpContext context) => (string)context.Request.RouteValues["database"]!;
 
     /// <summary>The route's database name, or the rule it breaks.</summary>
     public static Valid<DatabaseName> CheckDatabase(HttpContext context) =>
@@ -79,14 +74,18 @@ internal static class DocumentRoute
     /// A database that does not exist and one the key does not reach both answer 404 <c>unknown_database</c>, so a key
     /// learns nothing about other tenants.
     /// </summary>
-    public static async ValueTask<TenantResult> CheckTenantAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken) =>
-        CheckDatabase(context) switch
+    public static async ValueTask<TenantResult> CheckTenantAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken)
+    {
+        var database = context.Request.RouteValues["database"] as string;
+        if (database is not { } name || !EntityIds.IsValid(name) && !DatabaseName.TryParse(name, out _))
         {
-            Validation error => error,
-            DatabaseName name => await ResolveAsync(context, tenants, name, cancellationToken).ConfigureAwait(false),
-        };
+            return new Validation("database must be a canonical uppercase ULID or lowercase name of at most 63 characters");
+        }
 
-    private static async ValueTask<TenantResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, DatabaseName name, CancellationToken cancellationToken)
+        return await ResolveAsync(context, tenants, name, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<TenantResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, string name, CancellationToken cancellationToken)
     {
         if (!EntityIds.IsValid(Project(context)))
         {
@@ -95,14 +94,9 @@ internal static class DocumentRoute
 
         if (context.Features.Get<ProjectAccess>() is { } access)
         {
-            if (access.DatabaseName is not null && !string.Equals(access.DatabaseName, name.Value, StringComparison.Ordinal))
-            {
-                return UnknownDatabase;
-            }
-
-            var resolved = await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name.Value, cancellationToken).ConfigureAwait(false);
+            var resolved = await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name, cancellationToken).ConfigureAwait(false);
             if (resolved is not TenantContext database
-                || (access.DatabaseId is not null && !string.Equals(access.DatabaseId, database.DatabaseId, StringComparison.Ordinal)))
+                || (access.DatabaseName is not null && !string.Equals(access.DatabaseId, database.DatabaseId, StringComparison.Ordinal)))
             {
                 return resolved switch
                 {
@@ -115,7 +109,7 @@ internal static class DocumentRoute
         }
 
         var key = ApiKey.Of(context);
-        var found = await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false);
+        var found = await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name, cancellationToken).ConfigureAwait(false);
         if (found is not TenantContext tenant || !key.Reaches(tenant))
         {
             return found switch
@@ -210,7 +204,7 @@ internal static class DocumentRoute
 
     /// <summary>A document URI built from escaped route values, escaping caller-supplied keys.</summary>
     public static string Location(HttpContext context, DocumentKey key) =>
-        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/by-key?id={Uri.EscapeDataString(key.Id)}";
+        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context))}/collections/{Uri.EscapeDataString(key.Collection)}/documents/by-key?id={Uri.EscapeDataString(key.Id)}";
 
     /// <summary>Accepts only the listed query parameters, each at most once and non-empty.</summary>
     public static Valid<IQueryCollection> CheckParameters(HttpContext context, params string[] allowed)

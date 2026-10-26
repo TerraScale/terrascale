@@ -15,7 +15,9 @@ public sealed class WireProtocolTests
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task A_session_starts_only_with_a_hello_and_a_key_that_reaches_the_database()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_session_starts_only_with_a_hello_and_a_key_that_reaches_the_database(bool idRoute)
     {
         await using var api = await ManagementApi.StartAsync();
         var (database, key, _) = await DatabaseAsync(api, "documents:read");
@@ -28,7 +30,7 @@ public sealed class WireProtocolTests
         var (outOfReach, _) = await RefusedAsync(api, 0, Hello(key, other.Project, other.Name));
         using var tcp = await ConnectAsync(api);
         var stream = tcp.GetStream();
-        var (helloId, helloStatus, _) = await ExchangeAsync(stream, 1, 0, Hello(key, database.Project, database.Name));
+        var (helloId, helloStatus, _) = await ExchangeAsync(stream, 1, 0, Hello(key, database.Project, idRoute ? database.Id : database.Name));
         var operations = new List<(uint, int, string)>();
         for (var id = 2u; id < 2 + Faker.Random.UInt(1, 10); id++)
         {

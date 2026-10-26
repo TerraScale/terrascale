@@ -214,9 +214,10 @@ public sealed class ExplainSqlApiTests
         created.EnsureSuccessStatusCode();
         const string Sql = "SELECT email FROM people ORDER BY email LIMIT 1";
         await Assert.That(Strings(await ExplainAsync(api, database, Sql), "indexes")).IsEquivalentTo(["people_email"]);
+        await Assert.That(Strings(await ExplainAsync(api, database with { Name = database.Id }, Sql), "indexes")).IsEquivalentTo(["people_email"]);
         await Assert.That(Strings(await ExplainAsync(api, other, Sql), "indexes")).IsEmpty();
         using var client = ProjectClient(api, database.Project);
-        foreach (var hidden in new[] { other, database with { Name = "unknown" }, database with { Name = database.Id } })
+        foreach (var hidden in new[] { other, database with { Name = "unknown" }, database with { Name = EntityIds.New().ToString() } })
         {
             await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ExplainPath(hidden), new { sql = "DELETE FROM people" }), HttpStatusCode.NotFound,
                 hidden.Project != database.Project ? "unknown_database" : "not_found",
