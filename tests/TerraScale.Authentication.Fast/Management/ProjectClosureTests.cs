@@ -298,10 +298,10 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That((await JobAsync(oidc, "project", project))!.ProjectClosureVersion).IsEqualTo(1);
 
         var receipt = Receipt();
-        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token, oidc: oidc)).IsEqualTo((202, (string?)null));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((202, (string?)null));
         var attached = Receipt();
-        await Assert.That(await ReceiptCallAsync(oidc.Client, attached, HttpMethod.Delete, token: token, oidc: oidc)).IsEqualTo((202, (string?)null));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, attached, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         await Assert.That(await users.GetAsync("terrascale", alice.Id)).IsNotNull();
         await Assert.That(await JobAsync(oidc, "account", alice.Id)).IsNotNull();
@@ -382,7 +382,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.AddMemberAsync(shared, carol.Id, "member");
 
         var receipt = Receipt();
-        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token, oidc: oidc)).IsEqualTo((202, (string?)null));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         var startedJob = (await JobAsync(oidc, "project", started))!;
         await Assert.That(startedJob.AccountId).IsEqualTo(alice.Id);
         await Assert.That(startedJob.ProjectClosureVersion).IsEqualTo(2);
@@ -562,7 +562,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
             JsonSerializer.SerializeToElement(job with { CommittedAt = committed ? clock.GetUtcNow() : null }, ClosureJson.Default.ClosureJob));
 
         var receipt = Receipt();
-        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token, oidc: oidc)).IsEqualTo((409, "last_owner"));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((409, "last_owner"));
         if (!committed)
         {
             await Assert.That(await directory.ClosureAsync("account", alice.Id, CancellationToken.None)).IsNull();
@@ -841,10 +841,10 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         foreach (var malformed in new[] { "", receipt + "=", receipt[..42] + "B", "!" + receipt[1..], receipt + "," + receipt })
         {
             await Assert.That(await ReceiptCallAsync(oidc.Client, malformed)).IsEqualTo((400, "invalid_request"));
-            await Assert.That(await ReceiptCallAsync(oidc.Client, malformed, HttpMethod.Delete, token: token, oidc: oidc)).IsEqualTo((400, "invalid_request"));
+            await Assert.That(await ReceiptCallAsync(oidc.Client, malformed, HttpMethod.Delete, token: token)).IsEqualTo((400, "invalid_request"));
         }
 
-        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token, oidc: oidc)).IsEqualTo((202, (string?)null));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, organization: "invalid")).IsEqualTo((400, "invalid_request"));
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, organization: AuthStore.NewId())).IsEqualTo((404, "not_found"));
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
@@ -859,9 +859,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         using var verified = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = alice.Email, ["code"] = code });
         await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(OidcHarness.SessionCookie(verified)).IsNull();
-        // An authenticated different subject cannot adopt an existing capability, even with a fresh proof.
+        // An authenticated different subject cannot adopt an existing capability.
         var (_, otherToken) = await oidc.SignInUserAsync("other@example.test");
-        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: otherToken, oidc: oidc)).IsEqualTo((403, "step_up_required"));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: otherToken)).IsEqualTo((409, "deletion_refused"));
         // Losing a root without Users.DeleteAsync's atomic fence must never certify completion.
         var root = (await store.GetAsync(AuthStore.UserCollection, "terrascale", alice.Id))!;
         await Assert.That(await store.CompareAndDeleteAsync(AuthStore.UserCollection, "terrascale", alice.Id, root.Version)).IsTrue();
@@ -884,15 +884,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         return request;
     }
 
-    private static async Task<(int, string?)> ReceiptCallAsync(HttpClient client, string receipt, HttpMethod? method = null, string? token = null, string? organization = null, OidcHarness? oidc = null)
+    private static async Task<(int, string?)> ReceiptCallAsync(HttpClient client, string receipt, HttpMethod? method = null, string? token = null, string? organization = null)
     {
         var path = "/v1/terrascale/account" + (method == HttpMethod.Delete ? "" : "/deletion") + (organization is null ? "" : "?organization=" + organization);
         using var request = BearerRequest(method ?? HttpMethod.Get, path, token);
         request.Headers.TryAddWithoutValidation("X-TerraScale-Deletion-Receipt", receipt);
-        if (oidc is not null)
-        {
-            await oidc.AttachStepUpAsync(request, token);
-        }
         using var response = await client.SendAsync(request);
         return ((int)response.StatusCode, response.IsSuccessStatusCode ? null : await OidcHarness.EnvelopeCodeAsync(response));
     }

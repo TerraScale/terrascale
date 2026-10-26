@@ -86,14 +86,7 @@ public sealed record ApiKeyRecord(
     string CreatedBy,
     DateTimeOffset CreatedAt,
     DateTimeOffset? ExpiresAt,
-    IReadOnlyList<string>? AllowedCidrs = null)
-{
-    /// <summary>Fresh primary credential winners for the current secret, including its issuing user state.</summary>
-    public IReadOnlyList<CredentialBinding> SecretBindings { get; init; } = [];
-
-    /// <summary>The previous secret's own winners during rotation grace; never replaced with the new secret's lineage.</summary>
-    public IReadOnlyList<CredentialBinding> PreviousSecretBindings { get; init; } = [];
-}
+    IReadOnlyList<string>? AllowedCidrs = null);
 
 /// <summary>
 /// When an API key last exchanged a token (collection <c>api_key_usage</c>, addressed by key id). It is kept apart from the

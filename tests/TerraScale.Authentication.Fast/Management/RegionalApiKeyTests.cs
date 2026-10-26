@@ -11,17 +11,16 @@ namespace TerraScale.Authentication.Fast.Management;
 public sealed class RegionalApiKeyTests
 {
     private static readonly string[] ReadOnly = ["documents:read"];
-    private static readonly string[] Collections = [AuthStore.ApiKeyCollection, AuthStore.OrganizationCollection, AuthStore.MembershipCollection, AuthStore.UserCollection,
-        AuthStore.UniqueCollection, AuthStore.SessionCollection, AuthStore.OidcAuthorizationCollection, AuthStore.OidcTokenCollection];
+    private static readonly string[] Collections = [AuthStore.ApiKeyCollection, AuthStore.MembershipCollection, AuthStore.UserCollection];
 
     [Test]
-    public async Task Keys_survive_browser_sign_out_across_regions_but_stop_on_key_or_global_revocation()
+    public async Task Keys_outlive_their_creators_sign_in_across_regions_and_stop_everywhere_once_revoked()
     {
         await using var regions = await RegionalTerraBaseFixture.StartAsync();
         await using var gru = await OidcHarness.StartAsync(regions, "gru");
         await using var sjc = await OidcHarness.StartAsync(regions, "sjc");
         var nodes = new[] { gru, sjc };
-        var (user, session, initial) = await gru.SignInAndRedeemAsync();
+        var (user, _, initial) = await gru.SignInAndRedeemAsync();
         var token = initial.GetProperty("access_token").GetString()!;
         var organization = await gru.CreateOrganizationAsync(token);
         var path = $"{Organizations}/{organization}/api-keys";
@@ -30,16 +29,11 @@ public sealed class RegionalApiKeyTests
         var kept = (await gru.OkAsync(HttpMethod.Post, path, token, new { name = "kept", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
         await Assert.That(await ConvergedAsync(nodes)).IsTrue();
         var revoked = (await sjc.OkAsync(HttpMethod.Post, path, token, new { name = "revoked", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
-        var (_, otherToken) = await gru.SignInUserAsync("other@example.test");
-        var otherOrganization = await gru.CreateOrganizationAsync(otherToken);
-        var otherKey = (await gru.OkAsync(HttpMethod.Post, $"{Organizations}/{otherOrganization}/api-keys", otherToken,
-            new { name = "other user", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
         await Assert.That(await ConvergedAsync(nodes)).IsTrue();
         foreach (var node in nodes)
         {
             await AssertExchangeAsync(node, kept, succeeds: true);
             await AssertExchangeAsync(node, revoked, succeeds: true);
-            await AssertExchangeAsync(node, otherKey, succeeds: true);
         }
 
         // Revoking in one region stops the key in every region once the deletion replicates.
@@ -50,27 +44,13 @@ public sealed class RegionalApiKeyTests
             await AssertExchangeAsync(node, revoked, succeeds: false);
         }
 
-        // Issued keys have fresh proof lineage independent of the original browser grant and session.
-        using (var signOut = await gru.RevokeAsync(initial.GetProperty("refresh_token").GetString()!))
-        {
-            await Assert.That(signOut.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-        var sessions = gru.Server.App.Services.GetRequiredService<Sessions>();
-        await Assert.That(await sessions.RevokeAsync(OidcIssuer.InstanceId, session)).IsTrue();
-        await Assert.That(await ConvergedAsync(nodes)).IsTrue();
-        foreach (var node in nodes)
-        {
-            await Assert.That(await node.FailAsync(HttpMethod.Get, Organizations, token)).IsEqualTo((401, "unauthorized"));
-            await AssertExchangeAsync(node, kept, succeeds: true);
-        }
-
-        // Global sign-out advances the account-state winner retained by every fresh proof.
+        // Signing out everywhere advances the creator's authentication-state winner in both regions; the key it created is
+        // the organization's credential, not the sign-in's, so it keeps working.
         await Assert.That(await gru.Server.App.Services.GetRequiredService<Sessions>().RevokeAllAsync(OidcIssuer.InstanceId, user.Id)).IsTrue();
         await Assert.That(await ConvergedAsync(nodes)).IsTrue();
         foreach (var node in nodes)
         {
-            await AssertExchangeAsync(node, kept, succeeds: false);
-            await AssertExchangeAsync(node, otherKey, succeeds: true);
+            await AssertExchangeAsync(node, kept, succeeds: true);
         }
     }
 

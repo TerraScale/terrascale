@@ -621,9 +621,6 @@ public sealed class ConfigurationTests
             start.Environment.Remove(name);
         }
 
-        // Production configuration probes run on the supported auth authority unless explicitly overridden.
-        start.Environment["TS_REGION"] = "gru";
-
         foreach (var (key, value) in settings ?? [])
         {
             start.Environment[$"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}"] = value;

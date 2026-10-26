@@ -173,7 +173,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         return new IPAddress(raw).ToString();
     }
 
-    internal async Task<TimeSpan?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
+    private async Task<TimeSpan?> LimitMailAsync(string email, string ip, CancellationToken cancellationToken)
     {
         if (await this.LimitIpAsync(ip, mails: true, cancellationToken) is { } wait)
         {

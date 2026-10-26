@@ -40,9 +40,8 @@ public static class TerraBaseScopes
 
 /// <summary>
 /// API keys (TS-598): OAuth client credentials owned by an organization or a project, exchanged at the token endpoint
-/// for 60-second tokens. Each secret retains the fresh primary credential's winner lineage.
-/// A user-state change or losing proof revokes its secret;
-/// closing the original browser authorization alone does not. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
+/// for 60-second tokens. A key works until it is revoked or expires: it does not depend on the sign-in that created it,
+/// so signing out, a password reset or a lost regional sign-in race never disables it. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
 /// characters (260 random bits); only SHA-256 digests are stored and compared in constant time.
 /// </summary>
 public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory, TimeProvider clock)
@@ -124,11 +123,8 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             }
 
             var (id, secret) = Generate();
-            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs)
-            {
-                SecretBindings = caller.StepUpBindings,
-            };
-            List<StoreOperation> operations = [.. StepUpProofs.Requirements(caller), authority.Assertion, AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key))];
+            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs);
+            List<StoreOperation> operations = [authority.Assertion, AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key))];
             if (projectId is not null)
             {
                 // Orders the key against a deletion of the project.
@@ -200,11 +196,9 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
                 SecretHash = Tokens.Sha256Hex(secret),
                 PreviousSecretHash = previousTtl > TimeSpan.Zero ? key.Value.SecretHash : null,
                 PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null,
-                SecretBindings = caller.StepUpBindings,
-                PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
-                [.. StepUpProofs.Requirements(caller), authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, caller.Id, "api_key.rotated", keyId)], (rotated, secret));
+                [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, caller.Id, "api_key.rotated", keyId)], (rotated, secret));
         }, cancellationToken);
 
     /// <summary>The key a client id names, unless it is unknown or expired. Callers authenticate its string first.</summary>
@@ -216,17 +210,10 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         }
 
         var document = await store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken).ConfigureAwait(false);
-        if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId
-            || key.ExpiresAt <= clock.GetUtcNow())
-        {
-            return null;
-        }
-
-        var current = key.SecretBindings.Count > 0 && await store.AreCredentialsCurrentAsync(Instance, key.SecretBindings, cancellationToken).ConfigureAwait(false);
-        var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
-            && key.PreviousSecretBindings.Count > 0 && await store.AreCredentialsCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken).ConfigureAwait(false);
-        // These digests are a transient authentication view; the stored rotation record keeps both original lineages.
-        return current || previous ? key with { SecretHash = current ? key.SecretHash : string.Empty, PreviousSecretHash = previous ? key.PreviousSecretHash : null } : null;
+        return document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is { } key && key.InstanceId == Instance && key.Id == keyId
+            && (key.ExpiresAt is null || key.ExpiresAt > clock.GetUtcNow())
+            ? key
+            : null;
     }
 
     /// <summary>The <c>key_gen</c> of a key string: the first 16 hex digits of its stored digest.</summary>
@@ -270,7 +257,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     public IReadOnlyList<string> Digests(ApiKeyRecord key)
     {
         ArgumentNullException.ThrowIfNull(key);
-        return [.. new[] { key.SecretHash, key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretHash : null }.Where(hash => !string.IsNullOrEmpty(hash)).Select(hash => hash!)];
+        return key.PreviousSecretHash is { } previous && key.PreviousSecretExpiresAt > clock.GetUtcNow() ? [key.SecretHash, previous] : [key.SecretHash];
     }
 
     /// <summary>
@@ -349,11 +336,6 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         if (caller.InstanceId != Instance)
         {
             throw PlatformDirectory.Forbidden();
-        }
-
-        if (caller.StepUpBindings.Count == 0)
-        {
-            throw StepUpProofs.Required();
         }
 
         if (!await store.AreCredentialsCurrentAsync(Instance, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
