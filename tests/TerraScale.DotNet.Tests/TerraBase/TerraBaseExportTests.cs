@@ -166,12 +166,10 @@ public sealed class TerraBaseExportTests
         var source = new FragmentedStream(Encoding.UTF8.GetBytes(prefix + padding + suffix + (newline ? "\n" : "")), 4096);
         using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Ndjson(source)));
         using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-        {
-            Region = "sjc",
-            AccessTokenProvider = _ => ValueTask.FromResult("test-token"),
-            MaxResponseBytes = limit,
-        }).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        var database = new TerraBaseDocumentsClient(new TerraBaseConnection(
+            http, null, null, null, "credential", TerraBaseConnection.RequestDeadline, limit,
+            _ => ValueTask.FromResult("test-token"), region: "sjc"))
+            .Database(TerraBaseIntegrationFixture.ProjectId, "app");
         var lines = new List<TerraBaseExportLine>();
         async Task ReadAsync()
         {

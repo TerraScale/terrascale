@@ -36,12 +36,6 @@ public sealed record TerraBaseDocumentsClientOptions
     /// </summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
 
-    /// <summary>Deadline of each request, including reading its response. Default 30 seconds, at most 10 minutes.</summary>
-    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>Largest response body read, 64 KiB to 1 GiB. Default 64 MiB, enough for any page TerraBase returns.</summary>
-    public int MaxResponseBytes { get; init; } = TerraBaseConnection.DefaultMaxResponseBytes;
-
     /// <inheritdoc />
     public override string ToString() => $"TerraBase documents client options for {BaseAddress}";
 }
@@ -62,9 +56,11 @@ public sealed class TerraBaseDocumentsClient
     public TerraBaseDocumentsClient(HttpClient httpClient, TerraBaseDocumentsClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), options.RequestTimeout, options.MaxResponseBytes,
+        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline, TerraBaseConnection.DefaultMaxResponseBytes,
             options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
     }
+
+    internal TerraBaseDocumentsClient(TerraBaseConnection connection) => this.connection = connection;
 
     /// <summary>Canonical lifecycle and usage with project-token authority; does not create identity records.</summary>
     public TerraBaseProjectClient Project(string projectId) =>

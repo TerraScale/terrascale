@@ -51,12 +51,8 @@ public sealed class TerraBaseResponseTests
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
-        var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-        {
-            Region = "sjc",
-            AccessTokenProvider = _ => ValueTask.FromResult("test-token"),
-            MaxResponseBytes = 64 * 1024,
-        });
+        var client = new TerraBaseDocumentsClient(new TerraBaseConnection(http, TerraBaseRegion.PublicOrigin, null, null, "credential",
+            TerraBaseConnection.RequestDeadline, 64 * 1024, _ => ValueTask.FromResult("test-token"), region: "sjc"));
         var error = await Assert.ThrowsAsync<TerraBaseException>(() => client.Database(TerraBaseIntegrationFixture.ProjectId, "app").ListCollectionsAsync());
         await Assert.That(error!.RequestId).IsEqualTo(RequestId);
         await Assert.That(error.ResponseHeaders["X-Request-ID"].Single()).IsEqualTo(RequestId);
@@ -353,7 +349,7 @@ public sealed class TerraBaseResponseIntegrationTests
             var error = await Assert.ThrowsAsync<TerraBaseException>(call);
             await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
             await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(error.Message).Contains("larger than MaxResponseBytes");
+            await Assert.That(error.Message).Contains("larger than the supported response bound");
         }
         else
         {

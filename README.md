@@ -312,7 +312,7 @@ statuses callers act on: `TerraBaseValidationException` (400, 413, 415),
 and `TerraBaseKeyExpiredException` (permanent; replace the key), `TerraBaseForbiddenException` (403),
 `TerraBaseNotFoundException` (404), `TerraBaseConflictException` (409),
 `TerraBasePreconditionFailedException` (412) and `TerraBaseUnavailableException`
-(503). A request that passes its `RequestTimeout` throws `TimeoutException`.
+(503). A request that exceeds the fixed 30-second deadline throws `TimeoutException`.
 An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellation
 remains `OperationCanceledException`. Safe GET/HEAD reads retry `503 auth_unavailable` at most twice, honoring `Retry-After`
 with exponential backoff otherwise, within the request deadline. Authentication errors never retry.

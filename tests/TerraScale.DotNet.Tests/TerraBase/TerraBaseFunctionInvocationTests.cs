@@ -152,7 +152,8 @@ public sealed class TerraBaseFunctionInvocationTests
     {
         using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new ByteArrayContent(new byte[65537]) }));
         using var http = new HttpClient(handler);
-        var client = new TerraBaseDocumentsClient(http, new() { Region = "sjc", ApiKey = "project-token", MaxResponseBytes = 65536 });
+        var client = new TerraBaseDocumentsClient(new TerraBaseConnection(http, TerraBaseRegion.PublicOrigin, null, "project-token", "credential",
+            TerraBaseConnection.RequestDeadline, 65536, region: "sjc"));
         var db = client.Database(TerraBaseIntegrationFixture.ProjectId, "app");
         var error = await Assert.ThrowsAsync<TerraBaseException>(() => db.InvokeFunctionAsync("hello"));
         await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");

@@ -20,7 +20,6 @@ public sealed partial class TerraBaseShapeClient
     private const int MaxRequestLine = 8 * 1024 - 64;
     private const int MaxRetries = 6;
     private const string ResumeHeader = "TB-Shape-Resume";
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FirstBackoff = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(60);
@@ -42,7 +41,7 @@ public sealed partial class TerraBaseShapeClient
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(timeProvider);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), RequestTimeout, MaxResponseBytes,
+        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline, MaxResponseBytes,
             options.AccessTokenProvider, timeProvider: timeProvider);
         this.timeProvider = timeProvider;
     }

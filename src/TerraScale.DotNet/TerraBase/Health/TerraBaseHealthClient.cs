@@ -35,7 +35,7 @@ public sealed class TerraBaseHealthClient
     /// <summary>Creates a probe client. Use TerraBaseHttp.CreateHandler to disable redirects and cookies; optional region pins the answering region.
     /// Default Authorization or Cookie headers are rejected before dispatch; use a separate credential-free HttpClient.</summary>
     public TerraBaseHealthClient(HttpClient httpClient, Uri? baseAddress = null, string? region = null) =>
-        connection = new TerraBaseConnection(httpClient, baseAddress, null, null, "credential", TimeSpan.FromSeconds(30),
+        connection = new TerraBaseConnection(httpClient, baseAddress, null, null, "credential", TerraBaseConnection.RequestDeadline,
             TerraBaseConnection.DefaultMaxResponseBytes, region: region, publicAnonymous: true);
 
     /// <summary>Reads process liveness without credentials.</summary>

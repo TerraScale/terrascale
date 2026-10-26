@@ -29,8 +29,8 @@ public sealed partial class TerraBaseDatabase
     /// Streams every live document as NDJSON (<c>GET …/export</c>) with documents:read, in collection then id order, from
     /// one read snapshot. To resume an interrupted export, pass the last received line's <see cref="TerraBaseExportLine.Cursor"/>;
     /// the resumed part reads a new snapshot. A connection lost mid-stream throws, and a final line without its newline is
-    /// <c>invalid_response</c>: no line is delivered twice or half. RequestTimeout covers acquisition only; dispose the
-    /// enumerator or cancel to close the response. Each line is bounded by MaxResponseBytes.
+    /// <c>invalid_response</c>: no line is delivered twice or half. The 30-second deadline covers acquisition only; dispose the
+    /// enumerator or cancel to close the response. Each line is bounded by 64 MiB.
     /// </summary>
     public async IAsyncEnumerable<TerraBaseExportLine> ExportAsync(TerraBaseExportCursor? after = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
