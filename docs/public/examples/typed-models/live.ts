@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict'
 import { env } from 'node:process'
-import { generateId, isTerraBaseV1Error } from '@terrascale/sdk'
+import { createTerraBaseV1Client, ExactDecimal, generateId, isTerraBaseV1Error, requireId } from '@terrascale/sdk'
 import { createServerClient } from '../server-token-provider/server-client.mjs'
 import schema from './schema.json' with { type: 'json' }
 import type { OrderCreate, OrderPatch } from './models.js'
 
 const database = env.TERRASCALE_DATABASE_NAME
 if (!database) throw new Error('Missing TERRASCALE_DATABASE_NAME.')
-const { client } = createServerClient()
+const baseUrl = env.TERRASCALE_API_URL
+if (!baseUrl) throw new Error('Missing TERRASCALE_API_URL.')
+const project = env.TERRASCALE_PROJECT_ID
+if (!project) throw new Error('Missing TERRASCALE_PROJECT_ID.')
+// Share token renewal, but create the data client from this example's SDK copy.
+// Generated ExactDecimal inputs must use the same class as the data transport.
+const { getAccessToken } = createServerClient()
+const client = createTerraBaseV1Client({ baseUrl, project: requireId(project, 'project'), token: getAccessToken })
 const db = client.database(database)
 const name = `model_orders_${generateId().toLowerCase()}`
 const options = { signal: AbortSignal.timeout(60_000) }
@@ -19,7 +26,7 @@ try {
   created = true
   const orders = db.collection(name)
   await orders.putSchema(schema, options)
-  const body: OrderCreate = { quantity: 2, note: null }
+  const body: OrderCreate = { quantity: new ExactDecimal('2'), note: null }
   const order = await orders.create(body, options)
   const read = await orders.get(order.id, options)
   assert.equal(read.document.quantity, 2)
