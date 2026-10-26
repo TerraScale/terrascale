@@ -1329,12 +1329,21 @@ internal sealed partial class TursoStorageTransaction(
                 {
                     store.Collected();
                 }
+
+                if (_rewriteUncaptured)
+                {
+                    store.UncapturedCommit();
+                }
             }
             catch
             {
                 _faulted = true;
                 if (committing)
                 {
+                    if (_rewriteUncaptured)
+                    {
+                        store.UncapturedCommit();
+                    }
                     // An error at or after COMMIT, a failed sync included: whether the file holds the commit is unknown.
                     NoteCopyFault("an error at or after COMMIT");
                 }
@@ -1610,14 +1619,16 @@ internal sealed partial class TursoStorageTransaction(
     }, CancellationToken.None).ConfigureAwait(false);
 
     private bool _captureSuspended;
+    private bool _rewriteUncaptured;
 
     /// <summary>
     /// Stops capturing this write transaction's later statements in <c>turso_cdc</c> (design C's per-transaction toggle,
     /// docs/terrabase/multi-region-replication.md section 7); capture resumes when the transaction ends. Only for state
     /// that a restore and a replica rebuild themselves, such as the change tailer's own bookkeeping: continuous backup
     /// ships captured changes only, so anything written uncaptured is missing from every point-in-time restore.
+    /// Only dedicated peer-progress transactions pass peerProgressOnly: a rewrite refreshes their table at its final cut.
     /// </summary>
-    internal ValueTask SuspendCaptureAsync(CancellationToken cancellationToken)
+    internal ValueTask SuspendCaptureAsync(CancellationToken cancellationToken, bool peerProgressOnly = false)
     {
         if (!write)
         {
@@ -1636,6 +1647,7 @@ internal sealed partial class TursoStorageTransaction(
             command.CommandText = TursoSession.CaptureOff;
             command.ExecuteNonQuery();
             _captureSuspended = true;
+            _rewriteUncaptured |= !peerProgressOnly;
             return true;
         }, cancellationToken).AsTask());
     }

@@ -829,12 +829,18 @@ internal sealed partial class TursoDatabaseStore(
     private long _backupAnchor = -1;
 
     /// <summary>
-    /// The change id continuous backup's tap read up to, or null while no tap reads this file: CDC retention keeps the rows
-    /// from it on (<see cref="TursoStorageTransaction.RecordAckedAsync"/>).
+    /// The earliest change id held by continuous backup or a rewrite, or null when neither holds this file: CDC retention
+    /// keeps the rows from it on (<see cref="TursoStorageTransaction.RecordAckedAsync"/>).
     /// </summary>
     internal long? BackupAnchor
     {
-        get => Volatile.Read(ref _backupAnchor) is >= 0 and var anchor ? anchor : null;
+        get
+        {
+            var backup = Volatile.Read(ref _backupAnchor);
+            var rewrite = RewriteAnchor;
+            var anchor = backup < 0 ? rewrite : rewrite < 0 ? backup : Math.Min(backup, rewrite);
+            return anchor >= 0 ? anchor : null;
+        }
         set => Volatile.Write(ref _backupAnchor, value ?? -1);
     }
 
