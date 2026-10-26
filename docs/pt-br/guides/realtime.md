@@ -75,47 +75,24 @@ The feed keeps changes for 7 days. A cursor older than 7 days, or one that canno
 
 ## Follow the feed in JavaScript
 
-The SDK's `db.changes({ cursor, collections })` returns the feed as an async iterator. This plain `fetch` loop runs in Node.js 24 or newer and in browsers. A browser `EventSource` cannot send an `Authorization` header, so use `fetch`.
+The SDK iterator parses SSE and reconnects normal EOF with its last cursor. Supply an SDK database handle from the [quickstart](/pt-br/getting-started/javascript), configured with a current-token provider. Other errors reach the caller; respect `error.retryAfter` (seconds) before retrying a safe read.
 
 ```js
-const base = `https://api.terrascale.tech/v1/projects/${project}/databases/${database}`
+// db is an SDK database handle configured with a current-token provider.
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-async function followChanges({ getToken, onChange, onReset, signal }) {
+async function followChanges({ db, onChange, onReset, signal }) {
   let lastEventId = null
   let delay = 1000
   while (!signal.aborted) {
-    const headers = { Authorization: `Bearer ${await getToken()}`, Accept: 'text/event-stream' }
-    if (lastEventId) headers['Last-Event-ID'] = lastEventId
     let expired = false
     try {
-      const res = await fetch(`${base}/changes?cursor=now&collections=posts`, { headers, signal })
-      if (res.status < 500 && ![200, 410, 429].includes(res.status)) {
-        throw Object.assign(new Error(`changes feed: HTTP ${res.status}`), { fatal: true }) // Do not retry.
-      }
-      if (res.status === 410) expired = true
-      else if (!res.ok) await sleep(Number(res.headers.get('Retry-After') ?? 0) * 1000)
-      else {
-        delay = 1000
-        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
-        let buffer = ''
-        for (let chunk; !(chunk = await reader.read()).done;) {
-          buffer += chunk.value
-          for (let end; (end = buffer.indexOf('\n\n')) >= 0; buffer = buffer.slice(end + 2)) {
-            const event = {}
-            for (const line of buffer.slice(0, end).split('\n')) {
-              const colon = line.indexOf(': ')
-              event[line.slice(0, colon)] = line.slice(colon + 2)
-            }
-            const data = JSON.parse(event.data)
-            if (event.event === 'change') await onChange(data)
-            if (event.event === 'error' && data.error.code === 'cursor_expired') expired = true
-            if (event.id) lastEventId = event.id
-          }
-        }
+      for await (const event of db.changes({ cursor: 'now', collections: ['posts'], lastEventId: lastEventId ?? undefined }, { signal })) {
+        if (event.type === 'change') await onChange(event)
+        if (event.cursor !== undefined) lastEventId = event.cursor
       }
     } catch (error) {
-      if (signal.aborted || error.fatal) throw error
+      throw error // Includes terminal auth, expired history and application failures.
     }
     if (expired) {
       lastEventId = null // The next request starts again at cursor=now.
@@ -128,7 +105,7 @@ async function followChanges({ getToken, onChange, onReset, signal }) {
 }
 ```
 
-`onReset` re-reads your data with a [query](/pt-br/guides/queries). `getToken` returns a current access token, so a reconnect after expiry uses a fresh one.
+The client token provider supplies a current access token on each reconnect. Apply changes idempotently before advancing the checkpoint; application failures stop consumption. Expired history stops here for an explicit rebuild.
 
 ## Sync a filtered shape
 
