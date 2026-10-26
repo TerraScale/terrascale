@@ -132,6 +132,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
 
     // The head last written to the anchor.
     private long _anchored = -1;
+    private long _anchorTimeouts;
 
     /// <summary>The catalog head last written to the restore anchor, or -1.</summary>
     internal long Anchored => Interlocked.Read(ref _anchored);
@@ -147,6 +148,9 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             (membership, directory, antiEntropy, states, source, engine, options, time, logger);
         // The anchor needs the backup bucket and its keys: it is sealed like every backup object.
         (_anchors, _keys) = bucket is not null && keys is not null ? (bucket, keys) : (null, null);
+        meters.Create(Telemetry.MeterName).CreateObservableCounter("terrabase.catalog.anchor.timeouts",
+            () => Interlocked.Read(ref _anchorTimeouts),
+            description: "Catalog anchor attempts cancelled by their own ten-second deadline, including waiting for the anchor writer; excludes caller cancellation.");
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.catalog.verified", () => _open ? 1 : 0,
             description: "1 once this machine's catalog was verified or created empty, else 0.");
     }
@@ -601,15 +605,18 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             return;
         }
 
+        var callerCancellation = cancellationToken;
         using var deadline = new CancellationTokenSource(AnchorTimeout, _time);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         cancellationToken = bounded.Token;
 
         // One writer at a time, and the head read inside: the anchor never moves back. A change waits for the writer in flight
         // (the periodic anchor or another change's) within the deadline, then finds its head already anchored or writes it.
-        await _anchoring.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var acquired = false;
         try
         {
+            await _anchoring.WaitAsync(cancellationToken).ConfigureAwait(false);
+            acquired = true;
             if (revocation || _revocation is null)
             {
                 _revocation = await MarkRevocationAsync(cancellationToken).ConfigureAwait(false);
@@ -655,9 +662,17 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             _anchoredIncarnation = incarnation;
             Interlocked.Exchange(ref _anchored, head);
         }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !callerCancellation.IsCancellationRequested)
+        {
+            Interlocked.Increment(ref _anchorTimeouts);
+            throw;
+        }
         finally
         {
-            _anchoring.Release();
+            if (acquired)
+            {
+                _anchoring.Release();
+            }
         }
     }
 
