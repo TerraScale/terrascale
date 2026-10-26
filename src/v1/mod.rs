@@ -40,6 +40,7 @@ mod management;
 mod observability;
 mod query;
 mod reporting;
+mod request_logs;
 mod rules;
 mod shape_crypto;
 mod shapes;
@@ -78,6 +79,7 @@ pub use query::{
     Aggregate, Area, Count, Filter, GeoNear, Group, Metric, Near, Order, Pages, Path, Query,
     QueryPage, Scalar, SortKey,
 };
+pub use request_logs::{DatabaseRequestLog, DatabaseRequestLogs};
 pub use rules::{CollectionRules, ReadWriteGrants};
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};
 pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
