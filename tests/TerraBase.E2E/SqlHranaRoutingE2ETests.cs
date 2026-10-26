@@ -29,7 +29,7 @@ public sealed class SqlHranaRoutingE2ETests
             var label = new Faker().Random.AlphaNumeric(12);
             await WriteAsync(gru, path, endpoint,
                 "CREATE TABLE controls (id TEXT PRIMARY KEY, n INTEGER NOT NULL, nullable INTEGER, r REAL, p INTEGER NOT NULL, big INTEGER, label TEXT)");
-            await WriteAsync(gru, path, endpoint, "INSERT INTO controls VALUES (?, 0, NULL, 0.1, 0, ?, ?)", [id, 9007199254740993L, label]);
+            await WriteAsync(gru, path, endpoint, "INSERT INTO controls VALUES (?, 0, ?, ?, 0, ?, ?)", [id, null, 0.1, 9007199254740993L, label]);
             const string read = "SELECT n, nullable, r, p, big, label, typeof(n), typeof(r) FROM controls";
             var seed = JsonSerializer.Serialize(new object?[][] { [0, null, 0.1, 0, 9007199254740993L, label, "integer", "real"] });
             await RowsEqualAsync(fra, path, read, seed);
@@ -108,11 +108,11 @@ public sealed class SqlHranaRoutingE2ETests
             for (var i = 0; i < 5; i++)
             {
                 var id = EntityIds.New().ToString();
-                var result = await MarkerAsync(issuer, path, baton, id, i, Cluster.Fra);
-                issuerMachine ??= result.Machine;
-                await Assert.That(result.Machine).IsEqualTo(issuerMachine);
-                await Assert.That(result.Baton).IsNotEqualTo(baton);
-                baton = result.Baton;
+                var (next, machine) = await MarkerAsync(issuer, path, baton, id, i, Cluster.Fra);
+                issuerMachine ??= machine;
+                await Assert.That(machine).IsEqualTo(issuerMachine);
+                await Assert.That(next).IsNotEqualTo(baton);
+                baton = next;
                 acknowledged.Add(id);
             }
 
@@ -176,9 +176,9 @@ public sealed class SqlHranaRoutingE2ETests
 
     private static HttpClient Direct(Cluster cluster, string region)
     {
-        var endpoint = cluster.Endpoint(region);
-        var client = new HttpClient { BaseAddress = endpoint.Address };
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", endpoint.Token);
+        var (address, token, _) = cluster.Endpoint(region);
+        var client = new HttpClient { BaseAddress = address };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return client;
     }
 
@@ -205,6 +205,7 @@ public sealed class SqlHranaRoutingE2ETests
     {
         null => new { type = "null" },
         string text => new { type = "text", value = text },
+        double real => new { type = "float", value = real },
         _ => new { type = "integer", value = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) },
     };
 
@@ -233,7 +234,7 @@ public sealed class SqlHranaRoutingE2ETests
         }
     }
 
-    private static Task RowsEqualAsync(HttpClient client, string path, string sql, string expected) => Converge.UntilAsync(async () =>
+    private static Task<string> RowsEqualAsync(HttpClient client, string path, string sql, string expected) => Converge.UntilAsync(async () =>
     {
         using var response = await SendAsync(client, path, "sql", sql);
         var text = await response.Content.ReadAsStringAsync();
