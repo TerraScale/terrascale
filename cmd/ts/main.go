@@ -274,7 +274,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project name or id")
-	yes := fs.Bool("yes", false, "db delete: consent to permanent deletion")
+	yes := fs.Bool("yes", false, "consent to destructive operations or import preview")
 	org := fs.String("org", "", "organization name or id")
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
@@ -368,7 +368,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return errors.New("backup destination changes require explicit consent: pass -yes before the command; set reads its JSON only from stdin")
 		}
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination"}, name) {
+	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination", "collection drop", "functions delete", "import"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
@@ -378,6 +378,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		if err := confirmDelete(operands[0], *project, *yes, in, prompt, tty); err != nil {
 			return err
 		}
+	}
+	if (name == "collection drop" || name == "functions delete") && !tty && !*yes {
+		return errors.New("resource deletion requires a terminal: pass -yes before the command to explicitly consent")
 	}
 	switch name {
 	case "billing":
@@ -544,11 +547,23 @@ func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, c
 		}
 		return runSQL(ctx, s.tb.Database(s.project, operands[0]), mode, operands[1], input.in, out)
 	}
+	if name == "collection drop" || name == "functions delete" {
+		kind := "collection"
+		if name == "functions delete" {
+			kind = "function"
+		}
+		if err := confirmResourceDelete(kind, operands[0], operands[1], s.project, input.yes, input.in, input.prompt, input.tty); err != nil {
+			return err
+		}
+	}
 	if strings.HasPrefix(name, "functions ") {
 		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
 	}
 	if name == "import" {
-		return importFile(ctx, s.tb.Database(s.project, operands[0]), operands[1], operands[2], collection, out)
+		confirm := func(job *v1.ImportJob) error {
+			return confirmImport(job, input.yes, input.in, input.prompt, input.tty)
+		}
+		return importFile(ctx, s.tb.Database(s.project, operands[0]), operands[1], operands[2], collection, confirm, out)
 	}
 	return s.run(ctx, name, operands, out)
 }

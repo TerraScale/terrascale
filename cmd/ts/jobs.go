@@ -60,16 +60,16 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 	if jsonMode(out) {
 		return emitJSON(out, p)
 	}
-	fmt.Fprintf(out, "Created project %s (%s) in %s\n", p.Name, p.ID, matches[0].Name)
-	return nil
+	_, err = fmt.Fprintf(out, "Created project %s (%s) in %s\n", p.Name, p.ID, matches[0].Name)
+	return err
 }
 
 // importPoll is how often import waits for the job's next state.
 const importPoll = 2 * time.Second
 
-// importFile creates db, stages the file, prints the preview, confirms it
-// and waits until the import finishes.
-func importFile(ctx context.Context, db *v1.Database, format, path, collection string, out io.Writer) error {
+// importFile creates db and stages the file before preview-bound consent. Only
+// StartImport confirms copying documents; already confirmed jobs reattach.
+func importFile(ctx context.Context, db *v1.Database, format, path, collection string, confirm func(*v1.ImportJob) error, out io.Writer) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -118,10 +118,14 @@ func importFile(ctx context.Context, db *v1.Database, format, path, collection s
 			return importFailed(job)
 		}
 		w := tabwriter.NewWriter(progressOutput(out), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "SOURCE\tCOLLECTION\tROWS\tISSUES")
+		if _, err := fmt.Fprintln(w, "SOURCE\tCOLLECTION\tROWS\tISSUES"); err != nil {
+			return err
+		}
 		for _, t := range job.Preview.Tables {
 			if !t.Excluded {
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", t.Source, t.Collection, t.Rows, len(t.Issues))
+				if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", t.Source, t.Collection, t.Rows, len(t.Issues)); err != nil {
+					return err
+				}
 			}
 		}
 		if err := w.Flush(); err != nil {
@@ -130,7 +134,14 @@ func importFile(ctx context.Context, db *v1.Database, format, path, collection s
 		if job.Preview.Blocking > 0 {
 			return fmt.Errorf("import has %d blocking issues: ts import status %s prints them", job.Preview.Blocking, job.Database)
 		}
-		if _, err := db.StartImport(ctx, job.Preview.ID); err != nil {
+		previewID := job.Preview.ID
+		if confirm == nil {
+			return errors.New("import requires explicit preview confirmation")
+		}
+		if err := confirm(job); err != nil {
+			return err
+		}
+		if _, err := db.StartImport(ctx, previewID); err != nil {
 			return err
 		}
 	}
