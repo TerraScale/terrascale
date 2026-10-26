@@ -1,6 +1,6 @@
 export { createTerraBaseV1Client as createTerraBaseClient, TerraBaseV1Client as TerraBaseClient } from "./v1/terrabase-v1.js";
 export { terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "./management-contracts.js";
-// Project-scoped TerraBase API; shape support is retained for the historical release.
+// Project-scoped TerraBase API, including current free collection shape reads.
 export {
   createTerraBaseV1Client,
   TerraBaseV1Client,

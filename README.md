@@ -1,7 +1,7 @@
 # @terrascale/sdk
 
 The JavaScript/JSDoc SDK for the project-scoped C#/.NET TerraBase server
-(`TerraScale/terrascale`). Current source compatibility is pinned at
+(`TerraScale/terrascale`). The historical source compatibility audit records
 `e30ffdc287530551b161b0130220be53d3c0475e`; see the
 [compatibility audit](docs/api-compatibility-20261013.md) for exact evidence and open gates.
 The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
@@ -100,8 +100,8 @@ to TS-507; this release requires an explicit URL or caller-supplied resolver.
 
 Current handler source implements project-scoped database names and point
 addresses as `/documents/by-key?id=…`. The complete method/path/scope inventory
-is in [sdk-v1-route-manifest.json](sdk-v1-route-manifest.json), with 25 current
-source-backed routes and one retained historical shape route. Current generated
+is in [sdk-v1-route-manifest.json](sdk-v1-route-manifest.json), including the
+current public inventory and a retained historical shape route. Current generated
 OpenAPI and immutable release qualification remain open gates.
 
 | Surface | Public methods |
@@ -257,9 +257,9 @@ for await (const row of db.export({ after: last, signal: controller.signal })) {
 }
 ```
 
-The exported collection `shape()` remains compatible with the historical
-`6cb9745…` release. Its route is absent from the audited current server source;
-do not use it as current producer evidence. SSE changes are a separate database
+The exported collection `shape()` reads the current free shape protocol using
+`documents:read`. A retained historical `shapes:read` route descriptor does not
+qualify that current protocol. SSE changes are a separate database
 feed, not authorized bounded-query snapshots or the planned reactive WebSocket API.
 
 ## Free shape subscriptions (protocol v1)
@@ -354,12 +354,13 @@ in either runtime.
 This implements the [proposed protocol](contracts/shape-v1/shape-reads.md) at
 `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`, using `documents:read`. HTTP fakes and the
 upstream [conformance vectors](test/fixtures/shape-vectors.json) verify client
-behavior; they do not qualify a producer deployment. Current generated OpenAPI,
-live endpoint availability, and automatic region discovery remain unqualified.
-No TerraBase binary is downloaded or run by these tests. The existing historical
-`shape()` method keeps its contract. Manifest/object delivery and 302 redirects
-are deferred to FR-22; vector `presigned-manifest` is explicitly skipped until its
-delivery contract is ready upstream.
+behavior; they do not qualify a producer deployment. Isolated production checks
+on 2026-10-26 verified shape bootstrap, continuation, manifest and epoch-key reads,
+live subscription updates, and checkpoint restore. Full current generated
+OpenAPI and semantic-corpus parity, sealed-object delivery/decryption, and
+automatic region discovery remain open qualification gates. These collection
+reads do not implement the planned bounded-query WebSocket result protocol.
+No TerraBase binary is downloaded or run by SDK tests.
 
 Failures throw `TerraBaseV1Error` with status, code, optional transaction `op`,
 parsed `body`, raw `responseText`, response `headers`, and a received
@@ -376,44 +377,22 @@ failing in this draft. See the audit for exact results and producer dependencies
 ## Ouroboros and qualification
 
 Ouroboros means TerraScale services store their data in the same production
-TerraBase that customers use. SDK boundary tests must run the real C# TerraBase
-release binary, pinned by immutable version and SHA-256, with an isolated
-allocation. A fixture, mocked transport, SQLite SDK runtime, frozen Rust
-contract archive or typed build cannot establish producer compatibility.
+TerraBase that customers use. Qualification requires an authorized, isolated
+real-service allocation, independently verified producer release provenance,
+and current generated-contract and route-manifest parity. HTTP fakes, local
+SQLite, historical contract inputs and typed builds cannot establish deployed
+producer compatibility.
 
-The v1 route manifest and producer contract evidence must agree with the C#
-release under test. Keep live tests environment-gated; report missing local
-configuration as skipped, never as successful integration evidence. Required
-release qualification must supply the verified binary and real producer inputs.
-Never commit keys, cookies, environment files or real tenant data.
+This SDK repository does not download or launch a TerraBase binary. The
+historical [release pin](scripts/ci/terrabase-release.json) does not qualify the
+current producer or JWT authorization. Keep real HTTP tests environment-gated;
+missing live configuration is skipped, never successful integration evidence.
 
-The immutable release pin is
-[`scripts/ci/terrabase-release.json`](scripts/ci/terrabase-release.json): C#
-TerraBase 0.1.0, release `ci-6cb97456b9b52a92a61856601cc025c4f2833518-run-16729`,
-with binary SHA-256
-`cc2db35b18c385c6d58036c6c94e59460b0e12b0d5616da2222713efbe666700`.
-This official prerelease contains the qualified TS-754 ULID producer, the renamed
-`TerraBase` assembly and `src/TerraBase` sources. Its asset name remains `terrabase-linux-amd64`.
-The SDK integration harness consumes its official asset read-only when the
-version, source revision, size and SHA-256 are verified.
-The acquisition script verifies the official release, revision, asset size and
-digest. Private downloads require `FORGEJO_TOKEN`. Missing or mismatched official
-assets block qualification rather than selecting older bytes.
-
-```sh
-nice -n 19 npm run provision:terrabase
-export TERRABASE_BINARY=/absolute/path/printed/by/the/provisioner
-nice -n 19 npm run test:integration
-```
-
-The integration runner rechecks the binary digest, starts an isolated TLS server,
-verifies its version and runtime OpenAPI digest, and provisions a disposable
-organization, project, database, collections and scoped keys. It supplies the
-`TB_V1_*` environment and trusted local certificate to the real-server tests and
-cleans up the process and allocation afterwards. No TLS validation is disabled.
-Direct live test configuration uses `TB_V1_URL`, `TB_V1_PROJECT`,
-`TB_V1_DATA_KEY` and optionally `TB_V1_DATABASE` (default `app`);
-`TB_V1_REQUIRED=1` makes absent integration inputs fail rather than skip.
+Existing live tests consume `TB_V1_URL`, `TB_V1_PROJECT`, `TB_V1_DATA_KEY` and
+optionally `TB_V1_DATABASE` (default `app`) from an independently provisioned
+allocation. Denial checks use `TB_V1_READ_KEY` and `TB_V1_WRITE_KEY`. Supply
+credentials privately; never commit keys, cookies, environment files or real
+tenant data. Local checks below do not substitute for this live gate.
 
 Local checks run at low CPU priority:
 
@@ -428,6 +407,24 @@ nice -n 19 npm test
 `lint` reuses the strict TypeScript/JSDoc check, including unused-code checks,
 without adding a linter dependency. CI runs these commands at normal priority.
 See [CHANGELOG.md](CHANGELOG.md) for the 0.0.1 migration and breaking changes.
+
+## TypeScript document models
+
+Node-only `@terrascale/sdk/codegen` generates body aliases from declared JSON
+Schema, using `generateDocumentModels(schema, "Order")` or the authorized
+`generateCollectionModels(collection, "Order", { signal })` operation.
+Install its exact tooling peer separately:
+
+```sh
+npm install --save-dev json-schema-to-typescript@16.0.0
+npx terrascale-models schema.json Order models.ts
+```
+
+The input is the schema itself, without the API response wrapper. Output has
+`OrderDocument`, `OrderCreate` and `OrderPatch`; keep codegen out of browser
+bundles. Generated aliases do not validate or automatically narrow SDK reads.
+See [TypeScript document models](https://docs.terrascale.tech/guides/schema-validation#generate-typescript-document-models)
+for the supported subset, merge-patch null semantics and strict compiler setup.
 
 ## Separate and deprecated entrypoints
 

@@ -75,9 +75,6 @@ export class TsAuthHttp {
           ? JSON.stringify(options.body)
           : options.formBody?.toString();
       let attempt = 0;
-      let refreshed = false;
-      /** @type {string | undefined} */
-      let refreshedToken;
       while (true) {
         signal?.throwIfAborted();
         let responseReceived = false;
@@ -87,11 +84,10 @@ export class TsAuthHttp {
           const oidc = options.routeName.startsWith("tsauth.oidc.");
           const token = oidc
             ? undefined
-            : (refreshedToken ??
-              (await withCancellation(
+            : await withCancellation(
                 resolveAccessToken(this.#accessToken),
                 signal,
-              )));
+              );
           if (token !== undefined && token.length > 0)
             headers.set(
               "authorization",
@@ -133,19 +129,31 @@ export class TsAuthHttp {
                 ? "application/json"
                 : "application/x-www-form-urlencoded",
             );
+          /** @type {RequestInit & { duplex?: "half" }} */
+          const init = {
+            method: options.method,
+            headers,
+            redirect: "manual",
+            ...(signal === undefined ? {} : { signal }),
+            ...(body === undefined ? {} : { body }),
+          };
+          if (options.method !== "GET" && typeof process !== "undefined" && process.release?.name === "node") {
+            // Native Node fetch replays buffered mutations on 421, even with SDK retries disabled.
+            // Empty DELETEs also need a one-shot body. Keep JSON/form bytes and media types unchanged.
+            const bytes = body === undefined ? undefined : new TextEncoder().encode(body);
+            init.body = new ReadableStream({ start(controller) {
+              if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes);
+              controller.close();
+            } });
+            init.duplex = "half";
+          }
           const request = new Request(
             buildUrl(
               this.config.apiBaseUrl,
               options.path,
               options.query,
             ),
-            {
-              method: options.method,
-              headers,
-              redirect: "manual",
-              ...(signal === undefined ? {} : { signal }),
-              ...(body === undefined ? {} : { body }),
-            },
+            init,
           );
           signal?.throwIfAborted();
           fetchStarted = true;
@@ -205,22 +213,6 @@ export class TsAuthHttp {
               response.headers,
               /** @type {TResponse} */ (parsed.value),
             );
-          }
-          if (
-            response.status === 401 &&
-            !oidc &&
-            !refreshed &&
-            typeof this.#accessToken === "function"
-          ) {
-            const next = await withCancellation(
-              resolveAccessToken(this.#accessToken),
-              signal,
-            );
-            if (next !== undefined && next.length > 0 && next !== token) {
-              refreshed = true;
-              refreshedToken = next;
-              continue;
-            }
           }
           if (
             options.method === "GET" &&
