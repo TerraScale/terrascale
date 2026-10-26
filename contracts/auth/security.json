@@ -11,7 +11,7 @@
       "type": "http",
       "scheme": "basic",
       "encoding": "base64(ASCII(form_encode(client_id) + ':' + form_encode(client_secret)))",
-      "requires": "Confidential client; headless JSON additionally requires email-code grant permission."
+      "requires": "Confidential OAuth client."
     },
     "oauth_userinfo": {
       "type": "http",
@@ -65,14 +65,6 @@
       "temporarily_unavailable",
       "unauthorized"
     ],
-    "headless_codes": [
-      "invalid_request",
-      "invalid_client",
-      "invalid_password",
-      "invalid_code",
-      "rate_limited",
-      "temporarily_unavailable"
-    ],
     "token_codes": [
       "invalid_request",
       "invalid_client",
@@ -96,25 +88,6 @@
       "name",
       "scopes"
     ],
-    "HeadlessSignUpRequest": [
-      "email",
-      "password",
-      "ip_address"
-    ],
-    "HeadlessEmailCodeRequest": [
-      "email",
-      "ip_address"
-    ],
-    "HeadlessEmailRequest": [
-      "email",
-      "ip_address"
-    ],
-    "HeadlessPasswordResetRequest": [
-      "email",
-      "code",
-      "new_password",
-      "ip_address"
-    ],
     "CreateInvitationRequest": [
       "email",
       "role"
@@ -127,7 +100,6 @@
     ]
   },
   "limits": {
-    "headless_json_bytes": 8192,
     "platform_json_bytes": 16384,
     "sdk_token_form_and_success_bytes": 1048576,
     "sdk_error_bytes": 65536,

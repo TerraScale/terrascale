@@ -395,40 +395,6 @@
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   },
-  "headless_email_code_start": {
-    "request": {
-      "email": "synthetic@example.test",
-      "ip_address": "192.0.2.1",
-      "pending_token": "fixture-pending-token"
-    },
-    "response": null
-  },
-  "headless_sign_up": {
-    "request": {
-      "email": "synthetic@example.test",
-      "password": "fixture-password",
-      "ip_address": "192.0.2.1"
-    },
-    "response": {
-      "pending_token": "fixture-pending-token"
-    }
-  },
-  "headless_password_reset_start": {
-    "request": {
-      "email": "synthetic@example.test",
-      "ip_address": "192.0.2.1"
-    },
-    "response": null
-  },
-  "headless_password_reset_complete": {
-    "request": {
-      "email": "synthetic@example.test",
-      "code": "123456",
-      "new_password": "fixture-new-password",
-      "ip_address": "192.0.2.1"
-    },
-    "response": null
-  },
   "create_invitation": {
     "request": {
       "email": "invitee@example.test",

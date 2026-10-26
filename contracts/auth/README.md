@@ -15,18 +15,11 @@ Use `TerraScaleAuthClient` with `InstanceSlug = "terrascale"` and the trusted au
 - Project methods: Create/List/Get/Rename/DeleteProjectAsync; ListProjectMembersAsync, SetProjectMemberRoleAsync, RemoveProjectMemberAsync. DeleteProjectAsync returns `bool` the same way (204 `true`, 202 `false`: the project still exists until a later call returns `true`); 409 `not_empty`, `closure_conflict` or `binding_conflict` changes nothing. Any other success status is `invalid_response`.
 - Key methods: Create/List/Get/Revoke/RotateOrganizationApiKey(s)Async and the equivalent Project methods. Create takes `TerraScaleAuthPlatformCreateApiKey`; rotate takes optional `TerraScaleAuthPlatformRotateApiKey`. Create/rotate return `TerraScaleAuthPlatformApiKeySecret(ApiKey, Key)`. Never persist/log Key as a DTO; display the secret once. Revocation prevents new issuance; already-issued exchanged tokens live at most 60 seconds. `LastUsedAt` is the last successful token exchange (null when never used; at most five minutes stale).
 
-`auth.Headless` is `TerraScaleAuthHeadlessClient`. JSON methods take `(string clientId, string clientSecret, request, CancellationToken)` and use form-encoded Basic authentication: SignUpAsync with `TerraScaleAuthHeadlessSignUp` returns `TerraScaleAuthHeadlessPendingSignUp`; StartEmailCodeAsync with `TerraScaleAuthHeadlessEmailCode` and StartPasswordResetAsync with `TerraScaleAuthHeadlessEmail` require 202; CompletePasswordResetAsync with `TerraScaleAuthHeadlessPasswordReset` requires 204. PendingToken and request secrets redact ToString. JSON DTOs and password/email-code grants consistently accept `IPAddress` (`IPAddress?` in nullable wire DTOs); source-generated JSON metadata writes the producer's string wire field. Callers must supply proxy-validated end-user IPs. Existing DTO construction with a string now needs `IPAddress.Parse` or `TryParse`.
+Hosted sign-in uses OIDC authorization code with PKCE. The producer removed the headless routes and password/email-code grants on 2026-10-22; do not use their legacy SDK client or DTOs; callable cleanup follows separately.
 
 Token methods:
 
 ```csharp
-Task<TerraScaleAuthTokenResponse> auth.Headless.SignInWithPasswordAsync(
-    string clientId, string clientSecret, string email, string password,
-    IPAddress ipAddress, string? scope = null, CancellationToken cancellationToken = default);
-Task<TerraScaleAuthTokenResponse> auth.Headless.SignInWithEmailCodeAsync(
-    string clientId, string clientSecret, string email, string code,
-    IPAddress ipAddress, string? pendingToken = null, string? scope = null,
-    CancellationToken cancellationToken = default);
 Task<TerraScaleAuthTokenResponse> auth.Oidc.ExchangeTokenAsync(
     string clientId, string clientSecret, string subjectToken, string organizationId,
     string? projectId = null, string? scope = null, CancellationToken cancellationToken = default);
@@ -35,7 +28,7 @@ Task<TerraScaleAuthTokenResponse> auth.Oidc.RequestClientCredentialsTokenAsync(
     CancellationToken cancellationToken = default);
 ```
 
-Exchange uses the same confidential client that owns SubjectToken. **No database parameter exists in this producer's exchange grant.** A project API key can carry a database restriction; an organization API key optionally selects one project at token issuance. Key ID is a 26-character ULID (the producer ApiKeySecretBody comment incorrectly says 24). Full key string is client secret. The new optional project argument precedes CancellationToken in RequestClientCredentialsTokenAsync: existing positional fourth-argument cancellation callers must name that argument or supply project first. This is an explicit source API compatibility change in the 0.0.X candidate. Scope may be omitted from token responses. `IssuedTokenType` is optional RFC 8693 metadata. Sign-in scopes are only openid/email/profile/offline_access; action scopes come from exchange, never from password/code sign-in.
+Exchange uses the same confidential client that owns SubjectToken. **No database parameter exists in this producer's exchange grant.** A project API key can carry a database restriction; an organization API key optionally selects one project at token issuance. Key ID is a 26-character ULID (the producer ApiKeySecretBody comment incorrectly says 24). Full key string is client secret. The new optional project argument precedes CancellationToken in RequestClientCredentialsTokenAsync: existing positional fourth-argument cancellation callers must name that argument or supply project first. This is an explicit source API compatibility change in the 0.0.X candidate. Scope may be omitted from token responses. `IssuedTokenType` is optional RFC 8693 metadata. Sign-in scopes are only openid/email/profile/offline_access; action scopes come from exchange, never from hosted sign-in.
 
 Use existing Oidc.RefreshTokenAsync, RevokeTokenAsync and GetUserInfoAsync for restoration/logout. Revocation ends the whole sign-in in ts-auth; offline validation still accepts issued tokens until expiry. Retained IntrospectTokenAsync is **not supported** by this C# producer. Retained instance Organizations/ApiKeys clients represent an older contract and must not be used for platform management.
 
@@ -79,7 +72,7 @@ and `mfa_not_enrolled` (409: the owner must enrol before requiring MFA). These d
 retried. Only the fixed code and safe metadata are retained; unknown codes and producer messages remain omitted.
 Their producer revision and source hashes are pinned in `error-codes.json` under `mfa_producer`.
 
-JSON headless bodies: 8 KiB. Platform bodies: 16 KiB. Token forms and success responses: 1 MiB. Error responses: 64 KiB. One 30-second deadline covers transport/body work and preserves caller cancellation. TerraScaleAuthException exposes HTTP status, safe allowlisted ErrorCode and RetryAfter; unknown codes, producer messages/bodies and serializer details are not retained. Requests do not follow redirects when the documented handler prerequisite is met. The SDK never disposes caller-owned HttpClient. No storage, deployments, credential provisioning or service binaries are part of this contract. API-key metadata has no prefix or last4 field; do not fabricate either for list responses. The complete secret has format `<ULID>_<52 lowercase Crockford characters>` and appears only at creation/rotation.
+Platform bodies: 16 KiB. Token forms and success responses: 1 MiB. Error responses: 64 KiB. One 30-second deadline covers transport/body work and preserves caller cancellation. TerraScaleAuthException exposes HTTP status, safe allowlisted ErrorCode and RetryAfter; unknown codes, producer messages/bodies and serializer details are not retained. Requests do not follow redirects when the documented handler prerequisite is met. The SDK never disposes caller-owned HttpClient. No storage, deployments, credential provisioning or service binaries are part of this contract. API-key metadata has no prefix or last4 field; do not fabricate either for list responses. The complete secret has format `<ULID>_<52 lowercase Crockford characters>` and appears only at creation/rotation.
 
 ## I5 requests
 

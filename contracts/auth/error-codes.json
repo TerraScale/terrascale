@@ -124,7 +124,7 @@
     "username_taken",
     "version_required"
   ],
-  "note": "Current C# platform/headless literals plus the retained legacy vocabulary with separate provenance. Unknown codes and all server free text are omitted.",
+  "note": "Current C# platform literals plus the retained legacy vocabulary with separate provenance. Unknown codes and all server free text are omitted.",
   "legacy_producer_revision": "d7c59184fcdd7e9f16cb9ee93d9899478856103c",
   "legacy_producer_sources_sha256": {
     "crates/auth-app/src/features/authorization/mod.rs": "53aa1b91dd9e7317820de1fea506f24b79e9e9f596f6494c78bdf2230b764381",
@@ -141,7 +141,6 @@
     "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "1e47a6bf1dbeb390392ee5d14d6cc0a4f379e97db3587beb2b4555ae20dd7e01",
     "src/TerraScale.Authentication/Features/Platform/PlatformGrants.cs": "dbb77e75aa4467eee4414cc20178ef539a55efc1cf4be230101dd20b16bda5b1",
     "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "4667529347f9446398624a507f37b8bd8f94bc2167984cd75a46b05beabf8e87",
-    "src/TerraScale.Authentication/Features/Headless/HeadlessEndpoints.cs": "0927c0c52c6b1607b94a2a4fa0078bb3d967a792438f0b82c046e3ee91b3e251",
     "src/TerraScale.Authentication/Features/Platform/Invitations.cs": "c2c25fb0e3ac58a282a9401a8c56c4aa5d8d4777db048b6e4799429a001564b3"
   },
   "ts873_closure_producer": {

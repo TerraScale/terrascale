@@ -8,8 +8,6 @@
     "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "1e47a6bf1dbeb390392ee5d14d6cc0a4f379e97db3587beb2b4555ae20dd7e01",
     "src/TerraScale.Authentication/Features/Platform/PlatformAuthentication.cs": "df99dfb051ee1f03a1c4a3a5a5066a8ff96c9c26a9b61c8bbce6b40680882d26",
     "src/TerraScale.Authentication/Features/Platform/PlatformGrants.cs": "dbb77e75aa4467eee4414cc20178ef539a55efc1cf4be230101dd20b16bda5b1",
-    "src/TerraScale.Authentication/Features/Headless/HeadlessEndpoints.cs": "0927c0c52c6b1607b94a2a4fa0078bb3d967a792438f0b82c046e3ee91b3e251",
-    "src/TerraScale.Authentication/Features/Headless/HeadlessAuth.cs": "6c460869dec1916a0f1ffe1b3ac728c08f437988759d21041901b42f4ca19874",
     "src/TerraScale.Authentication/Features/Oidc/OidcEndpoints.cs": "0647ad6db4e2319acbefae6fd2cfccbcf00ece628ef47ca75ec26b2c3e16c5c3",
     "src/TerraScale.Authentication/Features/Oidc/OidcServer.cs": "cce1dd8dd7f51730b9b8e4a62a277514669370327bb5e32bd81487182e091ac7",
     "src/TerraScale.Authentication.Contracts/ApiException.cs": "f9e95914f00e00979271e2c1326e317f26c559305d26f710864a44e4492b45d4",
@@ -46,5 +44,13 @@
       "src/TerraScale.Authentication/Hosting/OpenApiSetup.cs": "1e79d24c7e391ad2d3c160765bfb25457eb4aaecc34909b747e7ea016e4e66a6",
       "docs/auth/account-deletion-receipts.md": "52e92c0532f0c4a95bf4f96ec482147b602dc17e91f735c4fee5557126556cff"
     }
+  },
+  "headless_removal_producer": {
+    "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+    "sources_sha256": {
+      "docs/auth/csharp-port.md": "6116f3c921bdabcaa198bae325b3572d08f4a5ef592ba02d875035bfe386a9be",
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Headless routes and password/email-code extension grants removed; older retained platform fixtures keep their own provenance."
   }
 }
