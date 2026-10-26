@@ -72,6 +72,8 @@ public sealed class WriterHoldTests
         // Both reach the scrape: how long writers were held, and how many calls wait for an I/O thread.
         var scraped = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         await Assert.That(scraped).Contains("terrabase_storage_writer_held_seconds_bucket");
+        // Each hold names its call site: this test's own durable writes.
+        await Assert.That(scraped).Contains("at=\"WriterHoldTests.cs:");
         await Assert.That(scraped).Contains("terrabase_storage_queued");
     }
 

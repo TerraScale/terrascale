@@ -616,7 +616,8 @@ internal sealed partial class TursoDatabaseStore(
             {
                 _holdStarted = 0;
                 held = Time.GetElapsedTime(started);
-                WriterHeld?.Record(held.TotalSeconds, new KeyValuePair<string, object?>("holder", holder));
+                // The call site too (file:line, a bounded set): a kind alone does not say which code holds the writers.
+                WriterHeld?.Record(held.TotalSeconds, new KeyValuePair<string, object?>("holder", holder), new KeyValuePair<string, object?>("at", holderAt));
             }
 
             _writer.Release();

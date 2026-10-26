@@ -124,6 +124,41 @@ method. The host was busier: some runs of both versions sustained only 7-20 of t
 Write transactions other than client commits and applies: main 29,701, branch 6,847 (-77 %). p50 lower on the branch in all
 six directions (6-37 ms); p99 again unresolved by this host.
 
+## 6. Production on batch 13 (TerraBase `67537ac39`, includes #687), 2026-10-26 11:4x-12:0xZ
+
+Same tenant and method; `-> gru` by FR1 from a container on gru (xregion-probe from main, with the warm-up). 0 probes
+lost in 1,440. ms:
+
+| Direction | Mode | Floor | p50 | p99 pooled | p99 per run median (min-max) | max |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| sjc -> fra | idle | 69.3 | 112.9 | 313.4 | 308.8 (251.6-313.4) | 441.7 |
+| fra -> sjc | idle | 69.2 | 130.6 | 403.5 | 320.3 (284.5-460.4) | 567.6 |
+| gru -> sjc | idle | 84.3 | 176.2 | 468.0 | 442.1 (374.3-468.0) | 519.3 |
+| gru -> fra | idle | 90.6 | 205.9 | 429.9 | 429.6 (316.3-429.9) | 528.2 |
+| sjc -> gru | idle | 84 | 189-193 (per run) | | 423 (336-524) | 705 |
+| fra -> gru | idle | 91 | 128-205 (per run) | | 301 (265-401) | 488 |
+| sjc -> fra | load 2 | 68.4 | 117.9 | 372.0 | 331.5 (313.7-351.5) | 451.6 |
+| fra -> sjc | load 2 | 68.7 | 112.1 | 306.2 | 285.8 (268.8-320.1) | 491.9 |
+| gru -> sjc | load 2 | 84.6 | 167.7 | 516.1 | 411.1 (280.1-516.1) | 558.8 |
+| gru -> fra | load 2 | 90.6 | 185.8 | 590.6 | 503.6 (369.5-567.7) | 617.1 |
+| sjc -> gru | load 2 | 84 | 201-215 (per run) | | 424 (415-597) | 1,115 |
+| fra -> gru | load 2 | 91 | 176-210 (per run) | | 519 (507-598) | 811 |
+
+p99 < 200 ms is **not met** in any direction, and every direction is worse than on batch 9 (sjc <-> fra pooled p99 there
+115-190 ms). The change in between is the nodes' background load, not the replication path:
+
+- Captures (sjc <-> fra): still no retransmission; the receiver plus poll at most 89 ms; slow probes spend 45-382 ms in the
+  origin's own write and up to 100-170 ms between commit and the batch leaving. sjc shipped 526 batches to fra in an idle
+  run (194 on batch 9).
+- sjc at idle (60 s, no probes): 12.7 durable and 26 other write transactions per second, 47 intent journal holds, 782
+  I/O pool calls in the "other" lane, against 1.2 applied batches and 0.8 ack bookkeeping per second. CPU pressure (PSI
+  some) 36-45 % on sjc and fra (8-12 % in RT2c's batch 7 run).
+- `receive.loop` (new in #687) is p99 0.7 ms on sjc: the receiver's own loop is not a cost there.
+- The usage meter's flush (`UsageMeter.cs:412`, every 10 s, one SYSTEM catalog transaction over every active database)
+  held the SYSTEM writer 1.0-1.5 s at most flushes and up to 8.3 s; 18 of 183 slow probes fell inside such a hold.
+- The writer-hold histogram names holder kinds only, so the 12.7 + 26 per second cannot be attributed from production
+  metrics; the next change adds the call site (`at`, file:line) to `terrabase.storage.writer_held`.
+
 ## Still open
 
 - `-> gru` on the new build: FR1's container probe.
