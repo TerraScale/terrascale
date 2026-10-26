@@ -111,10 +111,11 @@ than the home; an empty list on create returns 400 `placement_needs_two_regions`
 follows every serving region, including regions that join later, and cannot be combined with a replica list.
 `SetDatabaseRegionsAsync` replaces the complete replica list and turns all-regions placement off.
 
-`DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`)
-while replica regions exist. First call `Project(projectId).SetDatabaseRegionsAsync(databaseName, [])`, then
-`DeleteAsync` immediately. This empty-list update is transient teardown only: document writes return
-409 `placement_needs_two_regions` until deletion. It is not a supported single-region database.
+Call `DeleteAsync` directly in the database's home region, without a preceding placement update.
+Permanent purge authority removes every replica, including all-regions placement; branches remain independent.
+A 204 response records logical deletion and local cleanup. Remote erasure is retried durably, so 204 does
+not guarantee synchronous remote erasure. An empty replica-list update can temporarily make document writes
+return 409 `placement_needs_two_regions`; it is not required for deletion and does not provide supported single-region placement.
 
 Relational SQL runs on the same database handle and project access token
 ([contract](contracts/terrabase/sql-execute.md)). Each call is one transaction, all or nothing; reads need

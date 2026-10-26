@@ -42,16 +42,17 @@ public sealed partial class TerraBaseProjectClient
         (await connection.SendAsync(HttpMethod.Get, DatabasePath(databaseName), null, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>
-    /// Deletes at the home region; 409 database_replicated requires an empty replica list via SetDatabaseRegionsAsync
-    /// immediately before deletion. This is teardown, not supported single-region placement. Sent once.
+    /// Deletes directly in the home region without a preceding placement update. Permanent purge authority removes every replica,
+    /// including all-regions placement. A 204 response records logical deletion and local cleanup; remote erasure is retried
+    /// durably, not guaranteed synchronous. Branches remain independent. Sent once.
     /// </summary>
     public Task DeleteDatabaseAsync(string databaseName, CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, DatabasePath(databaseName), null, null, cancellationToken);
 
     /// <summary>
     /// Replaces the complete replica list in the home region and turns all-regions placement off. A writable database needs
-    /// at least one replica besides the home. An empty list is allowed only as a transient step immediately before deletion;
-    /// document writes then return 409 placement_needs_two_regions. Home and name cannot change. Sent once.
+    /// at least one replica besides the home. An empty list can temporarily make document writes return 409 placement_needs_two_regions;
+    /// it is not required for deletion and does not provide supported single-region placement. Home and name cannot change. Sent once.
     /// </summary>
     public async Task<TerraBaseManagedDatabase> SetDatabaseRegionsAsync(string databaseName, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken = default)
     {
