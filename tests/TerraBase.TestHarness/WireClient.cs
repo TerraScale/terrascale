@@ -51,8 +51,16 @@ public sealed class WireClient : IAsyncDisposable
     public static async Task<WireClient> ConnectAsync(int port)
     {
         var tcp = new TcpClient { NoDelay = true };
-        await tcp.ConnectAsync(IPAddress.Loopback, port);
-        return new WireClient(tcp);
+        try
+        {
+            await tcp.ConnectAsync(IPAddress.Loopback, port);
+            return new WireClient(tcp);
+        }
+        catch
+        {
+            tcp.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Connects and sends the hello; throws when it is refused.</summary>

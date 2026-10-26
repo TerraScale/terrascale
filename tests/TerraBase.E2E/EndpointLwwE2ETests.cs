@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Npgsql;
@@ -24,7 +25,7 @@ public sealed class EndpointLwwE2ETests
         await Gaps.RunAsync("endpoint-lww", async () =>
         {
             await using var cluster = await Cluster.StartLocalAsync([Cluster.Gru, Cluster.Sjc, Cluster.Fra],
-                new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
+                new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(5) });
             var clients = new List<Client>();
             try
             {
@@ -58,9 +59,11 @@ public sealed class EndpointLwwE2ETests
 
                 cluster.Heal();
                 await EverywhereAsync(clients, id, "sjc");
+                await MarkersEverywhereAsync(cluster, uri, gru: second != "wire", sjc: true);
                 // gru has observed the winner: its causally later write must win despite the slower clock.
                 await clients[0].WriteAsync(first, id, "causal");
                 await EverywhereAsync(clients, id, "causal");
+                await MarkersEverywhereAsync(cluster, uri, gru: true, sjc: first != "wire");
             }
             finally
             {
@@ -75,6 +78,11 @@ public sealed class EndpointLwwE2ETests
     private static Task<bool[]> EverywhereAsync(List<Client> clients, string id, string expected) =>
         Converge.UntilAsync(() => Task.WhenAll(clients.SelectMany(client => Endpoints.Select(endpoint => client.ReadAsync(endpoint, id, expected)))),
             matches => matches.All(match => match), $"every endpoint in all regions reads {expected}");
+
+    private static Task<JsonNode?[]> MarkersEverywhereAsync(Cluster cluster, Uri uri, bool gru, bool sjc) =>
+        Converge.UntilAsync(() => Task.WhenAll(cluster.Regions.Select(region => Docs.ReadAsync(cluster[region], uri))),
+            copies => copies.All(copy => copy is not null && (copy["gru_write"]?.GetValue<int>() == 1) == gru
+                && (copy["sjc_write"]?.GetValue<int>() == 1) == sjc), "Wire replacements clear older markers; field updates retain them");
 
     private sealed class Client(Cluster cluster, string region, HttpClient http, NpgsqlDataSource postgres, WireClient wire) : IAsyncDisposable
     {
@@ -95,7 +103,15 @@ public sealed class EndpointLwwE2ETests
             {
                 await TerraBaseTestServer.EventuallyAsync(async _ =>
                 {
-                    var candidate = await WireClient.ConnectAsync(sockets.Wire);
+                    WireClient candidate;
+                    try
+                    {
+                        candidate = await WireClient.ConnectAsync(sockets.Wire);
+                    }
+                    catch (SocketException error) when (error.SocketErrorCode == SocketError.ConnectionRefused)
+                    {
+                        return false;
+                    }
                     var hello = await candidate.HelloAsync(sockets.Key, cluster.ProjectPath.Split('/')[3], "canary");
                     if (hello.Status == 200)
                     {
