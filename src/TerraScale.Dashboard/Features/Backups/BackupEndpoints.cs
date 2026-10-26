@@ -61,7 +61,7 @@ public static class BackupEndpoints
                     catch (Exception error) when (KnownFailure(error) &&
                         (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
                     {
-                        if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404) return Failure(error);
+                        if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404 && error is not AccountAccessException { Code: "not_found" }) return Failure(error);
                         return await detailPage(http, context, databaseId, Message(error), DatabaseResults.Status(error));
                     }
                 });

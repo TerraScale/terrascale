@@ -90,11 +90,37 @@ public sealed class BackupBackend(IHttpClientFactory factory, IProjectAccessToke
         if (body is not null) request.Content = JsonContent.Create(body, options: Json);
         using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         if (response.StatusCode == HttpStatusCode.MisdirectedRequest) throw DatabaseWrongRegionException.From(response);
-        if (!response.IsSuccessStatusCode) throw new DatabaseProviderException(response.StatusCode);
+        if (!response.IsSuccessStatusCode) throw await FailureAsync(response, path, timeout.Token);
         if (response.StatusCode == HttpStatusCode.NoContent && default(T) is null) return default!;
         using var document = await PlatformJson.ReadAsync(response.Content, timeout.Token);
         try { return document.RootElement.Deserialize<T>(Json) ?? throw new HttpRequestException("The backup provider returned an invalid response."); }
         catch (JsonException error) { throw new HttpRequestException("The backup provider returned an invalid response.", error); }
+    }
+
+    private static async Task<Exception> FailureAsync(HttpResponseMessage response, string path, CancellationToken ct)
+    {
+        // Read a bounded envelope, keep only a recognized code, and never retain upstream text in exceptions or logs.
+        string? code = null;
+        try
+        {
+            using var json = await PlatformJson.ReadAsync(response.Content, ct);
+            if (json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.String)
+                code = value.GetString();
+        }
+        catch (Exception error) when (error is JsonException or HttpRequestException or IOException) { }
+        var message = ((int)response.StatusCode, code) switch
+        {
+            (409, "database_limit") => "Your organization has reached its database limit. Remove an unused database or upgrade your plan, then restore again.",
+            (409, "name_taken") => "That database name is already in use. Choose a different name for the restored database.",
+            (404, "not_found") when path.EndsWith("/restore", StringComparison.Ordinal) => "That restore point is no longer available. Refresh the backup list and choose another snapshot.",
+            (429 or 503, "capacity") => "Backup capacity is temporarily unavailable. Wait a moment, then try again.",
+            (400, "invalid_request") when path.EndsWith("/backup-policy", StringComparison.Ordinal) => "Set snapshot retention from 1 to 35 days and use a valid 5-field UTC cron schedule.",
+            (400, "invalid_request") when path.EndsWith("/restore", StringComparison.Ordinal) => "Choose a valid name for the restored database: 1 to 63 lowercase letters, numbers, hyphens or underscores, starting with a letter.",
+            _ => null
+        };
+        return message is null ? new DatabaseProviderException(response.StatusCode)
+            : new AccountAccessException(message, (int)response.StatusCode, code!);
     }
 
     // UI URLs use database IDs; the authoritative project list resolves them to the route names TerraBase expects.

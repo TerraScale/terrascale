@@ -112,6 +112,8 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public IReadOnlyList<string> SelectedRegions => PlacementDraft?.Regions ?? Serving;
     public bool SelectedAllRegions => PlacementDraft?.AllRegions ?? Database.AllRegions;
     public bool PlacementSaved { get; init; }
+    public string? BranchName { get; init; }
+    public bool OpenBranch => Tab == "branches" && BranchName is not null && Error.Length > 0 && Context.CanManage && Database.Status == "ready";
     // Each activity card keeps its own range; changing one keeps the others as they are.
     public string RangePath(string key, string range) => DatabaseService.Path(Database.Id) + "?" +
         string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";

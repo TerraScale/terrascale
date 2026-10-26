@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.Databases;
@@ -11,6 +12,71 @@ namespace TerraScale.Dashboard.E2E.Features.Databases;
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
 {
+    [Test]
+    [Arguments("invalid", 422)]
+    [Arguments("conflict", 409)]
+    [Arguments("unavailable", 503)]
+    public async Task FailedHtmlBranchKeepsEncodedNameAndDialogContextUntilCorrectedRetry(string failure, int status)
+    {
+        var unavailable = false;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+            Task.FromResult<IResult?>(Volatile.Read(ref unavailable) && http.Request.Method == "POST" &&
+                http.Request.Path.Value!.EndsWith("/branches", StringComparison.Ordinal)
+                ? Results.Json(new { error = new { code = "unavailable", message = "Branch copy unavailable", fix = "retry" } }, statusCode: 503)
+                : null));
+        using var client = scenario.CreateClient();
+        using var producer = scenario.CreateProviderClient();
+        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var identity = await ReadAsync(client, "/api/v1/auth/me");
+        await ControlAsync(producer, new { command = "plan", organizationId = identity.GetProperty("organizationId").GetString(), value = OrganizationRecord.StarterPlanId });
+        var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+        var source = await CreateAsync(client, csrf, "form-source");
+        var submittedName = failure == "invalid" ? "bad\"><img src=x onerror=alert(1)>" : "form-copy";
+        string? existing = null;
+        if (failure == "conflict")
+        {
+            using var created = await BranchAsync(client, csrf, source, submittedName);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            existing = (await BodyAsync(created)).GetProperty("id").GetString()!;
+        }
+        Volatile.Write(ref unavailable, failure == "unavailable");
+        using (var refused = await SubmitAsync(submittedName))
+        {
+            await Assert.That((int)refused.StatusCode).IsEqualTo(status);
+            var html = await refused.Content.ReadAsStringAsync();
+            var dialog = Regex.Match(html, "<dialog id=\"name-branch\".*?</dialog>", RegexOptions.Singleline).Value;
+            await Assert.That(dialog).Contains("data-init=\"el.showModal()\"");
+            await Assert.That(dialog).Contains("id=\"branch-error\" role=\"alert\"");
+            await Assert.That(dialog).Contains("aria-describedby=\"branch-name-hint branch-error\"");
+            await Assert.That(dialog).Contains("autofocus");
+            var retained = Regex.Match(dialog, "id=\"branch-name\"[^>]*value=\"([^\"]*)\"").Groups[1].Value;
+            await Assert.That(WebUtility.HtmlDecode(retained)).IsEqualTo(submittedName);
+            if (failure == "invalid") await Assert.That(html.Contains(submittedName, StringComparison.Ordinal)).IsFalse();
+        }
+        var before = (await ReadAsync(producer, "/__test/observations")).GetProperty("branchCreates").GetInt32();
+        await Assert.That(before).IsEqualTo(existing is null ? 0 : 1);
+        Volatile.Write(ref unavailable, false);
+        string retryId;
+        using (var retried = await SubmitAsync("form-retry"))
+        {
+            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            retryId = retried.Headers.Location!.OriginalString.Split('/')[^1];
+        }
+        await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("branchCreates").GetInt32()).IsEqualTo(before + 1);
+        await DeleteAsync(client, csrf, retryId, "form-retry");
+        if (existing is not null) await DeleteAsync(client, csrf, existing, submittedName);
+        await DeleteAsync(client, csrf, source, "form-source");
+
+        async Task<HttpResponseMessage> SubmitAsync(string name)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases/branch")
+            { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = source, ["name"] = name }) };
+            request.Headers.Accept.ParseAdd("text/html");
+            request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            return await client.SendAsync(request);
+        }
+    }
+
     [Test]
     public async Task OfficialSdkSnapshotAndInterruptedBranchRecoverWithExactProvenanceAndActualReplicas()
     {
