@@ -2,14 +2,10 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 import { get } from "svelte/store";
 
-import { createDatabaseQuery, createMutation, createQuery } from "./index.js";
-import { createTerraBaseClient } from "../local/legacy-client.js";
+import { createMutation, createQuery } from "./index.js";
 /** @import { SvelteMutation, SvelteQuery } from "./index.js" */
 /** @import { ReactiveQuerySource } from "../react/core.js" */
 
-const nativeTestKey = `tbk1.${"A".repeat(22)}.${"A".repeat(43)}`;
-/** @returns {Promise<Response>} */
-const unavailableDiscovery = async () => { throw new Error("Discovery transport is disabled in this lifecycle test."); };
 /**
  * @template TValue
  * @param {TValue} value
@@ -68,26 +64,6 @@ describe("svelte reactive bindings", () => {
     disabled.refetch();
     assert.equal(starts, 0);
     stop();
-  });
-
-  test("native store reports unavailable discovery without publishing rows", async () => {
-    /**
-     * @param {string} tail
-     * @returns {string}
-     */
-    const entityId = tail => String(tail).padStart(26, "0");
-    const client = createTerraBaseClient({ tenant: entityId("1"), database: entityId("2"), shard: 1n, apiKey: nativeTestKey, fetch: unavailableDiscovery });
-    const query = createQuery(createDatabaseQuery(client, { collection: entityId("3"), predicate: { op: "is_missing", path: [1] } }));
-    /** @type {() => void} */
-    let finish = () => undefined;
-    /** @type {Promise<void>} */
-    const terminal = new Promise(resolve => { finish = resolve; });
-    const bound = bind(query, state => { if (state.status === "error") finish(); });
-    await terminal;
-    assert.equal(bound.current()?.status, "error");
-    assert.equal(bound.current()?.error?.code, "transport_unavailable");
-    assert.equal(bound.current()?.data, undefined);
-    bound.stop();
   });
 
   test("last component unmount aborts a mutation and rolls back only once", async () => {

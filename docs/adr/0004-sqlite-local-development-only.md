@@ -1,17 +1,12 @@
 # Fake/local SDK stores are test-only
 
-Status: Operating contract updated by TS-795; runtime removal pending.
+Status: operating contract applied; exported legacy runtime removed in 0.0.16.
 
 The [zero-configuration policy](../../AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
-supersedes the earlier local-development opt-in decision. Fake/local SDK stores
-belong only in test code and test binaries, never an exported application mode
-or a customer emulator workflow. Existing `@terrascale/sdk/local` and listener
-paths remain inventoried for their owning removal thread; this ADR does not
-claim those paths have already been removed.
+confines fake/local SDK stores to test code and test binaries. Version 0.0.16
+removes the SQLite emulator, PostgreSQL listener client, their CLI and retired
+native schema/query/framework bindings. They are no longer package entrypoints
+or shipped runtime sources. Current root v1 and document codegen remain separate.
 
-Isolated adapter tests may check transactions, rollback, uniqueness,
-conditional updates, bounded queries and pagination. Their state tokens and
-results do not prove producer compatibility, regional durability or security
-authority. Preserve credential validation and environment safeguards until
-runtime removal. Real producer qualification must use the immutable release
-binary and an authorized isolated allocation, with no fake substitute.
+Fixture tests establish SDK behavior only. Real producer qualification requires
+an immutable release binary and an authorized isolated allocation.

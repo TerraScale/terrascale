@@ -31,10 +31,12 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
       assert.ok(listing.includes(`package/${entry}\n`), entry);
     assert.doesNotMatch(listing, /^package\/(?:test|scripts|contracts|node_modules)\/|\.test\.js$/mu);
     assert.doesNotMatch(listing, /^package\/(?:src\/better-auth\.js|types\/better-auth\.d\.ts)$/mu);
+    assert.doesNotMatch(listing, /^package\/(?:src|types)\/(?:local\/|tanstack\/|(?:postgres|schema|sql|database-view|database-codec|database-types)\.(?:js|d\.ts)$)/mu);
     await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));
-    await npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "typescript@5.9.3"], consumer);
+    await npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "typescript@5.9.3", "react@19.2.8"], consumer);
     const manifest = JSON.parse(await readFile(path.join(consumer, "node_modules/@terrascale/sdk/package.json"), "utf8"));
     await qualifyRuntimeDependencies(consumer, manifest.dependencies);
+    assert.equal(Object.hasOwn(manifest.bin, "terrascale-local"), false);
     await writeFile(path.join(consumer, "caller.ts"), installedCaller);
     await npmRun(["exec", "--", "tsc", "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], consumer);
     await run(process.execPath, ["caller.ts"], { cwd: consumer });
@@ -45,10 +47,10 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     `);
     await run(process.execPath, ["shape-identity.js"], { cwd: consumer });
     await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
-      "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
+      "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres','schema','sql','tanstack']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
     for (const conditions of [[], ["--conditions=workerd"]]) {
       await run(process.execPath, [...conditions, "--input-type=module", "--eval",
-        "import assert from 'node:assert/strict'; await assert.rejects(import('@terrascale/sdk/better-auth'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
+        "import assert from 'node:assert/strict'; for (const entry of ['better-auth','local','postgres','schema','sql','tanstack']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
     }
     const declarations = await readFile(path.join(root, "types/index.d.ts"), "utf8");
     assert.doesNotMatch(declarations, /node:sqlite|local\/|database-types|discovery\.js/u);
@@ -57,7 +59,11 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
   }
 });
 
-const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal, TerraBaseV1Error } from "@terrascale/sdk";
+const installedCaller = `import * as react from "@terrascale/sdk/react";
+import * as svelte from "@terrascale/sdk/svelte";
+if ("createDatabaseQuery" in react || "createDatabaseQuery" in svelte) throw new Error("Retired binding exported.");
+if (typeof react.useQuery !== "function" || typeof svelte.createQuery !== "function") throw new Error("Missing lifecycle utilities.");
+import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal, TerraBaseV1Error } from "@terrascale/sdk";
 import { createTerraScaleManagementClient, createTerraScaleIdentityManagementClient, createTerraScaleAccountDeletionClient, createTerraScaleProjectIdentityClient, requireTerraScaleManagement } from "@terrascale/sdk/management";
 import { createTerraScaleAdministrationClient, requireTerraScaleAdministration } from "@terrascale/sdk/admin";
 const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoicHJvamVjdCJ9.c2lnbmF0dXJl";

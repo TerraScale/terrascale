@@ -1,20 +1,5 @@
 import { generateId } from "../ids.js";
 /** @import { TerraScaleError, TerraScaleResult } from "../result.js" */
-/** @import { DatabaseResult } from "../database-types.js" */
-
-export {
-  createDatabaseQuery,
-  DatabaseSubscriptionError,
-  DatabaseSubscriptionView,
-} from "../database-view.js";
-
-/** @typedef {import("../database-view.js").DatabaseQueryCallbacks} DatabaseQueryCallbacks */
-/** @typedef {import("../database-view.js").DatabaseQueryOptions} DatabaseQueryOptions */
-/** @typedef {import("../database-view.js").DatabaseQuerySource} DatabaseQuerySource */
-/** @typedef {import("../database-view.js").DatabaseViewBinding} DatabaseViewBinding */
-/** @typedef {import("../database-view.js").DatabaseViewPosition} DatabaseViewPosition */
-/** @typedef {import("../database-view.js").DatabaseViewSnapshot} DatabaseViewSnapshot */
-
 /**
  * A subscription cleanup returned by a typed reactive transport.
  *
@@ -85,7 +70,6 @@ export {
  *   readonly message: string;
  *   readonly cause?: unknown;
  *   readonly terraScale?: TerraScaleError;
- *   readonly database?: Extract<DatabaseResult<never>, { readonly ok: false }>["error"];
  * }} ReactiveError
  */
 
@@ -408,7 +392,7 @@ export function createReactiveHttpQuery(transport, request, key) {
  *   readonly mutationFn: (
  *     variables: TVariables,
  *     context: ReactiveMutationContext,
- *   ) => Promise<TValue | TerraScaleResult<TValue> | DatabaseResult<TValue>>;
+ *   ) => Promise<TValue | TerraScaleResult<TValue>>;
  *   readonly idempotencyKey?: string | ((variables: TVariables) => string);
  *   readonly onMutate?: (variables: TVariables, context: ReactiveMutationContext) => OptimisticRollback | Promise<OptimisticRollback>;
  * }} ReactiveMutationOptions
@@ -445,8 +429,6 @@ export class ReactiveMutationObserver {
   #activeKey;
   #run = 0;
   #activeRun = 0;
-  /** @type {number | undefined} */
-  #cancelledRun;
   #disposed = false;
 
   /**
@@ -498,7 +480,6 @@ export class ReactiveMutationObserver {
     const context = Object.freeze({ signal: abort.signal, idempotencyKey });
     this.#abort = abort;
     this.#activeRun = run;
-    this.#cancelledRun = undefined;
     this.#activeKey = idempotencyKey;
     /** @type {(() => void) | undefined} */
     let rollback;
@@ -524,11 +505,6 @@ export class ReactiveMutationObserver {
       rollbackNow();
       const error = normalizeReactiveError(cause, abort.signal.aborted ? "cancelled" : "mutation");
       if (run === this.#activeRun) this.#setState({ status: error.kind === "cancelled" ? "cancelled" : "error", data: this.#state.data, error, idempotencyKey, isPending: false });
-      else if (run === this.#cancelledRun && this.#state.status === "cancelled" && error.database !== undefined) {
-        // Cancellation stops presentation immediately. A later native result
-        // may still establish uncertainty for this same server operation.
-        this.#setState({ ...this.#state, error });
-      }
       throw cause instanceof Error ? cause : new ReactiveMutationError(error.code, error.message, cause);
     } finally {
       if (run === this.#activeRun) {
@@ -560,7 +536,6 @@ export class ReactiveMutationObserver {
     this.#abort = undefined;
     this.#rollback = undefined;
     this.#activeKey = undefined;
-    this.#cancelledRun = this.#activeRun;
     const cancelledGeneration = this.#activeRun = ++this.#run;
     const error = normalizeReactiveError(cancelledError(), "cancelled");
     // Publish the detached ownership before invoking abort/rollback callbacks,
@@ -623,12 +598,12 @@ export class ReactiveMutationError extends Error {
 
 /**
  * @template TValue
- * @param {TValue | TerraScaleResult<TValue> | DatabaseResult<TValue>} result
+ * @param {TValue | TerraScaleResult<TValue>} result
  * @returns {TValue}
  */
 function unwrapMutationResult(result) {
   if (isTerraScaleResult(result)) {
-    if (!result.ok) throw new ReactiveMutationError(result.error.code, "message" in result.error ? result.error.message : `TerraBase request failed: ${result.error.code}`, result.error);
+    if (!result.ok) throw new ReactiveMutationError(result.error.code, result.error.message, result.error);
     return result.value;
   }
   return result;
@@ -636,8 +611,8 @@ function unwrapMutationResult(result) {
 
 /**
  * @template TValue
- * @param {TValue | TerraScaleResult<TValue> | DatabaseResult<TValue>} value
- * @returns {value is TerraScaleResult<TValue> | DatabaseResult<TValue>}
+ * @param {TValue | TerraScaleResult<TValue>} value
+ * @returns {value is TerraScaleResult<TValue>}
  */
 function isTerraScaleResult(value) {
   return typeof value === "object" && value !== null && "ok" in value && typeof (/** @type {{ readonly ok?: unknown }} */ (value)).ok === "boolean";
@@ -649,21 +624,12 @@ function isTerraScaleResult(value) {
  * @returns {ReactiveError}
  */
 function normalizeReactiveError(cause, fallback) {
-  if (cause instanceof ReactiveMutationError) return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause: cause.cause, ...(isDatabaseError(cause.cause) ? { database: cause.cause } : {}) });
+  if (cause instanceof ReactiveMutationError) return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause: cause.cause });
   if (isTerraScaleError(cause)) {
-    return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause, terraScale: cause, ...(cause instanceof Error && isDatabaseError(cause.cause) ? { database: cause.cause } : {}) });
+    return Object.freeze({ kind: fallback, code: cause.code, message: cause.message, cause, terraScale: cause });
   }
-  if (isDatabaseError(cause)) return Object.freeze({ kind: fallback, code: cause.code, message: `TerraBase request failed: ${cause.code}`, cause, database: cause });
   if (cause instanceof Error) return Object.freeze({ kind: fallback, code: fallback, message: cause.message, cause });
   return Object.freeze({ kind: fallback, code: fallback, message: String(cause), cause });
-}
-
-/**
- * @param {unknown} value
- * @returns {value is Extract<DatabaseResult<never>, { readonly ok: false }>["error"]}
- */
-function isDatabaseError(value) {
-  return typeof value === "object" && value !== null && "code" in value && typeof value.code === "string" && !("message" in value);
 }
 
 /**

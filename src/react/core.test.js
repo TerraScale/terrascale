@@ -7,17 +7,11 @@ import { useQuery } from "./index.js";
 import {
   ReactiveMutationObserver,
   ReactiveQueryObserver,
-  createDatabaseQuery,
   createReactiveHttpQuery,
 } from "./core.js";
-import { createTerraBaseClient } from "../local/legacy-client.js";
 /** @import { ReactTestRenderer } from "react-test-renderer" */
 /** @import { ReactiveQueryCallbacks, ReactiveHttpEvent, ReactiveQuerySource } from "./core.js" */
-/** @import { DatabaseCommitReceipt, DatabaseResult } from "../database-types.js" */
 
-const nativeTestKey = `tbk1.${"A".repeat(22)}.${"A".repeat(43)}`;
-/** @returns {Promise<Response>} */
-const unavailableDiscovery = async () => { throw new Error("Discovery transport is disabled in this lifecycle test."); };
 /** @returns {Promise<void>} */
 const flush = async () => {
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -153,61 +147,6 @@ describe("reactive hook core", () => {
     stop();
     observer.refetch();
     assert.equal(subscriptions, 2);
-  });
-
-  test("native query remains a typed generic observer source and fails closed on discovery transport failure", async () => {
-    /**
-     * @param {string} tail
-     * @returns {string}
-     */
-    const entityId = tail => String(tail).padStart(26, "0");
-    const client = createTerraBaseClient({ tenant: entityId("1"), database: entityId("2"), shard: 1n, apiKey: nativeTestKey, fetch: unavailableDiscovery });
-    const source = createDatabaseQuery(client, { collection: entityId("3"), predicate: { op: "is_missing", path: [1] } });
-    const observer = new ReactiveQueryObserver(source);
-    /** @type {() => void} */
-    let finish = () => undefined;
-    /** @type {Promise<void>} */
-    const terminal = new Promise(resolve => { finish = resolve; });
-    const stop = observer.subscribe(() => { if (observer.getSnapshot().status === "error") finish(); });
-    await terminal;
-    assert.equal(observer.getSnapshot().status, "error");
-    assert.equal(observer.getSnapshot().error?.code, "transport_unavailable");
-    assert.equal(observer.getSnapshot().data, undefined);
-    stop();
-  });
-
-  test("native uncertain mutation failures retain operation identity and never become success", async () => {
-    /** @type {DatabaseResult<DatabaseCommitReceipt>} */
-    const failure = { ok: false, error: { code: "transport_unavailable", mutation_outcome: "uncertain", transaction: { transaction_id: { expires_at_unix_ms: 100n, nonce: "11".repeat(16) }, authority: { mode: "leaderless" }, effect_digest: "22".repeat(32) } } };
-    /** @type {ReactiveMutationObserver<DatabaseCommitReceipt, void>} */
-    const observer = new ReactiveMutationObserver({ mutationFn: async () => /** @type {DatabaseResult<DatabaseCommitReceipt>} */ (failure) });
-    await assert.rejects(observer.mutateAsync(undefined), /transport_unavailable/u);
-    assert.equal(observer.getSnapshot().status, "error");
-    assert.equal(observer.getSnapshot().error?.code, "transport_unavailable");
-    assert.equal(observer.getSnapshot().error?.database?.mutation_outcome, "uncertain");
-    assert.equal(observer.getSnapshot().error?.database?.transaction, failure.error.transaction);
-    observer.dispose();
-  });
-
-  test("a native result after cancellation preserves uncertainty without reviving the mutation", async () => {
-    /** @type {() => void} */
-    let finish = () => undefined;
-    /** @type {Promise<void>} */
-    const ready = new Promise(resolve => { finish = resolve; });
-    /** @type {DatabaseResult<string>} */
-    const failure = { ok: false, error: { code: "cancelled", mutation_outcome: "uncertain", transaction: { transaction_id: { expires_at_unix_ms: 100n, nonce: "11".repeat(16) }, authority: { mode: "leaderless" }, effect_digest: "22".repeat(32) } } };
-    /** @type {ReactiveMutationObserver<string, void>} */
-    const observer = new ReactiveMutationObserver({ mutationFn: async () => { await ready; return /** @type {DatabaseResult<string>} */ (failure); } });
-    const pending = observer.mutateAsync(undefined);
-    const rejected = assert.rejects(pending, /cancelled/u);
-    await Promise.resolve();
-    observer.cancel();
-    finish();
-    await rejected;
-    assert.equal(observer.getSnapshot().status, "cancelled");
-    assert.equal(observer.getSnapshot().error?.database?.mutation_outcome, "uncertain");
-    assert.equal(observer.getSnapshot().error?.database?.transaction, failure.error.transaction);
-    observer.dispose();
   });
 
   test("subscribes only while observed and aborts/disposes on the last observer", () => {

@@ -446,7 +446,7 @@ bundles. Generated aliases do not validate or automatically narrow SDK reads.
 See [TypeScript document models](https://docs.terrascale.tech/guides/schema-validation#generate-typescript-document-models)
 for the supported subset, merge-patch null semantics and strict compiler setup.
 
-## Separate and deprecated entrypoints
+## Named entrypoints
 
 `@terrascale/sdk/management` exports `createTerraScaleManagementClient` with the
 root client's project credentials. It exposes `databases`, `database(name)`,
@@ -483,8 +483,8 @@ and administration mutations still need their owning public contracts.
 client, with its own origin, instance and credentials. A server-only Better Auth
 database adapter is planned; the package exports no `./better-auth` entrypoint.
 The [public auth primitives and durable receipts](docs/evidence/better-auth-producer-audit.md)
-require replication design before adapter work resumes. Existing adapter tooling
-pins Better Auth 1.7.2; this does not establish a supported production adapter.
+require replication design before adapter work resumes. The historical audit
+examined Better Auth 1.7.2; it does not establish a supported production adapter.
 The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; document-only keys are insufficient.
 Webhook dead-letter replay uses the documented `endpointId:eventId` delivery
@@ -496,15 +496,13 @@ list methods keep it in their existing options. Failures retain `kind: "transpor
 `request_aborted` identifies caller cancellation, `request_timeout` the SDK deadline,
 and `transport_error` an ordinary transport failure. Abort details carry a sanitized cause.
 
-`@terrascale/sdk/local` (including `terrascale-local`) and `@terrascale/sdk/postgres` are
-**deprecated legacy entrypoints**. The operating contract confines fake/local
-stores to test code and test binaries. Their current exported runtime paths
-remain inventoried for removal; this docs change does not remove them.
-Do not use them for application onboarding, production, staging or producer
-qualification. A local adapter test does not qualify the real C# API.
-The PostgreSQL listener and retired tenant/shard client are outside the default
-v1 API. Existing framework, schema and SQL entrypoints are separate legacy
-surfaces; the root entrypoint exposes the C# v1 client API.
+Version 0.0.16 removes the retired `./local`, `./postgres`, `./schema`, `./sql` and
+`./tanstack` entrypoints, the `terrascale-local` CLI and their runtime sources.
+Current database SQL/schema operations remain on the root database/collection
+clients; `./codegen` and `terrascale-models` generate current document models.
+React/Svelte exports retain generic observer, hook and store utilities. Their
+retired `createDatabaseQuery` binding is removed; current bounded-query service
+and framework integration remains planned, without a replacement adapter claim.
 
 Hosted OAuth resource requests use one exact registered HTTPS `resource`. `oidc.authorizationUrl`, `oidc.deviceAuthorization`, and the code, device, refresh, and client-credentials token grants retain its bytes, including path and query. Omission on a browser code or refresh flow preserves the stored no-resource binding; it never repairs a rejected audience or falls back to browser login. Refresh requests can ask for narrower scopes. Client credentials require explicit resource and scope values. Token and originating-client introspection methods use `client_secret_post`; public-client and originating-client Basic token authentication are not currently exposed by this SDK.
 
