@@ -458,9 +458,9 @@ sealed class TestWorkspace : ITsAuthPlatform
         Organizations[org.Id] = org;
         return org;
     }
-    private TerraScaleAuthPlatformOrganization Wire(OrganizationRecord org, string userId) => new(org.Id, org.Name, org.OwnerUserId, org.CreatedAt, ScopedRole(userId, org.Id));
+    private TerraScaleAuthPlatformOrganization Wire(OrganizationRecord org, string userId) => new(org.Id, org.Name, org.OwnerUserId, org.CreatedAt, ScopedRole(userId, org.Id), RequireMfa: false);
     private TerraScaleAuthPlatformProject Wire(ProjectRecord project, OrganizationRecord org, string userId) =>
-        new(project.Id, org.Id, project.Name, null, projectCreators.GetValueOrDefault(project.Id, org.OwnerUserId), project.CreatedAt, ProjectRole(userId, org.Id, project.Id));
+        new(project.Id, org.Id, project.Name, null, projectCreators.GetValueOrDefault(project.Id, org.OwnerUserId), project.CreatedAt, ProjectRole(userId, org.Id, project.Id), AllowedCidrs: []);
     private TerraScaleAuthPlatformInvitation Wire(InvitationRecord invitation, string invitedBy) =>
         new(invitation.Id, invitation.Email, invitation.Role, null, invitedBy, invitation.CreatedAt, invitation.ExpiresAt, invitation.ExpiresAt <= DateTimeOffset.UtcNow && invitation.Status == "pending" ? "expired" : invitation.Status);
     private void LastOwner(OrganizationRecord org, string userId)

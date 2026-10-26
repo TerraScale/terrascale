@@ -114,7 +114,9 @@ public sealed class DatabaseRenameJourneyTests(DashboardRootFixture fixture)
             await Assert.That(after.GetProperty(property).GetRawText()).IsEqualTo(before.GetProperty(property).GetRawText());
         await Assert.That(after.GetProperty("name").GetString()).IsEqualTo("rename_new-");
         await Assert.That(await client.GetStringAsync("/databases/" + databaseId)).Contains("/databases/rename_new-/");
-        await Assert.That((await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=users"))[0].GetProperty("value").GetProperty("value").GetString()).IsEqualTo("preserved");
+        var preserved = (await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=users")).GetProperty("documents").EnumerateArray().Single();
+        await Assert.That(preserved.GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000009");
+        await Assert.That(preserved.GetProperty("value").GetProperty("value").GetString()).IsEqualTo("preserved");
         using (var rotated = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId }))
         {
             await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
