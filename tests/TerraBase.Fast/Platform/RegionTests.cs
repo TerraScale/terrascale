@@ -205,8 +205,8 @@ public sealed class RegionTests
         await Assert.That(response.Headers.Contains(PinHeader)).IsFalse();
         var text = await response.Content.ReadAsStringAsync();
         using var body = JsonDocument.Parse(text);
-        await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("misdirected_request");
-        if (pin.Length > 0)
+        await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo(pin == "iad-1" ? "wrong_region" : "misdirected_request");
+        if (pin.Length > 0 && pin != "iad-1")
         {
             await Assert.That(text).DoesNotContain(pin);
         }

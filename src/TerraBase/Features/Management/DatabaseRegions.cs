@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Regions;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
@@ -98,14 +99,23 @@ public static class DatabaseRegions
         app.Use(async (context, next) =>
         {
             if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                && context.GetEndpoint() is { } endpoint && endpoint.Metadata.GetMetadata<PlacementAware>() is null
+                && context.GetEndpoint() is { } endpoint && (endpoint.Metadata.GetMetadata<PlacementAware>() is null || context.Features.Get<RequestedRegion>() is not null)
                 && context.Request.RouteValues.TryGetValue("project", out var projectValue) && projectValue is string project
                 && context.Request.RouteValues.TryGetValue("database", out var databaseValue) && databaseValue is string database)
             {
                 var region = context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
-                await (await RecordAsync(context, project, database).ConfigureAwait(false) switch
+                var record = await RecordAsync(context, project, database).ConfigureAwait(false);
+                var pin = context.Features.Get<RequestedRegion>()?.Region;
+                if (record is ManagedDatabase placed && (pin is not null || !placed.PlacedIn(region)))
                 {
-                    ManagedDatabase record when !record.PlacedIn(region) => WrongRegion(record.Home(region), record.Regions(region)).ExecuteAsync(context),
+                    var regions = await RegionGuidance.RegionsAsync(placed, region, context.RequestServices.GetRequiredService<IRegionCatalog>(), context.RequestAborted).ConfigureAwait(false);
+                    await new Misdirected(placed.Home(region), string.Join(',', regions), homeOnly: false, placed.AllRegions).ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                await (record switch
+                {
+                    NotFound when pin is not null => RegionGuidance.RefuseAsync(context, pin),
                     ManagedDatabase => next(context),
                     NotFound => next(context),
                     Unavailable error => ErrorResponse.From(error).ExecuteAsync(context),
@@ -154,15 +164,27 @@ public static class DatabaseRegions
         };
     }
 
-    internal sealed class Misdirected(string home, string regions, bool homeOnly) : IResult
+    internal sealed class Misdirected(string home, string regions, bool homeOnly, bool allRegions = false) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
             httpContext.Response.Headers.CacheControl = "no-store";
-            httpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
+            if (!allRegions)
+            {
+                httpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
+            }
             httpContext.Response.Headers["X-TerraBase-Database-Regions"] = regions;
-            Listeners.ReplayIn(httpContext, homeOnly ? home : regions);
-            return BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "wrong_region", $"the database is served in {home}", op: null);
+            var choices = regions.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            var pin = httpContext.Features.Get<RequestedRegion>()?.Region
+                ?? (Listeners.IsRegionalHost(httpContext.Request.Host.Host, out var host) ? host
+                    : httpContext.Request.Headers["X-TerraScale-Region-Pin"] is [{ } value] ? value : null);
+            var target = pin is not null && choices.Contains(pin, StringComparer.Ordinal) && !homeOnly ? pin : allRegions ? choices[0] : home;
+            if (pin is null || target == pin)
+            {
+                Listeners.ReplayIn(httpContext, pin ?? (homeOnly ? home : regions));
+            }
+
+            return RegionGuidance.RefuseAsync(httpContext, target, choices);
         }
     }
 }

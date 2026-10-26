@@ -7,14 +7,17 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -258,9 +261,21 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
 
         var slash = database.IndexOf('/', StringComparison.Ordinal);
+        string? pin = null;
+        var at = database.LastIndexOf('@');
+        if (at >= slash + 1)
+        {
+            pin = database[(at + 1)..];
+            if (!TerraBaseOptions.IsRegion(pin) || database[..at].Contains('@', StringComparison.Ordinal))
+            {
+                return new PgError("08004", $"misdirected_request: use one valid database@region pin; see {RegionGuidance.Docs}");
+            }
+
+            database = database[..at];
+        }
         if (TsAuthKeyExchange.IsKey(secret))
         {
-            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, cancellationToken).ConfigureAwait(false);
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, pin, client, cancellationToken).ConfigureAwait(false);
         }
 
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
@@ -272,17 +287,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return Denied;
         }
 
-        return await Tenants.FindDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
-            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
-            _ => Denied,
-        };
+        return await DatabaseAccessAsync(key.OrganizationId, project, name.Value, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), pin, key, cancellationToken).ConfigureAwait(false);
     }
 
     // A dashboard API key, as ts-auth issues it: its access token names the project, an optional database and the scopes,
     // and the project resolves to its storage namespace like a bearer token's on the client listener.
-    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, string? pin, IPAddress? client, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
         if (grant is Unavailable)
@@ -312,13 +322,32 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
 
         return organization is string found
-            ? await Tenants.FindDatabaseAsync(found, key.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) switch
-            {
-                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
-                Unavailable => new PgError("57P03", "the database is unavailable; retry"),
-                _ => Denied,
-            }
+            ? await DatabaseAccessAsync(found, key.ProjectId, name.Value, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), pin, null, cancellationToken).ConfigureAwait(false)
             : Denied;
+    }
+
+    private async ValueTask<Access> DatabaseAccessAsync(string organization, string project, string database, bool canWrite, string? pin, ApiKey? key, CancellationToken cancellationToken)
+    {
+        var found = await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(organization, project, database, cancellationToken).ConfigureAwait(false);
+        if (found is not ManagedDatabase record || (key is not null && !key.Reaches(new TenantContext(organization, PlanTier.Hobby, project, record.Id))))
+        {
+            return found is Unavailable ? new PgError("57P03", "the database is unavailable; retry") : Denied;
+        }
+
+        var region = services.GetRequiredService<TerraBaseOptions>().Region;
+        if (!record.PlacedIn(region) || (pin is not null && pin != region))
+        {
+            var regions = await RegionGuidance.RegionsAsync(record, region, services.GetRequiredService<IRegionCatalog>(), cancellationToken).ConfigureAwait(false);
+            var target = pin is not null && regions.Contains(pin, StringComparer.Ordinal) ? pin : regions[0];
+            return new PgError("08004", RegionGuidance.Message(target, regions));
+        }
+
+        return await Tenants.FindDatabaseAsync(organization, project, database, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext tenant => new Authorized(tenant, canWrite),
+            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+            _ => Denied,
+        };
     }
 
     private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)

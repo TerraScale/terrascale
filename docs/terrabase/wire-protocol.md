@@ -34,6 +34,8 @@ stay on the HTTP API. Any other operation answers `400 unknown_operation` and th
 the connection. The memory budget admits each frame before it is read (`429 tenant_memory` with request id 0 otherwise,
 which also closes the connection).
 
+Pinned hello (operation 4) and region recovery are specified in [region pin guidance](replication/27-region-pin-guidance.md).
+
 ## Handshake and authorization
 
 The first frame must be a hello for version 1, sent within 10 seconds; anything else answers `400 unsupported_version` and

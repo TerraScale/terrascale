@@ -183,7 +183,7 @@ public static class UserAuthExtensions
             var bucketCreation = context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "createFileBucket"
                 && !jwt.HasClaim("token_kind", "end_user") && jwt.FindFirst("database") is null;
             var resolved = await catalog.ResolveProjectAsync(project, actor,
-                createIn: bucketCreation ? jwt.FindFirst("org_id")?.Value : null, context.RequestAborted).ConfigureAwait(false);
+                createIn: bucketCreation && context.Features.Get<RequestedRegion>() is null ? jwt.FindFirst("org_id")?.Value : null, context.RequestAborted).ConfigureAwait(false);
             if (resolved is not string organization)
             {
                 await (resolved switch

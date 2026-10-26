@@ -299,7 +299,7 @@ public sealed class RegionalRoutingContractTests
         await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["sjc"]);
         await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Home")).IsEquivalentTo(["gru"]);
         await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions")).IsEquivalentTo([regions]);
-        await ErrorAssert.ErrorAsync(response, HttpStatusCode.MisdirectedRequest, "wrong_region", "the database is served in gru");
+        await ErrorAssert.ErrorAsync(response, HttpStatusCode.MisdirectedRequest, "wrong_region", TerraBase.Hosting.RegionGuidance.Message("gru", regions.Split(',')));
     }
 
     // Regional hosts: <region>.api.terrascale.tech pins a region and fails closed (region-identity.md). Several machines
