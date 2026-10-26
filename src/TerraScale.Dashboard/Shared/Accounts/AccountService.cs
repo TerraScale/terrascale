@@ -346,6 +346,8 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                 Id = item.Value.Id,
                 ProjectId = project.Id,
                 Name = item.Value.Name,
+                PreviousName = item.Value.PreviousName,
+                ConflictOf = item.Value.ConflictOf,
                 Region = item.Value.Region,
                 Regions = item.Value.Regions,
                 Endpoint = item.Value.Endpoint,

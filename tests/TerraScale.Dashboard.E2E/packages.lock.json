@@ -267,7 +267,7 @@
         "type": "CentralTransitive",
         "requested": "[0.0.13, )",
         "resolved": "0.0.13",
-        "contentHash": "go6oYyPPHigUp7AuZT0C0OZmFLKbF6J1IPKdsN23YDishS9M5YYkUs5ZKujlg5EtiIDm8w7Os3hGJIe4Ssb3HA==",
+        "contentHash": "BdXHbfbzPMxFKKBbaKZQKuW3v2tTMeHz7uLZ3EbmWt8YE0W1iBwhxjv5xq3+h6vkyjZrI50yzaxp79loTi9piA==",
         "dependencies": {
           "NUlid": "1.7.3"
         }

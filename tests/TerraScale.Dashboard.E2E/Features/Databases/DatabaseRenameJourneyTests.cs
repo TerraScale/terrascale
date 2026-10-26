@@ -32,6 +32,56 @@ public sealed class DatabaseRenameJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task ConflictRenamedDatabaseShowsItsPreservedIdentityAndClearsTheBannerWhenResolved()
+    {
+        var mode = 0;
+        var id = "";
+        var projectId = "";
+        var currentName = "";
+        var createdAt = DateTimeOffset.UnixEpoch;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        {
+            var observed = Volatile.Read(ref mode);
+            if (observed == 0 || http.Request.Method != "GET" || http.Request.Path != "/v1/projects/" + projectId + "/databases")
+                return Task.FromResult<IResult?>(null);
+            http.Response.Headers["X-TerraBase-Region"] = "gru";
+            return Task.FromResult<IResult?>(Results.Json(new { items = new[] { new
+            {
+                id, projectId, name = currentName, createdAt, branchedFrom = (string?)null,
+                region = "gru", homeRegion = "gru", replicaRegions = new[] { "sfo" }, allRegions = false,
+                previousName = observed == 1 ? "shared" : null,
+                conflictOf = observed == 1 ? "01JA0000000000000000000003" : null
+            } }, next = (string?)null }));
+        });
+        using var client = scenario.CreateClient();
+        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        projectId = (await ReadAsync(client, "/api/v1/auth/me")).GetProperty("projectId").GetString()!;
+        var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+        using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases",
+            new() { ["_csrf"] = csrf, ["name"] = "conflict-source", ["region"] = "GRU" }))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            var body = await BodyAsync(created);
+            id = body.GetProperty("id").GetString()!;
+            createdAt = body.GetProperty("createdAt").GetDateTimeOffset();
+        }
+        var path = "/databases/" + id + "/settings";
+        await Assert.That(await client.GetStringAsync(path)).DoesNotContain("id=\"database-name-conflict\"");
+        currentName = "shared-conflict-" + id[^6..].ToLowerInvariant();
+        Volatile.Write(ref mode, 1);
+        var page = await client.GetStringAsync(path);
+        await Assert.That(page).Contains("id=\"database-name-conflict\"");
+        await Assert.That(page).Contains("Renamed after a name conflict");
+        await Assert.That(page).Contains("<strong>shared</strong>");
+        await Assert.That(page).Contains(currentName);
+        await Assert.That(page).Contains("Its ID, data, files, backups and keys are preserved");
+        await Assert.That(page).Contains("name=\"databaseId\" value=\"" + id + "\"");
+        // Clearing conflict metadata must refresh even if the current label is unchanged.
+        Volatile.Write(ref mode, 2);
+        await Assert.That(await client.GetStringAsync(path)).DoesNotContain("id=\"database-name-conflict\"");
+    }
+
+    [Test]
     public async Task SettingsRenameUsesImmutableIdentityAndKeepsDataPlacementAndKeyRestriction()
     {
         var patches = 0;

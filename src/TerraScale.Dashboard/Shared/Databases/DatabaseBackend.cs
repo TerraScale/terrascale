@@ -32,7 +32,11 @@ public sealed record DatabaseRegion(string Code, string Id, string Name, string 
     public static DatabaseRegion? Resolve(IReadOnlyList<DatabaseRegion> catalog, string? code) =>
         catalog.FirstOrDefault(region => region.Code == code || region.Id == code) ?? FromId(code?.ToLowerInvariant());
 }
-public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false);
+public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false)
+{
+    public string? PreviousName { get; init; }
+    public string? ConflictOf { get; init; }
+}
 public sealed record CollectionStats(string Name, long Documents, long Bytes);
 public sealed record DatabaseSqlRow(string Id, JsonElement Value);
 public sealed record DatabaseSqlCatalog(IReadOnlyList<DatabaseSqlTable> Tables, bool Truncated);
@@ -318,7 +322,7 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     }
 
     private static ManagedDatabase Map(TerraBaseManagedDatabase item) => new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
-        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions);
+        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions) { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf };
     private static DatabaseIndex Map(TerraBaseIndex item) => new(item.Name, item.Collection, item.Fields, item.State);
     private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
     {

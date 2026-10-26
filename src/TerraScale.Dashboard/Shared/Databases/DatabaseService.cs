@@ -211,9 +211,13 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id)
                 ?? throw new AccountAccessException("Database is unavailable.", 404);
             current.Name = name;
+            current.PreviousName = remote.PreviousName;
+            current.ConflictOf = remote.ConflictOf;
             org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.renamed", name, "database", accounts.Now));
         }, cancellationToken);
         database.Name = name;
+        database.PreviousName = remote.PreviousName;
+        database.ConflictOf = remote.ConflictOf;
         return database;
     }
 
@@ -259,7 +263,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var seen = project.Databases.Values.ToArray();
             // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
             var observed = seen.ToDictionary(record => record.Id, record =>
-                (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
+                (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
             if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId)) homes = catalog.ToArray();
@@ -288,9 +292,11 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                 }
                 catch (HttpRequestException) { }
             }
-            var renamed = remote.Where(database => observed.TryGetValue(database.Id, out var before) && before.Name != database.Name).ToArray();
+            var renamed = remote.Where(database => observed.TryGetValue(database.Id, out var before) &&
+                (before.Name != database.Name || before.PreviousName != database.PreviousName || before.ConflictOf != database.ConflictOf)).ToArray();
             if (gone.Count == 0 && imported.Count == 0 && refreshed.Count == 0 && renamed.Length == 0) return;
             bool Unchanged(DatabaseRecord record) => observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
+                record.PreviousName == before.PreviousName && record.ConflictOf == before.ConflictOf &&
                 record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
             void Apply(ProjectRecord target)
             {
@@ -306,8 +312,13 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                         current.PlacementRevision = checked(current.PlacementRevision + 1);
                     }
                 foreach (var database in renamed)
-                    if (target.Databases.GetValueOrDefault(database.Id) is { } current && current.Name == observed[database.Id].Name)
+                    if (target.Databases.GetValueOrDefault(database.Id) is { } current && current.Name == observed[database.Id].Name &&
+                        current.PreviousName == observed[database.Id].PreviousName && current.ConflictOf == observed[database.Id].ConflictOf)
+                    {
                         current.Name = database.Name;
+                        current.PreviousName = database.PreviousName;
+                        current.ConflictOf = database.ConflictOf;
+                    }
                 foreach (var record in imported.Where(record => !target.Databases.ContainsKey(record.Id) && target.Databases.Values.All(database => database.Name != record.Name)))
                     target.Databases[record.Id] = record;
             }
@@ -366,6 +377,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         Id = remote.Id,
         ProjectId = remote.ProjectId,
         Name = remote.Name,
+        PreviousName = remote.PreviousName,
+        ConflictOf = remote.ConflictOf,
         CreatedAt = remote.CreatedAt,
         BranchedFrom = remote.BranchedFrom,
         Region = placement[0].Code,
