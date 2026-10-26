@@ -1,15 +1,19 @@
 # Rename a database
 
-Open a database's Overview, choose Settings, enter a unique new name, and type
+Open a database's Overview, choose Settings, enter a new name, and type
 the current name exactly to confirm. Names match `[a-z][a-z0-9_-]{0,62}`, excluding
 `con`, `prn`, `aux`, `nul`, `com[0-9]` and `lpt[0-9]`. Input is case-sensitive and
 never trimmed. Organization management access and a ready database are required.
 
-Renaming changes connection strings immediately. The old name stops resolving;
+After rename converges, the old name stops resolving unless claimed again;
 there is no alias or redirect. Update the database name in your application
 configuration. The dashboard URL keeps the immutable database ULID. The database's
 data and placement are preserved. New restricted API keys send the database ULID
 to ts-auth; the dashboard displays the current name without changing that restriction.
 
-The ts-dotnet project client PATCHes the database ULID with only `{"name":"new-name"}`; TerraBase validates names and uniqueness.
+DECISION: locally observed duplicate names return `409`; conflicting requests accepted in different regions may both succeed.
+Convergence keeps the smallest ULID at the target name, restores a renamed loser's previous customer name, and gives a create loser `<name>-conflict-<ulidtail>`.
+Reconciliation emits an event, preserves every ID/data/file/backup/key, and aligns name indexes with current labels across regions. Same-database renames are serialized at home.
+
+The ts-dotnet project client PATCHes the database ULID with only `{"name":"new-name"}`; an accepted response does not establish exclusive name ownership across regions.
 Catalog sync follows external renames and lost responses. Reload Settings after an uncertain error before retrying.
