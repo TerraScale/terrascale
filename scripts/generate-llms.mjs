@@ -67,6 +67,7 @@ for (const [folder, files] of [
   ['terrabase-js', ['quickstart.mjs', 'package.json', 'follow-changes.mjs']],
   ['terrabase-dotnet', ['Program.cs', 'TerraBaseStarter.csproj']],
   ['server-token-provider', ['server-client.mjs', 'package.json']],
+  ['typed-models', ['package.json', 'schema.json', 'verify-models.mjs', 'model-types.ts', 'tsconfig.json']],
 ]) {
   for (const file of files) outputs.push([
     `docs/public/examples/${folder}/${file}`,
@@ -77,6 +78,7 @@ outputs.push([
   'docs/public/examples/server-token-provider/README.txt',
   readFileSync(join(root, 'examples/server-token-provider/README.md')),
 ]);
+outputs.push(['docs/public/examples/typed-models/README.txt', readFileSync(join(root, 'examples/typed-models/README.md'))]);
 for (const [name, content] of outputs) {
   const path = join(root, name);
   if (check) {
