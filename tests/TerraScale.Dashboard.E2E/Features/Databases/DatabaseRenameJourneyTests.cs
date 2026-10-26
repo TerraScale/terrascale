@@ -45,13 +45,17 @@ public sealed class DatabaseRenameJourneyTests(DashboardRootFixture fixture)
             if (observed == 0 || http.Request.Method != "GET" || http.Request.Path != "/v1/projects/" + projectId + "/databases")
                 return Task.FromResult<IResult?>(null);
             http.Response.Headers["X-TerraBase-Region"] = "gru";
-            return Task.FromResult<IResult?>(Results.Json(new { items = new[] { new
+            return Task.FromResult<IResult?>(Results.Json(new
+            {
+                items = new[] { new
             {
                 id, projectId, name = currentName, createdAt, branchedFrom = (string?)null,
                 region = "gru", homeRegion = "gru", replicaRegions = new[] { "sfo" }, allRegions = false,
                 previousName = observed == 1 ? "shared" : null,
                 conflictOf = observed == 1 ? "01JA0000000000000000000003" : null
-            } }, next = (string?)null }));
+            } },
+                next = (string?)null
+            }));
         });
         using var client = scenario.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);

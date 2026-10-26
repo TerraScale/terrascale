@@ -322,7 +322,8 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     }
 
     private static ManagedDatabase Map(TerraBaseManagedDatabase item) => new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
-        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions) { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf };
+        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions)
+    { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf };
     private static DatabaseIndex Map(TerraBaseIndex item) => new(item.Name, item.Collection, item.Fields, item.State);
     private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
     {
