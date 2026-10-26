@@ -9,7 +9,10 @@ public sealed record BandwidthUsage(long BytesSent, long BytesReceived);
 /// <summary>Replication traffic by source, destination and kind, as observed at the sender and receiver.</summary>
 public sealed record ReplicationBandwidth(string SourceRegion, string DestinationRegion, string Kind, long BytesSent, long BytesReceived);
 
-/// <summary>Approximate latency percentiles in milliseconds, merged from fixed upper-bound histogram bins; null without requests.</summary>
+/// <summary>
+/// Approximate latency percentiles in milliseconds, interpolated linearly within merged power-of-two histogram bins (0.25 ms to
+/// 65536 ms); a percentile in the last, open-ended bin is its lower bound, 32768 ms. Null without requests.
+/// </summary>
 public sealed record LatencyPercentiles(double? P50Ms, double? P95Ms, double? P99Ms);
 
 /// <summary>One UTC analytics bucket. Storage is the average of sampled on-disk bytes, or null before sampling.</summary>

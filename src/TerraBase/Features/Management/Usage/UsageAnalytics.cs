@@ -385,6 +385,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         .OrderBy(value => value.SourceRegion, StringComparer.Ordinal).ThenBy(value => value.DestinationRegion, StringComparer.Ordinal)
         .ThenBy(value => value.Kind, StringComparer.Ordinal)];
 
+    // As Prometheus' histogram_quantile: linear within the bin that holds the rank, from the bound below it (0 for the first
+    // bin) to its own. The last bin also holds every longer request, so a rank there is its lower bound.
     private static double? Percentile(Int128[] histogram, double fraction)
     {
         var count = histogram.Aggregate(Int128.Zero, (total, bin) => total + bin);
@@ -393,18 +395,22 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             return null;
         }
 
-        var target = (Int128)Math.Ceiling((double)count * fraction);
+        var rank = (double)count * fraction;
         Int128 seen = 0;
         for (var i = 0; i < histogram.Length; i++)
         {
-            seen += histogram[i];
-            if (seen >= target)
+            if (histogram[i] == 0 || (double)(seen + histogram[i]) < rank)
             {
-                return UsageReading.LatencyBounds[i];
+                seen += histogram[i];
+                continue;
             }
+
+            var lower = i == 0 ? 0 : UsageReading.LatencyBounds[i - 1];
+            return i == histogram.Length - 1 ? lower
+                : lower + (UsageReading.LatencyBounds[i] - lower) * Math.Clamp((rank - (double)seen) / (double)histogram[i], 0, 1);
         }
 
-        return UsageReading.LatencyBounds[^1];
+        return UsageReading.LatencyBounds[^2];
     }
 }
 

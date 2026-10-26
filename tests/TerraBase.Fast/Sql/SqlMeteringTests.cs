@@ -89,6 +89,42 @@ public sealed class SqlMeteringTests
     }
 
     [Test]
+    public async Task Postgres_wire_exchanges_each_record_one_request_with_its_latency_errors_and_bytes()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var key = await api.Server.IssueNarrowedAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, null, "documents:read", "documents:write");
+        await using var source = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
+        {
+            Host = "127.0.0.1",
+            Port = api.Server.PostgresPort,
+            Username = "wire",
+            Password = key,
+            Database = DocumentApi.Database,
+            SslMode = SslMode.Disable,
+        }.ConnectionString);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, Notes);
+        var before = await RequestsAsync(api);
+
+        // Parse, Bind, Describe, Execute and Sync are one exchange: one request, its latency and its bytes both ways.
+        await ExecuteAsync(connection, "INSERT INTO notes VALUES (1, $1)", Faker.Lorem.Sentence());
+        var inserted = await RequestsAsync(api);
+        await Assert.That(inserted.Requests).IsEqualTo(before.Requests + 1);
+        await Assert.That(inserted.Timed).IsEqualTo(before.Timed + 1);
+        await Assert.That(inserted.Errors).IsEqualTo(before.Errors);
+        await Assert.That(inserted.Received).IsGreaterThan(before.Received);
+        await Assert.That(inserted.Sent).IsGreaterThan(before.Sent);
+        // The statement's document operation is still counted once, by the SQL service.
+        await Assert.That(await OperationsAsync(api)).IsEqualTo((1L, 0L, 0L));
+
+        // A failed statement is one request and one error.
+        await Assert.That(async () => await ExecuteAsync(connection, "SELECT * FROM nowhere")).Throws<PostgresException>();
+        var failed = await RequestsAsync(api);
+        await Assert.That(failed.Requests).IsEqualTo(inserted.Requests + 1);
+        await Assert.That(failed.Errors).IsEqualTo(inserted.Errors + 1);
+    }
+
+    [Test]
     public async Task Atomic_http_discards_read_prefix_charges_on_statement_and_commit_refusal()
     {
         var hook = new UsageCommitHook(storageLimit: _ => 16 * 1024);
@@ -237,6 +273,21 @@ public sealed class SqlMeteringTests
         var month = (await owner.GetFromJsonAsync<JsonElement>(
             ManagementApi.Uri($"/v1/management/organizations/{api.Tenant.OrganizationId}/projects/{api.Tenant.ProjectId}/usage"))).GetProperty("month");
         return (month.GetProperty("readUnits").GetInt64(), month.GetProperty("writeUnits").GetInt64());
+    }
+
+    // The database's `other` requests (the Postgres wire's), their errors, latency samples and client bytes.
+    private static async Task<(long Requests, long Errors, long Timed, long Received, long Sent)> RequestsAsync(DocumentApi api)
+    {
+        var counts = await api.Server.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(await api.TenantOfAsync(),
+            new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1), CancellationToken.None);
+        var meters = (counts is UsageCounts usage ? usage.Lifetime : throw new InvalidOperationException("usage unavailable")).Meters?.Values.ToArray() ?? [];
+        var requests = meters.Where(meter => meter.Dimension.Meter == "requests" && meter.Dimension.Kind == "other").ToArray();
+        long Bytes(string kind)
+        {
+            return meters.Where(meter => meter.Dimension.Meter == "client_bytes" && meter.Dimension.Kind == kind).Sum(meter => meter.Count);
+        }
+
+        return (requests.Sum(meter => meter.Count), requests.Sum(meter => meter.Value), requests.Sum(meter => meter.Latency?.Sum() ?? 0), Bytes("received"), Bytes("sent"));
     }
 
     private static async Task<(long Put, long Patch, long Delete)> OperationsAsync(DocumentApi api)

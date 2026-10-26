@@ -11,6 +11,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
@@ -49,6 +50,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private ITenantDirectory Tenants => services.GetRequiredService<ITenantDirectory>();
 
     private IMemoryBudget Memory => services.GetRequiredService<IMemoryBudget>();
+
+    private TimeProvider Time => services.GetRequiredService<TimeProvider>();
 
     /// <inheritdoc />
     public override async Task OnConnectedAsync(ConnectionContext connection)
@@ -374,6 +377,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return;
                 }
 
+                var exchange = session.Exchange ??= new Exchange(Time.GetTimestamp(), output.Written);
+                exchange.Received += 5 + body.Length;
                 if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
                 {
                     output.Error("57P03", "this machine's peer topology is not verified; retry", fatal: true);
@@ -391,6 +396,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             if (error.Fatal)
                             {
                                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                                Meter(session, output);
                                 return;
                             }
                         }
@@ -412,6 +418,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             if (refused.Fatal)
                             {
                                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                                Meter(session, output);
                                 return;
                             }
 
@@ -433,13 +440,32 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         output.Error(error.Code, error.Message, error.Fatal);
         session.Failed = !session.Sql.IsAutocommit;
+        session.Exchange?.Failed = true;
     }
 
-    private static async ValueTask SyncAsync(Session session, PgWriter output, CancellationToken cancellationToken)
+    private async ValueTask SyncAsync(Session session, PgWriter output, CancellationToken cancellationToken)
     {
         await session.Sql.EndRequestAsync().ConfigureAwait(false);
         output.Ready(session.Status);
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        Meter(session, output);
+    }
+
+    // An exchange ends at its Sync (a simple query syncs itself): one request of the database a statement in it resolved,
+    // with the protocol message bytes each way. Exchanges of only local commands (SET, SHOW, type loads) record nothing.
+    private void Meter(Session session, PgWriter output)
+    {
+        if (session.Exchange is not { } exchange)
+        {
+            return;
+        }
+
+        session.Exchange = null;
+        if (exchange.Database is { } database)
+        {
+            services.GetRequiredService<IUsageMeter>().RecordRequest(database, "OTHER", exchange.Failed ? 400 : 200, Time.GetElapsedTime(exchange.Started),
+                exchange.Received, output.Written - exchange.Written);
+        }
     }
 
     // A simple query runs its statements in order and stops at the first error.
@@ -777,6 +803,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return access is PgError { Fatal: true } refusal ? refusal : Denied;
             }
 
+            session.Exchange?.Database = database;
+
             // The HTTP pipeline's admission (QosExtensions): one organization lease, then the tenant's memory and budgets.
             var tenant = new TenantContext(database.OrganizationId, database.Plan);
             using var lease = services.GetRequiredService<IQosAdmission>().TryEnter(tenant, out var retryAfter);
@@ -921,6 +949,20 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null, DateTimeOffset? Until = null);
 
+    // The messages since the last Sync: when the first arrived, the output written before it, and what they received and resolved.
+    private sealed class Exchange(long started, long written)
+    {
+        public long Started => started;
+
+        public long Written => written;
+
+        public long Received { get; set; }
+
+        public bool Failed { get; set; }
+
+        public TenantContext? Database { get; set; }
+    }
+
     // Columns are fixed once described, so later executions send the types the client was told.
     private sealed class Prepared(PgStatement statement, int[] oids)
     {
@@ -967,6 +1009,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         // Whether an error aborted the open transaction.
         public bool Failed { get; set; }
+
+        // The exchange in progress, metered at its Sync.
+        public Exchange? Exchange { get; set; }
 
         // The ReadyForQuery status: idle, in a transaction, or in an aborted transaction.
         public char Status => Sql.IsAutocommit ? 'I' : Failed ? 'E' : 'T';
@@ -1041,6 +1086,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         private readonly ArrayBufferWriter<byte> _body = new();
         private byte _type;
 
+        // Every message byte written to the connection.
+        public long Written { get; private set; }
+
         public void Begin(char type)
         {
             _type = (byte)type;
@@ -1079,6 +1127,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             BinaryPrimitives.WriteInt32BigEndian(span[1..], length + 4);
             _body.WrittenSpan.CopyTo(span[5..]);
             pipe.Advance(length + 5);
+            Written += length + 5;
         }
 
         public void Empty(char type)
@@ -1091,6 +1140,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             pipe.GetSpan(1)[0] = value;
             pipe.Advance(1);
+            Written++;
         }
 
         public void Ready(char status)

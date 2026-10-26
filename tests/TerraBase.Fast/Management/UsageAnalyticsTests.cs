@@ -666,7 +666,7 @@ public sealed class UsageAnalyticsTests
         await Assert.That(replication.GetProperty("items")[0].GetProperty("bandwidth").EnumerateArray()
             .All(pair => pair.GetProperty("bytesSent").GetInt64() == long.MaxValue)).IsTrue();
 
-        // Two saturated request readings fill one latency bin past the 64-bit range: percentiles still name that bin.
+        // Two saturated request readings fill one latency bin past the 64-bit range: percentiles still interpolate within it.
         var latency = new long[UsageReading.LatencyBounds.Count];
         latency[5] = long.MaxValue;
         var meters = new Dictionary<string, UsageReading>(StringComparer.Ordinal);
@@ -681,8 +681,58 @@ public sealed class UsageAnalyticsTests
         meter.Add(key, new OpCounts(0, 0, meters));
         var saturated = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray()
             .Single(point => point.GetProperty("latency").GetProperty("p99Ms").ValueKind == JsonValueKind.Number
-                && point.GetProperty("latency").GetProperty("p50Ms").GetDouble() == UsageReading.LatencyBounds[5]);
-        await Assert.That(saturated.GetProperty("latency").GetProperty("p99Ms").GetDouble()).IsEqualTo(UsageReading.LatencyBounds[5]);
+                && Math.Abs(point.GetProperty("latency").GetProperty("p50Ms").GetDouble() - 6) < 1e-9);
+        await Assert.That(Math.Abs(saturated.GetProperty("latency").GetProperty("p99Ms").GetDouble() - 7.96)).IsLessThan(1e-9);
+    }
+
+    [Test]
+    public async Task Latency_percentiles_interpolate_within_their_bin_and_the_open_last_bin_reports_its_lower_bound()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", time: clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        var now = clock.GetUtcNow().ToUnixTimeSeconds() / 60;
+        // Minutes before the server started, so no real request shares their bins.
+        void Requests(long minute, params (int Bin, long Count)[] bins)
+        {
+            var latency = new long[UsageReading.LatencyBounds.Count];
+            foreach (var (bin, count) in bins)
+            {
+                latency[bin] = count;
+            }
+
+            var dimension = new UsageDimension("requests", "gru-1", "", "get");
+            var key = new UsageKey(new(database.Organization, database.Project, database.Id), minute / 60, TerraBase.Features.Management.Usage.UsageScope.Minute, (int)(minute % 60));
+            meter.Add(key, new OpCounts(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [dimension.Key] = new(dimension, bins.Sum(bin => bin.Count), 0, latency) }));
+        }
+
+        // A hundred requests of 16 to 32 ms (a 20 ms request's bin): ranks spread across the bin, not all at its 32 ms bound.
+        Requests(now - 30, (7, 100));
+        // Half under 0.25 ms, half beyond 32768 ms: the open last bin reports its lower bound.
+        Requests(now - 20, (0, 50), (UsageReading.LatencyBounds.Count - 1, 50));
+        var series = (await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1")))
+            .GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
+        JsonElement Latency(long minute)
+        {
+            return series.Single(point => point.GetProperty("start").GetDateTimeOffset() == DateTimeOffset.FromUnixTimeSeconds(minute * 60)).GetProperty("latency");
+        }
+
+        async Task Near(JsonElement latency, string percentile, double expected)
+        {
+            await Assert.That(Math.Abs(latency.GetProperty(percentile).GetDouble() - expected)).IsLessThan(1e-9).Because($"{percentile} should be {expected}");
+        }
+
+        var middle = Latency(now - 30);
+        await Near(middle, "p50Ms", 24);
+        await Near(middle, "p95Ms", 31.2);
+        await Near(middle, "p99Ms", 31.84);
+        var split = Latency(now - 20);
+        await Near(split, "p50Ms", 0.25);
+        await Near(split, "p95Ms", 32768);
+        await Near(split, "p99Ms", 32768);
     }
 
     [Test]

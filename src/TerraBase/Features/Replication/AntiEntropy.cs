@@ -33,6 +33,9 @@ internal sealed class AntiEntropy : BackgroundService
     private const int DigestBytes = 4096 * 16;
     private const int MaxPageStates = ChangeGroups.MaxDeltas;
 
+    // A repair's bucket read names the requesting region, to which the source attributes the pages it sends.
+    internal const string RegionHeader = "ts-region";
+
     private readonly IMembership _membership;
     private readonly PeerCredential _credential;
     private readonly IChangeGroupSource _source;
@@ -287,7 +290,8 @@ internal sealed class AntiEntropy : BackgroundService
 
         var request = new BucketRequest { Database = ChangeGroups.Wire(database, source) };
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
-        using var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
+        using var call = client.ReadBucket(request, new Metadata { { RegionHeader, _membership.Self.Region } },
+            TimeProvider.System.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken);
         var changed = 0;
         var theirKeys = horizon is not null ? new HashSet<(string Collection, string Id)>() : null;
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
