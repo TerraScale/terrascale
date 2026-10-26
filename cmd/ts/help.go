@@ -13,6 +13,7 @@ var commandSyntax = map[string]string{
 	"orgs": "orgs", "projects": "projects", "projects create": "projects create <name>",
 	"orgs create": "orgs create <name>", "orgs info": "orgs info <name|id>", "orgs rename": "orgs rename <name|id> <new-name>",
 	"projects info": "projects info <name|id>", "projects rename": "projects rename <name|id> <new-name>",
+	"orgs delete": "orgs delete <name|id>", "projects delete": "projects delete <name|id>",
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
 	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
@@ -166,7 +167,7 @@ func helpOptions(name string) map[string]string {
 	case name == "import":
 		options["-collection <name>"] = "destination collection for plain document NDJSON"
 		options["-yes"] = "consent to the inspected import preview for unattended execution"
-	case name == "db delete" || name == "collection drop" || name == "functions delete":
+	case name == "db delete" || name == "collection drop" || name == "functions delete" || name == "orgs delete" || name == "projects delete":
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "functions deploy":
 		options["-name <name>"] = "function name, default file/directory name"
