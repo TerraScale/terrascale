@@ -13,7 +13,10 @@ namespace TerraBase.Features.Postgres;
 internal sealed record PgColumn(string Name, int Oid);
 
 /// <summary>One statement's result: <paramref name="Columns"/> null for no rows, <paramref name="Tag"/> null for an empty query.</summary>
-internal sealed record PgResult(PgColumn[]? Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, string? Tag, PgError? Notice = null);
+internal sealed record PgResult(PgColumn[]? Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, string? Tag, PgError? Notice = null)
+{
+    internal SqlReadCharge? ReadCharge { get; init; }
+}
 
 /// <summary>An ErrorResponse: SQLSTATE and a message that never quotes secrets or paths.</summary>
 internal sealed record PgError(string Code, string Message);

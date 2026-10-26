@@ -657,7 +657,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
             _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
             {
-                SqlResult result => new[] { PostgresStatements.Result(statement, result) },
+                SqlResult result => new[] { PostgresStatements.Result(statement, result) with { ReadCharge = result.ReadCharge } },
                 SqlError error => PostgresStatements.Error(error),
             },
         }, cancellationToken).ConfigureAwait(false);
@@ -808,6 +808,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         output.Begin('C');
         output.CString(result.Tag);
         output.End();
+        result.ReadCharge?.Accept();
         return null;
     }
 

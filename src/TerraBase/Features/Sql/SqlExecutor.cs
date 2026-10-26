@@ -49,6 +49,9 @@ internal sealed class SqlTally(bool Measure)
     /// <summary>Operation units of the rows written (<see cref="OperationUnits"/>): a stored row's, one for a delete.</summary>
     public long WriteUnits { get; set; }
 
+    /// <summary>Operation telemetry emitted only after this transaction commits, never during replay.</summary>
+    public Dictionary<(string Collection, string Kind), int> Operations { get; } = [];
+
     /// <summary>Definitions by table name, null for no SQL table; DDL of the table removes its entry.</summary>
     public Dictionary<string, SqlTableDefinition?> Tables { get; } = [with(StringComparer.Ordinal)];
 }
@@ -558,6 +561,8 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 : await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false);
             tally.Writes++;
             tally.WriteUnits += operation is DeleteOperation ? 1 : OperationUnits.Of(after);
+            var key = (operation.Collection, operation switch { DeleteOperation => "delete", PatchOperation => "patch", _ => "put" });
+            tally.Operations[key] = tally.Operations.GetValueOrDefault(key) + 1;
             if (tally.Measure)
             {
                 tally.Delta += after - before;

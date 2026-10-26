@@ -166,9 +166,15 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
     {
         _responseBytes += 64 + result.Columns.Sum(column => 32L + column.Name.Length + (column.DeclType?.Length ?? 0))
             + (wantRows ? result.Rows.Sum(row => row.Sum(value => 32L + (value.Text?.Length ?? 0) * 3L)) : 0);
-        return _responseBytes <= MaxResponseBytes ? HranaStmtResult.From(result, wantRows)
+        HranaStmtOutcome outcome = _responseBytes <= MaxResponseBytes ? HranaStmtResult.From(result, wantRows)
             : result.RowsAffected > 0 ? HranaStmtResult.From(result, wantRows: false)
             : TooBig;
+        if (outcome is HranaStmtResult)
+        {
+            result.ReadCharge?.Accept();
+        }
+
+        return outcome;
     }
 
     // The core splits the text and runs its statements in order, stopping at the first failure.

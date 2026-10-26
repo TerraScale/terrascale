@@ -354,7 +354,7 @@ public sealed class PostgresWireTests
     }
 
     // The simple-query protocol as psql speaks it: one Query message, every response until ReadyForQuery.
-    private sealed class RawClient(TcpClient tcp, NetworkStream stream) : IAsyncDisposable
+    internal sealed class RawClient(TcpClient tcp, NetworkStream stream) : IAsyncDisposable
     {
         public static async Task<RawClient> ConnectAsync(int port, string key, string database)
         {
@@ -391,6 +391,34 @@ public sealed class PostgresWireTests
                     return [.. messages.Where(entry => entry.Type is 'D' or 'E' or 'C' or 'Z')];
                 }
             }
+        }
+
+        // Parse, bind and describe a portal, then either close it or execute with the requested row limit.
+        public async Task<List<char>> PortalAsync(string sql, int? maxRows)
+        {
+            await SendAsync('P', [0, .. CString(sql), 0, 0]);
+            await SendAsync('B', [0, 0, 0, 0, 0, 0, 0, 0]);
+            await SendAsync('D', [(byte)'P', 0]);
+            if (maxRows is { } limit)
+            {
+                var count = new byte[4];
+                BinaryPrimitives.WriteInt32BigEndian(count, limit);
+                await SendAsync('E', [0, .. count]);
+            }
+            else
+            {
+                await SendAsync('C', [(byte)'P', 0]);
+            }
+
+            await SendAsync('S', []);
+            var messages = new List<char>();
+            do
+            {
+                messages.Add((await ReadAsync()).Type);
+            }
+            while (messages[^1] != 'Z');
+
+            return messages;
         }
 
         public async ValueTask DisposeAsync()

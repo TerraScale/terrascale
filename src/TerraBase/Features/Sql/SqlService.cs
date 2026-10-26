@@ -11,18 +11,19 @@ using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Stats;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
 
 /// <summary>Relational SQL over a database's collections (docs/terrabase/sql/relational-sql.md).</summary>
 internal sealed class SqlService(
-    IStorageEngine engine, IDocumentService documents, IStorageQuota quota, IUsageMeter usage, IMemoryBudget memory, TimeProvider time) : ISqlService
+    IStorageEngine engine, IDocumentService documents, IStorageQuota quota, IUsageMeter usage, IDatabaseStats stats, IMemoryBudget memory, TimeProvider time) : ISqlService
 {
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, memory, new SqlExecutor(documents, time), time, database, canWrite);
+        return new SqlSession(engine, quota, usage, stats, memory, new SqlExecutor(documents, time), time, database, canWrite);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -79,7 +80,7 @@ internal sealed class SqlService(
 /// replay; the rows a transaction writes bill once it commits.
 /// </summary>
 internal sealed class SqlSession(
-    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IMemoryBudget memory, SqlExecutor executor, TimeProvider time, TenantContext database,
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IDatabaseStats stats, IMemoryBudget memory, SqlExecutor executor, TimeProvider time, TenantContext database,
     bool canWrite)
     : ISqlSession
 {
@@ -176,6 +177,12 @@ internal sealed class SqlSession(
                 if (last is SqlError)
                 {
                     break;
+                }
+
+                // Sequence retains its existing executed-read policy; its result has no protocol row projection.
+                if (last is SqlResult result)
+                {
+                    result.ReadCharge?.Accept();
                 }
             }
         }
@@ -298,8 +305,7 @@ internal sealed class SqlSession(
 
         _log.Add((command, Hash(result)));
         _logBytes += size;
-        BillRead(statement, result);
-        return result;
+        return StageRead(statement, result);
     }
 
     // This request's storage transaction, opened and brought up to date by replaying the log; a replayed statement that
@@ -375,14 +381,12 @@ internal sealed class SqlSession(
         {
             // Autocommit keys are never replayed: a throwaway log.
             var outcome = await RunAsync(request, statement, command, new SqlKeys(), cancellationToken, describe).ConfigureAwait(false);
-            if (outcome is SqlResult result && !describe)
+            if (outcome is SqlResult && request.Lease is { } lease && await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false) is SqlError failed)
             {
-                BillRead(statement, result);
+                return failed;
             }
 
-            return outcome is SqlResult && request.Lease is { } lease && await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false) is SqlError failed
-                ? failed
-                : outcome;
+            return outcome is SqlResult result && !describe ? StageRead(statement, result) : outcome;
         }
     }
 
@@ -463,6 +467,14 @@ internal sealed class SqlSession(
             if (request.Tally.Writes > 0)
             {
                 usage.RecordWrites(database, request.Tally.Writes, request.Tally.WriteUnits);
+                foreach (var ((collection, kind), count) in request.Tally.Operations)
+                {
+                    usage.RecordOperation(database, kind, count);
+                    for (var i = 0; i < count; i++)
+                    {
+                        stats.CollectionWrote(database, collection);
+                    }
+                }
             }
 
             return Empty;
@@ -485,19 +497,22 @@ internal sealed class SqlSession(
         _ => null,
     };
 
-    // A read of tables bills each returned row's started 4 KiB, at least one: its text values as UTF-8, 8 bytes per number.
+    // A read of tables stages each returned row's started 4 KiB, at least one: UTF-8 text, 8 bytes per number.
     // Catalog and constant reads bill nothing, and neither do the rows an UPDATE, DELETE or INSERT … SELECT reads.
-    private void BillRead(ParsedSql statement, SqlResult result)
+    private SqlResult StageRead(ParsedSql statement, SqlResult result)
     {
         if (statement is ReadSql { Tables.Count: > 0 })
         {
-            usage.RecordRead(database, result.Rows.Sum(row => Math.Max(1, OperationUnits.Of(row.Sum(value => value.Kind switch
+            var units = result.Rows.Sum(row => Math.Max(1, OperationUnits.Of(row.Sum(value => value.Kind switch
             {
                 SqlValueKind.Text => (long)Encoding.UTF8.GetByteCount(value.Text!),
                 SqlValueKind.Null => 0L,
                 _ => 8L,
-            })))));
+            }))));
+            return result with { ReadCharge = new SqlReadCharge(() => usage.RecordRead(database, units)) };
         }
+
+        return result;
     }
 
     // Bytes a logged statement holds: its text and arguments, as UTF-16.
