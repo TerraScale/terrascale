@@ -49,12 +49,12 @@ internal sealed record SqlAffinityScope(List<(string Name, List<Column>? Columns
             }
 
             var sources = qualifier is null ? [("", scope.Visible)] : scope.Sources.Where(source => Same(source.Name, qualifier)).ToList();
-            if (sources.Any(source => source.Item2 is null))
+            if (sources.Any(source => source.Columns is null))
             {
                 throw new FormatException("SQL source column affinity cannot be inferred");
             }
 
-            var matches = sources.SelectMany(source => source.Item2!).Where(column => Same(column.Name, name)).ToList();
+            var matches = sources.SelectMany(source => source.Columns!).Where(column => Same(column.Name, name)).ToList();
             if (matches.Count > 0)
             {
                 return matches.Count == 1 ? matches[0] : throw new FormatException("SQL column reference is ambiguous");

@@ -14,14 +14,14 @@ internal sealed class SqlAffinityResolver
     private readonly SqlAffinityBudget _budget = new();
     private readonly Func<Query, List<Scope>, List<Column>?> _output;
     private readonly IReadOnlyDictionary<string, SqlTableDefinition> _tables;
-    private readonly Dictionary<string, CommonTableExpression> _ctes = new(SqlIdentifierComparer.Instance);
-    private readonly Dictionary<string, List<Column>> _tableColumns = new(SqlIdentifierComparer.Instance);
-    private readonly Dictionary<Query, List<Column>?> _outputs = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<SetExpression, List<Column>?> _bodies = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Select, Scope> _selects = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Select, Scope> _aliasScopes = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Expression, List<Scope>> _scopes = new(ReferenceEqualityComparer.Instance);
-    private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, CommonTableExpression> _ctes = [with(SqlIdentifierComparer.Instance)];
+    private readonly Dictionary<string, List<Column>> _tableColumns = [with(SqlIdentifierComparer.Instance)];
+    private readonly Dictionary<Query, List<Column>?> _outputs = [with(ReferenceEqualityComparer.Instance)];
+    private readonly Dictionary<SetExpression, List<Column>?> _bodies = [with(ReferenceEqualityComparer.Instance)];
+    private readonly Dictionary<Select, Scope> _selects = [with(ReferenceEqualityComparer.Instance)];
+    private readonly Dictionary<Select, Scope> _aliasScopes = [with(ReferenceEqualityComparer.Instance)];
+    private readonly Dictionary<Expression, List<Scope>> _scopes = [with(ReferenceEqualityComparer.Instance)];
+    private readonly HashSet<object> _visited = [with(ReferenceEqualityComparer.Instance)];
     private int _groups;
 
     public SqlAffinityResolver(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables)
@@ -224,8 +224,8 @@ internal sealed class SqlAffinityResolver
         {
             Affinity = operation is JoinOperator.FullOuter ? null : operation is JoinOperator.RightOuter
                 ? right.Visible.FirstOrDefault(other => Same(other.Name, column.Name)).Affinity : column.Affinity,
-            Ambiguous = operation is JoinOperator.FullOuter ? false : operation is JoinOperator.RightOuter
-                ? right.Visible.FirstOrDefault(other => Same(other.Name, column.Name)).Ambiguous : column.Ambiguous,
+            Ambiguous = operation is not JoinOperator.FullOuter && (operation is JoinOperator.RightOuter
+                ? right.Visible.FirstOrDefault(other => Same(other.Name, column.Name)).Ambiguous : column.Ambiguous),
         } : column));
         _budget.Add(visible, right.Visible.Where(column => !merged.Contains(column.Name)));
         return new Scope(sources, visible);
