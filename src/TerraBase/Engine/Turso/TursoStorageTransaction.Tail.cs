@@ -65,9 +65,9 @@ internal sealed partial class TursoStorageTransaction
     /// Deletes what <see cref="RetentionCut"/> allows, oldest first, at most <see cref="RetentionRows"/> rows and
     /// <see cref="RetentionBytes"/> of after-images (at least one row). Reads only rows below the cut. A delete may stop inside
     /// a transaction: no reader starts below the cut, whose commit row stays, and a peer whose ack the deletion passes
-    /// refills as for any cut (<see cref="RetainsAsync"/>). Returns the rows deleted.
+    /// refills as for any cut (<see cref="RetainsAsync"/>). Returns whether rows below the cut remain.
     /// </summary>
-    internal static int Trim(SqliteConnection connection, SqliteTransaction? transaction, long below, long now, long gone)
+    internal static bool Trim(SqliteConnection connection, SqliteTransaction? transaction, long below, long now, long gone)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -77,7 +77,7 @@ internal sealed partial class TursoStorageTransaction
         command.Parameters.AddWithValue("$gone", gone);
         if (command.ExecuteScalar() is not long cut || cut == 0)
         {
-            return 0;
+            return false;
         }
 
         command.Parameters.Clear();
@@ -108,7 +108,8 @@ internal sealed partial class TursoStorageTransaction
         command.Parameters.Clear();
         command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $bound;";
         command.Parameters.AddWithValue("$bound", bound);
-        return command.ExecuteNonQuery();
+        _ = command.ExecuteNonQuery();
+        return bound < cut;
     }
 
     /// <summary>
@@ -401,9 +402,9 @@ internal sealed partial class TursoStorageTransaction
     /// <see cref="Trim"/> allows is deleted, below <paramref name="backupAnchor"/> unless it too is more than
     /// <see cref="MaxBehindRows"/> change ids behind. Returns the CDC rows left, and the
     /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
-    /// the oldest change id kept.
+    /// the oldest change id kept, and whether the bounded delete left rows below the cut (<see cref="TrimBatchAsync"/>).
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest)> TrimAsync(
+    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest, bool More)> TrimAsync(
         long? backupAnchor, DateTimeOffset now, ReplicaId self, IReadOnlySet<long> farBehind, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
@@ -411,7 +412,7 @@ internal sealed partial class TursoStorageTransaction
         {
             if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
             {
-                return (0L, (long?)null, new List<(long From, long To)>(), 0L);
+                return (0L, (long?)null, new List<(long From, long To)>(), 0L, false);
             }
 
             var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
@@ -470,18 +471,44 @@ internal sealed partial class TursoStorageTransaction
                 evict.ExecuteNonQuery();
             }
 
-            // The backup anchor and the shape frontier hold rows too, but no further back than a peer may: a backup tap that
-            // cannot read (or ship) pinned SYSTEM's whole log, whatever its peers acknowledged (TS-982). Its next read finds
-            // the rows gone, a hole, and its backup starts a new generation from a snapshot.
-            _ = Trim(session.Connection, transaction, backupAnchor is { } below && newest - below <= MaxBehindRows ? below : long.MaxValue,
-                now.ToUnixTimeSeconds(), Member.GoneBefore(now.ToUnixTimeMilliseconds()));
+            var more = Trim(session.Connection, transaction, RetentionBelow(backupAnchor, newest), now.ToUnixTimeSeconds(),
+                Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
             var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
-            return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept);
+            return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept, more);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// The next bounded retention delete of a pass whose <see cref="TrimAsync"/> left rows below the cut, in its own
+    /// transaction so each batch's pages are committed and released (uncaptured). Returns the CDC rows left and whether rows
+    /// below the cut still remain.
+    /// </summary>
+    internal async ValueTask<(long Left, bool More)> TrimBatchAsync(long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        return await RunAsync(() =>
+        {
+            if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
+            {
+                return (0L, false);
+            }
+
+            var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
+            var more = Trim(session.Connection, transaction, RetentionBelow(backupAnchor, newest), now.ToUnixTimeSeconds(),
+                Member.GoneBefore(now.ToUnixTimeMilliseconds()));
+            var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
+            return (left, more);
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // The backup anchor and the shape frontier hold rows too, but no further back than a peer may: a backup tap that cannot
+    // read (or ship) pinned SYSTEM's whole log, whatever its peers acknowledged (TS-982). Its next read finds the rows gone,
+    // a hole, and its backup starts a new generation from a snapshot.
+    private static long RetentionBelow(long? backupAnchor, long newest) =>
+        backupAnchor is { } below && newest - below <= MaxBehindRows ? below : long.MaxValue;
 
     // A peer this far behind in rows has its backlog's bytes measured; past FarBehindBytes it stops holding rows.
     private const long FarBehindRows = 65_536;
