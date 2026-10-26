@@ -111,7 +111,7 @@ public sealed class SqlWriteReplicationTests
     }
 
     // gru, sjc and fra replicating one database through their CDC tailers, each serving the public APIs.
-    private sealed class Cell : IAsyncDisposable
+    internal sealed class Cell : IAsyncDisposable
     {
         public FakeMemberStore Members { get; } = new();
 
@@ -168,7 +168,7 @@ public sealed class SqlWriteReplicationTests
         }
     }
 
-    private sealed class Machine(Cell cell, string region, string[] replicas) : IAsyncDisposable
+    internal sealed class Machine(Cell cell, string region, string[] replicas) : IAsyncDisposable
     {
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-sql-replication-").FullName;
         private readonly FakeS3 _s3 = new();
@@ -181,7 +181,7 @@ public sealed class SqlWriteReplicationTests
 
         public HttpClient Data => _data ?? throw new InvalidOperationException($"{region} is stopped");
 
-        private ManagementApi Api => _api ?? throw new InvalidOperationException($"{region} is stopped");
+        internal ManagementApi Api => _api ?? throw new InvalidOperationException($"{region} is stopped");
 
         public async Task StartAsync()
         {

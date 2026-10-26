@@ -34,7 +34,7 @@ public sealed class WireProtocolTests
         var operations = new List<(uint, int, string)>();
         for (var id = 2u; id < 2 + Faker.Random.UInt(1, 10); id++)
         {
-            var (answered, status, code) = await ExchangeAsync(stream, id, Faker.Random.Byte(3, 255), []);
+            var (answered, status, code) = await ExchangeAsync(stream, id, Faker.Random.Byte(4, 255), []);
             operations.Add((answered - id, status, code));
         }
 
@@ -73,11 +73,13 @@ public sealed class WireProtocolTests
         await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, database.Project, database.Name);
 
         var put = await session.PutAsync(Items, Ulid.NewUlid().ToString(), "{\"n\":1}");
+        var delete = await session.DeleteAsync(Items, Ulid.NewUlid().ToString());
         var missing = await session.GetAsync(Items, Ulid.NewUlid().ToString());
         var badId = await session.GetAsync(Items, "not-a-ulid-but-26-chars-xx");
         var badCollection = await session.GetAsync("Bad Collection!", Ulid.NewUlid().ToString());
 
         await Assert.That((put.Status, put.Code)).IsEqualTo((403, "forbidden_scope"));
+        await Assert.That((delete.Status, delete.Code)).IsEqualTo((403, "forbidden_scope"));
         await Assert.That((missing.Status, missing.Code)).IsEqualTo((404, "not_found"));
         await Assert.That((badId.Status, badId.Code)).IsEqualTo((400, "invalid_document_id"));
         await Assert.That(badCollection.Status).IsEqualTo(400);
@@ -92,7 +94,7 @@ public sealed class WireProtocolTests
         await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, database.Project, database.Name);
 
         // Every request is sent before any answer is awaited; more than run at once on one connection.
-        var answers = await Task.WhenAll(Enumerable.Range(0, Faker.Random.Int(200, 400)).Select(_ => session.SendAsync(Faker.Random.Byte(3, 255), Faker.Random.Bytes(Faker.Random.Int(0, 64)))));
+        var answers = await Task.WhenAll(Enumerable.Range(0, Faker.Random.Int(200, 400)).Select(_ => session.SendAsync(Faker.Random.Byte(4, 255), Faker.Random.Bytes(Faker.Random.Int(0, 64)))));
 
         await Assert.That(answers.Select(answer => (answer.Status, answer.Code)).Distinct()).IsEquivalentTo([(400, "unknown_operation")]);
         await Assert.That(session.Closed.IsCompleted).IsFalse();
