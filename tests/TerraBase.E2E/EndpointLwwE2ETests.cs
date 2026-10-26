@@ -81,8 +81,12 @@ public sealed class EndpointLwwE2ETests
 
     private static Task<JsonNode?[]> MarkersEverywhereAsync(Cluster cluster, Uri uri, bool gru, bool sjc) =>
         Converge.UntilAsync(() => Task.WhenAll(cluster.Regions.Select(region => Docs.ReadAsync(cluster[region], uri))),
-            copies => copies.All(copy => copy is not null && (copy["gru_write"]?.GetValue<int>() == 1) == gru
-                && (copy["sjc_write"]?.GetValue<int>() == 1) == sjc), "Wire replacements clear older markers; field updates retain them");
+            copies => copies.All(copy =>
+            {
+                var gruWritten = copy?["gru_write"]?.GetValue<int>() == 1;
+                var sjcWritten = copy?["sjc_write"]?.GetValue<int>() == 1;
+                return copy is not null && gruWritten == gru && sjcWritten == sjc;
+            }), "Wire replacements clear older markers; field updates retain them");
 
     private sealed class Client(Cluster cluster, string region, HttpClient http, NpgsqlDataSource postgres, WireClient wire) : IAsyncDisposable
     {
