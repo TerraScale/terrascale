@@ -100,8 +100,15 @@ public static partial class McpOAuth
         }
         if (length > MaxRegistrationBytes) return TooLarge();
         JsonElement metadata;
-        try { metadata = JsonSerializer.Deserialize<JsonElement>(bytes.AsSpan(0, length)); }
-        catch (JsonException) { return OAuthError("invalid_client_metadata", "Client metadata must be a JSON object."); }
+        try
+        {
+            // JsonElement decodes strings lazily: validate even ignored fields and property names before persistence.
+            var reader = new Utf8JsonReader(bytes.AsSpan(0, length));
+            while (reader.Read()) if (reader.TokenType is JsonTokenType.String or JsonTokenType.PropertyName) _ = reader.GetString();
+            metadata = JsonSerializer.Deserialize<JsonElement>(bytes.AsSpan(0, length));
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        { return OAuthError("invalid_client_metadata", "Client metadata must be a JSON object."); }
         if (metadata.ValueKind != JsonValueKind.Object) return OAuthError("invalid_client_metadata", "Client metadata must be a JSON object.");
         if (!metadata.TryGetProperty("redirect_uris", out var uris) || uris.ValueKind != JsonValueKind.Array || uris.GetArrayLength() is 0 or > 10 ||
             uris.EnumerateArray().Any(uri => uri.ValueKind != JsonValueKind.String || !ValidRedirect(uri.GetString()!)))
