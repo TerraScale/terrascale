@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.13 — current import contracts
+
+Imports support the published NDJSON format and collection option. Job and preview
+decoders match the current producer fields, with generated ULIDs for imported
+documents; retired missing-primary-key and id-policy fields are removed. Existing
+PostgreSQL/SQLite import operations and explicit preview confirmation are preserved.
+
 ## 0.0.12 — public management and administration
 
 `./management` exposes project-scoped database, placement, backup/import, usage,
