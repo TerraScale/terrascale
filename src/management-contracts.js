@@ -1,26 +1,25 @@
-/** Required capabilities whose producer/runtime admission is still open. */
+/** Remaining contract/qualification gaps; existing named management operations are usable. */
 export const terraScaleReleaseBlockers = Object.freeze({
   management: Object.freeze({
     code: "management_contract_unavailable",
-    owner: "C06/C07 regional management service",
+    owner: "owning public Database schema and Dashboard platform services",
     required: Object.freeze([
-      "resource provisioning",
-      "schema/catalog plan/apply/status",
-      "credential lifecycle",
-      "backups/restore",
-      "imports/exports",
-      "usage",
-      "administration",
+      "durable schema plan/apply/status",
+      "public platform billing REST",
+      "platform administration mutations",
     ]),
   }),
   betterAuth: Object.freeze({
     code: "security_authority_unavailable",
-    owner: "native single-writer security admission and C06/C07",
+    owner: "public Database auth primitives and durable mutation receipts",
     required: Object.freeze([
       "unique insert",
       "compare-and-swap",
       "one-time consume",
       "bounded transactions",
+      "native consumeOne/incrementOne",
+      "callback read-your-writes and rollback",
+      "durable mutation identities",
       "pagination/joins",
       "indexes/migrations",
       "revocation/denial",

@@ -1,6 +1,7 @@
 {
   "producerRevision": "e7fa366ddb289f5612c93d316b316fb92c568151",
   "routes": [
+    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/collections/{collection}/schema/preview","operation":"previewCollectionSchema","scopes":["documents:read","documents:write"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Documents/PreviewCollectionSchemaEndpoint.cs","request":"JsonElement","producerChange":"TerraScale/terrascale#667","contractPin":"contracts/schema-preview/pin.json"},
     {"method":"GET","path":"/backupz","operation":"backupz","scopes":["anonymous"],"requestMediaTypes":[],"statuses":[200,503],"responseMediaType":"application/json","source":"src/TerraBase/Features/Backup/BackupHealthEndpoint.cs","request":"none"},
     {"method":"GET","path":"/health/replication","operation":"replicationHealth","scopes":["anonymous"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Health/ReplicationHealthEndpoint.cs","request":"none"},
     {"method":"GET","path":"/healthz","operation":"healthz","scopes":["anonymous"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Health/HealthzEndpoint.cs","request":"none"},

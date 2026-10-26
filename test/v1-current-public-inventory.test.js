@@ -8,11 +8,11 @@ const current = [...v1Routes.filter(r => r.operation !== "readShape"), ...shapeV
 /** @param {{method: string; path: string}} route */
 const key = route => `${route.method} ${route.path}`;
 
-test("all 85 current public routes are inventoried once, including routes absent from the baseline SDK", () => {
+test("all 86 inventoried public routes are inventoried once, including routes absent from the baseline SDK", () => {
   expect(contract.producerRevision).toBe("e7fa366ddb289f5612c93d316b316fb92c568151");
-  expect(contract.routes).toHaveLength(85);
-  expect(current).toHaveLength(85);
-  expect(new Set(current.map(r => `${r.method} ${r.pathTemplate}`)).size).toBe(85);
+  expect(contract.routes).toHaveLength(86);
+  expect(current).toHaveLength(86);
+  expect(new Set(current.map(r => `${r.method} ${r.pathTemplate}`)).size).toBe(86);
   expect(current.map(r => `${r.method} ${r.pathTemplate}`).sort()).toEqual(contract.routes.map(key).sort());
   for (const route of current) {
     const expected = contract.routes.find(/** @param {{method: string; path: string}} r */ r => key(r) === `${route.method} ${route.pathTemplate}`);

@@ -4,9 +4,9 @@ export {
 } from "./management-contracts.js";
 import { requireTerraScaleCapability } from "./management-contracts.js";
 /**
- * Production Better Auth persistence is required but blocked by security authority
- * and catalog/credential admission. Local development uses the explicit ./local
- * SQLite factory pinned to Better Auth 1.7.2.
+ * Better Auth 1.7.2 persistence awaits public native auth primitives and durable
+ * mutation receipts. Local conditional writes and convergent uniqueness do not
+ * satisfy its consume/increment and callback transaction semantics.
  * @returns {never}
  */
 export function requireTerraScaleBetterAuth() {

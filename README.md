@@ -428,10 +428,44 @@ for the supported subset, merge-patch null semantics and strict compiler setup.
 
 ## Separate and deprecated entrypoints
 
+`@terrascale/sdk/management` exports `createTerraScaleManagementClient` with the
+root client's project credentials. It exposes `databases`, `database(name)`,
+`metrics`, `backupDestination` and `savedQueries`; database handles include
+backups, imports, indexes and schema. Collection `previewSchema(schema, { cursor })`
+observes a bounded page of existing documents without reserving a schema change.
+Repeat identical schema bytes with `nextCursor`; a stale preview must restart.
+
+The same entrypoint exports `createTerraScaleIdentityManagementClient({ apiBaseUrl,
+signInToken })` for named organization, project, member and API-key operations.
+Use the Authentication origin and the platform sign-in JWT, separately from
+project access tokens. Results use `{ ok, value, status }` or `{ ok: false, error,
+status }`; pages accept `limit/after` and return `items/next`. The service enforces
+roles. Mutations are never replayed automatically; deleteProject's 202 means
+pending closure. Store create/rotate key secrets securely when returned once.
+Identity operations also cover invitations, ownership transfer, SSO, organization
+MFA policy, audit and account lifecycle. `createTerraScaleAccountDeletionClient({
+apiBaseUrl })` checks deletion status/history using an explicit receipt capability
+after sign-in stops working. Logical deletion does not certify physical erasure.
+`createTerraScaleProjectIdentityClient({ apiBaseUrl, project, projectApiKey })`
+mints end-user tokens through the public assertion contract; keep the project key
+on your backend and give browsers only the issued short-lived end-user token.
+
+`@terrascale/sdk/admin` exports `createTerraScaleAdministrationClient({ baseUrl,
+token })` with named `databases`, `collections`, `documents` and `document` reads.
+The Database service requires `platform_role=admin`. The old `requireTerraScaleManagement`
+and `requireTerraScaleAdministration` names are deprecated construction aliases
+that now require the corresponding client configuration.
+See the [operation map](docs/evidence/management-operation-map.md) for contract
+pins and omitted producer operations. Durable schema plans, public billing REST
+and administration mutations still need their owning public contracts.
+
 `@terrascale/sdk/ts-auth` retains its separate hosted identity management and OIDC
-client, with its own origin, instance and credentials. Management,
-administration and production Better Auth capabilities remain subject to their
-explicit admission errors; they are not a shortcut into the database transport.
+client, with its own origin, instance and credentials. The server-only
+`@terrascale/sdk/better-auth` entrypoint remains unavailable pending the
+[public auth primitives and durable receipts](docs/evidence/better-auth-producer-audit.md).
+Its pinned Better Auth version is 1.7.2; no production adapter is claimed.
+The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
+in addition to `TB_V1_URL` and `TB_V1_PROJECT`; document-only keys are insufficient.
 Webhook dead-letter replay uses the documented `endpointId:eventId` delivery
 selector; both references must be canonical ULIDs. Entity pages reject null and
 primitive records; recovery-code pages contain strings.
