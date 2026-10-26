@@ -105,6 +105,8 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/libsql/{version}/cursor TsAuth(documents:read) libsqlCursor SQL
         POST /v1/projects/{project}/databases/{database}/libsql/{version}/pipeline TsAuth(documents:read) libsqlPipeline SQL
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
+        POST /v1/projects/{project}/databases/{database}/point-in-time/recover TsAuth(databases:write,documents:write) recoverHistoricalRecords Backups
+        POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview TsAuth(databases:write,documents:read) previewSelectiveRecovery Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
@@ -206,6 +208,8 @@ public sealed class ApiReferenceTests
             (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,429,503"),
+            (project + "/databases/{database}/point-in-time/recovery-preview", "post", "200,400,401,403,404,409,412,413,415,421,429,503"),
+            (project + "/databases/{database}/point-in-time/recover", "post", "200,400,401,403,404,409,412,413,415,421,429,503"),
             (project + "/databases/{database}/collections/{collection}/schema/preview", "post", "200,400,401,403,404,409,413,415,421,503"),
         })
         {
@@ -213,6 +217,13 @@ public sealed class ApiReferenceTests
                 .EnumerateObject().Select(status => status.Name).Order(StringComparer.Ordinal)))
                 .IsEqualTo(statuses).Because($"{method} {path}");
         }
+
+        var recovery = paths.GetProperty(project + "/databases/{database}/point-in-time/recovery-preview").GetProperty("post");
+        await Assert.That(recovery.GetProperty("requestBody").GetProperty("content").GetProperty("application/json")
+            .GetProperty("example").GetProperty("selections")[0].GetProperty("collection").GetString()).IsEqualTo("people");
+        await Assert.That(recovery.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json")
+            .GetProperty("example").GetProperty("records")[0].GetProperty("current").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(recovery.GetProperty("responses").GetProperty("409").GetProperty("description").GetString()).Contains("recovery_erasure_fenced");
 
         var destination = paths.GetProperty(project + "/backup-destination");
         var preview = paths.GetProperty(project + "/databases/{database}/collections/{collection}/schema/preview").GetProperty("post");
