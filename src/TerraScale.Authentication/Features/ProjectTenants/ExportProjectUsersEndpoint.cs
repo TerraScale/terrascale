@@ -13,13 +13,25 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
 /// <summary>Public identity fields only; credentials and authentication state are never serialized.</summary>
-public sealed record DirectoryUserBody(string Id, string Email, bool EmailVerified, DateTimeOffset CreatedAt, bool Disabled, IReadOnlyList<DirectoryProviderBody> LinkedProviders);
+public sealed record DirectoryUserBody(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("email")] string Email,
+    [property: JsonPropertyName("email_verified")] bool EmailVerified,
+    [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+    [property: JsonPropertyName("disabled")] bool Disabled,
+    [property: JsonPropertyName("linked_providers")] IReadOnlyList<DirectoryProviderBody> LinkedProviders);
 
 /// <summary>A verified public provider identity, never provider credentials.</summary>
-public sealed record DirectoryProviderBody(string Provider, string ClientId, string Subject);
+public sealed record DirectoryProviderBody(
+    [property: JsonPropertyName("provider")] string Provider,
+    [property: JsonPropertyName("client_id")] string ClientId,
+    [property: JsonPropertyName("subject")] string Subject);
 
 /// <summary>A bounded directory page with a creation cutoff, not a transaction snapshot.</summary>
-public sealed record DirectoryPageBody(IReadOnlyList<DirectoryUserBody> Items, string? Next, DateTimeOffset CreatedBefore);
+public sealed record DirectoryPageBody(
+    [property: JsonPropertyName("items")] IReadOnlyList<DirectoryUserBody> Items,
+    [property: JsonPropertyName("next")] string? Next,
+    [property: JsonPropertyName("created_before")] DateTimeOffset CreatedBefore);
 
 internal sealed record DirectoryCursor(DateTimeOffset CreatedBefore, string Position);
 

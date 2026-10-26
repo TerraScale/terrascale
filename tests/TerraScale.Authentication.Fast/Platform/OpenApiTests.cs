@@ -34,6 +34,15 @@ public sealed partial class OpenApiTests
         await Assert.That(exported.GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/DirectoryPageBody");
         await Assert.That(exported.GetProperty("headers").TryGetProperty("X-Export-Next", out _)).IsTrue();
 
+        var schemas = document.GetProperty("components").GetProperty("schemas");
+        await Assert.That(schemas.GetProperty("DirectoryPageBody").GetProperty("properties").EnumerateObject().Select(field => field.Name).ToList())
+            .IsEquivalentTo(["items", "next", "created_before"]);
+        await Assert.That(schemas.GetProperty("DirectoryUserBody").GetProperty("properties").EnumerateObject().Select(field => field.Name).ToList())
+            .IsEquivalentTo(["id", "email", "email_verified", "created_at", "disabled", "linked_providers"]);
+        await Assert.That(schemas.GetProperty("DirectoryProviderBody").GetProperty("properties").EnumerateObject().Select(field => field.Name).ToList())
+            .IsEquivalentTo(["provider", "client_id", "subject"]);
+        await Assert.That(schemas.GetProperty("BrandingBody").GetProperty("properties").TryGetProperty("email_message", out _)).IsTrue();
+
         var userInfo = paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get");
         await Assert.That(userInfo.GetProperty("responses").GetProperty("503").GetProperty("content").GetProperty("application/json")
             .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/OAuthErrorBody");
