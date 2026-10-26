@@ -120,6 +120,9 @@ public sealed class Cluster : IAsyncDisposable
     /// <summary>A new project-token client for <c>/sql</c> on the running region. The caller disposes it.</summary>
     public HttpClient Sql(string region) => _sql(region);
 
+    /// <summary>Local socket listeners and a scoped key issued by that node; never opens a production listener.</summary>
+    internal Task<(int Postgres, int Wire, string Key)> SocketsAsync(string region) => RequireLocal().SocketsAsync(region);
+
     /// <summary>Local nodes only: every neutral replay the local edge followed, in order.</summary>
     internal IReadOnlyCollection<LocalEdge.Replay> Replays => RequireLocal().Replays;
 
@@ -789,6 +792,13 @@ public sealed class Cluster : IAsyncDisposable
             var node = _nodes[region];
             var api = node.Api ?? throw new InvalidOperationException($"{region} is down");
             return (api.Server.ClientAddress!, node.Token!, node.DataDirectory);
+        }
+
+        public async Task<(int Postgres, int Wire, string Key)> SocketsAsync(string region)
+        {
+            var server = RunningNode(region).Api!.Server;
+            var key = await server.IssueNarrowedAsync(OrganizationId, _project, null, "documents:read", "documents:write");
+            return (server.PostgresPort, server.WirePort, key);
         }
 
         public async Task StopAsync(string region)
