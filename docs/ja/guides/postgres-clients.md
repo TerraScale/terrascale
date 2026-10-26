@@ -13,7 +13,7 @@ description: Connect psql, node-postgres, psycopg, pgx, Npgsql and JDBC to a Ter
 TerraBase provides a PostgreSQL v3 (PGv3) driver adapter over the TerraBase SQL subset. Postgres driver connectivity does not imply full PostgreSQL SQL, native-type or ORM compatibility. SQL writes replicate across regions like Documents API writes. SQL tables and Documents API collections have different schemas and query contracts, but share a database naming namespace. The examples use `sql_customers`, separate from the Documents quickstart's `customers` collection.
 
 ::: tip Verified
-Checked on 2026-10-24 against production (`pg.terrascale.tech`) with a dashboard API key as the password: `psql` 18, `pg` 8.23.1 and `pgx` v5.11.0 ran tables, writes, joins, parameters, prepared statements, transactions and indexes; a read-only key got `42501` on writes, and a revoked key was refused within a minute.
+Checked on 2026-10-24 against production (`pg.terrascale.tech`) with a dashboard API key as the password: `psql` 18, `pg` 8.23.1 and `pgx` v5.11.0 ran tables, writes, joins, parameters, prepared statements, transactions and indexes; a read-only key got `42501` on writes. This dated driver check does not validate the revocation bounds below.
 :::
 
 The [Drizzle](/ja/guides/orm-drizzle), [Prisma](/ja/guides/orm-prisma) and [SQLAlchemy](/ja/guides/orm-sqlalchemy) guides use SQLite/libSQL, not this adapter. The current live adapter does not support `RETURNING`, savepoints, schema-qualified names or general PostgreSQL catalog reflection; native binary UUID, numeric, temporal, bytea and array bindings may be rejected. Foreign-key declarations are not enforced. Test your exact ORM/provider, generated SQL and native types; the dated verification above covers only the listed driver flows.
@@ -27,7 +27,7 @@ postgresql://{label}@pg.terrascale.tech:5432/{database}?sslmode=verify-full&sslr
 | Part | Value |
 | --- | --- |
 | `{label}` | Any user name. TerraBase ignores it; use it to tell your applications apart in your own logs. |
-| Password (supply separately via `PGPASSWORD`) | The password: an API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. A revoked key is refused within about a minute. |
+| Password (supply separately via `PGPASSWORD`) | The password: an API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. Revocation and expiry refuse new connections and statements within 2 seconds in every region; open sessions close within 3 seconds. See [Authentication](/ja/guides/authentication#revocation-and-rotation). |
 | `{database}` | The database name in the key's project. With an organization-wide key, use `{projectId}/{name}`, written `{projectId}%2F{name}` in a URL. |
 | `sslmode=verify-full&sslrootcert=system` | For libpq 16+: require TLS and verify the certificate chain and hostname using installed system CA certificates. Encryption alone (`require`) does not guarantee hostname verification. |
 
@@ -201,7 +201,8 @@ Drivers that fetch results in batches through a cursor need that turned off: for
 | SQLSTATE | Meaning | What to do |
 | --- | --- | --- |
 | `23505` | Unique or primary key violation | Fix the data, or handle the duplicate |
-| `28000` | Connection refused: TLS missing | Add `sslmode=require` |
+| `28000` | FATAL `key_revoked:` / `key_expired:`, or TLS missing | For key errors, stop retrying and obtain a new key or rotated secret. For TLS, use the verifying settings above. |
+| `57P03` | FATAL `auth_unavailable:`: key validity cannot be confirmed | Retry the connection after 1 second, within a deadline; reconcile uncertain writes before replaying them. |
 | `28P01` | Authentication failed | Check the API key and the database name |
 | `40001` | Transaction conflict at `COMMIT` | Retry the whole transaction |
 | `42501` | The key cannot do this, for example a write with a read-only key | Use a key with `documents:write` |
@@ -212,8 +213,10 @@ Drivers that fetch results in batches through a cursor need that turned off: for
 
 ## Troubleshooting
 
-- **`28000` on connect.** Use the verifying TLS settings above: `sslmode=verify-full&sslrootcert=system` for libpq 16+, `SSL Mode=VerifyFull` for Npgsql, or the explicit Node `ssl` object. Keep certificate verification enabled.
-- **`28P01` on connect.** The API key is wrong, revoked or from another project, or the database name does not exist in the key's project. With an organization-wide key, use `{projectId}%2F{name}` as the database.
+- **`28000` with `key_revoked:` or `key_expired:`.** The refusal is permanent for that key or secret and its tokens. Replace the credential. Existing sessions, idle or busy, close within 3 seconds and open transactions roll back.
+- **`57P03` with `auth_unavailable:`.** Authentication is temporarily unavailable. Retry after 1 second, within a deadline.
+- **`28000` for missing TLS.** Use the verifying TLS settings above: `sslmode=verify-full&sslrootcert=system` for libpq 16+, `SSL Mode=VerifyFull` for Npgsql, or the explicit Node `ssl` object. Keep certificate verification enabled.
+- **`28P01` on connect.** The API key is wrong or from another project, or the database name does not exist in the key's project. With an organization-wide key, use `{projectId}%2F{name}` as the database.
 - **`0A000`.** The statement or protocol feature is not supported; check [Supported](#supported). GUI tools that browse the system catalog are a common source.
 - **`40001` at `COMMIT`.** Another writer changed what your transaction read. Retry from `BEGIN`.
 
