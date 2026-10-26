@@ -50,7 +50,7 @@ public static class ApiKeyEndpoints
             }
         }).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
             .WithSummary("Create a project key and reveal its secret once")
-            .WithDescription("Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
+            .WithDescription("Uses the original user session at ts-auth. " + ApiKeyService.ScopeDescription + " expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
             .Accepts<CreateProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>

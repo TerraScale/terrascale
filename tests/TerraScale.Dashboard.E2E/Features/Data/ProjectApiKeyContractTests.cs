@@ -60,7 +60,7 @@ public sealed class ProjectApiKeyContractTests
         var context = Context();
         var service = new ApiKeyService(wire, TimeProvider.System);
         var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId,
-            ["database:read", "database:write"], 0, [], CancellationToken.None);
+            ["documents:read", "documents:write"], 0, [], CancellationToken.None);
         using var request = JsonDocument.Parse(wire.Body!);
         await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
         await Assert.That(request.RootElement.TryGetProperty("allowed_cidrs", out _)).IsFalse();
@@ -87,7 +87,7 @@ public sealed class ProjectApiKeyContractTests
         var now = new DateTimeOffset(2026, 10, 23, 12, 0, 0, 750, TimeSpan.Zero);
         using var wire = new Wire();
         var created = await new ApiKeyService(wire, new FixedTime(now)).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
-            ["database:read", "database:write"], days, [], CancellationToken.None);
+            ["documents:read", "documents:write"], days, [], CancellationToken.None);
         using var request = JsonDocument.Parse(wire.Body!);
         var expected = new DateTimeOffset(2026, 10, 23, 12, 0, 0, TimeSpan.Zero).AddDays(days);
         await Assert.That(request.RootElement.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(expected);
@@ -103,7 +103,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire();
         AccountAccessException? rejected = null;
-        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", "", ["database:read"], days, [], CancellationToken.None); }
+        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", "", ["documents:read"], days, [], CancellationToken.None); }
         catch (AccountAccessException error) { rejected = error; }
         await Assert.That(rejected?.StatusCode).IsEqualTo(422);
         await Assert.That(wire.Requests).IsEqualTo(0);
@@ -114,7 +114,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire { Failure = "expiry" };
         HttpRequestException? rejected = null;
-        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId, ["database:read", "database:write"], 30, [], CancellationToken.None); }
+        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 30, [], CancellationToken.None); }
         catch (HttpRequestException error) { rejected = error; }
         await Assert.That(rejected?.Message).IsEqualTo("Credential issuance returned different restrictions.");
     }
@@ -205,7 +205,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire();
         var created = await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
-            ["database:read", "database:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None);
+            ["documents:read", "documents:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None);
         using var request = JsonDocument.Parse(wire.Body!);
         await Assert.That(request.RootElement.GetProperty("allowed_cidrs").EnumerateArray().Select(item => item.GetString()!))
             .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, CollectionOrdering.Matching);

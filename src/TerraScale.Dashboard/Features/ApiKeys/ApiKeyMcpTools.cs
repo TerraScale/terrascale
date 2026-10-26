@@ -31,7 +31,7 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
 
     [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires an owner or admin role.")]
     public Task<ProjectApiKeySecret> CreateApiKey(string name,
-        [Description("At least one of documents:read, documents:write, databases:read, databases:write. database:read and database:write are accepted aliases for document permissions.")] string[] scopes,
+        [Description(ApiKeyService.ScopeDescription)] string[] scopes,
         string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null) =>
         CreateCredentialAsync(Scope(organizationId, projectId), "api-key", name, scopes, databaseId, expiresInDays, allowedCidrs ?? []);
 
