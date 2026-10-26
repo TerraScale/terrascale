@@ -133,7 +133,7 @@ func importFile(ctx context.Context, db *v1.Database, format, path, collection s
 		if job.Preview == nil {
 			return importFailed(job)
 		}
-		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		w := tabwriter.NewWriter(progressOutput(out), 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "SOURCE\tCOLLECTION\tROWS\tISSUES")
 		for _, t := range job.Preview.Tables {
 			if !t.Excluded {
@@ -157,6 +157,9 @@ func importFile(ctx context.Context, db *v1.Database, format, path, collection s
 	}
 	if job.State != "completed" || job.Progress == nil {
 		return importFailed(job)
+	}
+	if jsonMode(out) {
+		return emitJSON(out, job)
 	}
 	_, err = fmt.Fprintf(out, "Imported %d rows into %s\n", job.Progress.RowsWritten, job.Database)
 	return err
