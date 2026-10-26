@@ -366,7 +366,7 @@ describe("V1ShapeSubscription", () => {
         () => new Response(new ReadableStream({ start(c) { c.error(new Error("reset")); } }), { status: 200, headers: { "content-type": "application/json" } }),
         () => log({ next: "4", upToDate: true, cursor: "51", ops: [update] }),
       ]);
-      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(4) });
+      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(5) });
       await vi.advanceTimersByTimeAsync(249);
       expect(requests).toHaveLength(5);
       await vi.advanceTimersByTimeAsync(1);

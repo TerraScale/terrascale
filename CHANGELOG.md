@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.11 — read replica isolation and freshness
+
+Persisted shape replicas bind to their service, project, database, collection and
+filter. Authorization denial clears local documents and freshness; transient
+disconnection marks the view stale while retrying the same checkpoint. Closing
+a subscription settles even when a replica store never finishes loading or saving.
+
 ## 0.0.10 — production contract fixes
 
 The named hosted-auth token operation accepts explicit project API-key grants
