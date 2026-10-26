@@ -182,9 +182,11 @@ type TokenSource struct {
 }
 
 type flight struct {
-	done  chan struct{}
-	token string
-	err   error
+	done    chan struct{}
+	token   string
+	err     error
+	cancel  context.CancelFunc
+	waiters int
 }
 
 func newSource(hc *http.Client, fetch func(context.Context, *http.Client) (*tokenResponse, error)) *TokenSource {
@@ -205,6 +207,9 @@ func noRedirects(hc *http.Client) *http.Client {
 // Token returns a valid access token. A request that fails is not cached:
 // the next call requests again.
 func (s *TokenSource) Token(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	if s.token != "" && s.now().Before(s.refreshAt) {
 		token := s.token
@@ -213,14 +218,27 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 	}
 	f := s.flight
 	if f == nil {
-		f = &flight{done: make(chan struct{})}
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		f = &flight{done: make(chan struct{}), cancel: cancel}
 		s.flight = f
-		// The request outlives a caller that gives up: others may wait on it.
-		go s.run(context.WithoutCancel(ctx), f)
+		go s.run(fetchCtx, f)
 	}
+	f.waiters++
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		f.waiters--
+		if f.waiters == 0 && s.flight == f {
+			s.flight = nil
+			f.cancel()
+		}
+	}()
 	select {
 	case <-f.done:
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		return f.token, f.err
 	case <-ctx.Done():
 		return "", ctx.Err()
@@ -228,8 +246,7 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 }
 
 func (s *TokenSource) run(ctx context.Context, f *flight) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+	defer f.cancel()
 	start := s.now()
 	res, err := s.fetch(ctx, s.hc)
 	var lifetime time.Duration
@@ -242,12 +259,14 @@ func (s *TokenSource) run(ctx context.Context, f *flight) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err == nil {
+	if err == nil && s.flight == f && ctx.Err() == nil {
 		s.token, s.refreshAt = res.AccessToken, start.Add(lifetime-min(time.Minute, lifetime/2))
 		f.token = res.AccessToken
 	}
 	f.err = err
-	s.flight = nil
+	if s.flight == f {
+		s.flight = nil
+	}
 	close(f.done)
 }
 

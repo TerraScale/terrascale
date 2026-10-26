@@ -140,16 +140,31 @@ func TestCallerCancelLeavesTheRequestToOthers(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error)
+	done := make(chan error, 1)
 	go func() { _, err := s.Token(ctx); done <- err }()
-	time.Sleep(20 * time.Millisecond)
+	live := make(chan string, 1)
+	go func() { token, _ := s.Token(t.Context()); live <- token }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.mu.Lock()
+		joined := s.flight != nil && s.flight.waiters == 2
+		s.mu.Unlock()
+		if joined {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatal("waiters did not join")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled caller: %v", err)
+		t.Fatal(err)
 	}
 	close(release)
-	if tok, err := s.Token(t.Context()); err != nil || tok != "kept" || srv.hits.Load() != 1 {
-		t.Fatalf("second caller: %q %v, %d requests", tok, err, srv.hits.Load())
+	if token := <-live; token != "kept" || srv.hits.Load() != 1 {
+		t.Fatalf("live caller: %q, %d requests", token, srv.hits.Load())
 	}
 }
 
