@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.ComponentModel;
 
 namespace TerraScale.Dashboard.Features.Organizations;
@@ -7,9 +8,10 @@ public sealed record OrganizationProjectResult(string Id, string OrganizationId,
 public sealed record OrganizationMemberView(string Id, string Name, string Email, string Role, bool IsOwner, bool IsSelf, bool CanEdit, string JoinedAt);
 public sealed record OrganizationRoleCounts(int Owner, int Member, int Viewer, int Admin);
 public sealed record OrganizationMemberList(IReadOnlyList<OrganizationMemberView> Members,
-    [property: Description("Active members by role across the whole organization.")] OrganizationRoleCounts RoleCounts);
+    [property: Description("Active members by role across the whole organization.")] OrganizationRoleCounts RoleCounts,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
 public sealed record OrganizationInvitationView(string Id, string Email, string Role, string Status, string ExpiresAt, bool Open);
-public sealed record OrganizationInvitationList(IReadOnlyList<OrganizationInvitationView> Invitations);
+public sealed record OrganizationInvitationList(IReadOnlyList<OrganizationInvitationView> Invitations, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
 public sealed record OrganizationIssuedInvitation(OrganizationInvitationView Invitation,
     [property: Description("One-time invitation link path. Prefix it with the dashboard origin and share it with the invitee; it is not shown again.")] string InviteUrl);
 public sealed record OrganizationInvitationPreview(string OrganizationId, string OrganizationName,

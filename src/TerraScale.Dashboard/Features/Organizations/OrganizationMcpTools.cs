@@ -69,7 +69,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     [McpServerTool(Name = "list_members", Title = "List members", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's active members with their roles, optionally filtered by name, email, or role.")]
     public Task<OrganizationMemberList> ListMembers([Description("Case-insensitive filter on member name or email.")] string search = "",
         [Description("Only members with this role: owner, admin, member, or viewer.")] string role = "",
-        [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
+        [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "") => Invoke(async () =>
     {
         if (role is not ("" or "all" or "owner" or "admin" or "member" or "viewer")) throw new AccountAccessException("Role must be owner, admin, member, or viewer.", 400);
         var context = await FreshAsync(organizationId, projectId);
@@ -81,17 +82,20 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
                 member.UserId == context.Organization!.OwnerUserId || member.Role == "owner", member.UserId == context.UserId,
                 context.CanManage && member.UserId != context.UserId && member.Role != "owner",
                 member.CreatedAt != DateTimeOffset.MinValue ? member.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd") : member.JoinedOn?.ToString("yyyy-MM-dd") ?? "")).ToArray();
-        return new OrganizationMemberList(matching, new(members.Count(member => member.Role == "owner"), members.Count(member => member.Role == "member"),
-            members.Count(member => member.Role == "viewer"), members.Count(member => member.Role == "admin")));
+        var page = CursorPaging.Page(matching, member => member.Id, CursorPaging.Scope(context, "members", search.Trim(), role), limit, after);
+        return new OrganizationMemberList(page.Items, new(members.Count(member => member.Role == "owner"), members.Count(member => member.Role == "member"),
+            members.Count(member => member.Role == "viewer"), members.Count(member => member.Role == "admin")), page.NextCursor, page.HasMore, page.Limit);
     });
 
-    [McpServerTool(Name = "list_invitations", Title = "List invitations", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's invitations with their status and expiry, pending first.")]
-    public Task<OrganizationInvitationList> ListInvitations([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
+    [McpServerTool(Name = "list_invitations", Title = "List invitations", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's invitations with their status and expiry, ordered by immutable ID.")]
+    public Task<OrganizationInvitationList> ListInvitations([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "") => Invoke(async () =>
     {
         var context = await FreshAsync(organizationId, projectId);
         var snapshot = await access.ReadAsync(context, Cancellation);
         var rows = snapshot.Invitations.Select(invite => View(invite.Id, invite.Email, invite.Role, invite.Status, invite.ExpiresAt));
-        return new OrganizationInvitationList(rows.OrderBy(invite => invite.Status != "Pending").ThenBy(invite => invite.Email).ToArray());
+        var page = CursorPaging.Page(rows, invite => invite.Id, CursorPaging.Scope(context, "invitations"), limit, after);
+        return new OrganizationInvitationList(page.Items, page.NextCursor, page.HasMore, page.Limit);
     });
 
     [McpServerTool(Name = "invite_member", Title = "Invite member", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Invite an email address to an organization and return a one-time invitation link. Requires the owner or admin role and plan member capacity.")]

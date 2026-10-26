@@ -14,12 +14,15 @@ namespace TerraScale.Dashboard.Features.Databases;
 public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, BackupService backups)
 {
     [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
-    public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null)
+    public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "")
     {
         var context = Scope(organizationId, projectId);
         DatabaseService.Scope(context);
         await databases.SyncAsync(context, Cancellation);
-        return new McpDatabaseList(context.Project!.Databases.Values.OrderBy(db => db.Name, StringComparer.Ordinal).Select(DatabaseOutput).ToArray());
+        var page = CursorPaging.Page(context.Project!.Databases.Values.Select(DatabaseOutput), db => db.Id,
+            CursorPaging.Scope(context, "databases"), limit, after);
+        return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
     }
 
     [McpServerTool(Name = "get_database", Title = "Get database", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show one database's status, regions, storage totals, and backup state.")]
@@ -93,7 +96,7 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
 }
 
 public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions);
-public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases);
+public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
 public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
     string Endpoint, IReadOnlyList<string> Regions,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Collections,

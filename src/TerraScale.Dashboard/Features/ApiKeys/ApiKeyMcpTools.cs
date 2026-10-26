@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
@@ -10,7 +11,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys;
 public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys, AccountService accounts)
 {
     [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API keys and machine-to-machine (M2M) clients without their secrets.")]
-    public async Task<McpCredentialList> ListApiKeys(string kind = "", string status = "", string databaseId = "", string search = "", string? organizationId = null, string? projectId = null)
+    public async Task<McpCredentialList> ListApiKeys(string kind = "", string status = "", string databaseId = "", string search = "", string? organizationId = null, string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "")
     {
         if (kind is not ("" or "api-key" or "m2m")) throw new AccountAccessException("Kind must be api-key or m2m.", 422);
         if (status is not ("" or "active" or "inactive")) throw new AccountAccessException("Status must be active or inactive.", 422);
@@ -18,8 +20,10 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
         search = search.Trim();
         var list = await keys.ListAsync(context, Cancellation);
-        return new(list.Where(key => kind != "m2m" && (status.Length == 0 || (status == "active") == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
-            && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata).ToArray());
+        var page = CursorPaging.Page(list.Where(key => kind != "m2m" && (status.Length == 0 || (status == "active") == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
+            && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata),
+            key => key.KeyId, CursorPaging.Scope(context, "credentials", kind, status, databaseId, search), limit, after);
+        return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
     }
 
     [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires an owner or admin role.")]
@@ -61,5 +65,5 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     }
 }
 
-public sealed record McpCredentialList(IReadOnlyList<ProjectCredentialMetadata> Credentials);
+public sealed record McpCredentialList(IReadOnlyList<ProjectCredentialMetadata> Credentials, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
 public sealed record McpCredentialRevoked(string KeyId, bool Revoked);

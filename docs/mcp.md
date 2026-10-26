@@ -55,6 +55,25 @@ and revoked on **Profile → Access tokens**. Clients and codes are stored in
 the `dashboard_mcp_oauth_clients` and `dashboard_mcp_oauth_codes`
 collections.
 
+## List continuation
+
+`list_api_keys`, `list_databases`, `list_backups`, `list_members`,
+`list_invitations`, `list_saved_queries`, `auth_list_clients`, and
+`list_query_subscriptions` accept `limit` (1–100, default 100) and `after`.
+They retain their named result arrays and add `limit`, `nextCursor`, and
+`hasMore`. Pass `nextCursor` unchanged as `after` until `hasMore` is false;
+the terminal cursor is explicitly null. Invalid limits/cursors are tool errors.
+Items use ascending ordinal immutable-ID order, independent of display names.
+Keep scope and filters unchanged; page size may change. Cursors select positions,
+not snapshots: concurrent inserts before the checkpoint need a fresh traversal.
+
+The source reads keys, databases, members and invitations 100 at a time, failing
+instead of truncating after 100 upstream pages. Backups drain 100-item pages;
+OAuth applications and saved-query/subscription metadata are complete sources.
+The browser document REST endpoint uses the same continuation fields and returns
+`documents`; native TerraBase cursors survive empty filtered pages. Its limit is
+1–100, default 100; upstream may end a page early for its byte budget.
+
 ### Personal access tokens
 
 Each request needs `Authorization: Bearer <personal access token>`. Users

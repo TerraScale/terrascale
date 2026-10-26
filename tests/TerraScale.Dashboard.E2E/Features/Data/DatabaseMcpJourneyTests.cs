@@ -112,7 +112,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await ErrorAsync(replica, "list_documents", new(docFields) { ["after"] = "3", ["sort"] = "name" });
             await ErrorAsync(replica, "list_documents", new(docFields) { ["limit"] = 101 });
             using (var apiDocuments = await replica.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=users"))
-                await Assert.That((await ReadJsonAsync(apiDocuments)).GetArrayLength()).IsEqualTo(31);
+                await Assert.That((await ReadJsonAsync(apiDocuments)).GetProperty("documents").GetArrayLength()).IsEqualTo(31);
 
             var reference = new Dictionary<string, object?>(docFields) { ["documentId"] = "01K78CVSTMER00000000000000" };
             var original = await CallAsync(replica, "get_document", new(reference) { ["includeVersion"] = true });
@@ -180,6 +180,21 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(savedIds.Distinct().Count()).IsEqualTo(2);
             var queries = await CallAsync(replica, "list_saved_queries");
             await Assert.That(savedIds.All(id => queries.GetProperty("queries").EnumerateArray().Any(query => query.GetProperty("id").GetString() == id))).IsTrue();
+            var traversed = new List<string>();
+            string? afterQuery = null;
+            do
+            {
+                var queryPage = await CallAsync(replica, "list_saved_queries", new() { ["limit"] = 1, ["after"] = afterQuery ?? "" });
+                var ids = queryPage.GetProperty("queries").EnumerateArray().Select(query => query.GetProperty("id").GetString()!).ToArray();
+                await Assert.That(ids.Length).IsLessThanOrEqualTo(1);
+                await Assert.That(ids.Any(traversed.Contains)).IsFalse();
+                traversed.AddRange(ids);
+                afterQuery = queryPage.GetProperty("nextCursor").GetString();
+                await Assert.That(queryPage.GetProperty("hasMore").GetBoolean()).IsEqualTo(afterQuery is not null);
+            } while (afterQuery is not null);
+            await Assert.That(savedIds.All(traversed.Contains)).IsTrue();
+            await ErrorAsync(replica, "list_saved_queries", new() { ["after"] = "bad" });
+            await ErrorAsync(replica, "list_saved_queries", new() { ["limit"] = 0 });
             using (var apiQueries = await replica.GetAsync("/api/v1/dashboard/data/saved-queries"))
                 await Assert.That((await ReadJsonAsync(apiQueries)).EnumerateArray().Any(query => query.GetProperty("id").GetString() == savedIds[0])).IsTrue();
             foreach (var id in savedIds.ToArray()) await CallAsync(replica, "delete_saved_query", new() { ["queryId"] = id });

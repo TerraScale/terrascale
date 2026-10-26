@@ -145,8 +145,14 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     }
 
     [McpServerTool(Name = "list_saved_queries", Title = "List saved queries", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the SQL queries saved in a project.")]
-    public async Task<McpSavedQueries> SavedQueries(string? organizationId = null, string? projectId = null) =>
-        new((await saved.ListAsync(Scope(organizationId, projectId), Cancellation)).Select(SavedQueryOutput).ToArray());
+    public async Task<McpSavedQueries> SavedQueries(string? organizationId = null, string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "")
+    {
+        var context = Scope(organizationId, projectId);
+        var page = CursorPaging.Page((await saved.ListAsync(context, Cancellation)).Select(SavedQueryOutput), query => query.Id,
+            CursorPaging.Scope(context, "saved-queries"), limit, after);
+        return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
+    }
 
     [McpServerTool(Name = "save_query", Title = "Save query", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Save a read-only SQL query for everyone in the project. Requires write access.")]
     public async Task<McpSavedQuery> SaveQuery(string name, string sql, string? organizationId = null, string? projectId = null) =>
@@ -228,4 +234,4 @@ public sealed record McpRecommendationApplied(string RecommendationId, string Da
 public sealed record McpMigration(string State, int Completed, int Total, int Percent, string Watermark);
 public sealed record McpIndexMigration([property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] McpMigration? Migration);
 public sealed record McpSavedQuery(string Id, string Name, string Sql, DateTimeOffset CreatedAt);
-public sealed record McpSavedQueries(IReadOnlyList<McpSavedQuery> Queries);
+public sealed record McpSavedQueries(IReadOnlyList<McpSavedQuery> Queries, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
