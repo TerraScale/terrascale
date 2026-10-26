@@ -1,5 +1,5 @@
-using SqlParser.Ast;
 using SqlParser;
+using SqlParser.Ast;
 using SqlParser.Dialects;
 using SqlParser.Tokens;
 
@@ -34,8 +34,11 @@ internal static partial class SqlParse
     private static AddColumnSql AddColumn(Statement.AlterTable alter)
     {
         const string supported = "ALTER TABLE supports ADD [COLUMN] name [type] [NULL or DEFAULT NULL] only";
-        if (alter is not { IfExists: false, Only: false, Location: null, OnCluster: null,
-            Operations: [AlterTableOperation.AddColumn { IfNotExists: false, ColumnPosition: null, ColumnDef: var column }] })
+        if (alter is not
+            {
+                IfExists: false, Only: false, Location: null, OnCluster: null,
+                Operations: [AlterTableOperation.AddColumn { IfNotExists: false, ColumnPosition: null, ColumnDef: var column }],
+            })
         {
             throw new FormatException(supported);
         }

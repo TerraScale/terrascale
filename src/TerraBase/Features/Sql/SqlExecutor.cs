@@ -1,13 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
 using SqlParser;
-using SqlParser.Ast;
 using SqlParser.Dialects;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Primitives;
+using ColumnDef = SqlParser.Ast.ColumnDef;
+using Statement = SqlParser.Ast.Statement;
 
 namespace TerraBase.Features.Sql;
 
@@ -152,7 +153,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         {
             if (sql is not null && new Parser().ParseSql(sql, new SQLiteDialect()) is [Statement.CreateTable { Element: var create }])
             {
-                var text = (create with { Columns = new Sequence<ColumnDef>([.. create.Columns, column]) }).ToSql();
+                var text = (create with { Columns = [.. create.Columns, column] }).ToSql();
                 return new Parser().ParseSql(text, new SQLiteDialect()) is [Statement.CreateTable] ? text : null;
             }
         }
