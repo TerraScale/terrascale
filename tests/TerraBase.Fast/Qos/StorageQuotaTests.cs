@@ -36,9 +36,11 @@ public sealed class StorageQuotaTests
         await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
 
         // Replacing a full table in one transaction has no net growth; include a just-inserted row in the drop.
-        await SqlApi.OkAsync(api, "INSERT INTO t VALUES (2, 'x')", "DROP TABLE t", create, insert);
+        await SqlApi.OkAsync(api, "INSERT INTO t VALUES (2, 'x')", "DROP TABLE t",
+            "CREATE TABLE replacement (id INTEGER PRIMARY KEY, body TEXT)", "INSERT INTO replacement VALUES (1, '1234567890')");
+        await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM replacement"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-        await SqlApi.OkAsync(api, "DROP TABLE t");
+        await SqlApi.OkAsync(api, "DROP TABLE replacement");
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Data(21))).Status).IsEqualTo(HttpStatusCode.Created);
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
     }
