@@ -6,11 +6,9 @@ using System.Text.Json;
 
 namespace TerraScale.DotNet.Tests;
 
-public sealed class TerraScaleAuthHeadlessTokenTests
+public sealed class TerraScaleAuthOidcTokenTests
 {
     [Test]
-    [Arguments("password")]
-    [Arguments("email-code")]
     [Arguments("exchange")]
     [Arguments("client-credentials")]
     [Arguments("refresh")]
@@ -27,8 +25,6 @@ public sealed class TerraScaleAuthHeadlessTokenTests
         TerraScaleAuthTokenResponse? tokens = null;
         switch (operation)
         {
-            case "password": tokens = await client.Headless.SignInWithPasswordAsync("id: é+", "secret+= é", "a+b@example.test", "p&=+é", IPAddress.Parse("192.0.2.1"), "openid email offline_access"); break;
-            case "email-code": tokens = await client.Headless.SignInWithEmailCodeAsync("id: é+", "secret+= é", "a+b@example.test", "123456", IPAddress.Parse("2001:db8::1"), "pending+&=é", "openid email"); break;
             case "exchange": tokens = await client.Oidc.ExchangeTokenAsync("id: é+", "secret+= é", "subject+&=é", organization, project, "documents:read documents:write"); break;
             case "client-credentials": tokens = await client.Oidc.RequestClientCredentialsTokenAsync("id: é+", "secret+= é", "documents:read", project); break;
             case "refresh": tokens = await client.Oidc.RefreshTokenAsync("id: é+", "secret+= é", "refresh+&=é"); break;
@@ -49,7 +45,7 @@ public sealed class TerraScaleAuthHeadlessTokenTests
         }
         await Assert.That(handler.MediaType).IsEqualTo("application/x-www-form-urlencoded");
         var form = DecodeForm(handler.Body!);
-        if (operation is "password" or "email-code" or "exchange")
+        if (operation == "exchange")
         {
             await Assert.That(handler.Auth!.Scheme).IsEqualTo("Basic");
             var credentials = Encoding.ASCII.GetString(Convert.FromBase64String(handler.Auth.Parameter!)).Split(':');
@@ -66,20 +62,6 @@ public sealed class TerraScaleAuthHeadlessTokenTests
         }
         switch (operation)
         {
-            case "password":
-                await Assert.That(form["grant_type"]).IsEqualTo("urn:terrascale:params:oauth:grant-type:password");
-                await Assert.That(form["password"]).IsEqualTo("p&=+é");
-                await Assert.That(form["email"]).IsEqualTo("a+b@example.test");
-                await Assert.That(form["ip_address"]).IsEqualTo("192.0.2.1");
-                await Assert.That(form["scope"]).IsEqualTo("openid email offline_access");
-                await Assert.That(form.Count).IsEqualTo(5); break;
-            case "email-code":
-                await Assert.That(form["grant_type"]).IsEqualTo("urn:terrascale:params:oauth:grant-type:email-code");
-                await Assert.That(form["code"]).IsEqualTo("123456");
-                await Assert.That(form["pending_token"]).IsEqualTo("pending+&=é");
-                await Assert.That(form["ip_address"]).IsEqualTo("2001:db8::1");
-                await Assert.That(form["scope"]).IsEqualTo("openid email");
-                await Assert.That(form.Count).IsEqualTo(6); break;
             case "exchange":
                 await Assert.That(form["grant_type"]).IsEqualTo("urn:ietf:params:oauth:grant-type:token-exchange");
                 await Assert.That(form["subject_token_type"]).IsEqualTo("urn:ietf:params:oauth:token-type:access_token");

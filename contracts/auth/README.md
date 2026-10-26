@@ -15,7 +15,7 @@ Use `TerraScaleAuthClient` with `InstanceSlug = "terrascale"` and the trusted au
 - Project methods: Create/List/Get/Rename/DeleteProjectAsync; ListProjectMembersAsync, SetProjectMemberRoleAsync, RemoveProjectMemberAsync. DeleteProjectAsync returns `bool` the same way (204 `true`, 202 `false`: the project still exists until a later call returns `true`); 409 `not_empty`, `closure_conflict` or `binding_conflict` changes nothing. Any other success status is `invalid_response`.
 - Key methods: Create/List/Get/Revoke/RotateOrganizationApiKey(s)Async and the equivalent Project methods. Create takes `TerraScaleAuthPlatformCreateApiKey`; rotate takes optional `TerraScaleAuthPlatformRotateApiKey`. Create/rotate return `TerraScaleAuthPlatformApiKeySecret(ApiKey, Key)`. Never persist/log Key as a DTO; display the secret once. Revocation prevents new issuance; already-issued exchanged tokens live at most 60 seconds. `LastUsedAt` is the last successful token exchange (null when never used; at most five minutes stale).
 
-Hosted sign-in uses OIDC authorization code with PKCE. The producer removed the headless routes and password/email-code grants on 2026-10-22; do not use their legacy SDK client or DTOs; callable cleanup follows separately.
+Hosted sign-in uses OIDC authorization code with PKCE. The producer removed the headless routes and password/email-code grants on 2026-10-22; the SDK no longer exposes their client or DTOs.
 
 Token methods:
 

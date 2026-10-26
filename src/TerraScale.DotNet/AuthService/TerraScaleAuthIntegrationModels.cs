@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
@@ -81,47 +80,4 @@ public sealed record TerraScaleAuthPlatformApiKeySecret(
 {
     /// <inheritdoc />
     public override string ToString() => "TerraScaleAuthPlatformApiKeySecret { sensitive fields redacted }";
-}
-
-/// <summary>Wire DTO for the producer HeadlessEmailRequest. See contracts/auth/dtos.json.</summary>
-public sealed record TerraScaleAuthHeadlessEmail(
-    [property: JsonPropertyName("email")] string? Email,
-    [property: JsonPropertyName("ip_address")] IPAddress? IpAddress);
-
-/// <summary>Wire DTO for the producer HeadlessEmailCodeRequest. See contracts/auth/dtos.json.</summary>
-public sealed record TerraScaleAuthHeadlessEmailCode(
-    [property: JsonPropertyName("email")] string? Email,
-    [property: JsonPropertyName("ip_address")] IPAddress? IpAddress,
-    [property: JsonPropertyName("pending_token")] string? PendingToken = null)
-{
-    /// <inheritdoc />
-    public override string ToString() => "TerraScaleAuthHeadlessEmailCode { sensitive fields redacted }";
-}
-
-/// <summary>Wire DTO for the producer HeadlessSignUpRequest. See contracts/auth/dtos.json.</summary>
-public sealed record TerraScaleAuthHeadlessSignUp(
-    [property: JsonPropertyName("email")] string? Email,
-    [property: JsonPropertyName("password")] string? Password,
-    [property: JsonPropertyName("ip_address")] IPAddress? IpAddress)
-{
-    /// <inheritdoc />
-    public override string ToString() => "TerraScaleAuthHeadlessSignUp { sensitive fields redacted }";
-}
-
-/// <summary>Wire DTO for the producer HeadlessSignUpResponse. See contracts/auth/dtos.json.</summary>
-public sealed record TerraScaleAuthHeadlessPendingSignUp([property: JsonPropertyName("pending_token")] string PendingToken)
-{
-    /// <inheritdoc />
-    public override string ToString() => "TerraScaleAuthHeadlessPendingSignUp { sensitive fields redacted }";
-}
-
-/// <summary>Wire DTO for the producer HeadlessPasswordResetRequest. See contracts/auth/dtos.json.</summary>
-public sealed record TerraScaleAuthHeadlessPasswordReset(
-    [property: JsonPropertyName("email")] string? Email,
-    [property: JsonPropertyName("code")] string? Code,
-    [property: JsonPropertyName("new_password")] string? NewPassword,
-    [property: JsonPropertyName("ip_address")] IPAddress? IpAddress)
-{
-    /// <inheritdoc />
-    public override string ToString() => "TerraScaleAuthHeadlessPasswordReset { sensitive fields redacted }";
 }

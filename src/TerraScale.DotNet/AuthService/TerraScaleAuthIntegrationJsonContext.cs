@@ -2,8 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-[JsonSourceGenerationOptions(RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true,
-    Converters = new[] { typeof(TerraScaleAuthIpAddressConverter) })]
+[JsonSourceGenerationOptions(RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(TerraScaleAuthPlatformName))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformRole))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformMfaPolicy))]
@@ -22,11 +21,6 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthPlatformApiKey))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformApiKeySecret))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>))]
-[JsonSerializable(typeof(TerraScaleAuthHeadlessEmail))]
-[JsonSerializable(typeof(TerraScaleAuthHeadlessEmailCode))]
-[JsonSerializable(typeof(TerraScaleAuthHeadlessSignUp))]
-[JsonSerializable(typeof(TerraScaleAuthHeadlessPendingSignUp))]
-[JsonSerializable(typeof(TerraScaleAuthHeadlessPasswordReset))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformCreateInvitation))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformInvitationToken))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformStartOwnershipTransfer))]

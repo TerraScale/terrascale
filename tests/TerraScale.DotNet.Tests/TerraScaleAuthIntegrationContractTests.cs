@@ -9,8 +9,21 @@ namespace TerraScale.DotNet.Tests;
 
 public sealed class TerraScaleAuthIntegrationContractTests
 {
-    private const string ClientId = "fixture id:é+";
-    private const string ClientSecret = "fixture secret:+=/é";
+
+    [Test]
+    public async Task PublicApiAndContractsExcludeRetiredHeadlessOperations()
+    {
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("Headless")).IsNull();
+        await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetExportedTypes()
+            .Any(type => type.Name.StartsWith("TerraScaleAuthHeadless", StringComparison.Ordinal))).IsFalse();
+        using var routes = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("routes.json")));
+        await Assert.That(routes.RootElement.GetProperty("operations").EnumerateArray()
+            .Any(operation => operation.GetProperty("sdk_method").GetString()!.StartsWith("Headless.", StringComparison.Ordinal))).IsFalse();
+        var grants = routes.RootElement.GetProperty("oauth_operations").EnumerateArray()
+            .Single(operation => operation.GetProperty("operation_id").GetString() == "oauth_token").GetProperty("grants");
+        await Assert.That(grants.TryGetProperty("password", out _)).IsFalse();
+        await Assert.That(grants.TryGetProperty("email_code", out _)).IsFalse();
+    }
 
     [Test]
     [Arguments("get_account_mfa")]
@@ -57,7 +70,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
     [Arguments("set_project_allowed_cidrs")]
     [Arguments("set_project_api_key_allowed_cidrs")]
     [Arguments("set_organization_api_key_allowed_cidrs")]
-    public async Task SourcePinnedPlatformAndHeadlessRoutesMatch(string operation)
+    public async Task SourcePinnedPlatformRoutesMatch(string operation)
     {
         var ids = new TerraScaleIdGenerator();
         var organizationId = ids.NewId(); var projectId = ids.NewId(); var userId = ids.NewId(); var keyId = ids.NewId();
@@ -111,10 +124,6 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "get_project_api_key" => client.Platform.GetProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, cancellationToken: cancellationToken),
             "revoke_project_api_key" => client.Platform.RevokeProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, cancellationToken: cancellationToken),
             "rotate_project_api_key" => client.Platform.RotateProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRotateApiKey)!, cancellationToken: cancellationToken),
-            "headless_email_code_start" => client.Headless.StartEmailCodeAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessEmailCode)!, cancellationToken: cancellationToken),
-            "headless_sign_up" => client.Headless.SignUpAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessSignUp)!, cancellationToken: cancellationToken),
-            "headless_password_reset_start" => client.Headless.StartPasswordResetAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessEmail)!, cancellationToken: cancellationToken),
-            "headless_password_reset_complete" => client.Headless.CompletePasswordResetAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessPasswordReset)!, cancellationToken: cancellationToken),
             "create_invitation" => client.Platform.CreateInvitationAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateInvitation)!, cancellationToken: cancellationToken),
             "list_invitations" => client.Platform.ListInvitationsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "revoke_invitation" => client.Platform.RevokeInvitationAsync("fixture-sign-in", organizationId, invitationId, cancellationToken: cancellationToken),
@@ -141,14 +150,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
         await Assert.That(handler.Method).IsEqualTo(contract.GetProperty("method").GetString());
         await Assert.That(handler.Uri.Host).IsEqualTo("auth.example.test");
         await Assert.That(handler.Calls).IsEqualTo(1);
-        if (operation.StartsWith("headless_", StringComparison.Ordinal))
-        {
-            await Assert.That(handler.Authorization!.Scheme).IsEqualTo("Basic");
-            var credential = Encoding.ASCII.GetString(Convert.FromBase64String(handler.Authorization.Parameter!)).Split(':');
-            await Assert.That(Uri.UnescapeDataString(credential[0].Replace("+", " ", StringComparison.Ordinal))).IsEqualTo(ClientId);
-            await Assert.That(Uri.UnescapeDataString(credential[1].Replace("+", " ", StringComparison.Ordinal))).IsEqualTo(ClientSecret);
-        }
-        else await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
+        await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
         if (requestJson is not null)
         {
             await Assert.That(handler.MediaType).IsEqualTo("application/json");
@@ -309,20 +311,6 @@ public sealed class TerraScaleAuthIntegrationContractTests
     }
 
     [Test]
-    [Arguments("192.0.2.1")]
-    [Arguments("2001:db8::1")]
-    public async Task TypedHeadlessIpAddressesRemainStringWireValues(string address)
-    {
-        using var handler = new CaptureHandler(HttpStatusCode.Accepted, "");
-        using var http = new HttpClient(handler);
-        await Client(http).Headless.StartEmailCodeAsync(ClientId, ClientSecret, new("synthetic@example.test", IPAddress.Parse(address)));
-        using var body = JsonDocument.Parse(handler.Body!);
-        await Assert.That(body.RootElement.GetProperty("ip_address").GetString()).IsEqualTo(address);
-        var decoded = JsonSerializer.Deserialize(handler.Body!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessEmailCode)!;
-        await Assert.That(decoded.IpAddress).IsEqualTo(IPAddress.Parse(address));
-    }
-
-    [Test]
     public async Task InvitationTokensRedactFormatting()
     {
         const string token = "fixture-invitation-canary";
@@ -450,7 +438,6 @@ public sealed class TerraScaleAuthIntegrationContractTests
         Task<TerraScaleAuthPlatformProjectMember> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformProjectMember),
         Task<TerraScaleAuthPlatformApiKey> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformApiKey),
         Task<TerraScaleAuthPlatformApiKeySecret> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformApiKeySecret),
-        Task<TerraScaleAuthHeadlessPendingSignUp> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessPendingSignUp),
         Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformOrganization>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformOrganization),
         Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformMember>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformMember),
         Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProject>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformProject),

@@ -71,7 +71,6 @@ public sealed class TerraScaleAuthClient
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
-        Headless = new TerraScaleAuthHeadlessClient(this);
     }
 
     /// <summary>User, session-adjacent, MFA factor, and passkey management.</summary>
@@ -118,9 +117,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Project tenant settings, end users, sessions and OAuth clients under <c>/v1/{project}</c>, using a user sign-in token.</summary>
     public TerraScaleAuthProjectsClient Projects { get; }
-
-    /// <summary>Confidential-client headless enrollment, sign-in and password recovery.</summary>
-    public TerraScaleAuthHeadlessClient Headless { get; }
 
     /// <summary>The validated instance slug every management route is scoped to.</summary>
     internal string InstanceSlug => options.InstanceSlug!;

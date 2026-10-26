@@ -3,7 +3,7 @@
 The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
 both targets.
 
-Version `0.0.3` combines accepted ts-auth platform/headless contracts (#13) and
+Version `0.0.3` combines ts-auth platform contracts (#13) and
 TerraBase lifecycle/usage/changes contracts (#14). The package includes their
 producer artifacts; pending producer inputs remain qualified separately. Import
 APIs and the later stream-timer follow-up (#15) are excluded from this release.
