@@ -60,15 +60,44 @@ internal sealed class MemoryBudget : IMemoryBudget
 
             _reserved += bytes;
             _reservations++;
-            return new Reservation(this, bytes, tenant?.OrganizationId);
+            return new Reservation(this, bytes, tenant?.OrganizationId, tenantLimit);
         }
     }
 
-    private sealed class Reservation(MemoryBudget budget, long bytes, string? organization) : IMemoryReservation
+    private sealed class Reservation(MemoryBudget budget, long bytes, string? organization, long tenantLimit) : IGrowableMemoryReservation
     {
+        private long _bytes = bytes;
         private int _released;
 
-        public long Bytes => bytes;
+        public long Bytes => Volatile.Read(ref _bytes);
+
+        public bool TryGrow(long more)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(more);
+            lock (budget._gate)
+            {
+                // Growth takes no table entry, so both byte limits are the whole admission.
+                if (Volatile.Read(ref _released) != 0 || more > budget._limit - budget._reserved)
+                {
+                    return false;
+                }
+
+                if (organization is not null)
+                {
+                    var current = budget._tenants[organization];
+                    if (more > tenantLimit - current.Bytes)
+                    {
+                        return false;
+                    }
+
+                    budget._tenants[organization] = current with { Bytes = current.Bytes + more };
+                }
+
+                budget._reserved += more;
+                _bytes += more;
+                return true;
+            }
+        }
 
         public void Dispose()
         {
@@ -79,12 +108,12 @@ internal sealed class MemoryBudget : IMemoryBudget
 
             lock (budget._gate)
             {
-                budget._reserved -= bytes;
+                budget._reserved -= _bytes;
                 budget._reservations--;
                 if (organization is not null)
                 {
                     var current = budget._tenants[organization];
-                    var remaining = new TenantUsage(current.Bytes - bytes, current.Reservations - 1);
+                    var remaining = new TenantUsage(current.Bytes - _bytes, current.Reservations - 1);
                     if (remaining.Reservations == 0)
                     {
                         budget._tenants.Remove(organization);
