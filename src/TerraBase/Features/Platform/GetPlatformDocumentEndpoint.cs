@@ -54,7 +54,7 @@ public sealed class GetPlatformDocumentEndpoint(IDocumentService documents, ITen
         };
     }
 
-    private IResult Accepted(TenantContext database, string collection, StoredDocument document, CancellationToken cancellationToken)
+    private Microsoft.AspNetCore.Http.HttpResults.Ok<DocumentBody> Accepted(TenantContext database, string collection, StoredDocument document, CancellationToken cancellationToken)
     {
         var body = Redacted(collection, document, cancellationToken);
         documents.AcceptRead(new DocumentKey(database, collection, document.Id), document);
