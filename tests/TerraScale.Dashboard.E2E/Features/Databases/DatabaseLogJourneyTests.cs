@@ -97,8 +97,8 @@ public sealed class DatabaseLogJourneyTests(DashboardRootFixture fixture)
         await Assert.That(slow).Contains("Run the query with \"explain\": true to see its plan and a suggested index.");
         await Assert.That(slow).Contains("title=\"" + longShape + "\"");
         await Assert.That(slow).Contains(longShape[..100] + "…</code>");
-        await Assert.That(slow).Contains("<td>2</td><td>—</td><td>5.5</td><td>10.5</td>");
-        await Assert.That(slow).Contains("<td>0</td><td>—</td><td>—</td><td>—</td>");
+        await Assert.That(slow).Contains("<td title=\"2\">2</td><td>—</td><td>5.5</td><td>10.5</td>");
+        await Assert.That(slow).Contains("<td title=\"0\">0</td><td>—</td><td>—</td><td>—</td>");
         await Assert.That(slow.IndexOf("slowest</td>", StringComparison.Ordinal) < slow.IndexOf("legacy</td>", StringComparison.Ordinal)).IsTrue();
         await Assert.That(slow.IndexOf("legacy</td>", StringComparison.Ordinal) < slow.IndexOf("null-p95</td>", StringComparison.Ordinal)).IsTrue();
         await Assert.That(slow.IndexOf("null-p95</td>", StringComparison.Ordinal) < slow.IndexOf("popular</td>", StringComparison.Ordinal)).IsTrue();

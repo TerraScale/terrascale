@@ -68,7 +68,7 @@ public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
         await Assert.That(overview.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var html = await overview.Content.ReadAsStringAsync();
         await Assert.That(html).Contains("Sample organization activity for this demo; not measured provider traffic.");
-        await Assert.That(html).Contains("20698");
+        await Assert.That(html).Contains("<strong title=\"20,698\">20.7k</strong>");
     }
 
     [Test]
