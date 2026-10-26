@@ -79,9 +79,11 @@ const (
 	StateConflict State = "conflict"
 )
 
-// Document is a document as returned by GET, queries and shapes.
+// Document is a stored value returned by GET, queries and shapes. Shared read
+// envelopes may contain user-chosen SQL primary keys; document point reads
+// additionally require a canonical ULID.
 type Document struct {
-	ID      string `json:"id" documentkey:"required"`
+	ID      string `json:"id" storedkey:"required"`
 	Version string `json:"version"`
 	State   State  `json:"state"`
 	// Document is the exact JSON object for state "value".

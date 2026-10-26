@@ -213,7 +213,7 @@ func (wire *shapeBodyWire) apply(state ShapeState) ShapeState {
 func checkShapeOps(ops []shapeOpWire, snapshot bool, page string, nextSnap bool, nextPage string) error {
 	last := ""
 	for _, op := range ops {
-		if op.ID == nil || entityid.DocumentKey(*op.ID) != nil {
+		if op.ID == nil || entityid.StoredKey(*op.ID) != nil {
 			return badShape("document id")
 		}
 		id := *op.ID
@@ -292,14 +292,14 @@ func parseShapeDecimal(s string) (int64, error) {
 // accepts, such as embedded CR or LF, and non-zero trailing bits.
 func decodeShapePage(token string) (string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != token || entityid.DocumentKey(string(raw)) != nil {
+	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != token || entityid.StoredKey(string(raw)) != nil {
 		return "", badShape("snapshot page key")
 	}
 	return string(raw), nil
 }
 
 // shapeKeyLess orders document keys by UTF-16 code unit, the ordinal order that
-// DocumentKey counts in.
+// StoredKey counts in.
 func shapeKeyLess(a, b string) bool {
 	return slices.Compare(utf16.Encode([]rune(a)), utf16.Encode([]rune(b))) < 0
 }

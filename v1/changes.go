@@ -213,7 +213,7 @@ func readChanges(body io.Reader, limit int64, header http.Header, yield func(Cha
 			if err := checkName("collection", event.Collection); err != nil {
 				return false, err
 			}
-			if err := entityid.DocumentKey(event.ID); err != nil {
+			if err := entityid.StoredKey(event.ID); err != nil {
 				return false, err
 			}
 			if _, err := strconv.ParseUint(event.Version, 10, 63); err != nil {

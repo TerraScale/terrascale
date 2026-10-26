@@ -69,5 +69,12 @@ func (c *Client) PlatformDocument(ctx context.Context, database, collection, id 
 	if err != nil {
 		return nil, err
 	}
-	return publicCall[Document](ctx, c, req, nil)
+	doc, err := publicCall[Document](ctx, c, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := entityid.DocumentKey(doc.ID); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }
