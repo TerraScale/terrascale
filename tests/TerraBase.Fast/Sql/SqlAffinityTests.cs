@@ -5,6 +5,8 @@ namespace TerraBase.Fast.Sql;
 
 public sealed class SqlAffinityTests
 {
+    private static readonly int[] One = [1];
+    private static readonly string[] ZeroOne = ["01"];
     [Test]
     [Arguments("n = :x AND s = :x")]
     [Arguments("n IS :x AND s IS :x")]
@@ -32,7 +34,7 @@ public sealed class SqlAffinityTests
         var statements = cases.Select(item => (object)new { sql, named = new { x = item.Value, other = (object?)null } }).ToArray();
         if (!predicate.Contains(":other", StringComparison.Ordinal))
         {
-            statements = cases.Select(item => (object)new { sql, named = new { x = item.Value } }).ToArray();
+            statements = [.. cases.Select(item => (object)new { sql, named = new { x = item.Value } })];
         }
 
         var response = await SqlApi.SendAsync(api, api.Client, statements);
@@ -80,8 +82,8 @@ public sealed class SqlAffinityTests
         var response = await SqlApi.SendAsync(api, api.Client,
             new { sql = "SELECT ?2, typeof(?2), b = ?2 FROM t WHERE n = ?2 AND r = ?2 AND s = ?2", args = new object[] { "unused", "1.25" } },
             new { sql = "SELECT ?1, typeof(?1), b = ?1 FROM t WHERE n = ?1 AND r = ?1 AND s = ?1", args = new object[] { 1.25 } },
-            new { sql = "WITH q AS (SELECT '01' AS n FROM t) SELECT count(*) FROM q WHERE n = ?", args = new[] { 1 } },
-            new { sql = "SELECT 'it''''s', ?1", args = new[] { "01" } });
+            new { sql = "WITH q AS (SELECT '01' AS n FROM t) SELECT count(*) FROM q WHERE n = ?", args = One },
+            new { sql = "SELECT 'it''''s', ?1", args = ZeroOne });
         await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK).Because(response.Message ?? "SQL batch");
         var results = response.Json.GetProperty("results");
         await Assert.That(results[0].GetProperty("rows").GetRawText()).IsEqualTo("""[["1.25","text",1]]""");
