@@ -43,8 +43,8 @@ func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
 	}
 	var operands []string
 	for {
-		if fs.Parse(args) != nil {
-			return nil, errUsage
+		if err := fs.Parse(args); err != nil {
+			return nil, parserError(err)
 		}
 		if args = fs.Args(); len(args) == 0 {
 			break
