@@ -27,7 +27,8 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 1440, Height = 900 } });
+        var output = BrowserAudit.Output(fixture.Root, "code-editor-styling");
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 1440, Height = 900 }, RecordVideoDir = output });
         var page = await context.NewPageAsync();
         var failures = new ConcurrentQueue<string>();
         page.PageError += (_, error) => failures.Enqueue(error);
@@ -40,11 +41,10 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: scenario.Personas.Seeded.Email, password: scenario.Personas.Seeded.Password);
         await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         const string database = "/databases/0Z793APJ2ECFW2F7P6J9F2RKVY";
-        var output = BrowserAudit.Output(fixture.Root, "code-editor-styling");
 
         await NavigateAsync(database + "/documents/orders");
         // Every token the theme reads must exist; a missing one silently inherits the body ink colour.
-        foreach (var token in new[] { "--ts-surface", "--ts-ink-3", "--ts-link", "--ts-syn-keyword", "--ts-syn-string", "--ts-syn-number", "--ts-syn-comment", "--ts-shadow" })
+        foreach (var token in new[] { "--ts-surface", "--ts-ink-3", "--ts-link", "--ts-syn-keyword", "--ts-syn-string", "--ts-syn-number", "--ts-syn-comment", "--ts-syn-fn", "--ts-syn-punct", "--ts-shadow" })
         {
             await Assert.That(await page.EvaluateAsync<string>("name => getComputedStyle(document.documentElement).getPropertyValue(name).trim()", token))
                 .IsNotEmpty().Because(token + " must be defined in tokens.css for the editor theme.");
@@ -124,12 +124,15 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
         {
             await page.Locator(host + "[data-ready]").WaitForAsync(new() { Timeout = 15000 });
             // A data-ready host proves nothing about styling: Monaco's stylesheet must be injected and applied.
-            await Assert.That(await page.EvaluateAsync<bool>("() => [...document.querySelectorAll('style')].some(style => style.textContent.includes('.monaco-editor'))"))
-                .IsTrue().Because(name + ": Monaco's injected stylesheet must be in the document.");
-            await Assert.That(await page.Locator(host + " .monaco-editor .view-lines").EvaluateAsync<string>("el => getComputedStyle(el).position"))
-                .IsEqualTo("absolute").Because(name + ": Monaco's core CSS must apply to the editor.");
+            await Assert.That(await page.EvaluateAsync<bool>("() => document.getElementById('monaco-editor-core-css')?.sheet?.cssRules.length > 1000"))
+                .IsTrue().Because(name + ": Monaco's core stylesheet must be admitted by CSP.");
+            await Assert.That(await page.Locator(host + " .monaco-editor .overflow-guard").EvaluateAsync<string>("el => getComputedStyle(el).position"))
+                .IsEqualTo("relative").Because(name + ": Monaco's core CSS must apply to the editor.");
             var surface = await page.Locator(host + " .ts-code-editor-surface").BoundingBoxAsync();
             await Assert.That(surface is { Width: > 0, Height: > 0 }).IsTrue().Because(name + ": the editor must have a size once its dialog is shown.");
+            var editor = await page.Locator(host + " .monaco-editor").BoundingBoxAsync();
+            await Assert.That(editor is not null && Math.Abs(editor.Width - surface!.Width) < 2 && Math.Abs(editor.Height - surface.Height) < 2)
+                .IsTrue().Because(name + ": Monaco must fill its surface after a hidden dialog opens.");
             await Assert.That(await page.Locator(host).EvaluateAsync<string>("el => getComputedStyle(el).backgroundColor")).IsEqualTo(surfaceToken)
                 .Because(name + ": the host surface must use --ts-surface.");
             await Assert.That(await page.Locator(host + " .monaco-editor-background").First.EvaluateAsync<string>("el => getComputedStyle(el).backgroundColor")).IsEqualTo(surfaceToken)
