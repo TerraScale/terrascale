@@ -26,8 +26,9 @@ operation's response/media-type contract.
 ## Covered operations
 
 The current reference includes session identity, organization/project selection,
-project API-key creation/rotation/revocation/CIDRs, conditional document writes,
-and document-change streams. It is a partial integration contract, not an inventory
+project API-key creation/rotation/revocation, and document-change streams.
+CIDR restrictions and conditional document-write handlers are not included in
+the current OpenAPI reference. It is a partial integration contract, not an inventory
 of every dashboard page or form endpoint. API-key creation and rotation return
 secrets once: store them securely and never include their response bodies in logs.
 
