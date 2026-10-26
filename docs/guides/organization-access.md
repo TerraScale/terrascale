@@ -29,7 +29,7 @@ The identity API permits an organization **Member** to create a project identity
 
 Identity API project roles are separate from organization roles. A project-only collaborator can access the assigned project, not sibling projects or organization member, invitation, audit or billing management. A project **Member** can create a service key through the identity API; dashboard key management requires an organization owner or admin. Key permissions remain independent of the person's role.
 
-Project-only access currently works through the identity API; the organization dashboard may not list a project-only collaborator's organization. Do not grant organization-wide membership merely to make a project appear. Use the existing project-scoped API access and ask support if dashboard access is required. [MCP scope selection](/guides/mcp#3-choose-the-organization-and-project) does not grant additional permissions.
+Project-only access currently works through the identity API; the organization dashboard may not list a project-only collaborator's organization. Do not grant organization-wide membership merely to make a project appear. Use the existing project-scoped API access and ask support if dashboard access is required. [MCP scope selection](/guides/mcp#_3-choose-the-organization-and-project) does not grant additional permissions.
 
 ## Invite and manage teammates
 
