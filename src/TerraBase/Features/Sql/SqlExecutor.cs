@@ -131,11 +131,17 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return SqlErrors.Error("a table has 1 to 256 columns");
         }
 
+        var sql = WithColumn(table.Sql, add.Definition);
+        if (table.Sql is not null && sql is null)
+        {
+            return SqlErrors.Error("cannot preserve the table's catalog definition");
+        }
+
         tally.Tables.Remove(add.Table);
         await SqlTable.WriteAsync(transaction, add.Table, table with
         {
             Columns = [.. table.Columns, add.Column],
-            Sql = WithColumn(table.Sql, add.Definition),
+            Sql = sql,
         }, cancellationToken).ConfigureAwait(false);
         return Empty;
     }

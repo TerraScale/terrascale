@@ -572,6 +572,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 foreach (var result in executedOutcome is PgResult[] results ? results : [])
                 {
+                    if (running.Formats.Length > 1 && running.Formats.Length != (result.Columns?.Length ?? 0))
+                    {
+                        return new PgError("08P01", "result format count must match the result columns");
+                    }
+
                     if (running.Described && (result.Columns?.Length ?? 0) != (running.Columns?.Length ?? 0))
                     {
                         return new PgError("0A000", "cached plan must not change result type");

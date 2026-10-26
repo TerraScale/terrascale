@@ -159,10 +159,10 @@ internal static partial class SqlParse
         {
             var (numbered, names) = SqlRead.Number(sql);
             var statements = new Parser().ParseSql(numbered, new SQLiteDialect());
-            // SQLiteDialect drops ADD IF NOT EXISTS; GenericDialect retains it so it can be refused.
-            if (statements is [Statement.AlterTable])
+            // SQLiteDialect silently drops ADD IF NOT EXISTS; inspect tokens without changing dialect or quoting.
+            if (statements is [Statement.AlterTable] && AlterIfNotExists(numbered))
             {
-                statements = new Parser().ParseSql(numbered, new GenericDialect());
+                throw new FormatException("ALTER TABLE does not support IF NOT EXISTS");
             }
 
             return statements.Count == 1

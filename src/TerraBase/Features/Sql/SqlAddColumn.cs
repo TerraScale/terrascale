@@ -1,4 +1,7 @@
 using SqlParser.Ast;
+using SqlParser;
+using SqlParser.Dialects;
+using SqlParser.Tokens;
 
 namespace TerraBase.Features.Sql;
 
@@ -13,6 +16,21 @@ internal sealed record AddColumnSql(string Table, SqlColumnDefinition Column, Co
 
 internal static partial class SqlParse
 {
+    private static bool AlterIfNotExists(string sql)
+    {
+        var tokens = new Tokenizer().Tokenize(sql, new SQLiteDialect()).Where(token => token is not Whitespace).ToArray();
+        for (var i = 0; i + 2 < tokens.Length; i++)
+        {
+            if (tokens[i] is Word { Keyword: Keyword.IF } && tokens[i + 1] is Word { Keyword: Keyword.NOT }
+                && tokens[i + 2] is Word { Keyword: Keyword.EXISTS })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static AddColumnSql AddColumn(Statement.AlterTable alter)
     {
         const string supported = "ALTER TABLE supports ADD [COLUMN] name [type] [NULL or DEFAULT NULL] only";

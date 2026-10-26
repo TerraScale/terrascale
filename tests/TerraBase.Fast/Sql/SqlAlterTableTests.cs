@@ -15,7 +15,9 @@ public sealed class SqlAlterTableTests
         await Assert.That(before[0].GetProperty("rows")[0].GetRawText()).IsEqualTo("""[1,"old",null]""");
         await Assert.That(before[0].GetProperty("columns")[2].GetProperty("name").GetString()).IsEqualTo("extra");
         await Assert.That(before[1].GetProperty("rows")[2].GetRawText()).IsEqualTo("""[2,"extra","TEXT",0,null,0]""");
-        await Assert.That(before[2].GetProperty("rows")[0][0].GetString()!).Contains("extra TEXT");
+        var catalog = before[2].GetProperty("rows")[0][0].GetString()!;
+        await Assert.That(catalog).Contains("extra TEXT");
+        await Assert.That(catalog).Contains("UNIQUE (value)");
 
         var arity = await SqlApi.ExecuteAsync(api, "INSERT INTO t VALUES (2, 'new')");
         await Assert.That(arity.Status).IsEqualTo(HttpStatusCode.BadRequest);
@@ -66,5 +68,21 @@ public sealed class SqlAlterTableTests
 
         var columns = await SqlApi.OkAsync(api, "PRAGMA table_info(t)");
         await Assert.That(columns[0].GetProperty("rows").GetArrayLength()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Sqlite_quoting_omitted_types_and_added_column_affinity_keep_their_meaning()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY)", "INSERT INTO t VALUES (1)",
+            "ALTER TABLE [t] ADD [raw]", "ALTER TABLE t ADD `number` INTEGER", "ALTER TABLE t ADD \"Extra\" TEXT DEFAULT NULL");
+        await SqlApi.OkAsync(api, "UPDATE t SET raw = '12', number = '12'");
+        var values = await SqlApi.OkAsync(api, "SELECT raw, number, Extra FROM t", "PRAGMA table_info(t)");
+        await Assert.That(values[0].GetProperty("rows")[0].GetRawText()).IsEqualTo("""["12",12,null]""");
+        await Assert.That(values[1].GetProperty("rows")[1][2].GetString()).IsEqualTo("");
+        var invalid = await SqlApi.ExecuteAsync(api, "ALTER TABLE t ADD bad NOT NULL");
+        await Assert.That(invalid.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        var after = await SqlApi.OkAsync(api, "PRAGMA table_info(t)");
+        await Assert.That(after[0].GetProperty("rows").GetArrayLength()).IsEqualTo(4);
     }
 }
