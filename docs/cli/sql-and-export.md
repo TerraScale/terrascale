@@ -18,7 +18,7 @@ printf 'SELECT 1 AS n;\n.run\n.quit\n' | ts --json shell example
 Shell JSON emits one typed result record per successful `.run`, then the [complete/error terminal](./automation). Prompts/help/diagnostics go to stderr. Any SQL failure makes the final exit nonzero even if later statements succeed; interruption or pending input cannot produce complete.
 
 `ts export example` writes raw `{collection,id,document}` NDJSON for **live documents only**, compatible with server NDJSON import. `ts --json export example` wraps those records and adds the common terminal contract; those envelopes are not import input.
-Exports exclude relational tables, empty collections, schemas, indexes, TTL, functions and other metadata. One request reads one document snapshot; separate requests/resumptions read new snapshots. Use [backups](../guides/backups-and-restore) for recovery, not a document export as a full database backup.
+Stored SQL rows and migration records can appear as document representations with their original keys. Importing those records does not recreate relational table definitions or constraints. Exports exclude empty collections, schemas, indexes, TTL, functions and other metadata. One request reads one document snapshot; separate requests/resumptions read new snapshots. Use [backups](../guides/backups-and-restore) for recovery, not a document export as a full database backup.
 
 Write to a new private partial file and publish it only after exit 0; preserve existing backups and discard partial exports on failure. For JSON, also require a complete terminal record. Output failure never guarantees that an earlier import or SQL write was rolled back.
 
