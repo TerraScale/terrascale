@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Hosting;
 
@@ -64,6 +65,30 @@ public static partial class OpenApiSetup
             .Configure<ScalarOptions>(scalar => scalar.DisableDefaultFonts().WithNonce())
             .Configure<OpenApiOptions>("v1", options =>
         {
+            options.AddSchemaTransformer((schema, context, _) =>
+            {
+                // These endpoints serialize explicitly with their own snake_case contexts, not
+                // the global HTTP JSON options used by OpenAPI. Include their nested DTOs, but
+                // leave every other auth contract (and the persisted settings) untouched.
+                var wire = ProjectTenantJson.Default.GetTypeInfo(context.JsonTypeInfo.Type)
+                    ?? DirectoryExportJson.Default.GetTypeInfo(context.JsonTypeInfo.Type);
+                if (wire is not null && schema.Properties is { Count: > 0 } properties)
+                {
+                    var names = wire.Properties.Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+                    var renamed = properties.Keys.ToDictionary(name => name, name =>
+                    {
+                        var candidate = wire.Options.PropertyNamingPolicy!.ConvertName(name);
+                        return names.Contains(candidate) ? candidate : name;
+                    }, StringComparer.Ordinal);
+                    schema.Properties = properties.ToDictionary(property => renamed[property.Key], property => property.Value, StringComparer.Ordinal);
+                    if (schema.Required is { } required)
+                    {
+                        schema.Required = required.Select(name => renamed.GetValueOrDefault(name, name)).ToHashSet(StringComparer.Ordinal);
+                    }
+                }
+
+                return Task.CompletedTask;
+            });
             options.AddOperationTransformer((operation, context, _) =>
             {
                 // Same precedence as ASP.NET authorization: AllowAnonymous anywhere wins;
