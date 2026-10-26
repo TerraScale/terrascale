@@ -81,3 +81,7 @@ Package all `contracts/auth` manifests/fixtures with the SDK candidate and regis
 ## Project tenant management
 
 `auth.Projects` is `TerraScaleAuthProjectsClient` for the producer's project tenant management API (`docs/auth/project-tenant-management.md` section 2, base `/v1/{project}`). Every method takes the caller's terrascale sign-in `accessToken` and the project ULID first and an optional `CancellationToken` last; viewer reads, admin changes, 404 hides projects the caller cannot see and 403 `forbidden` reports a role too low. Lists return `TerraScaleAuthPlatformPage<T>`. `TerraScaleAuthProjectOAuthClient.ClientSecret` appears only when creating a confidential client and is redacted from `ToString`. `fixtures/project-tenant.json` holds the HTTP-fake fixtures, with each operation's method, path and status; producer parity remains unproven. `ExportUsersAsync` returns one audited, admin-only directory page; see `user-export.md`.
+
+## Retired instance billing
+
+The unsupported `auth.Billing` client and its exclusive plan, seat-quota, checkout and portal DTOs have been removed. Its five operations used the legacy instance management key and `/v1/{slug}/billing...` routes; they are not wrappers for current public platform or dashboard billing. No replacement endpoint or adapter is provided. `Platform`, `Projects`, `Oidc` and their existing constructors/DTOs remain intact in this retirement phase.

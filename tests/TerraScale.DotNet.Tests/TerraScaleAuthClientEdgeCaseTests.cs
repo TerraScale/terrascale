@@ -294,23 +294,6 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     }
 
     [Test]
-    public async Task B17_ServerErrorCodesSurface()
-    {
-        var unavailable = CreateClient(new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable,
-            ErrorEnvelopeJson("temporarily_unavailable", "The instance is restarting."))));
-        var unconfigured = CreateClient(new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable,
-            ErrorEnvelopeJson("billing_not_configured", "Stripe is not configured for this instance."))));
-
-        var overviewError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => unavailable.Billing.GetOverviewAsync());
-        var checkoutError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => unconfigured.Billing.CreateCheckoutAsync("pro"));
-
-        await Assert.That(overviewError!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(overviewError.ErrorCode).IsEqualTo("temporarily_unavailable");
-        await Assert.That(checkoutError!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(checkoutError.ErrorCode).IsEqualTo("billing_not_configured");
-    }
-
-    [Test]
     public async Task B18_OAuthFlatErrorWithChallengeHeaderMapsCode()
     {
         var handler = new ScriptedHandler((_, _) =>

@@ -52,5 +52,12 @@
       "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
     },
     "scope": "Headless routes and password/email-code extension grants removed; older retained platform fixtures keep their own provenance."
+  },
+  "instance_billing_retirement_producer": {
+    "revision": "2cc348ec75a11079aa20547c09203e581ce70cb8",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Legacy instance billing retirement only; public platform/dashboard billing authority is separate. No billing operations were present in the supported SDK route/DTO manifests."
   }
 }

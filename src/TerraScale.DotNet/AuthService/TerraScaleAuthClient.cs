@@ -65,7 +65,6 @@ public sealed class TerraScaleAuthClient
         JwtTemplates = new TerraScaleAuthJwtTemplatesClient(this);
         Webhooks = new TerraScaleAuthWebhooksClient(this);
         AuditEvents = new TerraScaleAuthAuditClient(this);
-        Billing = new TerraScaleAuthBillingClient(this);
         Instance = new TerraScaleAuthInstanceClient(this);
         OAuthClients = new TerraScaleAuthOAuthClientsClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
@@ -99,9 +98,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Instance audit event listing.</summary>
     public TerraScaleAuthAuditClient AuditEvents { get; }
-
-    /// <summary>Plan, quota, and Stripe checkout/portal operations.</summary>
-    public TerraScaleAuthBillingClient Billing { get; }
 
     /// <summary>Instance record and hosted-UI branding settings.</summary>
     public TerraScaleAuthInstanceClient Instance { get; }

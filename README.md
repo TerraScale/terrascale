@@ -361,7 +361,7 @@ See [TerraBase consumers](docs/terrabase-consumers.md).
 
 `TerraScaleAuthClient` implements the existing instance-scoped ts-auth
 management and OIDC APIs: users, sessions, API keys, organizations, SSO,
-directories, JWT templates, webhooks, audit, billing, instance settings and
+directories, JWT templates, webhooks, audit, instance settings and
 OAuth clients. `TerraScaleAuthWebhookVerifier` verifies webhook HMAC-SHA256
 signatures. Management calls use the instance key and `/v1/{slug}/...` routes;
 OIDC calls use the published `/{slug}/oauth/...` surface.
