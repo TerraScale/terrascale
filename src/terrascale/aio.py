@@ -13,7 +13,7 @@ from . import _spec, models
 from ._spec import Call, TransactionBuilder
 from ._version import __version__
 from .auth import AsyncAPIKeyTokenSource
-from .client import _error, _settings
+from .client import _error, _parse_response, _settings
 from .errors import CommitUncertainError, TerraScaleError
 
 __all__ = ["AsyncTerraScale", "AsyncDatabase", "AsyncCollection", "AsyncTransaction"]
@@ -97,7 +97,7 @@ class AsyncTerraScale:
                 await asyncio.sleep(_spec.backoff(attempt, None))
                 continue
             if response.status_code < 300:
-                return call.parse(response)
+                return _parse_response(call, response)
             err = _error(response)
             if response.status_code == 401 and self._source is not None and not refreshed:
                 # An expired or revoked token was never processed: refresh once.

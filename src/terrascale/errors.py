@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .ids import is_valid_id
+
 __all__ = [
     "TerraScaleError",
     "TokenError",
@@ -29,13 +31,16 @@ class TerraScaleError(Exception):
 
 class TokenError(TerraScaleError):
     """The ts-auth token endpoint refused the API key (RFC 6749 section 5.2),
-    for example 401 ``invalid_client`` for an unknown, wrong or revoked key."""
+    for example 401 ``invalid_client`` for an unknown, wrong or revoked key.
+    ``request_id`` is the response's canonical ULID, or None."""
 
-    def __init__(self, status: int, code: str, description: str = "", retry_after: float | None = None):
+    def __init__(self, status: int, code: str, description: str = "", retry_after: float | None = None,
+                 *, request_id: str | None = None):
         self.status = status
         self.code = code
         self.description = description
         self.retry_after = retry_after
+        self.request_id: str | None = request_id if is_valid_id(request_id) else None
         msg = f"token endpoint answered {status} {code}".rstrip()
         if description:
             msg += f": {description}"
@@ -43,7 +48,8 @@ class TokenError(TerraScaleError):
 
 
 class APIError(TerraScaleError):
-    """A TerraBase error response ``{"error": {"code", "message", ...}}``."""
+    """A TerraBase error or an undecodable success response.
+    ``request_id`` is the response's canonical ULID, or None."""
 
     def __init__(
         self,
@@ -56,6 +62,7 @@ class APIError(TerraScaleError):
         retry_after: float | None = None,
         etag: str | None = None,
         region: str | None = None,
+        request_id: str | None = None,
     ):
         self.status = status
         self.code = code
@@ -65,6 +72,7 @@ class APIError(TerraScaleError):
         self.retry_after = retry_after
         self.etag = etag
         self.region = region
+        self.request_id: str | None = request_id if is_valid_id(request_id) else None
         text = f"{status} {code}"
         if message:
             text += f": {message}"
@@ -144,7 +152,7 @@ def error_for(status: int, body: Any, headers: Any = None) -> APIError:
     op = err.get("op")
     try:
         op = int(op) if op is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         op = None
     retry_after = None
     etag = None
@@ -163,7 +171,23 @@ def error_for(status: int, body: Any, headers: Any = None) -> APIError:
         retry_after=retry_after,
         etag=etag,
         region=err.get("region"),
+        request_id=response_request_id(headers),
     )
+
+
+def response_request_id(headers: Any) -> str | None:
+    """Read one canonical ULID for correlation only, never authorization.
+
+    httpx combines repeated header fields with commas, which fails validation.
+    Count case-insensitively for plain mappings too; never keep arbitrary text.
+    """
+    if headers is None:
+        return None
+    values = [value for name, value in headers.items() if name.lower() == "x-request-id"]
+    if len(values) != 1:
+        return None
+    value = values[0]
+    return value if isinstance(value, str) and len(value) == 26 and is_valid_id(value) else None
 
 
 def parse_retry_after(value: str | None) -> float | None:
