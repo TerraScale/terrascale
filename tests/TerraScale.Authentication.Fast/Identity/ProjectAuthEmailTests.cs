@@ -56,7 +56,9 @@ public sealed partial class ProjectAuthEmailTests(TerraBaseFixture fixture)
         await Assert.That(message.Text).Contains("Sent by TerraScale Authentication.");
         if (branded)
         {
-            await Assert.That(message.Html).Contains("src=\"https://cdn.example.test/mail.png\"").And.Contains("#123456");
+            // Code-only emails show the accent as a tinted code box, rather than an action button.
+            await Assert.That(message.Html).Contains("src=\"https://cdn.example.test/mail.png\"")
+                .And.Contains("background-color:#eceff1;border:1px solid #c4ccd5;");
             await Assert.That(message.Html).Contains("&lt;script&gt;mail()&lt;/script&gt;").And.DoesNotContain("<script>");
             await Assert.That(message.Text).Contains("<script>mail()</script>\n{{ code }}");
         }
