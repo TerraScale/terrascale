@@ -64,6 +64,8 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
     private static IReadOnlyList<BillingLimitWarning> Warnings(OrganizationRecord org, BillingPlan plan, DateTimeOffset now)
     {
         var limits = PlanCatalog.ResourceLimits(plan.Key); var warnings = new List<BillingLimitWarning>();
+        if (limits.Projects > 0 && org.Projects.Count > limits.Projects)
+            warnings.Add(new("More projects than " + plan.Name + " allows", $"{org.Name} has {org.Projects.Count} projects and {plan.Name} allows {limits.Projects}. Existing projects stay, but new projects can’t be created until the organization is below the limit."));
         var databases = org.Projects.Values.Sum(project => project.Databases.Count);
         if (limits.Databases > 0 && databases > limits.Databases)
             warnings.Add(new("More databases than " + plan.Name + " allows", $"{org.Name} has {databases} databases and {plan.Name} allows {limits.Databases}. Existing databases stay, but new ones can’t be created until it’s under the limit."));

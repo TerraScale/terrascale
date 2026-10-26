@@ -127,6 +127,51 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(Regex.IsMatch(business, "<input[^>]*name=\"plan\"[^>]*value=\"free\"", RegexOptions.CultureInvariant)).IsFalse();
     }
 
+    [Test]
+    public async Task ProToStarterReviewWarnsOnlyWhenExistingProjectsExceedTheTargetAllowance()
+    {
+        using var client = fixture.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        await BillingPlanJourneyTests.SignUpPaidAsync(client, "project-review-" + suffix + "@example.test", "E2E-project-review-" + suffix, suffix);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
+        using var upgrade = await HttpJourney.PostFormAsync(client, "/billing/change", new()
+        { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
+        await Assert.That(upgrade.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        for (var count = 2; count <= 6; count++)
+        {
+            using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/projects", new()
+            { ["_csrf"] = csrf, ["name"] = "Review project " + count, ["region"] = "GRU", ["regions"] = "GRU" });
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            if (count == 5)
+                await Assert.That((await ReviewAsync()).Contains("More projects than Starter allows", StringComparison.Ordinal)).IsFalse();
+        }
+        var review = await ReviewAsync();
+        await Assert.That(Regex.Matches(review, "role=\"alert\"").Count).IsEqualTo(1).Because("Only projects exceed Starter: databases and members remain below their limits.");
+        await Assert.That(review).Contains("More projects than Starter allows");
+        await Assert.That(review).Contains("has 6 projects and Starter allows 5.");
+        await Assert.That(review).Contains("Existing projects stay");
+        await Assert.That(review).Contains("new projects can’t be created until the organization is below the limit.");
+        await Assert.That(review).Contains("At renewal on ");
+        await Assert.That(review).Contains("Confirm change");
+        using var context = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context"));
+        var organizationId = context.RootElement.GetProperty("selection").GetProperty("organizationId").GetString();
+        var organization = context.RootElement.GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == organizationId);
+        await Assert.That(organization.GetProperty("planId").GetString()).IsEqualTo(PlanCatalog.For("pro").Id);
+        var projects = organization.GetProperty("projects").EnumerateObject().ToArray();
+        await Assert.That(projects.Length).IsEqualTo(6);
+        await Assert.That(projects.Sum(project => project.Value.GetProperty("databases").EnumerateObject().Count())).IsEqualTo(0);
+        await Assert.That(organization.GetProperty("members").EnumerateObject().Count()).IsEqualTo(1);
+
+        async Task<string> ReviewAsync()
+        {
+            using var response = await client.GetAsync("/organization?tab=billing&review=1&plan=starter&interval=annual");
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var dialog = Regex.Match(WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync()), "<dialog id=\"review-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
+            await Assert.That(dialog.Length).IsGreaterThan(0);
+            return dialog;
+        }
+    }
+
     private static string PlanCard(string html, string key) => Regex.Match(html,
         "<article[^>]*aria-labelledby=\"plan-" + key + "\"[^>]*>.*?</article>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
 

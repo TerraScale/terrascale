@@ -22,7 +22,7 @@ public sealed record InvoiceHistoryPage(BillingInvoiceList Listing, string Statu
         return "/organization" + QueryString.Create(values.OrderBy(value => value.Key, StringComparer.Ordinal));
     }
 }
-// The subscription's next renewal: Stripe charges the plan price for the next period on this date.
+// Catalog base subscription fee at renewal; usage and invoice adjustments are not included.
 public sealed record InvoiceRenewal(DateTimeOffset At, long AmountCents, string Currency, string Interval, bool Ends = false);
 public sealed record InvoiceSummary(string NextInvoice, string NextDetail, string Period, string PeriodDetail,
     string Outstanding, string OutstandingDetail, bool HasPeriod = false, int PeriodPercent = 0);
@@ -92,8 +92,9 @@ public static class InvoiceHistory
             "No current billing period is recorded.", "Not recorded", "No invoices are recorded.");
         if (renewal is { } next && next.At > now) summary = summary with
         {
-            NextInvoice = next.Ends ? "None scheduled" : Money(next.AmountCents, next.Currency),
-            NextDetail = (next.Ends ? "The subscription ends on " : "Renewal invoice on ") + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
+            NextInvoice = next.Ends ? "None scheduled" : Money(next.AmountCents, next.Currency) + " base fee",
+            NextDetail = next.Ends ? "The subscription ends on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
+                : "Base subscription at renewal on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture) + ". Usage, credits, discounts and taxes may change the final invoice."
         };
         var current = invoices.Where(invoice => invoice.PeriodStart is { } start && invoice.PeriodEnd is { } end &&
             start <= now && now < end).OrderByDescending(invoice => invoice.PeriodStart).FirstOrDefault();

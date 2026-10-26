@@ -282,6 +282,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
     public async Task PlanMutationsRequireSignInCsrfValidPlansAndBoundCheckout()
     {
         using var client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Accept.ParseAdd("text/html");
         using var anonymous = await HttpJourney.PostFormAsync(client, "/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" });
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         using var login = await HttpJourney.LoginAsync(client);
@@ -291,6 +292,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
         using var invalid = await HttpJourney.PostFormAsync(client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "reserved", ["interval"] = "monthly" });
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(invalid.Content.Headers.ContentType!.MediaType).IsEqualTo("text/plain");
         using var foreignReturn = await client.GetAsync("/billing/checkout/return?session_id=foreign-checkout");
         await Assert.That(foreignReturn.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var foreignCancel = await HttpJourney.PostFormAsync(client, "/checkout/foreign-checkout/cancel", new() { ["_csrf"] = csrf });
@@ -373,7 +375,39 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         {
             using var lost = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
             await Assert.That(lost.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
-            await Assert.That(await lost.Content.ReadAsStringAsync()).Contains("Stripe could not complete this billing change.");
+            await Assert.That(await lost.Content.ReadAsStringAsync()).IsEqualTo("Stripe could not complete this billing change. Reload billing and try again.");
+            await Assert.That(lost.Content.Headers.ContentType!.MediaType).IsEqualTo("text/plain");
+            using var selection = JsonDocument.Parse(await first.GetStringAsync("/api/v1/auth/me"));
+            var organizationId = selection.RootElement.GetProperty("organizationId").GetString()!;
+            using var htmlRequest = new HttpRequestMessage(HttpMethod.Post, "/billing/change?organizationId=" + Uri.EscapeDataString(organizationId))
+            { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" }) };
+            htmlRequest.Headers.Add("Origin", first.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            htmlRequest.Headers.Accept.ParseAdd("text/html");
+            using var htmlFailure = await first.SendAsync(htmlRequest);
+            await Assert.That(htmlFailure.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
+            await Assert.That(htmlFailure.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
+            await Assert.That(htmlFailure.Headers.Location).IsNull();
+            var html = await htmlFailure.Content.ReadAsStringAsync();
+            await Assert.That(html).Contains("<!DOCTYPE html>");
+            await Assert.That(html.TrimEnd().EndsWith("</html>", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(html).Contains("<title>Billing change uncertain · TerraScale</title>");
+            await Assert.That(html).Contains("aria-labelledby=\"billing-change-title\"");
+            await Assert.That(html).Contains("role=\"alert\"");
+            await Assert.That(html).Contains("brand/logo-icon-blue.svg");
+            await Assert.That(html).Contains("We could not confirm whether Stripe completed this billing change");
+            await Assert.That(html).Contains("Review your current plan and billing status before trying another billing change.");
+            await Assert.That(html).Contains("Stripe may have already processed your request.");
+            foreach (var privateValue in new[] { csrf, "price_", "cus_", "sub_", "requestKey", "test-only vendor", "HttpRequestException", "_csrf", "<form", "http-equiv=\"refresh\"" })
+                await Assert.That(html.Contains(privateValue, StringComparison.OrdinalIgnoreCase)).IsFalse().Because("The error page must not expose provider details or resubmit a mutation.");
+            var link = System.Text.RegularExpressions.Regex.Match(html, "<a[^>]+href=\"([^\"]+)\"[^>]*>Review current plan and billing</a>");
+            await Assert.That(link.Success).IsTrue();
+            var billingPath = WebUtility.HtmlDecode(link.Groups[1].Value);
+            await Assert.That(billingPath).IsEqualTo("/organization?tab=billing&organizationId=" + organizationId);
+            using var beforeReview = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/plans/probe"));
+            using var reviewed = await first.GetAsync(billingPath);
+            await Assert.That(reviewed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            using var afterReview = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/plans/probe"));
+            await Assert.That(afterReview.RootElement.GetProperty("mutations").GetArrayLength()).IsEqualTo(beforeReview.RootElement.GetProperty("mutations").GetArrayLength());
             using var conflicting = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "team", ["interval"] = "monthly" });
             await Assert.That(conflicting.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             using var outage = await HttpJourney.PostFormAsync(first, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "offline" });

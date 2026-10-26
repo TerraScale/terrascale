@@ -1,0 +1,19 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login" aria-labelledby="billing-change-title">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                <div class="ts-auth-heading"><h1 class="ts-auth-title" id="billing-change-title">Billing change uncertain</h1></div>
+                <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">We could not confirm whether Stripe completed this billing change</p><p class="ts-alert-body">Review your current plan and billing status before trying another billing change. Stripe may have already processed your request.</p></div>
+                <a class="ts-btn ts-btn-primary ts-btn-block" href="@TerraScale.Dashboard.Shared.Accounts.WorkspaceUrl.PreserveRequest(HttpContext!, "/organization?tab=billing")">Review current plan and billing</a>
+            </div>
+        </div>
+    </div>
+</main>
+@functions { public DocumentModel LayoutModel => Model; }
