@@ -503,7 +503,10 @@ internal static class SignInFlow
         return SignInPageModel.Render(context,
             new SignInPageModel(step, Tenant(context), email, next, $"Try again in {retryAfter} seconds.")
             {
-                ErrorTitle = "Too many attempts", Limited = true, PendingToken = pendingToken, Challenge = challenge,
+                ErrorTitle = "Too many attempts",
+                Limited = true,
+                PendingToken = pendingToken,
+                Challenge = challenge,
             },
             StatusCodes.Status429TooManyRequests);
     }
