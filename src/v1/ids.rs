@@ -95,6 +95,14 @@ pub(crate) fn check_name(kind: &str, name: &str) -> Result<()> {
     }
 }
 
+pub(crate) fn check_database_selector(selector: &str) -> Result<()> {
+    if valid_entity_id(selector) {
+        Ok(())
+    } else {
+        check_name("database", selector)
+    }
+}
+
 /// A document version: `tbv1-` followed by 32 lowercase hex characters. It is
 /// the strong ETag of point reads and the value of `If-Match`.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

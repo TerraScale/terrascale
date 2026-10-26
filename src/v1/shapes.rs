@@ -363,7 +363,7 @@ impl ShapeSync {
 
     /// Sends requests until one response applies, then returns its update.
     async fn step(&mut self) -> Result<ShapeUpdate> {
-        super::ids::check_name("database", &self.database)?;
+        super::ids::check_database_selector(&self.database)?;
         super::ids::check_name("collection", &self.collection)?;
         retain_epoch(&mut *self.client.shape_keys().lock().await, current_epoch());
         let mut restarts = 0;

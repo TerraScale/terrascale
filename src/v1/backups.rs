@@ -3,7 +3,7 @@ use super::{
     client::{Client, Req},
     documents::Database,
     errors::{Error, Result},
-    ids::{check_name, valid_entity_id},
+    ids::{check_database_selector, check_name, valid_entity_id},
 };
 use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -149,7 +149,7 @@ impl Database {
         &self,
         body: &impl Serialize,
     ) -> Result<T> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let mut req = Req::new(
             Method::POST,
             vec!["v1", "databases", self.name(), "point-in-time", "plan"],
