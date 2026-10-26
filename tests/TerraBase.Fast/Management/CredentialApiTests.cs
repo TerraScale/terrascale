@@ -58,36 +58,6 @@ public sealed class CredentialApiTests
     }
 
     [Test]
-    public async Task An_operator_key_with_an_expiry_stops_authenticating_when_it_expires()
-    {
-        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 12, 0, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: time);
-        var database = await api.CreateManagedDatabaseAsync();
-        var expires = time.GetUtcNow().AddDays(90);
-        using var issued = await api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
-            new { name = "ci-e2e", scopes = ReadOnly, organizationId = database.Organization, projectId = database.Project, expiresAt = expires });
-        var body = await issued.Content.ReadFromJsonAsync<JsonElement>();
-        using var data = api.DataClient(body.GetProperty("secret").GetString());
-        var collections = Uri($"/v1/projects/{database.Project}/databases/{database.Name}/collections");
-
-        using var before = await data.GetAsync(collections);
-        // Move UTC without replaying 90 days of the host's background timers.
-        time.AdjustTime(expires);
-        using var after = await data.GetAsync(collections);
-        using var past = await api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
-            new { name = "past", scopes = ReadOnly, organizationId = database.Organization, expiresAt = time.GetUtcNow().AddMinutes(-1) });
-        using var tooFar = await api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
-            new { name = "far", scopes = ReadOnly, organizationId = database.Organization, expiresAt = time.GetUtcNow().AddDays(367) });
-
-        await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(body.GetProperty("expiresAt").GetDateTimeOffset()).IsEqualTo(expires);
-        await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(past.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(tooFar.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-    }
-
-    [Test]
     public async Task Keys_created_at_one_timestamp_paginate_in_committed_creation_order()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));

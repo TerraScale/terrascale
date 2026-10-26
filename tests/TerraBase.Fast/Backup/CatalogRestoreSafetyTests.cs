@@ -26,13 +26,13 @@ public sealed class CatalogRestoreSafetyTests
         await gru.StartAsync();
         var organization = await gru.Api.CreateOrganizationAsync("rollout");
         var project = await gru.Api.CreateProjectAsync(organization, "project");
-        var path = ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/api-keys");
-        using var created = await gru.Api.Client.PostAsJsonAsync(path, new { name = "revoked before rollout", scopes = ReadScopes }, token);
+        var path = ManagementApi.Uri("/admin/api-keys");
+        using var created = await gru.Api.Server.Client.PostAsJsonAsync(path, new { name = "revoked before rollout", scopes = ReadScopes, organizationId = organization, projectId = project }, token);
         created.EnsureSuccessStatusCode();
         var key = await created.Content.ReadFromJsonAsync<JsonElement>(token);
-        var id = key.GetProperty("key").GetProperty("id").GetString()!;
+        var id = key.GetProperty("id").GetString()!;
         var secret = key.GetProperty("secret").GetString()!;
-        using var revoked = await gru.Api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/api-keys/{id}"), token);
+        using var revoked = await gru.Api.Server.Client.DeleteAsync(ManagementApi.Uri($"/admin/api-keys/{id}"), token);
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var before = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
         var source = await gru.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
@@ -138,12 +138,12 @@ public sealed class CatalogRestoreSafetyTests
         }
         var organization = await gru.Api.CreateOrganizationAsync("restore-majority");
         var project = await gru.Api.CreateProjectAsync(organization, "project");
-        using var created = await gru.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/api-keys"),
-            new { name = "restore-majority", scopes = ReadScopes }, token);
+        using var created = await gru.Api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
+            new { name = "restore-majority", scopes = ReadScopes, organizationId = organization, projectId = project }, token);
         created.EnsureSuccessStatusCode();
         var key = await created.Content.ReadFromJsonAsync<JsonElement>(token);
         var secret = key.GetProperty("secret").GetString()!;
-        var id = key.GetProperty("key").GetProperty("id").GetString()!;
+        var id = key.GetProperty("id").GetString()!;
         foreach (var machine in machines)
         {
             if (machine != gru)
@@ -160,7 +160,7 @@ public sealed class CatalogRestoreSafetyTests
         // later, acknowledged revocation. In particular two restored peers must not form a stale serving majority.
         await sjc.StopAsync();
         await fra.StopAsync();
-        using var revoked = await gru.Api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/api-keys/{id}"), token);
+        using var revoked = await gru.Api.Server.Client.DeleteAsync(ManagementApi.Uri($"/admin/api-keys/{id}"), token);
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await gru.StopAsync();
         for (var index = 0; index < machines.Length; index++)

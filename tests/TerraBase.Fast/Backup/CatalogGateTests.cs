@@ -312,12 +312,12 @@ public sealed class CatalogGateTests
                 var database = await api.CreateManagedDatabaseAsync();
                 recoveryPath = database.Path + "/recovery/retry";
                 recoveryUser = api.User;
-                using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/projects/{database.Project}/api-keys"),
-                    new { name = "restore-drill", scopes = ReadScopes }, token);
+                using var created = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
+                    new { name = "restore-drill", scopes = ReadScopes, organizationId = database.Organization, projectId = database.Project }, token);
                 created.EnsureSuccessStatusCode();
                 var key = await created.Content.ReadFromJsonAsync<JsonElement>(token);
                 secret = key.GetProperty("secret").GetString()!;
-                var id = key.GetProperty("key").GetProperty("id").GetString()!;
+                var id = key.GetProperty("id").GetString()!;
                 Directory.CreateDirectory(Path.Combine(directory, ".restore-drill"));
                 await using (var tap = await api.Server.Services.GetRequiredService<IWalBackup>().OpenTapAsync(null, token))
                 {
@@ -334,7 +334,7 @@ public sealed class CatalogGateTests
                     }
                 }
 
-                using var revoked = await api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/projects/{database.Project}/api-keys/{id}"), token);
+                using var revoked = await api.Server.Client.DeleteAsync(ManagementApi.Uri($"/admin/api-keys/{id}"), token);
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 await Assert.That(await api.Server.Services.GetRequiredService<IApiKeyStore>().FindAsync(secret, token) is NotFound).IsTrue();
                 using var removed = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);

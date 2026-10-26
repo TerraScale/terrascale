@@ -172,7 +172,7 @@ public sealed class WireProtocolTests
         var id = Ulid.NewUlid().ToString();
 
         var before = await session.PutAsync(Items, id, "{\"n\":1}");
-        using var revoked = await api.Client.DeleteAsync(ManagementApi.Uri($"{database.ProjectPath}/api-keys/{keyId}"));
+        using var revoked = await api.Server.Client.DeleteAsync(ManagementApi.Uri($"/admin/api-keys/{keyId}"));
         var after = await session.GetAsync(Items, id);
         await session.Closed.WaitAsync(TimeSpan.FromSeconds(10));
         await using var again = await WireClient.ConnectAsync(api.Server.WirePort);
@@ -277,12 +277,13 @@ public sealed class WireProtocolTests
         var database = await api.CreateManagedDatabaseAsync();
         // Enterprise: no request rate or concurrency limit, so pipelined requests are never refused as tenant_busy.
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
-        using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.ProjectPath}/api-keys"), new { name = Faker.Hacker.Noun(), scopes });
+        using var created = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
+            new { name = Faker.Hacker.Noun(), scopes, organizationId = database.Organization, projectId = database.Project });
         created.EnsureSuccessStatusCode();
         var body = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var owner = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(owner, database, Items);
-        return (database, body.GetProperty("secret").GetString()!, body.GetProperty("key").GetProperty("id").GetString()!);
+        return (database, body.GetProperty("secret").GetString()!, body.GetProperty("id").GetString()!);
     }
 
     private static async Task<TcpClient> ConnectAsync(ManagementApi api)

@@ -76,6 +76,31 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             : key;
     }
 
+    public async ValueTask<RevocationResult> RevokeAsync(string keyId, CancellationToken cancellationToken) =>
+        await catalog.WriteAsync<RevocationResult>(async transaction =>
+        {
+            var key = await GetAsync(transaction, Collection, keyId, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
+            if (key is null)
+            {
+                return new NotFound();
+            }
+
+            var hash = await GetAsync(transaction, Hashes, keyId, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("the API key has no secret lookup");
+            await transaction.DeleteAsync(Collection, keyId, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, hash, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, keyId, cancellationToken).ConfigureAwait(false);
+            if (key.ProjectId is { } project)
+            {
+                var entry = await GetAsync(transaction, ProjectKeys(project), keyId, TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("the API key has no project entry");
+                await transaction.DeleteAsync(ProjectKeys(project), keyId, cancellationToken).ConfigureAwait(false);
+                await transaction.DeleteAsync(ProjectKeyOrder(project), entry.Order, cancellationToken).ConfigureAwait(false);
+            }
+
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+
     public async ValueTask<CreateProjectKeyResult> CreateProjectKeyAsync(
         string userId, string organizationId, string projectId, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken)
     {
@@ -153,6 +178,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Collection, keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Hashes, entry.Hash, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeys(projectId), keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeyOrder(projectId), entry.Order, cancellationToken).ConfigureAwait(false);
             return new Done();
@@ -168,6 +194,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                 ?? throw new InvalidOperationException("a closing project's API key is invalid");
             await transaction.DeleteAsync(Collection, document.Id, token).ConfigureAwait(false);
             await transaction.DeleteAsync(Hashes, entry.Hash, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, document.Id, token).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeys(project), document.Id, token).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeyOrder(project), entry.Order, token).ConfigureAwait(false);
         }
@@ -184,6 +211,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         var hash = Hash(secret);
         await PutAsync(transaction, Collection, key.Id, key, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, Hashes, hash, key.Id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, Hashes, key.Id, hash, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
         if (projectId is null)
         {
             return (key, null);

@@ -224,7 +224,8 @@ public sealed class ProjectClosureTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var route = $"/v1/management/organizations/{database.Organization}/projects/{database.Project}";
-        using var issued = await api.Client.PostAsJsonAsync(ManagementApi.Uri(route + "/api-keys"), new { name = "existing", scopes = ReadScope });
+        using var issued = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
+            new { name = "existing", scopes = ReadScope, organizationId = database.Organization, projectId = database.Project });
         await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var key = await issued.Content.ReadFromJsonAsync<JsonElement>();
         using var data = api.DataClient(key.GetProperty("secret").GetString());
