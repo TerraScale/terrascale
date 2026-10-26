@@ -379,8 +379,8 @@ impl Client {
         ClientBuilder::new(base_url, token)
     }
 
-    /// A handle to the named database. Performs no I/O; the name is validated
-    /// on each request.
+    /// A handle by current database name or immutable ULID. Performs no I/O;
+    /// the selector is validated on each request.
     #[must_use]
     pub fn database(&self, name: impl Into<String>) -> Database {
         Database::new(self.clone(), name.into())

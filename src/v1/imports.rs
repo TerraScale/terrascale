@@ -3,7 +3,7 @@ use super::{
     client::{Req, MAX_REQUEST_BYTES},
     documents::Database,
     errors::{Error, Result},
-    ids::{check_name, valid_entity_id},
+    ids::{check_database_selector, valid_entity_id},
 };
 use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
@@ -11,7 +11,7 @@ use serde::{de::DeserializeOwned, Serialize};
 impl Database {
     /// `POST D/import`; 201 new job or 200 same source already registered.
     pub async fn create_import<T: DeserializeOwned>(&self, body: &impl Serialize) -> Result<T> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let req =
             Req::new(Method::POST, vec!["v1", "databases", self.name(), "import"]).json(body)?;
         self.client()
@@ -41,7 +41,7 @@ impl Database {
         offset: u64,
         bytes: &[u8],
     ) -> Result<T> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         if offset > i64::MAX as u64 || bytes.is_empty() || bytes.len() > MAX_REQUEST_BYTES {
             return Err(Error::InvalidInput(
                 "import offset must fit int64 and part must contain 1 to 4194304 bytes".into(),

@@ -6,8 +6,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::client::{Client, Req};
 use super::documents::{Database, ProjectDatabaseInfo};
-use super::errors::Result;
-use super::ids::check_name;
+use super::errors::{Error, Result};
+use super::ids::{check_database_selector, check_name, valid_entity_id};
 
 /// Management pagination uses `after` / `next`, independently of data cursors.
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +49,35 @@ impl Client {
             req = req.json(body)?;
         }
         self.send_project(req).await?.decode_status(&[status])
+    }
+
+    /// Renames a database by immutable ULID (`PATCH P/databases/{database_id}`).
+    /// Availability remains held pending the owning API; see docs/database-rename.md.
+    /// Requires `databases:write`. Returns the existing database metadata; its
+    /// ID, data, keys and placement stay unchanged. Invalid names return 400
+    /// (or local validation errors); project-duplicate names return 409.
+    /// Old name routes return 404. Update name-based connection strings and
+    /// handles; ID-based connection strings remain valid. Reconcile uncertain
+    /// failures before explicitly retrying this mutation.
+    pub async fn rename_database(
+        &self,
+        database_id: &str,
+        name: &str,
+    ) -> Result<ProjectDatabaseInfo> {
+        if !valid_entity_id(database_id) {
+            return Err(Error::InvalidInput(
+                "database ID must be a canonical uppercase ULID".into(),
+            ));
+        }
+        check_name("database", name)?;
+        self.management(
+            Method::PATCH,
+            vec!["v1", "databases", database_id],
+            &[],
+            Some(&serde_json::json!({"name": name})),
+            StatusCode::OK,
+        )
+        .await
     }
 
     /// `GET P/databases`; `after` is an opaque management cursor.
@@ -94,7 +123,7 @@ impl Database {
             .await
     }
 
-    /// `GET D`; selectors are database names, response identities are ULIDs.
+    /// `GET D`; selectors accept a current name or immutable ULID.
     pub async fn get_database(&self) -> Result<ProjectDatabaseInfo> {
         self.management(Method::GET, &[], &[], None::<&()>, StatusCode::OK)
             .await
@@ -117,7 +146,7 @@ impl Database {
     /// confirms logical deletion and local cleanup; remote erasure is retried
     /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         self.client()
             .send_project(Req::new(
                 Method::DELETE,
@@ -148,7 +177,7 @@ impl Database {
         body: Option<&impl Serialize>,
         status: StatusCode,
     ) -> Result<T> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let mut segments = vec!["v1", "databases", self.name()];
         segments.extend_from_slice(suffix);
         self.client()
