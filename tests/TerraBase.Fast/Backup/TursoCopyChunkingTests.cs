@@ -37,7 +37,7 @@ public sealed class TursoCopyChunkingTests
                         events.Parameters.Clear();
                         events.Parameters.Add(new TursoParameter("$id", (long)i * 3));
                         events.Parameters.Add(new TursoParameter("$acct", "acct-" + i % 7));
-                        events.Parameters.Add(new TursoParameter("$note", i % 5 == 0 ? DBNull.Value : new string('n', 40 + i)));
+                        events.Parameters.Add(new TursoParameter("$note", i % 5 == 0 ? DBNull.Value : "\u00e9\ud83c\udf0d" + new string('n', 40 + i)));
                         events.Parameters.Add(new TursoParameter("$amount", (long)i * 100));
                         events.ExecuteNonQuery();
                     }
@@ -62,7 +62,8 @@ public sealed class TursoCopyChunkingTests
             using var reader = new TursoConnection(TestMasterKey.ConnectionString(source));
             reader.Open();
             Execute(reader, "BEGIN;");
-            TursoCopy.Write(reader, TestMasterKey.ConnectionString(copy, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate), chunkRows: 2, chunkBytes: 64, CancellationToken.None);
+            // Rewrite derives the target string from an existing source: the copy must create its scratch file even with ReadWrite.
+            TursoCopy.Write(reader, TestMasterKey.ConnectionString(copy), chunkRows: 2, chunkBytes: 64, CancellationToken.None);
 
             using var target = new TursoConnection(TestMasterKey.ConnectionString(copy));
             target.Open();
@@ -72,8 +73,9 @@ public sealed class TursoCopyChunkingTests
             await Assert.That(Scalar(target, "SELECT min(id) FROM events;")).IsEqualTo(3L);
             await Assert.That(Scalar(target, "SELECT max(id) FROM events;")).IsEqualTo(150L);
             await Assert.That(Scalar(target, "SELECT count(*) FROM events WHERE id % 3 != 0;")).IsEqualTo(0L);
-            await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 5;")).IsNull();
-            await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 3;")).IsEqualTo(new string('n', 41));
+            await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 15;")).IsEqualTo(DBNull.Value);
+            await Assert.That(Scalar(target, "SELECT count(*) FROM events WHERE note IS NULL;")).IsEqualTo(10L);
+            await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 3;")).IsEqualTo("\u00e9\ud83c\udf0d" + new string('n', 41));
             await Assert.That(Scalar(target, "SELECT hex(payload) FROM markers WHERE name = 'marker-4';")).IsEqualTo("04010203");
             // The index came with the rows: i % 7 == 0 over 1..50 is seven rows.
             await Assert.That(Scalar(target, "SELECT count(*) FROM events WHERE acct = 'acct-0';")).IsEqualTo(7L);
