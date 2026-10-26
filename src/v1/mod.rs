@@ -42,6 +42,7 @@ mod query;
 mod reporting;
 mod request_logs;
 mod rules;
+mod schema_preview;
 mod shape_crypto;
 mod shapes;
 mod sql;
@@ -81,6 +82,7 @@ pub use query::{
 };
 pub use request_logs::{DatabaseRequestLog, DatabaseRequestLogs};
 pub use rules::{CollectionRules, ReadWriteGrants};
+pub use schema_preview::{CollectionSchemaPreview, SchemaPreviewDiagnostic};
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};
 pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
 pub use sql_exec::{
