@@ -303,7 +303,7 @@ public static class CheckNugetVulnerabilities
 
     private static (int, string, string) RunDotnetList(string project) =>
         RunScanner(
-            ["dotnet", "list", project, "package", "--vulnerable", "--include-transitive", "--format", "json"],
+            ["dotnet", "list", project, "package", "--no-restore", "--vulnerable", "--include-transitive", "--format", "json"],
             TimeSpan.FromMinutes(10));
 
     /// <summary>Runs a scanner command; output that stalls past the timeout fails with exit code 1.</summary>

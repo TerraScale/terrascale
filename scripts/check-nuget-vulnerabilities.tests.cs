@@ -1,4 +1,5 @@
 #!/usr/bin/env dotnet run
+#:property NuGetLockFilePath=check-nuget-vulnerabilities.tests.packages.lock.json
 #:package TUnit@1.72.10
 #:include check-nuget-vulnerabilities.lib.cs
 
@@ -63,13 +64,15 @@ public sealed class AuditTests
     }
 
     [Test]
-    [Arguments("topLevelPackages")]
-    [Arguments("transitivePackages")]
-    public async Task Direct_and_transitive_advisories_are_reported(string kind)
+    [Arguments("topLevelPackages", "Low")]
+    [Arguments("transitivePackages", "Moderate")]
+    [Arguments("topLevelPackages", "High")]
+    [Arguments("transitivePackages", "Critical")]
+    public async Task Direct_and_transitive_advisories_are_reported(string kind, string severity)
     {
         var report = CleanReport(
             "[{\"framework\": \"net11.0\", \"" + kind + "\": [{\"id\": \"Example\", \"resolvedVersion\": \"1.0\", " +
-            "\"vulnerabilities\": [{\"severity\": \"High\", \"advisoryurl\": \"https://example.test/advisory\"}]}]}]");
+            "\"vulnerabilities\": [{\"severity\": \"" + severity + "\", \"advisoryurl\": \"https://example.test/advisory\"}]}]}]");
         var findings = TerraScale.Ci.CheckNugetVulnerabilities.ValidateReport(Parse(report), Project);
         await Assert.That(findings.Count).IsEqualTo(1);
         await Assert.That(findings[0].GetProperty("id").GetString()).IsEqualTo("Example");
