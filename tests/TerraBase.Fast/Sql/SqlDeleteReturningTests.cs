@@ -8,6 +8,8 @@ public sealed class SqlDeleteReturningTests
     [Test]
     [Arguments("DELETE FROM t RETURNING *")]
     [Arguments("DELETE FROM t RETURNING *;")]
+    [Arguments("DELETE FROM t WHERE id = 1 RETURNING *; -- END")]
+    [Arguments("DELETE FROM t AS d RETURNING *; -- END")]
     [Arguments("/* RETURNING */ DELETE /* target */ FROM \"t\" -- RETURNING\n rEtUrNiNg *;")]
     [Arguments("DELETE FROM `t` RETURNING t.id AS id, v")]
     [Arguments("DELETE FROM [t] RETURNING id, v")]
@@ -87,6 +89,10 @@ public sealed class SqlDeleteReturningTests
     [Arguments("DELETE FROM t RETURNING * END")]
     [Arguments("DELETE FROM t RETURNING * END; SELECT 1")]
     [Arguments("DELETE FROM t RETURNING id AS \"END\" /* tail */ END; SELECT 1")]
+    [Arguments("DELETE FROM t WHERE id = 1 RETURNING * END; SELECT 1")]
+    [Arguments("DELETE FROM t AS d RETURNING * END; SELECT 1")]
+    [Arguments("DELETE FROM t RETURNING *; SELECT 1 END; SELECT 2;")]
+    [Arguments("SELECT 1 END; SELECT 2")]
     public async Task Invalid_returning_does_not_commit_any_statement_in_the_http_batch(string sql)
     {
         await using var api = await DocumentApi.StartAsync();

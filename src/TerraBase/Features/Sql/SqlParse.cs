@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using SqlParser;
 using SqlParser.Ast;
+using SqlParser.Tokens;
 using TerraBase.Engine;
 
 namespace TerraBase.Features.Sql;
@@ -157,7 +158,14 @@ internal static partial class SqlParse
         try
         {
             var (numbered, names) = SqlRead.Number(sql);
-            var statements = new Parser().ParseSql(numbered, new SqlDialect());
+            var parser = new Parser();
+            var statements = parser.ParseSql(numbered, new SqlDialect());
+            // The parser can stop at a block's END; client SQL must consume the entire input.
+            if (parser.PeekToken() is not EOF)
+            {
+                throw Parser.Expected("end of input", parser.PeekToken());
+            }
+
             return statements.Count == 1
                 ? Translate(statements[0]) with { Params = names }
                 : throw new FormatException("exactly one statement is supported");

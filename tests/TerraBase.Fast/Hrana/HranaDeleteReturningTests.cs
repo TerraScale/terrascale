@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Sql;
 using static TerraBase.Fast.Hrana.HranaPipelineTests;
@@ -8,19 +9,31 @@ namespace TerraBase.Fast.Hrana;
 public sealed class HranaDeleteReturningTests
 {
     [Test]
-    [Arguments("v2")]
-    [Arguments("v3")]
-    public async Task Malformed_returning_tails_are_refused_without_deleting_or_executing_a_script_prefix(string version)
+    [Arguments("v2", "DELETE FROM t RETURNING * END; SELECT 1")]
+    [Arguments("v3", "DELETE FROM t RETURNING * END; SELECT 1")]
+    [Arguments("v2", "DELETE FROM t RETURNING id AS \"END\" /* tail */ END; SELECT 1;")]
+    [Arguments("v3", "DELETE FROM t RETURNING id AS \"END\" /* tail */ END; SELECT 1;")]
+    [Arguments("v2", "DELETE FROM t WHERE id = 1 RETURNING * END; SELECT 1")]
+    [Arguments("v3", "DELETE FROM t WHERE id = 1 RETURNING * END; SELECT 1")]
+    [Arguments("v2", "DELETE FROM t AS d RETURNING * END; SELECT 1")]
+    [Arguments("v3", "DELETE FROM t AS d RETURNING * END; SELECT 1")]
+    [Arguments("v2", "DELETE FROM t RETURNING *; SELECT 1 END; SELECT 2;")]
+    [Arguments("v3", "DELETE FROM t RETURNING *; SELECT 1 END; SELECT 2;")]
+    [Arguments("v2", "SELECT 1 END; SELECT 2")]
+    [Arguments("v3", "SELECT 1 END; SELECT 2")]
+    public async Task Malformed_returning_tails_are_refused_without_deleting_or_executing_a_script_prefix(string version, string sql)
     {
         await using var api = await DocumentApi.StartAsync();
-        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", "INSERT INTO t VALUES (1, 'keep')");
-        var result = await PostAsync(api, """
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", "INSERT INTO t VALUES (1, 'keep'), (2, 'also keep')");
+        var statement = JsonSerializer.Serialize(sql);
+        var script = JsonSerializer.Serialize("INSERT INTO t VALUES (3, 'prefix'); " + sql);
+        var result = await PostAsync(api, $$$"""
             {"requests":[
-             {"type":"execute","stmt":{"sql":"DELETE FROM t RETURNING * END; SELECT 1"}},
-             {"type":"execute","stmt":{"sql":"SELECT * FROM t"}},
-             {"type":"sequence","sql":"INSERT INTO t VALUES (2, 'prefix'); DELETE FROM t RETURNING id AS \"END\" /* tail */ END; SELECT 1;"},
-             {"type":"execute","stmt":{"sql":"SELECT * FROM t"}},
-             {"type":"describe","sql":"DELETE FROM t RETURNING * END"},
+             {"type":"execute","stmt":{"sql":{{{statement}}}}},
+             {"type":"execute","stmt":{"sql":"SELECT * FROM t ORDER BY id"}},
+             {"type":"sequence","sql":{{{script}}}},
+             {"type":"execute","stmt":{"sql":"SELECT * FROM t ORDER BY id"}},
+             {"type":"describe","sql":{{{statement}}}},
              {"type":"execute","stmt":{"sql":"DELETE FROM t RETURNING id AS \"END\", v; -- END"}},
              {"type":"execute","stmt":{"sql":"SELECT count(*) FROM t"}},{"type":"close"}]}
             """, version: version);
@@ -33,8 +46,9 @@ public sealed class HranaDeleteReturningTests
 
         foreach (var index in new[] { 1, 3, 5 })
         {
-            await Assert.That(Response(result.Json, index).GetProperty("result").GetProperty("rows").GetRawText())
-                .IsEqualTo("""[[{"type":"integer","value":"1"},{"type":"text","value":"keep"}]]""");
+            await Assert.That(string.Join(',', Response(result.Json, index).GetProperty("result").GetProperty("rows").EnumerateArray()
+                .OrderBy(row => row[0].GetProperty("value").GetString(), StringComparer.Ordinal).Select(row => row.GetRawText())))
+                .IsEqualTo("""[{"type":"integer","value":"1"},{"type":"text","value":"keep"}],[{"type":"integer","value":"2"},{"type":"text","value":"also keep"}]""");
         }
 
         await Assert.That(Response(result.Json, 5).GetProperty("result").GetProperty("cols")[0].GetProperty("name").GetString()).IsEqualTo("END");

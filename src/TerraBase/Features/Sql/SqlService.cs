@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using SqlParser;
+using SqlParser.Tokens;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
@@ -149,7 +150,13 @@ internal sealed class SqlSession(
         {
             // The whole text passes the literal and name checks before it is split.
             _ = SqlRead.Number(sql);
-            statements = new Parser().ParseSql(sql, new SqlDialect());
+            var parser = new Parser();
+            statements = parser.ParseSql(sql, new SqlDialect());
+            // Reject an unconsumed tail before any statement in the script executes.
+            if (parser.PeekToken() is not EOF)
+            {
+                throw Parser.Expected("end of input", parser.PeekToken());
+            }
         }
         catch (FormatException error)
         {
