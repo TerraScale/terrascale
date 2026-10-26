@@ -98,3 +98,39 @@ later bounded top-ups/final replay rely on the tested replay implementation, not
 The synthetic I/O saturation test exercises the 0013f queue feedback loop, not an arbitrarily stalled fsync syscall.
 The separate source checkpoint still serializes with Turso writers; its duration is exposed separately and a storage
 device that stops completing I/O can exceed the measured hold target. General capture-always-on remains decision 0017 PR 2.
+
+
+The combined #707 includes the replay refactor originally reviewed in #706. Its final validation on main `e5d70309c`
+used one sequential `ts-heavy-any` job, native download first, .NET 11 Release, default TUnit parallelism and CI's pinned
+SDK dependency. Both suite builds had zero warnings/errors. Fast selections passed 375/375 (92 rewrite/erasure/hold/group
+commit, 11 retention/copy, 166 rebuild, 106 recovery/shutdown); the Slow rolling-restart test passed three times, covering
+60 restarts and 30 completed SYSTEM rewrites. Two Budget refusals each succeeded on attempt two. Real-clock 54,013,692-byte
+SYSTEM and 53,951,716-byte tenant sources held the healthy-rewrite writer 65/70 ms with 668/173 concurrent commits retained.
+
+Step maxima across the two large-file cases and the rolling-restart attempts:
+
+| Step | Maximum (ms) |
+| --- | ---: |
+| Final replay | 119.494 |
+| Final source checkpoint | 12.934 |
+| Peer refresh | 6.513 |
+| Rebuild-ledger refresh | 0.562 |
+| Final scratch checkpoint | 9.165 |
+| Final source fsync | 2.017 |
+| Final scratch fsync | 4.852 |
+| Rename | 3.779 |
+| Directory fsync before rename | 3.284 |
+| Directory fsync after rename | 2.524 |
+| Historical source checkpoint (separate hold) | 20.264 |
+| Historical source fsync (off writer) | 5.319 |
+
+The complete final pass peaked at 156.465 ms. The instrumented unchanged `28a5b6b13` replicated baseline passed once;
+its maxima were 9.476 ms final replay, 23.493 ms source checkpoint, 5.750/1.310 ms peer/ledger refresh, 1.583 ms scratch
+checkpoint, 0.070/2.401 ms source/scratch fsync, 1.218 ms rename and 2.556/1.269 ms directory fsync. Loads differ between
+samples. The original CI 750 ms expiry did not reproduce; no claim is made about its precise stalled step.
+
+An unmodified-main recovery/shutdown control at `ece4231f2` passed 104 and failed two absent-directory delete cases:
+the deliberately armed lifecycle fault escaped through background convergence during shutdown. The first host now uses
+a scoped fake clock while asserting its crash state, as neighboring interruption tests do; restarts still use real time.
+Production recovery/shutdown code is unchanged. The final 106-test selection passes, including both reported shutdown
+variants. Full Fast is left to CI and full Slow was not run.
