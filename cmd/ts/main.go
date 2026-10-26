@@ -20,7 +20,6 @@ import (
 	"iter"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -32,7 +31,7 @@ import (
 
 var version = "dev" // Set by release builds with -ldflags.
 
-const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
+const usage = `usage: ts [-project <name or id>] [-org <name or id>] [-yes] <command>
 
   version                                 print the CLI version
   help                                    print this help
@@ -46,6 +45,9 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
   completion bash | zsh | fish            print a shell completion script
 
   db list | create <db> | delete <db>     manage the project's databases
+                                          delete requires typing the database
+                                          name; -yes before db delete consents
+                                          explicitly for unattended use
   db branch <source> <db>                 copy a database into a new one
   db info <db>                            print a database's metadata as JSON
   db regions <db> <region>... | none      set the replica regions (gru, sjc,
@@ -186,6 +188,10 @@ var commands = map[string][]int{
 }
 
 func run(ctx context.Context, args []string, out io.Writer) error {
+	return runWithInput(ctx, args, out, os.Stdin, os.Stderr, stdinTerminal())
+}
+
+func runWithInput(ctx context.Context, args []string, out io.Writer, in io.Reader, prompt io.Writer, tty bool) error {
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
 		_, err := fmt.Fprintln(out, "ts", version)
 		return err
@@ -199,6 +205,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project name or id")
+	yes := fs.Bool("yes", false, "db delete: consent to permanent deletion")
 	org := fs.String("org", "", "organization name or id")
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
@@ -223,14 +230,25 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	var collectionSet bool
+	var collectionSet, yesSet bool
 	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "yes" {
+			yesSet = true
+		}
 		if f.Name == "collection" {
 			collectionSet = true
 		}
 	})
 	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
 		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
+	}
+	if yesSet && name != "db delete" {
+		return fmt.Errorf("-yes is only accepted for db delete: %w", errUsage)
+	}
+	if name == "db delete" {
+		if err := confirmDelete(operands[0], *project, *yes, in, prompt, tty); err != nil {
+			return err
+		}
 	}
 	switch name {
 	case "completion":
@@ -353,36 +371,6 @@ func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io
 	fmt.Fprintf(os.Stderr, "Created key %s (%s). Expires: %s. Allowed networks: %s.\nStore it now, it is not shown again:\n", k.APIKey.Name, k.APIKey.ID, expires, networks)
 	fmt.Fprintln(out, k.Key)
 	return nil
-}
-
-// credentials are the CLI's sign-in, kept in the user's config directory.
-type credentials struct {
-	AccessToken  string    `json:"accessToken"`
-	RefreshToken string    `json:"refreshToken"`
-	Expiry       time.Time `json:"expiry"`
-}
-
-func credentialsPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "terrascale", "cli.json"), nil
-}
-
-func save(t *tsauth.Tokens) error {
-	path, err := credentialsPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.Marshal(credentials{t.AccessToken, t.RefreshToken, t.Expiry})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
 }
 
 func login(ctx context.Context, d *tsauth.Device, out io.Writer) error {
