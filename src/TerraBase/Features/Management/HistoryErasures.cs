@@ -51,13 +51,6 @@ internal sealed partial class HistoryErasures(
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
-    private static readonly TimeSpan MinimumRewriteInterval = TimeSpan.FromMinutes(10);
-    // Only Auth and System, shared by all phases; RunOnceAsync serializes access. Use monotonic elapsed time.
-    private readonly Dictionary<string, long> _rewriteStarted = [];
-    private RewritePhase _nextRewritePhase;
-
-    private enum RewritePhase { Final, Residue, Retirement }
-
     // A refused rewrite waits this long before the next attempt of that file, doubling to an hour: each attempt ends the
     // backup tap of a file that does drain, and a busy file must not be refused (and re-shipped) every pass.
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromHours(1);
@@ -376,17 +369,9 @@ internal sealed partial class HistoryErasures(
                 }
             }
 
-            // Rotate after a successful auth rewrite: a stream of new final cuts must not starve residue or retirement.
-            var first = (int)_nextRewritePhase;
-            for (var step = 0; step < 3; step++)
-            {
-                await ((RewritePhase)((first + step) % 3) switch
-                {
-                    RewritePhase.Final => RewriteAsync(rewrite, cancellationToken),
-                    RewritePhase.Residue => RewriteResidueAsync(residue, cancellationToken),
-                    _ => RetireAsync(retire, cancellationToken),
-                }).ConfigureAwait(false);
-            }
+            await RewriteAsync(rewrite, cancellationToken).ConfigureAwait(false);
+            await RewriteResidueAsync(residue, cancellationToken).ConfigureAwait(false);
+            await RetireAsync(retire, cancellationToken).ConfigureAwait(false);
             await VerifyBackupsAsync(records, cancellationToken).ConfigureAwait(false);
             if (page.Next is not null)
             {
@@ -594,7 +579,6 @@ internal sealed partial class HistoryErasures(
             return;
         }
 
-        _nextRewritePhase = RewritePhase.Residue;
         await RecordLineageAsync(auth: a.TargetIncarnation, system: null, cancellationToken).ConfigureAwait(false);
         if (await TryRewriteAsync(null, System, systemOffset, systemIncarnation, cancellationToken).ConfigureAwait(false) is not { } s)
         {
@@ -656,7 +640,6 @@ internal sealed partial class HistoryErasures(
             return;
         }
 
-        _nextRewritePhase = RewritePhase.Retirement;
         await RecordLineageAsync(auth: auth.TargetIncarnation, system: null, cancellationToken).ConfigureAwait(false);
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
@@ -746,7 +729,6 @@ internal sealed partial class HistoryErasures(
             return;
         }
 
-        _nextRewritePhase = RewritePhase.Final;
         await RecordLineageAsync(auth: auth.TargetIncarnation, system: null, cancellationToken).ConfigureAwait(false);
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
@@ -767,19 +749,11 @@ internal sealed partial class HistoryErasures(
     private const string Auth = "auth";
     private const string System = "system";
 
-    // Every erasure phase shares the per-file start interval, including refused attempts and longer refusal backoffs.
-    private bool Backing(string file) =>
-        _rewriteStarted.TryGetValue(file, out var started) && time.GetElapsedTime(started) < MinimumRewriteInterval
-        || _backoff.TryGetValue(file, out var backoff) && time.GetUtcNow() < backoff.Next;
+    // Whether a file's last refused rewrite asks this pass to wait.
+    private bool Backing(string file) => _backoff.TryGetValue(file, out var backoff) && time.GetUtcNow() < backoff.Next;
 
     private async Task<HealthyRewrite?> TryRewriteAsync(TenantContext? database, string file, long offset, Ulid covered, CancellationToken cancellationToken)
     {
-        if (Backing(file))
-        {
-            return null;
-        }
-
-        _rewriteStarted[file] = time.GetTimestamp();
         try
         {
             var rewrite = await rewrites.RewriteAsync(database, offset, cancellationToken).ConfigureAwait(false);
