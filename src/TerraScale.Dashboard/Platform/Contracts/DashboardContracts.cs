@@ -14,7 +14,7 @@ public static class DashboardContracts
             {
                 document.Info.Title = "TerraScale Dashboard integration API";
                 document.Info.Version = "v1";
-                document.Servers = [];
+                document.Servers = [new OpenApiServer { Url = "https://dash.terrascale.tech" }];
                 document.Info.Description = "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. " +
                     "New public APIs use /v1. Mutations require the current session and the _csrf form token " +
                     "bound to the same origin; authentication and membership checks run before actions. " +

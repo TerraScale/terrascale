@@ -21,15 +21,22 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         return new(name, "created");
     }
 
-    [McpServerTool(Name = "list_documents", Title = "List documents", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a collection's documents ordered by ID, with optional search and paging.")]
+    [McpServerTool(Name = "list_documents", Title = "List documents", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List documents by ID using native cursor pagination: limit 1–100 (0 or omitted means 100), after is the opaque nextCursor from the previous response. Search filters each fetched page by case-insensitive ID/JSON substring; an empty page may still have hasMore=true. Continue until hasMore=false. Setting sort, descending=true or page!=1 selects browser paging: 25 rows per page, page 1–40, no limit/after. Browser search scans at most 1,000 documents; without search reads only through the requested page plus one row, up to 1,000. Browser results expose actual (possibly clamped) page, pageCount and total; totalIsLowerBound=true means the scan is incomplete and pageCount is also a lower bound. hasMore means later pages or unscanned documents remain, including beyond the browser cap; use cursor mode for complete traversal. Cursor mode has no total/page counts; browser mode has no nextCursor.")]
     public async Task<McpDocumentList> Documents(string databaseId, string collection, string search = "", int limit = 0, string after = "", string? organizationId = null, string? projectId = null,
         string sort = "", bool descending = false, int page = 1)
     {
         var context = Scope(organizationId, projectId);
-        var rows = sort.Length > 0 || descending || page != 1
-            ? (await data.BrowseAsync(context, databaseId, collection, search, sort, descending, page, Cancellation)).Documents
-            : await data.ListAsync(context, databaseId, collection, search, limit, after, Cancellation);
-        return new(rows.Select(row => new McpDocument(row.Id, row.Document)).ToArray());
+        if (page is < 1 or > 40) throw new AccountAccessException("Document pages use 1–40.", 422);
+        if (limit is < 0 or > 100) throw new AccountAccessException("Document limits use 1–100 rows, or 0 for the default of 100.", 422);
+        if (sort.Length > 0 || descending || page != 1)
+        {
+            if (limit != 0 || after.Length > 0) throw new AccountAccessException("Browser paging (sort, descending or page) cannot be combined with limit or after. Use cursor paging for complete traversal.", 422);
+            var browse = await data.BrowseAsync(context, databaseId, collection, search, sort, descending, page, Cancellation);
+            return new(browse.Documents.Select(row => new McpDocument(row.Id, row.Document)).ToArray(),
+                HasMore: browse.Page < browse.PageCount || browse.More, Page: browse.Page, PageCount: browse.PageCount, Total: browse.Matched, TotalIsLowerBound: browse.More);
+        }
+        var result = await data.ListPageAsync(context, databaseId, collection, search, limit, after, Cancellation);
+        return new(result.Items.Select(row => new McpDocument(row.Id, row.Document)).ToArray(), result.NextCursor, !string.IsNullOrEmpty(result.NextCursor));
     }
 
     [McpServerTool(Name = "get_document", Title = "Get document", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read one document by its ULID ID. Set includeVersion for a conditional-write version.")]
@@ -196,7 +203,8 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
 public sealed record McpCollectionList(IReadOnlyList<string> Collections);
 public sealed record McpCollectionCreated(string Collection, string Status);
 public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
-public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
+public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents, string? NextCursor = null, bool HasMore = false,
+    int? Page = null, int? PageCount = null, int? Total = null, bool? TotalIsLowerBound = null);
 public sealed record McpDocumentWrite(string Id, string Operation)
 {
     public string Outcome { get; init; } = "acknowledged";

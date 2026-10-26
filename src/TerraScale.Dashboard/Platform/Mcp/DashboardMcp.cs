@@ -122,7 +122,7 @@ public static class DashboardMcp
             await next(context);
         });
         app.MapMcp("/mcp");
-        app.MapMcp("/{**mcpPath}").RequireHost("mcp.terrascale.tech");
+        app.MapMcp("/").RequireHost("mcp.terrascale.tech");
     }
 
     internal static AccountContext Scope(HttpContext? http, string? organizationId, string? projectId)

@@ -65,7 +65,7 @@ public static class HttpJourney
         return client.SendAsync(request);
     }
 
-    public static async Task<JsonElement> McpAsync(HttpClient client, string secret, string method, object arguments)
+    public static async Task<JsonElement> McpAsync(HttpClient client, string secret, string method, object arguments, string path = "/mcp", string? host = null)
     {
         // The source dashboard uses the current stateless protocol. Keep the
         // explicit legacy initialize journey as a compatibility assertion.
@@ -78,11 +78,12 @@ public static class HttpJourney
                 ["io.modelcontextprotocol/clientCapabilities"] = new { },
                 ["io.modelcontextprotocol/clientInfo"] = new { name = "TUnit dashboard E2E", version = "1" }
             });
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
         {
             Content = new StringContent(JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 1, method, @params = parameters }), Encoding.UTF8, "application/json")
         };
         request.Headers.Accept.ParseAdd("application/json, text/event-stream");
+        if (host is not null) request.Headers.Host = host;
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
         request.Headers.Add("MCP-Protocol-Version", protocol);
         request.Headers.Add("Mcp-Method", method);

@@ -8,6 +8,10 @@ The C# application is the only implementation; the Go application was removed.
 Production runs on OCI gru under ts-orch; see the
 [OCI deployment contract](docs/oci-deployment.md).
 
+Connect an assistant with the [MCP guide](https://docs.terrascale.tech/guides/mcp).
+The [dashboard integration API](docs/platform-api.md) describes the serving
+session-authenticated contract and links its interactive reference.
+
 ## Layout
 - `src/TerraScale.Dashboard/`: the application (`Features/`, `Platform/`, `UI/`).
   CSS/JS sources are in `web/assets/`, feature CSS sits beside its slice in `Features/`; served files are in `web/static/`.
