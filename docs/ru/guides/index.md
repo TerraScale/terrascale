@@ -12,6 +12,7 @@ title: Practical guides
 Use the [quickstart](/ru/getting-started/) to establish one working application connection, then choose the guide for the next operation.
 
 - [SDK reference](/ru/guides/sdks): public installation, language support and API compatibility.
+- [Authentication capabilities](/ru/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/ru/guides/authentication): credential scope and server/browser boundaries.
 - [Queries and pagination](/ru/guides/queries): filters, projection, cursors and version preconditions.
 - [Connect with psql and Postgres drivers](/ru/guides/postgres-clients): SQL over the PostgreSQL wire protocol from psql and standard drivers (pending).

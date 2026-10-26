@@ -20,6 +20,7 @@
 - [CLI sign-in, least-privilege keys, saved context, consent and dashboard billing](https://docs.terrascale.tech/cli/access)
 - [Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records](https://docs.terrascale.tech/cli/automation)
 - [Supported runtimes, installation and SDK contracts](https://docs.terrascale.tech/guides/sdks)
+- [Current authentication methods, protocol scope and availability](https://docs.terrascale.tech/guides/authentication-capabilities)
 - [API keys, token exchange and scoped access](https://docs.terrascale.tech/guides/authentication)
 - [JSON filters, projection, opaque pagination and version preconditions](https://docs.terrascale.tech/guides/queries)
 - [Run SQL from the official libSQL clients (JavaScript, Go, Rust, Python)](https://docs.terrascale.tech/guides/libsql-clients)

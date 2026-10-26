@@ -18,6 +18,7 @@ const routes = [
   ['/cli/access', 'CLI sign-in, least-privilege keys, saved context, consent and dashboard billing'],
   ['/cli/automation', 'Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records'],
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
+  ['/guides/authentication-capabilities', 'Current authentication methods, protocol scope and availability'],
   ['/guides/authentication', 'API keys, token exchange and scoped access'],
   ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
   ['/guides/libsql-clients', 'Run SQL from the official libSQL clients (JavaScript, Go, Rust, Python)'],
