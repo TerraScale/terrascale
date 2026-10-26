@@ -27,3 +27,14 @@ updates:
       actions-security:
         applies-to: security-updates
         patterns: ["*"]
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /scripts/ci
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      runtime-security:
+        applies-to: security-updates
+        patterns: ['*']
