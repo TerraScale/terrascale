@@ -134,7 +134,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
             .Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
     }
 
-    public HttpClient CreateClient() => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+    public HttpClient CreateClient() => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
     { BaseAddress = Origin, Timeout = TimeSpan.FromSeconds(15) };
 
     public async Task<HttpClient> LoginAsync(string persona = "owner")

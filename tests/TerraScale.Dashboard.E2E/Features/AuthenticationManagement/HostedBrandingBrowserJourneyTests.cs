@@ -16,7 +16,7 @@ public sealed class HostedBrandingBrowserJourneyTests(DashboardRootFixture fixtu
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         var output = BrowserAudit.Output(fixture.Root, "hosted-auth-v3/" + width);
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height }, ColorScheme = ColorScheme.Light, RecordVideoDir = output });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height }, ColorScheme = ColorScheme.Light, RecordVideoDir = output });
         var page = await context.NewPageAsync();
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);

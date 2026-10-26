@@ -16,7 +16,7 @@ public sealed class HostLifecycleJourneyTests
             .Because("Every actual listener receives a free port, including simultaneous runs from the same checkout.");
         foreach (var origin in origins)
         {
-            using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
             { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
             using var ready = await client.GetAsync("/readyz");
             await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);

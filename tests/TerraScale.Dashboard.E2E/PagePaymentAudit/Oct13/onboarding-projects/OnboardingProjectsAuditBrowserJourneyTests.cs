@@ -24,7 +24,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
         foreach (var (size, width, height) in new[] { ("desktop", 1440, 900), ("mobile", 390, 844) })
         {
             await using var context = await browser.NewContextAsync(new()
-            { ViewportSize = new() { Width = width, Height = height }, RecordVideoDir = output, RecordVideoSize = new() { Width = width, Height = height } });
+            { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height }, RecordVideoDir = output, RecordVideoSize = new() { Width = width, Height = height } });
             // Redact synthetic account identity before screenshots/video. Product markup is unchanged.
             await context.AddInitScriptAsync("""
                 document.addEventListener('DOMContentLoaded', () => {

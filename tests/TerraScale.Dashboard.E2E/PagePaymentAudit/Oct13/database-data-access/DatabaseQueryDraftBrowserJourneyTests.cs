@@ -21,7 +21,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         var id = await DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "oct13-management-pages");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         var mutations = new List<string>();
         page.Request += (_, request) =>
@@ -90,7 +90,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         var id = await DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "oct13-browser-check");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
         await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
@@ -130,7 +130,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         var id = await DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "oct13-query-draft");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
         await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());

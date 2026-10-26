@@ -141,7 +141,7 @@ public sealed class AccountDeletionJourneyTests
             await environment.InitializeAsync();
             var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1");
             await app.StartAsync();
-            var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+            var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
             { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
             if (signIn)
             {

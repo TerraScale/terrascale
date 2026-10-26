@@ -17,7 +17,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var browserContext = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var browserContext = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await browserContext.NewPageAsync();
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();
@@ -147,7 +147,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var browserContext = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var browserContext = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await browserContext.NewPageAsync();
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();

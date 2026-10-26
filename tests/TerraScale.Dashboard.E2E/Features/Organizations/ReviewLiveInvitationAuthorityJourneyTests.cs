@@ -137,7 +137,7 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
                 TerraBasePrecondition.Matches(current.Version), default);
         }
 
-        public HttpClient Client(bool replica = false) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        public HttpClient Client(bool replica = false) => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = replica ? this.replica : origin, Timeout = TimeSpan.FromSeconds(30) };
 
         public async ValueTask DisposeAsync()

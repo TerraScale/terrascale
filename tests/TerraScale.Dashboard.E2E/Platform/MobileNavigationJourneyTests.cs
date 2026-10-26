@@ -13,7 +13,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 390, Height = 844 } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 390, Height = 844 } });
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();
@@ -71,7 +71,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 390, Height = 844 } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 390, Height = 844 } });
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();

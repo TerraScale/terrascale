@@ -13,7 +13,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var page = await browser.NewPageAsync(new() { ViewportSize = new() { Width = width, Height = 900 } });
+        var page = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = 900 } });
         await LoginAsync(page, "/profile");
         var name = page.GetByLabel("Display name");
         var phone = page.GetByLabel("Phone number (optional)");
@@ -37,7 +37,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var page = await browser.NewPageAsync(new() { ViewportSize = new() { Width = width, Height = 900 } });
+        var page = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = 900 } });
         await LoginAsync(page, "/organization?tab=members");
         var role = page.GetByLabel("Role", new() { Exact = true });
         await role.ScrollIntoViewIfNeededAsync();
@@ -55,7 +55,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var page = await browser.NewPageAsync(new() { ViewportSize = new() { Width = width, Height = 900 } });
+        var page = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = 900 } });
         await LoginAsync(page, "/organization?tab=members");
         var remove = page.Locator("#team-members tbody tr").First.GetByRole(AriaRole.Button, new() { Name = "Remove access", Exact = true });
         var dialog = page.Locator("dialog[open]");

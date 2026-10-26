@@ -43,7 +43,7 @@ public sealed class DirectoryExportBrowserJourneyTests(DashboardRootFixture fixt
         using var playwright = await Playwright.CreateAsync();
         await using var chromium = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         var output = BrowserAudit.Output(fixture.Root, "directory-export-browser");
-        await using var context = await chromium.NewContextAsync(new() { ViewportSize = new() { Width = 1440, Height = 1000 }, ColorScheme = ColorScheme.Light, RecordVideoDir = output, AcceptDownloads = true });
+        await using var context = await chromium.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 1440, Height = 1000 }, ColorScheme = ColorScheme.Light, RecordVideoDir = output, AcceptDownloads = true });
         await context.AddCookiesAsync(cookies);
         var page = await context.NewPageAsync();
         var errors = new ConcurrentQueue<string>();

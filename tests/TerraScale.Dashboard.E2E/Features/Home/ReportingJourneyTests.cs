@@ -515,7 +515,7 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
 
     public async Task<(IBrowserContext Context, IPage Page)> SessionAsync(int width, int height)
     {
-        var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height }, AcceptDownloads = true });
+        var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height }, AcceptDownloads = true });
         contexts.Add(context);
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(timeout);

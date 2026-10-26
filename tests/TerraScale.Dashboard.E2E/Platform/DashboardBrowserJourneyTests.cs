@@ -22,7 +22,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
             foreach (var (size, width, height) in new[] { ("desktop", 1440, 900), ("mobile", 390, 844) })
             {
                 // Closed explicitly on success only, so a failure can still capture the open page below.
-                var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+                var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
                 var page = activePage = await context.NewPageAsync();
                 var errors = new ConcurrentQueue<string>();
                 page.PageError += (_, error) => errors.Enqueue(error);
@@ -225,7 +225,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, fixture.Origin);
         foreach (var width in new[] { 375, 768, 1280, 1920 })
@@ -249,7 +249,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         foreach (var (name, width, height) in new[] { ("desktop", 1440, 1000), ("mobile", 390, 844) })
         {
-            await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+            await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
             var page = await context.NewPageAsync();
             var errors = new ConcurrentQueue<string>();
             page.PageError += (_, error) => errors.Enqueue(error);

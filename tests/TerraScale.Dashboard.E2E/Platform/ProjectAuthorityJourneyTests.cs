@@ -42,7 +42,7 @@ public sealed class ProjectAuthorityJourneyTests
             });
         });
         await app.StartAsync();
-        using var browser = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var browser = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using var login = await HttpJourney.LoginAsync(browser);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -77,7 +77,7 @@ public sealed class ProjectAuthorityJourneyTests
             { return Results.StatusCode((int)error.StatusCode); }
         });
         await app.StartAsync();
-        using var browser = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var browser = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using var login = await HttpJourney.LoginAsync(browser);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);

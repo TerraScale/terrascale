@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
@@ -116,20 +115,15 @@ public sealed class PublicDemoJourneyTests
         while (!File.Exists(Path.Combine(root, "TerraScale.Dashboard.slnx"))) root = Path.GetDirectoryName(root)!;
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        using var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        var origin = new Uri($"http://127.0.0.1:{port}/");
-        var app = environment.CreateTestHost(root, port, origin.ToString().TrimEnd('/'), PublicDemo.Configure);
+        var app = environment.CreateTestHost(root, 0, "https://127.0.0.1", PublicDemo.Configure);
         app.MapGet("/__demo-error-probe", string () => throw new InvalidOperationException(Secret));
         await app.StartAsync();
-        return new(app, origin);
+        return new(app, new(app.Urls.Single()));
     }
 
     private sealed record PublicDemoHost(WebApplication App, Uri Origin) : IAsyncDisposable
     {
-        public HttpClient Client() => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
+        public HttpClient Client() => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
         { BaseAddress = Origin, Timeout = TimeSpan.FromSeconds(30) };
 
         public async ValueTask DisposeAsync()

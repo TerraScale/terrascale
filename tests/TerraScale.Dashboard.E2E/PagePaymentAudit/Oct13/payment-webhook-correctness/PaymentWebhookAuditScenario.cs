@@ -61,6 +61,7 @@ internal sealed class PaymentWebhookAuditScenario : IAsyncDisposable
 
     public HttpClient CreateClient(bool replica = false) => new(new HttpClientHandler
     {
+        ServerCertificateCustomValidationCallback = TestHttps.Validate,
         AllowAutoRedirect = false,
         CookieContainer = new CookieContainer()
     })

@@ -102,7 +102,7 @@ internal sealed class AllowanceNotificationScenario(string root) : IAsyncDisposa
         await host.StartAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await backend.WaitForReadAsync(deadline.Token);
-        Client = new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        Client = new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(20) };
         if (principal is null) principal = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(Client);
         else

@@ -187,7 +187,7 @@ public sealed class ReviewInvitationBoundaryJourneyTests
                 }
                 foreach (var host in scenario.hosts)
                 {
-                    var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+                    var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
                     { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(20) };
                     using (var login = await HttpJourney.LoginAsync(client)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                     scenario.clients.Add((client, await HttpJourney.CsrfAsync(client, "/organization?tab=invitations")));

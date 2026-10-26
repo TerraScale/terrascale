@@ -38,7 +38,7 @@ internal sealed class AlertScenario(string root) : IAsyncDisposable
                 builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == worker));
         });
         await host.StartAsync();
-        Client = new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        Client = new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(20) };
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(Client);
         Csrf = await HttpJourney.CsrfAsync(Client, "/databases");

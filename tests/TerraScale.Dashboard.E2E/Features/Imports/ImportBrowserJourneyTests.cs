@@ -17,7 +17,7 @@ public sealed class ImportBrowserJourneyTests(DashboardRootFixture fixture)
         await using var scenario = await ImportScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 1440, Height = 900 } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 1440, Height = 900 } });
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(30000);
         var errors = new ConcurrentQueue<string>();

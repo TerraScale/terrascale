@@ -24,7 +24,7 @@ public sealed class HomeRegionsJourneyTests(DashboardRootFixture fixture)
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements, TerraBaseHomeMeasurements>());
         });
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using (var anonymous = await client.GetAsync("/overview/regions"))
             await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -53,7 +53,7 @@ public sealed class HomeRegionsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(patch).Contains("id=\"home-regions\"");
         await Assert.That(patch).DoesNotContain("data-init");
         await Assert.That(patch).Contains(unavailable ? "Region measurements unavailable" : "12.50 ms");
-        using var emptyClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() }) { BaseAddress = client.BaseAddress };
+        using var emptyClient = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() }) { BaseAddress = client.BaseAddress };
         using var emptyLogin = await HttpJourney.LoginAsync(emptyClient);
         var empty = environment.Workspace.Organizations.Values.Single(org => org.OwnerUserId == "test-user");
         var emptyPatch = await emptyClient.GetStringAsync("/overview/regions?organizationId=" + empty.Id + "&projectId=" + empty.Projects.Keys.Single());

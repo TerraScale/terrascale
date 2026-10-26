@@ -119,6 +119,7 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         var output = BrowserAudit.Output(fixture.Root, "webhooks-" + width + "x" + height);
         await using var context = await browser.NewContextAsync(new()
         {
+            IgnoreHTTPSErrors = true,
             ViewportSize = new() { Width = width, Height = height },
             RecordVideoDir = Path.Combine(output, "video"),
             RecordVideoSize = new() { Width = width, Height = height }

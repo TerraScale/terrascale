@@ -67,7 +67,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
 
     public HttpClient CreateClient(bool replica = false) => Client(replica ? ReplicaOrigin : Origin);
     public HttpClient CreateProviderClient() => Client(ProviderOrigin);
-    private static HttpClient Client(Uri origin) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+    private static HttpClient Client(Uri origin) => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
     { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
 
     private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configureScenario)
@@ -126,7 +126,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         public HttpClient CreateClient(string name) => new(transport, disposeHandler: false);
     }
 
-    private sealed class ProducerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
+    private sealed class ProducerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
     {
         public TestAuthApiKeys? ApiKeys { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

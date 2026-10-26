@@ -49,7 +49,7 @@ public sealed class LiveProductionReadinessJourneyTests
             await Assert.That(completed == listening.Task && !process.HasExited).IsTrue()
                 .Because("Live production startup must complete using automatic machine identity delivery, genuine discovery and the owning persistent state producer. Raw startup logs are deliberately withheld.");
             var origin = await listening.Task;
-            using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, UseCookies = false })
             { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(10) };
             using var readinessDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             readinessDeadline.CancelAfter(TimeSpan.FromSeconds(10));

@@ -58,7 +58,7 @@ public sealed class BillingCheckoutAuditFixture : IAsyncInitializer, IAsyncDispo
         Directory.CreateDirectory(Evidence);
     }
 
-    public HttpClient CreateClient(CookieContainer? cookies = null) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies ?? new() })
+    public HttpClient CreateClient(CookieContainer? cookies = null) => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies ?? new() })
     { BaseAddress = Origin, Timeout = TimeSpan.FromSeconds(30) };
 
     public async ValueTask DisposeAsync()

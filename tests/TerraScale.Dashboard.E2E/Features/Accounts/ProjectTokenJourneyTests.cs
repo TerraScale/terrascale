@@ -115,7 +115,7 @@ public sealed class ProjectTokenJourneyTests
             catch { await scenario.DisposeAsync(); throw; }
         }
 
-        public HttpClient Client() => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        public HttpClient Client() => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
 
         public async ValueTask DisposeAsync()

@@ -43,7 +43,7 @@ public sealed class WorkspaceSwitchCallCountJourneyTests(DashboardRootFixture fi
         await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1", builder =>
             builder.Services.Replace(ServiceDescriptor.Singleton(platform)));
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);

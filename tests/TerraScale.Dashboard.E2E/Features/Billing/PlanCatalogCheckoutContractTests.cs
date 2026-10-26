@@ -31,7 +31,7 @@ public sealed class PlanCatalogCheckoutContractTests(DashboardRootFixture fixtur
         });
         using var wireLifetime = wire;
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
