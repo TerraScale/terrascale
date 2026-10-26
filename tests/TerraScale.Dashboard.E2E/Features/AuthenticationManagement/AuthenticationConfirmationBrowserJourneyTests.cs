@@ -53,15 +53,22 @@ public sealed class AuthenticationConfirmationBrowserJourneyTests(DashboardRootF
         };
         var dialogs = new ConcurrentQueue<string>();
         var accept = false;
-        page.Dialog += async (_, dialog) =>
+        var firstDialogHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        page.Dialog += (sender, dialog) => _ = HandleDialogAsync(dialog);
+        async Task HandleDialogAsync(IDialog dialog)
         {
             dialogs.Enqueue(dialog.Type);
             if (accept) await dialog.AcceptAsync();
             else await dialog.DismissAsync();
-        };
+            firstDialogHandled.TrySetResult();
+        }
 
+        await Assert.That(errors.ToArray()).IsEmpty();
+        await Assert.That(cspViolations).IsEmpty();
         await button.FocusAsync();
+        await Expect(button).ToBeFocusedAsync();
         await page.Keyboard.PressAsync("Enter");
+        await firstDialogHandled.Task.WaitAsync(TimeSpan.FromSeconds(15));
         await Assert.That(dialogs.ToArray()).IsEquivalentTo(new[] { "confirm" });
         await Expect(button).Not.ToHaveAttributeAsync("aria-busy", "true");
         await Expect(page.Locator("body")).Not.ToHaveClassAsync(new Regex("ts-nav-pending"));
@@ -80,6 +87,20 @@ public sealed class AuthenticationConfirmationBrowserJourneyTests(DashboardRootF
         await Assert.That(cspViolations).IsEmpty();
 
         var csrf = await form.Locator("input[name='_csrf']").InputValueAsync();
+        var pendingState = new TaskCompletionSource<(string Busy, int Spinners, bool NavigationPending)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await page.ExposeBindingAsync("recordNativePending", (BindingSource _, string busy, int spinners, bool navigationPending) =>
+            pendingState.TrySetResult((busy, spinners, navigationPending)));
+        await form.EvaluateAsync("""
+            form => window.addEventListener('submit', event => {
+                if (event.target !== form) return;
+                const button = event.submitter;
+                const busy = button.getAttribute('aria-busy');
+                const spinners = button.querySelectorAll('.ts-btn-spinner').length;
+                const navigationPending = document.body.classList.contains('ts-nav-pending');
+                button.click();
+                void recordNativePending(busy, spinners, navigationPending);
+            })
+            """);
         // Hold this request at the browser boundary to inspect the real shared pending state without sleeps.
         var posted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -89,17 +110,18 @@ public sealed class AuthenticationConfirmationBrowserJourneyTests(DashboardRootF
             await release.Task;
             await route.ContinueAsync();
         });
+        var confirmations = dialogs.Count + 1;
         var submitted = await page.RunAndWaitForResponseAsync(async () =>
         {
             var press = button.PressAsync("Space");
             try
             {
                 await posted.Task.WaitAsync(TimeSpan.FromSeconds(15));
-                await Expect(button).ToHaveAttributeAsync("aria-busy", "true");
-                await Expect(button.Locator(".ts-btn-spinner")).ToHaveCountAsync(1);
-                await Expect(page.Locator("body")).ToHaveClassAsync(new Regex("ts-nav-pending"));
-                var confirmations = dialogs.Count;
-                await button.EvaluateAsync("el => el.click()");
+                // Observe submit feedback before the native navigation pauses the browser execution context.
+                var state = await pendingState.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await Assert.That(state.Busy).IsEqualTo("true");
+                await Assert.That(state.Spinners).IsEqualTo(1);
+                await Assert.That(state.NavigationPending).IsTrue();
                 await Assert.That(dialogs.Count).IsEqualTo(confirmations);
                 await Assert.That(posts.Count).IsEqualTo(2);
             }
