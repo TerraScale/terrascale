@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict'
 import { env } from 'node:process'
-import { generateId, isTerraBaseV1Error } from '@terrascale/sdk'
+import { createTerraBaseV1Client, generateId, isTerraBaseV1Error } from '@terrascale/sdk'
 import { createServerClient } from '../server-token-provider/server-client.mjs'
 import schema from './schema.json' with { type: 'json' }
 import type { OrderCreate, OrderPatch } from './models.js'
 
 const database = env.TERRASCALE_DATABASE_NAME
 if (!database) throw new Error('Missing TERRASCALE_DATABASE_NAME.')
-const { client } = createServerClient()
+const baseUrl = env.TERRASCALE_API_URL
+const project = env.TERRASCALE_PROJECT_ID
+if (!baseUrl || !project) throw new Error('Missing TERRASCALE_API_URL or TERRASCALE_PROJECT_ID.')
+const { getAccessToken } = createServerClient()
+// Keep the data client and generated ExactDecimal inputs in this example's SDK instance.
+const client = createTerraBaseV1Client({ baseUrl, project, token: getAccessToken })
 const db = client.database(database)
 const name = `model_orders_${generateId().toLowerCase()}`
 const options = { signal: AbortSignal.timeout(60_000) }
