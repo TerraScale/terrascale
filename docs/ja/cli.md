@@ -75,6 +75,16 @@ mkdir -p ~/.config/fish/completions
 ts completion fish > ~/.config/fish/completions/ts.fish
 ```
 
+## Start from the CLI
+
+After installing, create your own project and database:
+
+```sh
+ts auth login
+ts projects create my-project
+ts -project my-project db create example
+```
+
 ## Sign in
 
 ```sh
@@ -123,6 +133,11 @@ ts db list
 ts db create example
 ts db branch example example-preview
 ```
+
+Database deletion asks you to type the database name in a terminal before it
+changes placement or deletes data. For an unattended script, explicitly consent
+with `ts -project my-project -yes db delete example`. Keep `-yes` before the command.
+
 
 `db list` prints database names, IDs, home regions and replica regions, and an
 empty table before the project's first database. `db info` prints one
@@ -309,6 +324,19 @@ ts keys revoke 01JZ8Q5B7C9D1E3F5G7H9J1K3M
 `documents:read` and `documents:write`. It prints the key once on standard
 output; store it immediately in your secret manager. Use the key with an SDK's
 API key token exchange, as the [quickstarts](/ja/getting-started) show.
+
+### Key lifetime and allowed networks
+
+Keys default to no expiry and read/write scopes. Prefer an expiry and a database
+restriction. Put key-creation flags before the command:
+
+```sh
+ts -expires 30d -allow-cidr 203.0.113.0/24 keys create app example
+```
+
+Replace the documentation network above with your application's real egress CIDR.
+Expiry accepts `30d`, `90d`, `365d` or `never`; CIDRs are comma-separated. Treat the
+one-time key output as a secret; write it only to a private file or secret store.
 
 ## Sign out
 
