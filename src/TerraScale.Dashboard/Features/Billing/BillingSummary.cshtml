@@ -11,7 +11,7 @@
     var free = plan?.Key == "free" && !subscribed;
     var planName = awaiting || plan is null ? "No plan" : plan.Name;
     var status = org.BillingStatus == "billing_required" ? "Payment required" : binding?.Status == "trialing" ? "Trialing" : org.BillingStatus == "active" ? "Active" : org.BillingStatus;
-    var effectiveInterval = binding?.EffectiveInterval is { Length: > 0 } currentInterval ? currentInterval : binding?.Interval;
+    var effectiveInterval = !subscribed ? null : binding?.EffectiveInterval is { Length: > 0 } currentInterval ? currentInterval : binding?.Interval;
     var statusClass = binding?.Status == "trialing" ? "ts-badge-info" : awaiting ? "ts-badge-warning" : org.BillingStatus is "" or "active" ? "ts-badge-success" : "ts-badge-neutral";
 }
 <div class="ts-stack ts-billing ts-usage">

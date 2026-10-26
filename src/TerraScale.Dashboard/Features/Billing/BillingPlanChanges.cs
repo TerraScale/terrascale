@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.ComponentModel;
 using Stripe;
 using TerraScale.DotNet.TerraBase;
@@ -7,7 +8,10 @@ using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed record BillingPlanState(string PlanKey, string Interval, DateTimeOffset RenewalAt, string ScheduledPlanKey,
-    string ScheduledInterval, DateTimeOffset? ScheduledAt, string PendingPlanKey, string PendingInterval, bool CancelAtPeriodEnd, bool Entitled, string PaymentUrl = "");
+    string ScheduledInterval, DateTimeOffset? ScheduledAt, string PendingPlanKey, string PendingInterval, bool CancelAtPeriodEnd, bool Entitled, string PaymentUrl = "")
+{
+    [JsonIgnore] public DateTimeOffset? PeriodStart { get; init; }
+}
 public sealed record BillingPlanPreview(string PlanKey, string Interval,
     [property: Description("Whether the change applies now (upgrade) instead of at renewal (downgrade).")] bool Immediate, DateTimeOffset EffectiveAt,
     [property: Description("Estimated charge today in the smallest currency unit.")] long AmountDueCents, long ProrationCents, string Currency, string Note);
@@ -236,7 +240,8 @@ public sealed partial class StripeBilling
                 paymentUrl = Invoices.InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl);
         }
         return new(client, binding, subscription, item, new(plan.Key, interval, item.CurrentPeriodEnd, scheduledKey, scheduledInterval, scheduledAt,
-            pendingKey, pendingInterval, subscription.CancelAtPeriodEnd, subscription.Status is "active" or "trialing", paymentUrl));
+            pendingKey, pendingInterval, subscription.CancelAtPeriodEnd, subscription.Status is "active" or "trialing", paymentUrl)
+        { PeriodStart = item.CurrentPeriodStart > DateTime.UnixEpoch && item.CurrentPeriodStart < item.CurrentPeriodEnd ? item.CurrentPeriodStart : null });
     }
 
     private async Task<BillingChangeReceipt> ReserveChangeAsync(AccountContext context, PlanSnapshot snapshot, string action, string key, string interval, CancellationToken cancellationToken)

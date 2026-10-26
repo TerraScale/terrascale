@@ -41,6 +41,43 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
+    [Arguments("starter", "annual", "Annual")]
+    [Arguments("pro", "monthly", "Monthly")]
+    public async Task PendingAndCanceledCheckoutCadenceDoesNotReplaceFreeUntilSubscriptionConfirmed(string plan, string interval, string paidCadence)
+    {
+        using var client = fixture.CreateClient();
+        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
+        var fields = new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = plan, ["interval"] = interval, ["return"] = "/organization?tab=billing" };
+        using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", fields);
+        await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(checkout.Headers.Location!.OriginalString).Contains("/__test/checkout");
+        // Leave the hosted checkout unopened: no payment or subscription exists.
+        await AssertFreeAsync();
+        using var canceled = await HttpJourney.PostFormAsync(client, "/billing/checkout/cancel", new() { ["_csrf"] = csrf });
+        await Assert.That(canceled.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await AssertFreeAsync();
+        using var replacement = await HttpJourney.PostFormAsync(client, "/billing/checkout", fields);
+        await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using var completed = await client.GetAsync(replacement.Headers.Location);
+        await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.Found);
+        using var callback = await client.GetAsync(completed.Headers.Location);
+        await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var paid = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing"));
+        await Assert.That(paid).Contains("<dt>Billing interval</dt><dd>" + paidCadence + "</dd>");
+        await Assert.That(PlanCard(paid, plan)).Contains("aria-current=\"true\"");
+
+        async Task AssertFreeAsync()
+        {
+            var html = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing"));
+            await Assert.That(html).Contains("Free plan. No subscription or payment method is required; no Stripe charges.");
+            await Assert.That(html).Contains("<dt>Billing interval</dt><dd>Not applicable</dd>");
+            await Assert.That(html).Contains("<dt>Renewal</dt><dd>Not scheduled</dd>");
+            await Assert.That(PlanCard(html, "free")).Contains("aria-current=\"true\"");
+        }
+    }
+
+    [Test]
     [Arguments("starter", "monthly")]
     [Arguments("pro", "annual")]
     [Arguments("team", "annual")]
@@ -76,6 +113,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
             { ["_csrf"] = csrf, ["step"] = "payment-method", ["organizationID"] = organizationId, ["plan"] = "starter" });
         await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(checkout.Headers.Location!.OriginalString).Contains("/__test/checkout");
+        var pending = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing&organizationId=" + Uri.EscapeDataString(organizationId)));
+        await Assert.That(pending).Contains("Payment required");
+        await Assert.That(pending).Contains("<dt>Billing interval</dt><dd>Not applicable</dd>");
         using var completed = await client.GetAsync(checkout.Headers.Location);
         await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.Found);
         using var callback = await client.GetAsync(completed.Headers.Location);
