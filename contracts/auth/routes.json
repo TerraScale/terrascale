@@ -869,13 +869,21 @@
   ],
   "oauth_operations": [
     {
+      "operation_id": "oauth_device_authorization", "method": "POST", "path": "/{slug}/oauth/device",
+      "request_media_type": "application/x-www-form-urlencoded", "response_media_type": "application/json",
+      "security": "none; registered public CLI client_id", "success_status": 200,
+      "required": ["client_id"], "optional": ["scope"], "errors": [400, 429, 503],
+      "retry": "none; caller owns original expiry and announced polling interval",
+      "sdk_method": "Oidc.StartDeviceAuthorizationAsync", "contract": "public-client-provenance.json"
+    },
+    {
       "operation_id": "oauth_token",
       "method": "POST",
       "path": "/{slug}/oauth/token",
       "request_media_type": "application/x-www-form-urlencoded",
       "response_media_type": "application/json",
       "response_dto": "TokenBody",
-      "security": "client_secret_basic or client_secret_post",
+      "security": "client_secret_basic or client_secret_post; none with client_id for registered public clients",
       "success_status": 200,
       "errors": [
         400,
@@ -885,6 +893,8 @@
       ],
       "retry": "none",
       "grants": {
+        "public_authorization_code": {"grant_type": "authorization_code", "required": ["client_id", "code", "redirect_uri", "code_verifier"], "sdk_method": "Oidc.ExchangePublicAuthorizationCodeAsync", "security": "registered public application; original callback and PKCE"},
+        "device_code": {"grant_type": "urn:ietf:params:oauth:grant-type:device_code", "required": ["client_id", "device_code"], "sdk_method": "Oidc.ExchangeDeviceCodeAsync", "contract": "public-client-provenance.json"},
         "token_exchange": {
           "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
           "required": [
@@ -900,7 +910,8 @@
           "unsupported": [
             "database"
           ],
-          "sdk_method": "Oidc.ExchangeTokenAsync"
+          "sdk_method": "Oidc.ExchangeTokenAsync",
+          "sdk_public_method": "Oidc.ExchangePublicClientTokenAsync"
         },
         "client_credentials": {
           "grant_type": "client_credentials",
@@ -918,9 +929,9 @@
           "grant_type": "refresh_token",
           "required": [
             "refresh_token",
-            "client_id",
-            "client_secret"
+            "client_id"
           ],
+          "optional": ["client_secret; confidential clients only"],
           "sdk_method": "Oidc.RefreshTokenAsync"
         }
       }
@@ -930,7 +941,7 @@
       "method": "POST",
       "path": "/{slug}/oauth/revoke",
       "request_media_type": "application/x-www-form-urlencoded",
-      "security": "client_secret_basic or client_secret_post",
+      "security": "client_secret_basic or client_secret_post; none with client_id for registered public clients",
       "required": [
         "token"
       ],

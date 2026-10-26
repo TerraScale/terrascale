@@ -1,0 +1,26 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/Oidc/DeviceFlow.cs": "847206624b3afb49c0e60e88e317aec3db6179133c6b4262dbe209caf714d6bf",
+    "src/TerraScale.Authentication/Features/Oidc/OidcServer.cs": "100d2b3dac02920c10ce9823bcfb8bbd8382f1e9ce8426241a6c5f75b6cfebae",
+    "src/TerraScale.Authentication/Features/Platform/PlatformGrants.cs": "2ce867c6bad7c207d10c8ab33a2929f59d5bfc2b89551c21416df86aaadd4b08",
+    "src/TerraScale.Authentication/Features/Oidc/OidcEndpoints.cs": "58adf957467a85ae6045dd7c21fcc16679a30241093e593e3bf609a8e4ba3c7e"
+  },
+  "scope": "Shipped public CLI device, refresh, revocation and sign-in resource exchange; does not claim current generated inventory parity.",
+  "client": "00000000000000000000000007; public; device/refresh/exchange; no authorization-code callback",
+  "form_media": "application/x-www-form-urlencoded",
+  "response_media": "application/json; flat OAuth error",
+  "device": "POST /{slug}/oauth/device; client_id required, scope optional; 200 device_code/user_code/verification_uri/verification_uri_complete/expires_in=600/interval=5",
+  "approval": "Hosted same-origin POST requires live session, user_code and explicit decision; SDK never approves automatically.",
+  "token": "POST /{slug}/oauth/token; public client_id, no secret or Authorization header",
+  "device_grant": "urn:ietf:params:oauth:grant-type:device_code + device_code; authorization_pending/slow_down/access_denied/expired_token retained",
+  "refresh": "refresh_token grant rotates atomically; uncertain outcomes must never replay the old token",
+  "exchange": "urn:ietf:params:oauth:grant-type:token-exchange; live subject_token, access_token subject type, organization required; project/scope optional; presenter and current role rechecked; no database restriction",
+  "revoke": "POST /{slug}/oauth/revoke; client_id + token, no secret; 200 for unknown/revoked tokens too",
+  "errors": "400 OAuth errors, 401 invalid client, 429 rate_limited/Retry-After, 503 unavailable; preserve typed result; no retry",
+  "lifetime": "User grant 5 minutes, resource exchange 60 seconds, refresh 14 days; refresh does not renew original authentication/MFA",
+  "pagination": "none",
+  "qualification": "HTTP fixtures only until exact-source live proof; no producer binaries or fake success promoted to live",
+  "public_authorization_code": "Registered public applications only; original redirect_uri and PKCE code_verifier required; never invent a CLI code grant/callback"
+}

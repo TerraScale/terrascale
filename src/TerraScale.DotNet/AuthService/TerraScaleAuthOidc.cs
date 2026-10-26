@@ -8,7 +8,7 @@ namespace TerraScale.DotNet;
 /// <c>/{instanceSlug}/...</c> on the public origin and authenticate with OAuth
 /// client credentials or access tokens, not the management key.
 /// </summary>
-public sealed class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
+public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
 {
     /// <summary>Fetches the OIDC discovery document for the instance.</summary>
     public Task<TerraScaleAuthOidcDiscovery> GetDiscoveryDocumentAsync(CancellationToken cancellationToken = default) =>
