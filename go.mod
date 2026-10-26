@@ -3,6 +3,7 @@ module terrascale.tech/sdk
 go 1.25.0
 
 require (
+	github.com/chzyer/readline v1.5.1
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/oklog/ulid/v2 v2.1.2
 	golang.org/x/term v0.45.0

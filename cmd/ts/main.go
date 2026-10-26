@@ -77,6 +77,8 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   backup restore <db> <backup id> <new db> restore a backup into a new database
   backup restore-at <db> <time> <new db> [platform|customer]
                                           restore an RFC3339 instant (default platform)
+  shell <db>                              multiline SQL; .run submits, .mode selects
+                                          relational or document; session history
   export <db>                             stream all live documents (NDJSON);
                                           excludes relational tables and metadata
   db changes <db> [<collection>...]       print committed changes as JSON lines
@@ -179,6 +181,7 @@ var commands = map[string][]int{
 	"completion":         {1},
 	"db changes":         changesOperandCounts(),
 	"export":             {1},
+	"shell":              {1},
 	"backup restore-at":  {3, 4},
 	"backup policy":      {1},
 	"backup policy-set":  {3},
@@ -291,7 +294,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			name, operands = strings.Join(args[:n], " "), args[n:]
 		}
 	}
-	if slices.Contains([]string{"db changes", "doc list", "export"}, name) {
+	if slices.Contains([]string{"db changes", "doc list", "export", "shell"}, name) {
 		beginJSONStream(out)
 	}
 	var fn functionFlags
@@ -531,6 +534,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 
 // dispatch runs a project command.
 func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, collection string, operands []string, input commandInput, out io.Writer) error {
+	if name == "shell" {
+		return sqlShell(ctx, s.tb.Database(s.project, operands[0]), input, out)
+	}
 	if name == "sql" || name == "exec" {
 		mode := "document"
 		if name == "exec" {

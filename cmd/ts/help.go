@@ -158,6 +158,11 @@ func parserError(err error) error {
 
 func helpOptions(name string) map[string]string {
 	options := make(map[string]string, len(helpFlags)+4)
+	if name == "shell" {
+		options[".run / .reset"] = "submit the full multiline buffer or discard it"
+		options[".mode relational|document"] = "SQL tables (default) or read-only collection SELECT"
+		options[".quit / .help"] = "exit with an empty buffer or show shell help; history is session-only"
+	}
 	for flag, text := range helpFlags {
 		options[flag] = text
 	}
