@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
@@ -25,7 +26,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
         var refusedCreates = 0;
         var forbiddenCommits = 0;
         var unauthorizedCreates = 0;
-        string[] regions = ["GRU"];
+        string[] regions = ["GRU", "SFO"];
         const string name = "catalog-recovery";
         TestAuth auth = null!;
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
@@ -60,7 +61,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
                     createdAt = DateTimeOffset.UtcNow,
                     region = "gru",
                     homeRegion = fault == "placement-identity" ? "sfo" : "gru",
-                    replicaRegions = Array.Empty<string>(),
+                    replicaRegions = new[] { fault == "placement-identity" ? "gru" : "sfo" },
                     allRegions = false
                 }, statusCode: 201));
             }
@@ -78,6 +79,8 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
         projectId = identity.GetProperty("projectId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var secret = await HttpJourney.CreatePatAsync(client, "Unavailable regional catalog", account.Password);
+        using (var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sfo" } }))
+            await Assert.That(catalog.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var baseline = await ReadAsync(producer, "/__test/observations");
         var baselineProjects = ProjectIdentities(baseline);
         Volatile.Write(ref armed, true);
@@ -113,7 +116,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
         var canonical = (await ReadAsync(replica, "/api/v1/dashboard/databases"))[0];
         await Assert.That(canonical.GetProperty("id").GetString()).IsEqualTo(databaseId);
         await Assert.That(canonical.GetProperty("projectId").GetString()).IsEqualTo(projectId);
-        await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo("GRU,SFO").Because("TerraBase places a home-only create in every other serving region");
+        await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo("GRU,SFO").Because("The successful retry keeps the explicitly requested two-region placement");
         if (fault == "project-missing")
         {
             using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()

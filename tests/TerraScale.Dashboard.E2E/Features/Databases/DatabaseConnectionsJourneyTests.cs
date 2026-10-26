@@ -52,13 +52,13 @@ public sealed class DatabaseConnectionsJourneyTests(DashboardRootFixture fixture
             (Id: "document", Label: "Document HTTP", Url: endpoint + "/collections"),
             (Id: "sql", Label: "HTTP SQL", Url: endpoint + "/sql/execute"),
             (Id: "libsql", Label: "libSQL / Hrana", Url: endpoint + "/libsql/"),
-            (Id: "postgres", Label: "Postgres", Url: $"postgresql://app@pg.terrascale.tech:5432/{project}%2F{name}?sslmode=require")
+            (Id: "postgres", Label: "Postgres", Url: $"postgresql://app@pg.terrascale.tech:5432/{project}%2F{name}?sslmode=verify-full&sslrootcert=system")
         };
         var card = page.Locator("#connect");
         await Assert.That(await card.InnerTextAsync()).Contains("Project ID");
         await Assert.That(await card.InnerTextAsync()).Contains("expires_in");
         await Assert.That(await card.InnerTextAsync()).Contains("no token exchange");
-        await Assert.That(await card.InnerTextAsync()).Contains("sslmode=verify-full&sslrootcert=system");
+        await Assert.That(await card.InnerTextAsync()).Contains("verifies the TLS certificate and hostname");
         await Assert.That(await card.Locator("a[href^='/api-keys']").CountAsync()).IsEqualTo(1);
         foreach (var protocol in protocols)
         {

@@ -38,7 +38,7 @@ public sealed class UsagePlacementJourneyTests(DashboardRootFixture fixture)
         await CallAsync("set_database_regions", new() { ["databaseId"] = first.GetProperty("id").GetString(), ["allRegions"] = true });
         await AssertSummaryAsync(null, "All serving regions (count unavailable)");
         // Removing the all-regions policy restores the explicit union, not home-only counts.
-        await CallAsync("set_database_regions", new() { ["databaseId"] = first.GetProperty("id").GetString(), ["regions"] = new[] { "GRU" } });
+        await CallAsync("set_database_regions", new() { ["databaseId"] = first.GetProperty("id").GetString(), ["regions"] = new[] { "GRU", "SFO" } });
         await AssertSummaryAsync(2, "2");
 
         async Task<JsonElement> CallAsync(string name, Dictionary<string, object?> arguments)

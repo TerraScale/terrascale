@@ -90,7 +90,6 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
             await Assert.That(target.GetProperty("branchedFrom").GetString()).IsEqualTo(sourceId);
             await Assert.That(await ScoreAsync(replica, restoredId)).IsEqualTo(1);
             await Assert.That(await ScoreAsync(client, sourceId)).IsEqualTo(2);
-            await RemoveReplicaAsync(client, csrf, restoredId);
             await DeleteAsync(client, csrf, restoredId, "paused-source-restore");
             await DeleteAsync(client, csrf, sourceId, "paused-source");
             var observed = await ReadAsync(producer, "/__test/observations");
@@ -327,12 +326,6 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
     }
     private static async Task<int> ScoreAsync(HttpClient client, string id) =>
         (await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=users"))[0].GetProperty("value").GetProperty("score").GetInt32();
-    private static async Task RemoveReplicaAsync(HttpClient client, string csrf, string id)
-    {
-        using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/regions", new()
-        { ["_csrf"] = csrf, ["databaseId"] = id, ["region"] = "GRU" });
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-    }
     private static async Task DeleteAsync(HttpClient client, string csrf, string id, string name)
     {
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()

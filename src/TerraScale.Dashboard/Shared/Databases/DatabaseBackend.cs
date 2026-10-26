@@ -167,15 +167,11 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         // committed but answered 503: the caller then only drops its record.
         if ((await ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId) is not { } database) return;
         var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
-        // TerraBase deletes only a database without replica regions (409 database_replicated), and every new one has them.
-        // {"replicaRegions":[]} also turns allRegions off.
-        if (database.ReplicaRegions is { Count: > 0 } || database.AllRegions)
-            await CommittedStepAsync(() => project.SetDatabaseRegionsAsync(database.Name, [], cancellationToken), cancellationToken);
         await CommittedStepAsync(() => project.DeleteDatabaseAsync(database.Name, cancellationToken), cancellationToken);
     }
 
     // TerraBase answers 503 catalog_anchor_unavailable when it committed a catalog change but could not write its restore
-    // anchor in time, and asks for the same request again; both delete steps are idempotent, so each is sent at most three
+    // anchor in time, and asks for the same request again; deletion is idempotent, so it is sent at most three
     // times. A 404 (unknown_database, or unknown_route under project access) means the database is already gone.
     private static async Task CommittedStepAsync(Func<Task> step, CancellationToken cancellationToken)
     {

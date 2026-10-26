@@ -33,11 +33,12 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         var identity = await JsonAsync(client, "/api/v1/auth/me");
         organizationId = identity.GetProperty("organizationId").GetString()!;
         projectId = identity.GetProperty("projectId").GetString()!;
+        await ControlAsync(producer, new { command = "catalog", value = new[] { "gru", "fra" } });
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/databases");
         const string name = "interrupted-home";
         Volatile.Write(ref rejectCreate, true);
-        using (var unavailable = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU"]))
+        using (var unavailable = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU", "FRA"]))
         {
             await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(unavailable, producer));
             await Assert.That(unavailable.Headers.Location is null).IsTrue();
@@ -46,13 +47,13 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("creates").GetInt32()).IsEqualTo(0);
         await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         // A region the catalog does not list cannot be chosen as a new home.
-        using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO"]))
+        using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO", "FRA"]))
             await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(await EvidenceAsync(wrongHome, producer));
         Volatile.Write(ref rejectCreate, false);
         await ControlAsync(producer, new { command = "fail-database-metadata", organizationId, projectId, name });
         await ControlAsync(producer, new { command = "pause-database-creates" });
-        // Only the answering region (GRU) is choosable; SFO joins below through the producer, outside the catalog.
-        var pending = PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU"]);
+        // SFO joins below through the producer, outside the discovered GRU/FRA placement.
+        var pending = PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU", "FRA"]);
         try
         {
             await WaitAsync(producer, "pausedCreates");
@@ -69,7 +70,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         // No listing runs before the retry: it would record the database TerraBase has, as the retry does.
         // The retry omits SFO. Recovery must retain the producer's actual SFO
         // replica rather than claim this new request changed placement.
-        using (var recovered = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["GRU"]))
+        using (var recovered = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["GRU", "FRA"]))
         {
             await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await EvidenceAsync(recovered, producer));
             await Assert.That(recovered.Headers.Location?.OriginalString).IsEqualTo("/databases/" + actualId + "?created=1");
@@ -79,7 +80,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That(rows[0].GetProperty("id").GetString()).IsEqualTo(actualId);
         await Assert.That(rows[0].GetProperty("status").GetString()).IsEqualTo("ready");
         await Assert.That(rows[0].GetProperty("region").GetString()).IsEqualTo("GRU");
-        await Assert.That(Regions(rows[0])).IsEqualTo("GRU,SFO");
+        await Assert.That(Regions(rows[0])).IsEqualTo("GRU,FRA,SFO");
         var page = await PageAsync(client, "/databases/" + actualId + "?created=1");
         await Assert.That(page).Contains(name + " is ready</p>");
         await Assert.That(page).Contains("Its home region is ready. Replica progress is shown in Replication.");
@@ -92,8 +93,6 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
             await Assert.That(document.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await EvidenceAsync(document, producer));
         var documents = await JsonAsync(replica, "/api/v1/dashboard/data/documents?databaseId=" + actualId + "&collection=users");
         await Assert.That(documents[0].GetProperty("value").GetProperty("ready").GetBoolean()).IsTrue();
-        using (var removed = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = actualId }, ["GRU"]))
-            await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await EvidenceAsync(removed, producer));
         await DeleteAsync(client, csrf, actualId, name);
         observed = await JsonAsync(producer, "/__test/observations");
         await Assert.That(observed.GetProperty("creates").GetInt32()).IsEqualTo(1);
@@ -130,7 +129,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
                 ["createdAt"] = DateTimeOffset.UtcNow,
                 ["region"] = "gru",
                 ["homeRegion"] = mismatch == "home" ? "sfo" : "gru",
-                ["replicaRegions"] = mismatch == "replicas" ? new[] { "sfo" } : Array.Empty<string>()
+                ["replicaRegions"] = mismatch == "replicas" ? new[] { "sfo" } : new[] { "fra" }
             };
             if (mismatch == "missing-replicas") value.Remove("replicaRegions");
             return Task.FromResult<IResult?>(Results.Json(value));
@@ -143,9 +142,10 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         projectId = identity.GetProperty("projectId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         id = await CreateAsync(client, csrf, name);
+        await ControlAsync(producer, new { command = "catalog", value = new[] { "gru", "sfo", "fra" } });
         Volatile.Write(ref invalid, true);
-        // Only the answering region is listed (no TerraBase region catalog), so the placement keeps its home alone.
-        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU"]))
+        // A valid two-region request reaches the producer; only the chosen response field is incorrect.
+        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU", "FRA"]))
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(response, producer));
         var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];
         await Assert.That(database.GetProperty("id").GetString()).IsEqualTo(id);
@@ -190,8 +190,9 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         projectId = identity.GetProperty("projectId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         id = await CreateAsync(client, csrf, name);
+        await ControlAsync(producer, new { command = "catalog", value = new[] { "gru", "sfo" } });
         Volatile.Write(ref misdirect, true);
-        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU"]))
+        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU", "SFO"]))
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(response, producer));
             var html = System.Net.WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());

@@ -48,7 +48,9 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
             .Select(match => match.Groups[1].Value).ToArray();
         await Assert.That(selected).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
         await Assert.That(Regex.Match(html, "<option value=\"GRU\"[^>]*>").Value).Contains("selected");
-        await Assert.That(Regex.Match(html, "<input[^>]+name=\"allRegions\"[^>]*>").Value.Contains("checked", StringComparison.Ordinal)).IsFalse();
+        var allRegionsInput = Regex.Match(html, "<input[^>]+name=\"allRegions\"[^>]*>").Value;
+        await Assert.That(allRegionsInput.Length > 0).IsTrue();
+        await Assert.That(Regex.IsMatch(allRegionsInput, "\\schecked(?:\\s|=|/?>)")).IsFalse();
         await Assert.That(html.Contains("One region keeps the data only there", StringComparison.Ordinal)).IsFalse();
         foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
         {

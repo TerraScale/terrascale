@@ -22,8 +22,8 @@ public static class DatabaseConnections
                 "POST JSON, for example: {\"statements\":[{\"sql\":\"SELECT 1\"}]}. Set Content-Type: application/json.", "guides/sql-http.html"),
             new("libsql", "libSQL / Hrana", endpoint + "/libsql/",
                 "Use this HTTPS URL, including the trailing slash, and the access token as authToken. Refresh the token and recreate the client before it expires.", "guides/libsql-clients.html"),
-            new("postgres", "Postgres", $"postgresql://app@pg.terrascale.tech:5432/{project}%2F{name}?sslmode=require",
-                "Use the full API key as the password (PGPASSWORD for psql); no token exchange. TLS is required. With libpq 16+, sslmode=verify-full&sslrootcert=system also verifies the certificate.", "guides/postgres-clients.html")
+            new("postgres", "Postgres", $"postgresql://app@pg.terrascale.tech:5432/{project}%2F{name}?sslmode=verify-full&sslrootcert=system",
+                "Use the full API key as the password (PGPASSWORD for psql); no token exchange. This URL requires libpq 16+ and verifies the TLS certificate and hostname using system trust. For other clients, configure trusted CAs and certificate/hostname verification.", "guides/postgres-clients.html")
         ];
     }
 }

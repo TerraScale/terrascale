@@ -121,7 +121,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             var uri = request.RequestUri!;
             if (uri.Host == "auth.terrascale.tech") return ApiKeys!.SendAsync(request, cancellationToken);
             if (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Host is not
-                ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech"))
+                ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech" or "sjc.api.terrascale.tech" or "fra.api.terrascale.tech"))
                 throw new HttpRequestException("Unexpected outbound origin in the test-only database producer.");
             request.Headers.Host = uri.Authority;
             request.RequestUri = new(origin, uri.PathAndQuery);
@@ -383,9 +383,13 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (Extension is not null && await Extension(http) is { } extensionResult) return extensionResult;
                 if (path == "/__test/control") return await ControlAsync(http);
                 if (path == "/__test/observations") return Observations();
-                Require(http.Request.Host.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech", "Trusted producer host");
+                Require(http.Request.Host.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech" or "sjc.api.terrascale.tech" or "fra.api.terrascale.tech", "Trusted producer host");
                 // terrascale e30ffdc2 (region-identity.md): every answer names its region; api.terrascale.tech answers in ApiRegion.
-                var answering = http.Request.Host.Host switch { "sfo.api.terrascale.tech" => "sfo", "gru.api.terrascale.tech" => "gru", _ => ApiRegion };
+                var answering = http.Request.Host.Host switch
+                {
+                    "gru.api.terrascale.tech" => "gru", "sfo.api.terrascale.tech" => "sfo",
+                    "sjc.api.terrascale.tech" => "sjc", "fra.api.terrascale.tech" => "fra", _ => ApiRegion
+                };
                 http.Response.Headers["X-TerraBase-Region"] = answering;
                 if (http.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin) && (pin.Count != 1 || pin[0] != answering))
                     return Error(421, "misdirected_request");
@@ -752,8 +756,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (all && body.TryGetProperty("replicaRegions", out _)) return Error(400, "placement_conflict");
                 // As production TerraBase: without replicaRegions (and not allRegions) it places the database in every other serving region.
                 var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray()
-                    : all ? [] : new[] { "gru", "sfo" }.Where(region => region != home).ToArray();
-                // As production TerraBase on a cell (decision 0013a): an explicit empty list places the database in one region only.
+                    : all ? [] : (Catalog ?? ["gru", "sfo"]).Where(region => region != home).ToArray();
+                // As production TerraBase on a cell: explicit placement requires at least two regions.
                 if (listed.ValueKind == JsonValueKind.Array && replicas.Length == 0) return Error(400, "placement_needs_two_regions");
                 if (home != answering) return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
                 if (createGate is { } paused) { Interlocked.Increment(ref pausedCreates); await paused.Task.WaitAsync(http.RequestAborted); }
@@ -793,7 +797,6 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     lock (gate) { var changed = current with { ReplicaRegions = replicas, AllRegions = false }; databases[current.Id] = changed; return Interlocked.Decrement(ref anchorPatchFailures) >= 0 ? AnchorUnavailable() : Results.Json(Wire(changed, answering)); }
                 case (5, "DELETE", _):
                     if (!atHome) return WrongRegion(http, current);
-                    if (current.ReplicaRegions is { Count: > 0 } || current.AllRegions) return Error(409, "database_replicated");
                     lock (gate)
                     {
                         databases.Remove(current.Id);

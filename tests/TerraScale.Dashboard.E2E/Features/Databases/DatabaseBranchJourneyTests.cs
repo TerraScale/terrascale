@@ -151,9 +151,6 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
         }
         await Assert.That(await ValueAsync(client, recoveredId)).IsEqualTo("original");
         await Assert.That(await ValueAsync(replica, sourceId)).IsEqualTo("source-after-snapshot");
-        using (var removed = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/regions", new()
-        { ["_csrf"] = csrf, ["databaseId"] = recoveredId, ["region"] = "GRU" }))
-            await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await DeleteAsync(replica, replicaCsrf, recoveredId, retryName);
         await DeleteAsync(client, csrf, sourceId, sourceName);
         observations = await ReadAsync(producer, "/__test/observations");
