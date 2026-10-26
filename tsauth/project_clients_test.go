@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"terrascale.tech/sdk/tsauth"
 )
@@ -148,6 +149,33 @@ func TestProjectOAuthClientsMalformedResponse(t *testing.T) {
 		var malformed *tsauth.ResponseContractError
 		if !errors.As(err, &malformed) {
 			t.Fatalf("malformed contract accepted: %v", err)
+		}
+	}
+}
+
+func TestProjectOAuthClientsCanceledBeforeDispatch(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		if expired {
+			cancel()
+			ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+		}
+		cancel()
+		calls := 0
+		u := projectAuthUser(t, func(*http.Request) (*http.Response, error) {
+			calls++
+			return nil, errors.New("unexpected dispatch")
+		})
+		_, listErr := u.ListProjectOAuthClients(ctx, oauthProject)
+		_, createErr := u.CreateProjectOAuthClient(ctx, oauthProject, oauthRegistration())
+		deleteErr := u.DeleteProjectOAuthClient(ctx, oauthProject, oauthClientID)
+		for _, err := range []error{listErr, createErr, deleteErr} {
+			if !errors.Is(err, ctx.Err()) {
+				t.Fatalf("caller cancellation lost: %v", err)
+			}
+		}
+		if calls != 0 {
+			t.Fatalf("canceled work reached the caller's transport: %d", calls)
 		}
 	}
 }
