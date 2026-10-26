@@ -15,6 +15,7 @@ public sealed partial class TerraBaseHomeMeasurements
 {
     private async Task AnalyticsAsync(AccountContext context, string range, HomeMeasurement result, CancellationToken cancellationToken)
     {
+        if (context.Role.Length == 0) { result.AnalyticsError = "Organization membership is required for analytics."; return; }
         try
         {
             var selection = AnalyticsSelection.For(context, context.Project?.Id ?? "", "", "", range);
@@ -54,6 +55,7 @@ public sealed partial class TerraBaseHomeMeasurements
 
     private async Task ReplicationAsync(AccountContext context, string range, HomeMeasurement result, CancellationToken cancellationToken)
     {
+        if (context.Role.Length == 0) { result.ReplicationError = "Organization membership is required for replication metrics."; return; }
         try
         {
             var selection = UsageSelection.For(context, context.Project?.Id ?? "", "", range);

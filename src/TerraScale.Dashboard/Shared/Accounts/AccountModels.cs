@@ -167,9 +167,19 @@ public sealed class NotificationRecord
     public string Url { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; }
     public bool Unread => Status.Equals("unread", StringComparison.OrdinalIgnoreCase);
-    public bool VisibleTo(AccountContext context) => (OrganizationId == "" || OrganizationId == context.Organization?.Id) &&
-        (ProjectId == "" || ProjectId == context.Project?.Id) &&
-        (!Type.StartsWith("allowance-", StringComparison.Ordinal) || context.Organization?.RoleFor(context.UserId) == "owner");
+    public bool VisibleTo(AccountContext context)
+    {
+        if (Type.StartsWith("allowance-", StringComparison.Ordinal) && context.Organization?.RoleFor(context.UserId) != "owner") return false;
+        if (OrganizationId == "" && ProjectId == "") return true;
+        var organization = context.Organization;
+        if (organization is null || OrganizationId != organization.Id || organization.MfaRequired ||
+            organization.Status != "active" || organization.Archived || !context.Organizations.Contains(organization)) return false;
+        if (ProjectId == "") return organization.ContainsMember(context.UserId);
+        var project = context.Project;
+        return project is { Status: "active" } && ProjectId == project.Id && project.OrganizationId == organization.Id &&
+            organization.Projects.GetValueOrDefault(project.Id) == project && (organization.ContainsMember(context.UserId) ||
+                !PlatformDatabases.IsPlatform(organization.Id) && project.Role is "viewer" or "member" or "admin");
+    }
 }
 
 // Ip is the client address of the request that recorded a dashboard event; events stored before it was recorded,

@@ -15,7 +15,7 @@ public sealed class NotificationMcpTools(IHttpContextAccessor http, AccountServi
         [Description("One-based page of 10 notifications, clamped to the available page range. Read page/pageCount from the response.")] int page = 1,
         string? organizationId = null, string? projectId = null)
     {
-        var context = await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
+        var context = await NotificationCommands.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
         if (http.HttpContext is { } request) await ApiKeyExpiryNotifications.RefreshAsync(request, context);
         var inbox = NotificationCommands.Inbox(context, status, page);
         return new(inbox.Items.Select(item => new NotificationToolItem(item.Id, item.Type, item.Title, item.Body,

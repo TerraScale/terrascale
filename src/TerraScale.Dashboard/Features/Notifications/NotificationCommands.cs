@@ -11,6 +11,9 @@ public sealed record NotificationsMarked(int Marked);
 // Shared pagination and CAS mutation keep native forms and MCP consistent.
 public static class NotificationCommands
 {
+    public static Task<AccountContext> RefreshAsync(AccountService accounts, AccountContext context, CancellationToken cancellationToken, bool reload = false) =>
+        AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: context.Role.Length == 0, reload: reload);
+
     public static NotificationInboxSnapshot Inbox(AccountContext context, string? status, int requestedPage)
     {
         var visible = context.Account.Notifications.Where(item => item.VisibleTo(context)).ToArray();
@@ -26,7 +29,7 @@ public static class NotificationCommands
 
     public static async Task<int> MarkAsync(AccountService accounts, AccountContext context, string? notificationId, CancellationToken cancellationToken)
     {
-        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
+        context = await RefreshAsync(accounts, context, cancellationToken);
         var marked = 0;
         await accounts.UpdateAccountAsync(context.Session, account =>
         {
