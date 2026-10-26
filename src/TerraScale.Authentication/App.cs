@@ -219,6 +219,8 @@ public static class App
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
         // Inside the envelope, so a failing page still answers 500; only empty, unstarted responses reach the handler.
         app.UseStatusCodePages(NotFoundPage.HandleAsync);
+        // Ahead of the rate-limit guards: their storage writes stall with every other write.
+        app.UseMiddleware<TokenEndpointDeadline>();
         TokenRateLimitMiddleware.UsePeerGuard(app);
         if (options.TrustedProxies.Count > 0)
         {

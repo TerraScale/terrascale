@@ -80,7 +80,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
 
     // A project tenant's token endpoint, existing or not, charges the same per-peer budget as the platform's: the
     // budget belongs to the caller's address, not to the tenant it names.
-    private static bool IsProjectTokenPath(PathString path) =>
+    internal static bool IsProjectTokenPath(PathString path) =>
         (path.Value ?? string.Empty).Split('/') is [_, var tenant, var oauth, var token, ..] rest
         && rest.Length <= 5 && (rest.Length == 4 || rest[4].Length == 0)
         && string.Equals(oauth, "oauth", StringComparison.OrdinalIgnoreCase) && string.Equals(token, "token", StringComparison.OrdinalIgnoreCase)
