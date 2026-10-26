@@ -27,7 +27,7 @@ func TestAnonymousPublicProbes(t *testing.T) {
 						w.WriteHeader(http.StatusServiceUnavailable)
 						status = "unavailable"
 					}
-					io.WriteString(w, `{"status":"`+status+`","version":"0.0.1","region":"gru","storageFormat":"17","revision":null,"machine":"local"}`)
+					io.WriteString(w, `{"status":"`+status+`","version":"0.0.1","region":"gru"}`)
 				}
 			}))
 			t.Cleanup(server.Close)
@@ -60,7 +60,7 @@ func TestAnonymousPublicProbes(t *testing.T) {
 						t.Fatalf("unavailable = %v", err)
 					}
 				}
-				if out == nil || out.Version != "0.0.1" || out.StorageFormat != "17" || out.Revision != nil || out.Machine != "local" {
+				if out == nil || out.Version != "0.0.1" || out.Region != "gru" || out.Status == "" {
 					t.Fatalf("status = %+v", out)
 				}
 			}
