@@ -51,6 +51,9 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 	if err != nil {
 		return err
 	}
+	if jsonMode(out) {
+		return emitJSON(out, p)
+	}
 	fmt.Fprintf(out, "Created project %s (%s) in %s\n", p.Name, p.ID, matches[0].Name)
 	return nil
 }
