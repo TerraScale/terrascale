@@ -23,12 +23,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.13.5"
           python-version: ${{ matrix.python }}
           activate-environment: true
-      - run: uv pip install -e '.[dev]'
+          enable-cache: true
+          cache-dependency-glob: requirements-ci.txt
+      - run: 'uv pip sync --require-hashes --only-binary :all: requirements-ci.txt'
+      - name: check resolved graph
+        if: matrix.python == '3.12'
+        run: bash scripts/check-ci-lock.sh
+      - uses: actions/cache@v4
+        if: matrix.python == '3.12'
+        with:
+          path: ~/.cache/pip-audit
+          key: pip-audit-${{ runner.os }}-${{ hashFiles('requirements-ci.txt') }}
+          restore-keys: pip-audit-${{ runner.os }}-
+      - name: audit runtime, dev and build graph (all severities)
+        if: matrix.python == '3.12'
+        run: pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt --cache-dir ~/.cache/pip-audit
+      - run: uv pip install --no-deps --no-build-isolation -e '.[dev]' && uv pip check
       - run: ruff check src tests
       - run: mypy
       - run: pytest -q
       - name: build
         if: matrix.python == '3.12'
-        run: uv build && uvx twine check dist/*
+        run: uv build --no-build-isolation && twine check dist/*
