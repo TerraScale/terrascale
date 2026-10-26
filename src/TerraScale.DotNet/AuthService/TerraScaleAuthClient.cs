@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -9,15 +8,13 @@ namespace TerraScale.DotNet;
 /// <summary>
 /// Entry point for ts-auth management API and OIDC operations against one
 /// ts-auth instance. Built over a caller-owned <see cref="HttpClient"/>; the
-/// underlying handler must disable automatic redirects. Safe reads are retried
-/// per <see cref="TerraScaleAuthClientOptions"/>; ts-auth mutations carry no
-/// idempotency contract and are always sent exactly once.
+/// underlying handler must disable automatic redirects. Every operation is sent
+/// once; ts-auth operations have no automatic retry or mutation replay.
 /// </summary>
 public sealed partial class TerraScaleAuthClient
 {
     private const int MaxOperationBytes = 1_048_576;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
 
     // Immutable header values shared by every request: one allocation, not one per call.
     private static readonly MediaTypeWithQualityHeaderValue AcceptJson = new("application/json");
@@ -125,7 +122,7 @@ public sealed partial class TerraScaleAuthClient
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             method,
             requestUri,
             CreateRawJsonBodyFactory(payload),
@@ -195,7 +192,7 @@ public sealed partial class TerraScaleAuthClient
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             HttpMethod.Get,
             requestUri,
             bodyFactory: null,
@@ -213,7 +210,7 @@ public sealed partial class TerraScaleAuthClient
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             HttpMethod.Post,
             requestUri,
             CreateFormBodyFactory(formValues),
@@ -231,7 +228,7 @@ public sealed partial class TerraScaleAuthClient
         AuthenticationHeaderValue? authorization,
         CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             HttpMethod.Post,
             requestUri,
             CreateFormBodyFactory(formValues),
@@ -251,7 +248,7 @@ public sealed partial class TerraScaleAuthClient
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             HttpMethod.Get,
             requestUri,
             bodyFactory: null,
@@ -266,7 +263,7 @@ public sealed partial class TerraScaleAuthClient
         HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken cancellationToken)
         where TRequest : class
     {
-        using var response = await SendWithRetriesAsync(method, route,
+        using var response = await SendRequestAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
             new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
         await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
@@ -279,7 +276,7 @@ public sealed partial class TerraScaleAuthClient
         int maxRequestBytes, CancellationToken cancellationToken)
         where TRequest : class
     {
-        using var response = await SendWithRetriesAsync(method, route,
+        using var response = await SendRequestAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
             new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
         await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
@@ -289,7 +286,7 @@ public sealed partial class TerraScaleAuthClient
     // request resumes it). Any other success status is not evidence either way.
     private async Task<bool> SendAuthenticatedForDeletionCoreAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(HttpMethod.Delete, route, null, new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
+        using var response = await SendRequestAsync(HttpMethod.Delete, route, null, new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Accepted)
         {
             return false;
@@ -310,7 +307,7 @@ public sealed partial class TerraScaleAuthClient
             throw new ArgumentException("A deletion receipt must be the canonical unpadded base64url encoding of exactly 32 bytes.", nameof(deletionReceipt));
         }
 
-        using var response = await SendWithRetriesAsync(method, route, null,
+        using var response = await SendRequestAsync(method, route, null,
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
             cancellationToken, deletionReceipt).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Accepted)
@@ -343,7 +340,7 @@ public sealed partial class TerraScaleAuthClient
         RequestAuthentication authentication,
         CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             method,
             requestUri,
             bodyFactory,
@@ -359,7 +356,7 @@ public sealed partial class TerraScaleAuthClient
         RequestAuthentication authentication,
         CancellationToken cancellationToken)
     {
-        using var response = await SendWithRetriesAsync(
+        using var response = await SendRequestAsync(
             method,
             requestUri,
             bodyFactory,
@@ -409,7 +406,7 @@ public sealed partial class TerraScaleAuthClient
         return () => new FormUrlEncodedContent(values);
     }
 
-    private async Task<HttpResponseMessage> SendWithRetriesAsync(
+    private async Task<HttpResponseMessage> SendRequestAsync(
         HttpMethod method,
         string requestUri,
         Func<HttpContent?>? bodyFactory,
@@ -417,85 +414,23 @@ public sealed partial class TerraScaleAuthClient
         CancellationToken cancellationToken,
         string? deletionReceipt = null)
     {
-        var token = cancellationToken;
-        var attempt = 0;
-        while (true)
+        cancellationToken.ThrowIfCancellationRequested();
+        using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
+        if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Contains("Authorization"))
         {
-            // Every attempt rebuilds the request: content cannot be reused across sends.
-            cancellationToken.ThrowIfCancellationRequested();
-            using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
-            if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Contains("Authorization"))
-            {
-                throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
-            }
-            ApplyAuthentication(request, authentication);
-            if (deletionReceipt is not null)
-            {
-                request.Headers.Add("X-TerraScale-Deletion-Receipt", deletionReceipt);
-            }
-            request.Headers.Accept.Add(AcceptJson);
-            if (bodyFactory?.Invoke() is { } content)
-            {
-                request.Content = content;
-            }
-
-            try
-            {
-                var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
-                if (deletionReceipt is not null || authentication.Kind == RequestAuthenticationKind.Explicit || !ShouldRetry(response, method, attempt, options.MaxRetryAttempts))
-                {
-                    return response;
-                }
-
-                var delay = GetRetryDelay(response, attempt);
-                // Surfacing at exactly the cap too: a delay equal to the
-                // request deadline could never complete before it fires.
-                if (delay >= MaxRetryAfter)
-                {
-                    return response;
-                }
-
-                response.Dispose();
-                await Task.Delay(delay, token).ConfigureAwait(false);
-            }
-            catch (HttpRequestException) when (deletionReceipt is null && authentication.Kind != RequestAuthenticationKind.Explicit && IsSafeRead(method) && attempt < options.MaxRetryAttempts)
-            {
-                await Task.Delay(GetRetryDelay(response: null, attempt), token).ConfigureAwait(false);
-            }
-
-            attempt++;
+            throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
         }
-    }
-
-    private static bool ShouldRetry(HttpResponseMessage response, HttpMethod method, int attempt, int maxAttempts) =>
-        IsSafeRead(method) &&
-        attempt < maxAttempts &&
-        response.StatusCode is HttpStatusCode.RequestTimeout or
-            HttpStatusCode.TooManyRequests or
-            HttpStatusCode.InternalServerError or
-            HttpStatusCode.BadGateway or
-            HttpStatusCode.ServiceUnavailable or
-            HttpStatusCode.GatewayTimeout;
-
-    private static bool IsSafeRead(HttpMethod method) =>
-        method == HttpMethod.Get || method == HttpMethod.Head;
-
-    private TimeSpan GetRetryDelay(HttpResponseMessage? response, int attempt)
-    {
-        if (TerraScaleAuthErrors.ResolveRetryAfter(response) is { } retryAfter)
+        ApplyAuthentication(request, authentication);
+        if (deletionReceipt is not null)
         {
-            return retryAfter <= TimeSpan.Zero ? TimeSpan.Zero : retryAfter;
+            request.Headers.Add("X-TerraScale-Deletion-Receipt", deletionReceipt);
         }
-
-        if (options.RetryDelay == TimeSpan.Zero)
+        request.Headers.Accept.Add(AcceptJson);
+        if (bodyFactory?.Invoke() is { } content)
         {
-            return TimeSpan.Zero;
+            request.Content = content;
         }
-
-        var milliseconds = Math.Min(
-            options.RetryDelay.TotalMilliseconds * Math.Pow(2, attempt),
-            TimeSpan.FromSeconds(30).TotalMilliseconds);
-        return TimeSpan.FromMilliseconds(milliseconds);
+        return await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
     }
 
     private void ApplyAuthentication(HttpRequestMessage request, RequestAuthentication authentication)

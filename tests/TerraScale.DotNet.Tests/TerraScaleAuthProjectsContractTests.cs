@@ -251,8 +251,6 @@ public sealed class TerraScaleAuthProjectsContractTests
     {
         BaseAddress = new Uri("https://auth.example.test"),
         InstanceSlug = "terrascale",
-        MaxRetryAttempts = 2,
-        RetryDelay = TimeSpan.Zero
     });
 
     private sealed class CaptureHandler(HttpStatusCode status, params string[] bodies) : HttpMessageHandler

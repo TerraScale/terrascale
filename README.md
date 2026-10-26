@@ -312,7 +312,7 @@ statuses callers act on: `TerraBaseValidationException` (400, 413, 415),
 and `TerraBaseKeyExpiredException` (permanent; replace the key), `TerraBaseForbiddenException` (403),
 `TerraBaseNotFoundException` (404), `TerraBaseConflictException` (409),
 `TerraBasePreconditionFailedException` (412) and `TerraBaseUnavailableException`
-(503). A request that passes its `RequestTimeout` throws `TimeoutException`.
+(503). A request that exceeds the fixed 30-second deadline throws `TimeoutException`.
 An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellation
 remains `OperationCanceledException`. Safe GET/HEAD reads retry `503 auth_unavailable` at most twice, honoring `Retry-After`
 with exponential backoff otherwise, within the request deadline. Authentication errors never retry.
@@ -392,8 +392,8 @@ var organizations = await auth.Platform.ListOrganizationsAsync(signInAccessToken
 
 The auth client calls its `BaseAddress` directly; there is no regional discovery or proxy switch. This does not
 route database requests. `AddTerraScaleAuthClient` supplies dependency-injection registration
-with redirects disabled. Only safe reads can retry; auth mutations are sent
-once. `TerraScaleAuthException` exposes typed status/retry metadata and only
+with redirects disabled. Every auth operation is sent once; retry behavior and body/deadline bounds are fixed by the SDK.
+`TerraScaleAuthException` exposes typed status/retry metadata and only
 known fixed error codes. Messages are fixed safe diagnostics; arbitrary
 producer messages, codes and response bodies are never retained. Options
 formatting omits credentials.

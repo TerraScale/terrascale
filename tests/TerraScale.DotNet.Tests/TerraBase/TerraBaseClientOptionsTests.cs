@@ -85,14 +85,14 @@ public sealed class TerraBaseClientOptionsTests
     }
 
     [Test]
-    public async Task RequestTimeoutAndResponseBoundMustBeBounded()
+    public async Task InternalTransportTestBoundsRemainValidated()
     {
         using var http = new HttpClient();
-        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_key", RequestTimeout = TimeSpan.Zero }))
+        await Assert.That(() => new TerraBaseConnection(http, Origin, null, "tb_key", "credential", TimeSpan.Zero, TerraBaseConnection.DefaultMaxResponseBytes))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_key", RequestTimeout = TimeSpan.FromHours(1) }))
+        await Assert.That(() => new TerraBaseConnection(http, Origin, null, "tb_key", "credential", TimeSpan.FromHours(1), TerraBaseConnection.DefaultMaxResponseBytes))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private, MaxResponseBytes = 1024 }))
+        await Assert.That(() => new TerraBaseConnection(http, Private, null, null, "credential", TerraBaseConnection.RequestDeadline, 1024, anonymousAllowed: true))
             .Throws<ArgumentOutOfRangeException>();
     }
 
@@ -236,21 +236,18 @@ public sealed class TerraBaseClientOptionsTests
     {
         if (managementClient)
         {
-            var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions
-            {
-                BaseAddress = Origin,
-                AccessTokenProvider = provider,
-                RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
-            });
+            var management = timeout is null
+                ? new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, AccessTokenProvider = provider })
+                : new TerraBaseManagementClient(new TerraBaseConnection(http, Origin, null, null, "credential", timeout.Value,
+                    TerraBaseConnection.DefaultMaxResponseBytes, provider, anonymousAllowed: true));
             return token => management.ListOrganizationsAsync("user", cancellationToken: token);
         }
 
-        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-        {
-            BaseAddress = Origin,
-            AccessTokenProvider = provider,
-            RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
-        }).Database("project", "app");
+        var client = timeout is null
+            ? new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, AccessTokenProvider = provider })
+            : new TerraBaseDocumentsClient(new TerraBaseConnection(http, Origin, null, null, "credential", timeout.Value,
+                TerraBaseConnection.DefaultMaxResponseBytes, provider, anonymousAllowed: true));
+        var database = client.Database("project", "app");
         return token => database.ListCollectionsAsync(cancellationToken: token);
     }
 

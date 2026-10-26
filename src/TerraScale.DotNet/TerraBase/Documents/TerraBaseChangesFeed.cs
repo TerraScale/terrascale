@@ -37,7 +37,7 @@ public sealed partial class TerraBaseDatabase
     /// 400 invalid_cursor rejects multiple Last-Event-ID values; 410 cursor_expired includes malformed, old or differently scoped cursors.
     /// For 410, explicitly re-read and restart with now; the SDK never resets the checkpoint itself.
     /// Includes document mutations only, not collection/index metadata or documents removed by a collection drop.
-    /// Dispose the enumerator to close the response. RequestTimeout covers acquisition; stalled reads stop after 45 seconds.
+    /// Dispose the enumerator to close the response. The 30-second deadline covers acquisition; stalled reads stop after 45 seconds.
     /// </summary>
     public async IAsyncEnumerable<TerraBaseChangesEvent> StreamChangesAsync(string? cursor = null, string? lastEventId = null,
         IReadOnlyList<string>? collections = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)

@@ -29,12 +29,6 @@ public sealed record TerraBaseManagementClientOptions
     /// </summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
 
-    /// <summary>Deadline of each request, including reading its response. Default 30 seconds, at most 10 minutes.</summary>
-    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>Largest response body read, 64 KiB to 1 GiB. Default 64 MiB, enough for any page TerraBase returns.</summary>
-    public int MaxResponseBytes { get; init; } = TerraBaseConnection.DefaultMaxResponseBytes;
-
     /// <inheritdoc />
     public override string ToString() => $"TerraBase management client options for {BaseAddress}";
 }
@@ -64,9 +58,11 @@ public sealed class TerraBaseManagementClient
     public TerraBaseManagementClient(HttpClient httpClient, TerraBaseManagementClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.AccessTokenProvider), options.RequestTimeout, options.MaxResponseBytes,
+        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.AccessTokenProvider), TerraBaseConnection.RequestDeadline, TerraBaseConnection.DefaultMaxResponseBytes,
             options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
     }
+
+    internal TerraBaseManagementClient(TerraBaseConnection connection) => this.connection = connection;
 
     // Organizations
 

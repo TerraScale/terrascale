@@ -19,6 +19,8 @@ internal sealed class TerraBaseConnection
     /// </summary>
     public const int DefaultMaxResponseBytes = 64 * 1024 * 1024;
 
+    internal static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
+
     private const int MinResponseBytes = 64 * 1024;
     private const int MaxResponseBytesLimit = 1024 * 1024 * 1024;
     private const int MaxSecretLength = 4096;
@@ -125,7 +127,7 @@ internal sealed class TerraBaseConnection
         var status = await SendAsync(method, path, content, headers, async (response, token) =>
         {
             using var body = new BoundedHttpBodyStream(
-                maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than MaxResponseBytes.", "invalid_response", null), token);
+                maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than the supported response bound.", "invalid_response", null), token);
             await response.Content.CopyToAsync(body, token).ConfigureAwait(false);
             value = ReadResponse(body.Written.Span, typeInfo, response.StatusCode);
         }, cancellationToken).ConfigureAwait(false);

@@ -140,7 +140,7 @@ public sealed class TerraScaleAuthClientTests
     }
 
     [Test]
-    public async Task RetriesRepeatSafeReadsButNeverMutations()
+    public async Task ReadsAndMutationsAreSentOnceUntilTheCallerStartsAnotherOperation()
     {
         var readHandler = new FlakyOnceHandler("""{"keys":[]}""");
         var readClient = CreateClient(readHandler, new TerraScaleAuthClientOptions
@@ -148,9 +148,9 @@ public sealed class TerraScaleAuthClientTests
             BaseAddress = new Uri("https://auth.example.test/"),
             ApiKey = "sk_key",
             InstanceSlug = "acme",
-            MaxRetryAttempts = 1,
-            RetryDelay = TimeSpan.Zero,
         });
+        await Assert.ThrowsAsync<TerraScaleAuthException>(() => readClient.Oidc.GetJwksAsync());
+        await Assert.That(readHandler.Attempts).IsEqualTo(1);
         var keys = await readClient.Oidc.GetJwksAsync();
         await Assert.That(keys.Keys.Count).IsEqualTo(0);
         await Assert.That(readHandler.Attempts).IsEqualTo(2);
@@ -161,13 +161,18 @@ public sealed class TerraScaleAuthClientTests
             BaseAddress = new Uri("https://auth.example.test/"),
             ApiKey = "sk_key",
             InstanceSlug = "acme",
-            MaxRetryAttempts = 5,
-            RetryDelay = TimeSpan.Zero,
         });
         var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(
             () => mutationClient.Users.DeleteAsync("usr_1"));
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(mutationHandler.Attempts).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AuthOptionsExposeOnlyOriginInstanceAndCredential()
+    {
+        var names = typeof(TerraScaleAuthClientOptions).GetProperties().Select(property => property.Name).Order(StringComparer.Ordinal).ToArray();
+        await Assert.That(names).IsEquivalentTo(new[] { "ApiKey", "BaseAddress", "InstanceSlug" });
     }
 
     [Test]
