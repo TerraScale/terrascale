@@ -38,6 +38,8 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   auth login | logout                     sign in with your browser, or sign out
   whoami                                  print the signed-in account
   billing                                 print the dashboard billing URL (offline)
+  context show | clear                    inspect or clear saved selectors
+  context set <org> <project> [<database>] save verified selectors; @ uses saved DB
   orgs                                    list every accessible organization
   projects                                list the projects you can reach
   projects create <name>                  create a project (and an organization
@@ -145,6 +147,9 @@ var commands = map[string][]int{
 	"billing":           {0},
 	"projects":          {0},
 	"orgs":              {0},
+	"context show":      {0},
+	"context clear":     {0},
+	"context set":       {2, 3},
 	"projects create":   {1},
 	"usage":             {0, 1},
 	"completion":        {1},
@@ -296,7 +301,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if yesSet && name != "db delete" {
 		return fmt.Errorf("-yes is only accepted for db delete: %w", errUsage)
 	}
-	if name == "db delete" {
+	if name == "db delete" && !tty && !*yes {
 		if err := confirmDelete(operands[0], *project, *yes, in, prompt, tty); err != nil {
 			return err
 		}
@@ -304,18 +309,35 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	switch name {
 	case "billing":
 		return showBilling(out)
+	case "context show", "context clear":
+		path, err := contextPath()
+		if err != nil {
+			return err
+		}
+		if name == "context show" {
+			return showCLIContext(path, out)
+		}
+		return clearCLIContext(path, out)
 	case "completion":
 		return completion(operands[0], out)
 	case "migrate new":
 		return newMigration(operands[0], out)
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
-		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || name == "orgs" {
+		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || name == "orgs" || name == "context set" {
 			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
+		}
+		if _, err := contextDatabase(operands, ""); err != nil {
+			return err
 		}
 		s, err := openKey(ctx, key, *project)
 		if err != nil {
 			return err
+		}
+		if name == "db delete" {
+			if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
+				return err
+			}
 		}
 		return s.dispatch(ctx, name, fn, *collection, operands, out)
 	}
@@ -347,6 +369,34 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return err
 	}
 	u := auth.WithToken(token)
+	if name == "context set" {
+		return selectCLIContext(ctx, u, token, operands, out)
+	}
+	if name != "whoami" && name != "orgs" && name != "projects" && name != "projects create" {
+		path, err := contextPath()
+		if err != nil {
+			return err
+		}
+		c, err := readCLIContext(path)
+		if err != nil {
+			return err
+		}
+		var claims struct {
+			Sub string `json:"sub"`
+		}
+		decodeClaims(token, &claims)
+		var database string
+		*org, *project, database, err = contextDefaults(c, claims.Sub, *org, *project)
+		if err != nil {
+			return err
+		}
+		if usesDatabaseOperand(name) {
+			operands, err = contextDatabase(operands, database)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	switch name {
 	case "whoami":
 		return whoami(ctx, u, token, out)
@@ -357,12 +407,17 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	case "projects create":
 		return createProject(ctx, u, *org, operands[0], out)
 	}
-	s, err := open(ctx, u, token, *project)
+	s, err := open(ctx, u, token, *org, *project)
 	if err != nil {
 		return err
 	}
 	if name == "keys create" {
 		return createKey(ctx, s, keyReq, out)
+	}
+	if name == "db delete" {
+		if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
+			return err
+		}
 	}
 	return s.dispatch(ctx, name, fn, *collection, operands, out)
 }
@@ -509,7 +564,7 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 }
 
 // projects yields every project the user reaches, in every organization.
-func projects(ctx context.Context, u *tsauth.User) iter.Seq2[tsauth.Project, error] {
+func projects(ctx context.Context, u *tsauth.User, organization string) iter.Seq2[tsauth.Project, error] {
 	return func(yield func(tsauth.Project, error) bool) {
 		for org, err := range pages(func(after string) (*v1.Page[tsauth.Organization], error) {
 			p, err := u.Organizations(ctx, tsauth.PageOptions{Limit: 100, After: after})
@@ -518,6 +573,9 @@ func projects(ctx context.Context, u *tsauth.User) iter.Seq2[tsauth.Project, err
 			if err != nil {
 				yield(tsauth.Project{}, err)
 				return
+			}
+			if organization != "" && org.ID != organization && org.Name != organization {
+				continue
 			}
 			for p, err := range pages(func(after string) (*v1.Page[tsauth.Project], error) {
 				p, err := u.Projects(ctx, org.ID, tsauth.PageOptions{Limit: 100, After: after})
@@ -537,7 +595,7 @@ func listProjects(ctx context.Context, u *tsauth.User, out io.Writer) error {
 	if !jsonMode(out) {
 		fmt.Fprintln(w, "NAME\tID\tORGANIZATION\tROLE")
 	}
-	for p, err := range projects(ctx, u) {
+	for p, err := range projects(ctx, u, "") {
 		if err != nil {
 			return err
 		}
@@ -614,9 +672,9 @@ type session struct {
 	project string
 }
 
-func open(ctx context.Context, u *tsauth.User, token, project string) (*session, error) {
+func open(ctx context.Context, u *tsauth.User, token, organization, project string) (*session, error) {
 	var matches []tsauth.Project
-	for p, err := range projects(ctx, u) {
+	for p, err := range projects(ctx, u, organization) {
 		if err != nil {
 			return nil, err
 		}
