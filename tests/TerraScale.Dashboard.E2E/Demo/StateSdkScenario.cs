@@ -327,6 +327,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private int databasePuts;
         private int databaseCreates;
         private int collectionPosts;
+        private int collectionLists;
         private int collectionConflicts;
         private int documentWrites;
         private int preconditionFailures;
@@ -390,6 +391,18 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 }
                 Require(parts.Length >= 6 && parts[5] == "collections", "Only genuine collection and by-key document routes are admitted.");
                 if (parts.Length == 6 && http.Request.Method == "POST") return await CreateCollectionAsync(http);
+                if (parts.Length == 6 && http.Request.Method == "GET")
+                {
+                    Interlocked.Increment(ref collectionLists);
+                    var offset = int.TryParse(http.Request.Query["cursor"], out var parsed) ? parsed : 0;
+                    var size = Mode == "paged-collections" ? 10 : 200;
+                    lock (gate)
+                    {
+                        var items = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Skip(offset).Take(size).ToArray();
+                        return Results.Json(new { items = items.Select(item => CollectionBody(item.Key, item.Value)),
+                            next_cursor = offset + items.Length < collections.Count ? (offset + items.Length).ToString(CultureInfo.InvariantCulture) : null });
+                    }
+                }
                 Require(parts.Length >= 7, "A collection name is required.");
                 if (parts.Length == 7 && http.Request.Method == "GET")
                 {
@@ -588,6 +601,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 preconditionFailures,
                 pausedCreates,
                 pausedWrites,
+                collectionLists,
                 privateRequests,
                 pausedTransactions,
                 redirectTargetRequests,

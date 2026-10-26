@@ -3,12 +3,65 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TUnit.Core;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
 {
+    [Test]
+    [Arguments("sessions")]
+    [Arguments("auth_credentials")]
+    public async Task AnExternalRotationIsVisibleInsideTheWaitingReadRequest(string collection)
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        Check(await scenario.StartHostsAsync(), "The fixed state schema initializes.");
+        var state = scenario.RegistrationState;
+        await state.PutAsync(collection, "synthetic-lease", JsonSerializer.SerializeToElement(new { lease = "held" }), TerraBasePrecondition.Absent, default);
+        var original = (await state.GetAsync(collection, "synthetic-lease", default))!;
+        var rotate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // This task belongs to a different request, outside the waiting request's timing context.
+        var writer = Task.Run(async () =>
+        {
+            await rotate.Task;
+            await state.PutAsync(collection, "synthetic-lease", JsonSerializer.SerializeToElement(new { lease = "rotated" }),
+                TerraBasePrecondition.Matches(original.Version), default);
+        });
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, async () =>
+        {
+            var before = (await state.GetAsync(collection, "synthetic-lease", default))!;
+            await Assert.That(before.Document.GetProperty("lease").GetString()).IsEqualTo("held");
+            rotate.SetResult();
+            await writer;
+            var after = (await state.GetAsync(collection, "synthetic-lease", default))!;
+            await Assert.That(after.Document.GetProperty("lease").GetString()).IsEqualTo("rotated");
+        }, NullLogger.Instance);
+    }
+
+    [Test]
+    public async Task ReadinessUsesOneSchemaPageAndConsumesPaginationWithoutCachingDroppedCollections()
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        Check(await scenario.StartHostsAsync(), "The fixed state schema initializes.");
+        using var client = scenario.CreateClient();
+        var before = (await ObserveAsync(controls)).GetProperty("collectionLists").GetInt32();
+        await ReadyAsync(client);
+        Check((await ObserveAsync(controls)).GetProperty("collectionLists").GetInt32() == before + 1,
+            "A readiness probe checks all required collections through one SDK metadata page.");
+        await ControlAsync(controls, new { command = "mode", value = "paged-collections" });
+        await ReadyAsync(client);
+        Check((await ObserveAsync(controls)).GetProperty("collectionLists").GetInt32() == before + 4,
+            "A producer returning ten collections per page is fully traversed.");
+        await ControlAsync(controls, new { command = "drop-collection", name = "auth-flows" });
+        using var missing = await client.GetAsync("/readyz");
+        Check(missing.StatusCode == HttpStatusCode.ServiceUnavailable, "The next probe immediately refuses a missing collection.");
+        CheckProtocol(await ObserveAsync(controls));
+    }
+
     [Test]
     public async Task ConcurrentColdStartNativeSignupCasAndColdRestartUseTheProductionStateSdk()
     {

@@ -40,6 +40,9 @@ public static class DashboardApplication
             Args = args,
             WebRootPath = "web/static"
         });
+        // The console formatter's fixed setting retains sanitized request/trace scopes in structured timings.
+        builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
+        builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
         builder.Services.AddSafeHttpLogging();
         builder.Services.AddSingleton<AssetUrls>();
