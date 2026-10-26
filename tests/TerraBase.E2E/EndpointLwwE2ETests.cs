@@ -92,11 +92,15 @@ public sealed class EndpointLwwE2ETests
 
         public static async Task<Client> OpenAsync(Cluster cluster, string region)
         {
-            var sockets = await cluster.SocketsAsync(region);
+            var (postgresPort, wirePort, key) = await cluster.SocketsAsync(region);
             var source = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
             {
-                Host = "127.0.0.1", Port = sockets.Postgres, Username = "wire", Password = sockets.Key,
-                Database = "canary", SslMode = SslMode.Disable,
+                Host = "127.0.0.1",
+                Port = postgresPort,
+                Username = "wire",
+                Password = key,
+                Database = "canary",
+                SslMode = SslMode.Disable,
             }.ConnectionString);
             WireClient? opened = null;
             try
@@ -106,13 +110,13 @@ public sealed class EndpointLwwE2ETests
                     WireClient candidate;
                     try
                     {
-                        candidate = await WireClient.ConnectAsync(sockets.Wire);
+                        candidate = await WireClient.ConnectAsync(wirePort);
                     }
                     catch (SocketException error) when (error.SocketErrorCode == SocketError.ConnectionRefused)
                     {
                         return false;
                     }
-                    var hello = await candidate.HelloAsync(sockets.Key, cluster.ProjectPath.Split('/')[3], "canary");
+                    var hello = await candidate.HelloAsync(key, cluster.ProjectPath.Split('/')[3], "canary");
                     if (hello.Status == 200)
                     {
                         opened = candidate;
