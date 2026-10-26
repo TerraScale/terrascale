@@ -32,6 +32,7 @@ public static class DashboardMcp
             typeof(DashboardMcpTools),
             typeof(TerraScale.Dashboard.Features.Databases.DatabaseMcpTools),
             typeof(TerraScale.Dashboard.Features.Data.DataMcpTools),
+            typeof(TerraScale.Dashboard.Features.Data.DeclaredSchemaMcpTools),
             typeof(TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools),
             typeof(TerraScale.Dashboard.Features.Backups.BackupMcpTools),
             typeof(TerraScale.Dashboard.Features.Home.HomeMcpTools),
