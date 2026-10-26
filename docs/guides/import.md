@@ -82,7 +82,7 @@ Run these in one shell session from the directory that holds your export.
      api -H 'Content-Type: application/json' --data-binary @- "$D/import" | jq .state
    ```
 
-   The state is `awaiting_source`. The database is created in the region that receives the request, without replicas; a database with replica regions answers `409 destination_replicated`, so add replicas after the import completes. Repeating the identical attach request is safe: it answers with the existing job. Because `DB` is a fresh name, a `409 name_taken` from a repeated database request can only be your own database.
+   The state is `awaiting_source`. Import runs in the destination’s home region and supports replicated destinations; keep the placement returned by database creation. Repeating the identical attach request returns the existing job. On `409 name_taken`, verify ownership and the existing import before continuing; a name collision alone does not identify your database.
 
 3. Upload the file in parts of at most 4 MiB, then wait for analysis:
 
@@ -216,7 +216,6 @@ When the copy finishes, the job compares, for each table:
 | `403 forbidden_scope` | Use a token with the required scopes. |
 | `404 unknown_database` | Check `DB` and that the token belongs to this project and is not narrowed to another database. |
 | `409 destination_not_empty` | The database already has collections. Create a new database for the import. |
-| `409 destination_replicated` | Create a new database without replica regions; add replicas after the import completes. |
 | `409 import_exists` | The database already has a different import. Use a new database. |
 | `409 offset_mismatch` | Run step 3 again; it continues from `receivedBytes`. |
 | `409 preview_changed`, `409 preview_blocked` | Fetch the job, review the current preview, resolve blocking issues, then start with its `preview.id`. |

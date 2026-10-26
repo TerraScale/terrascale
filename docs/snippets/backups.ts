@@ -27,7 +27,5 @@ export async function run(sandbox: Sandbox): Promise<void> {
   // Restore never overwrites: it creates a new database from the backup.
   const restored = await db.backups.restore(backup.id, { name: `${sandbox.databaseName}-restored` });
   assert.equal(restored.name, `${sandbox.databaseName}-restored`);
-  // Delete answers 409 database_replicated until the replicas are removed.
-  await sandbox.client.databases.update(restored.name, { replicaRegions: [] });
   await sandbox.client.databases.delete(restored.name);
 }

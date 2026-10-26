@@ -9,9 +9,7 @@ title: Branches
 
 # Branches
 
-A branch is a new database in the same project that starts as a consistent copy of another database, taken when you create it. After that, writes to the branch and the source are independent. Use a branch to test a migration or an import against real data without touching the source.
-
-The published `@terrascale/sdk@0.0.3` does not wrap branching yet. The examples use `curl` against the HTTP API.
+A branch is a new database in the same project, created by copying a full, consistent snapshot of the source, including real customer data. Copy time and storage grow with the data; later writes are independent. Check the returned `homeRegion` and `replicaRegions` before use: branching uses default placement, which can differ from the source. The published `@terrascale/sdk@0.0.9` supports `client.databases.branch(sourceName, { name: "orders-migration-test" })`; the examples below use HTTP.
 
 ## Before you start
 
@@ -38,7 +36,7 @@ api -X POST -H 'Content-Type: application/json' \
   "$TERRASCALE_API_URL/v1/projects/$PROJECT/databases/$DATABASE/branches"
 ```
 
-`name` is required. It starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 63 characters, and must be free in the project.
+`name` is required. It starts with a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 63 characters, and must be free in the project. Reserved device names such as `con`, `nul`, `com0`–`com9` and `lpt0`–`lpt9` are rejected.
 
 The call answers `201` with `Location: /v1/projects/$PROJECT/databases/orders-migration-test`:
 
@@ -65,12 +63,13 @@ A branch is created in the source database's home region. Any other region answe
 | `400 invalid_request` | `name` is missing or breaks the name rules |
 | `404 unknown_route` | The source database does not exist or is out of the token's reach |
 | `409 name_taken` | Another database in the project already has that name |
+| `409 database_limit` / `429 storage_quota` | Free a database slot or increase your allowance / resolve storage quota; never delete your recovery source just to make room |
 | `421 wrong_region` | Repeat in the region named by `X-TerraBase-Database-Home` |
 | `429` / `503` | `tenant_busy`, `tenant_memory`, `storage_busy`, `capacity`, `unavailable`: retry with backoff |
 
 ## Delete a branch
 
-Delete a branch like any other database. Deleting the source does not delete its branches; they are independent copies.
+Confirm the target name, then run `api -X DELETE "$TERRASCALE_API_URL/v1/projects/$PROJECT/databases/orders-migration-test"` in its home region. No replica-removal PATCH is needed. `204` records logical deletion and local cleanup; remote erasure is retried. Deleting a source leaves its independent branches, but also removes the source’s backups: validate recovery before deleting it.
 
 ## Preview databases for pull requests
 
@@ -83,7 +82,7 @@ Store an API key in the repository secret `TERRASCALE_API_KEY`. `ts keys create 
 | `api-key` | yes | The API key, from `secrets.TERRASCALE_API_KEY` |
 | `database` | yes | The database to branch |
 | `branch` | no | The branch name. The default is `pr-<number>` |
-| `command` | no | `create`, `reset` or `delete`. Empty deletes the branch when the pull request closes and creates it otherwise. `reset` branches again from the source on each push |
+| `command` | no | `create`, `reset` or `delete`. Empty deletes the branch when the pull request closes and creates it otherwise. `reset` deletes the target before copying again: replacement failure loses the old target; success creates a new ULID, without transferring database-scoped keys or descendant lineage. It is destructive recreation, not an atomic reset |
 | `project` | no | The project. Only organization keys need it |
 
 The action has these outputs: `name`, `id`, `project-id` and `api-url`, which is `https://api.terrascale.tech/v1/projects/<project>/databases/<name>`.
