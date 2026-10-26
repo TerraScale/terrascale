@@ -81,12 +81,15 @@ ol {
 
 a {
   color: var(--ts-link);
-  text-decoration: none;
-}
-
-a:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* Controls and navigation have their own shape or placement as a link cue. */
+a:is(.ts-btn, .ts-icon-btn, .ts-segment, .ts-tab, .ts-menu-item,
+     .ts-nav-link, .ts-subnav-link, .ts-sidebar-brand, .ts-status-link,
+     .ts-db-region, .ts-idp-email-kind) {
+  text-decoration: none;
 }
 
 button,

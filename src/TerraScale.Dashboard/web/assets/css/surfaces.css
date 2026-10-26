@@ -435,7 +435,7 @@
 
 }
 
-/* Icon tile: feature, step and empty-state icons (Lucide 16, accent). */
+/* Icon tile: blue text stays readable over the soft fill on every surface. */
 .ts-icon-tile {
   display: grid;
   flex: none;
@@ -444,7 +444,7 @@
   height: 32px;
   border-radius: var(--ts-radius);
   background: var(--ts-accent-soft);
-  color: var(--ts-accent);
+  color: var(--ts-info);
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-xs);
 }
