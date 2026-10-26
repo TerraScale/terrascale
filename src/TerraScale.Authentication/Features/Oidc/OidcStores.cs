@@ -493,6 +493,19 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
         return token;
     }
 
+    /// <summary>Reads persisted consumption evidence without changing the token's effective ancestry validity.</summary>
+    internal async ValueTask<bool> IsPersistedRefreshRedeemedAsync(string identifier, string authorizationId, string clientId, CancellationToken cancellationToken)
+    {
+        if (!TerraScaleIds.IsValid(identifier))
+        {
+            return false;
+        }
+
+        var document = await store.GetAsync(Collection, this.Tenant, identifier, cancellationToken).ConfigureAwait(false);
+        return Read(document, this.Tenant) is { Status: Statuses.Redeemed, Type: TokenTypeIdentifiers.RefreshToken } token
+            && token.Id == identifier && token.AuthorizationId == authorizationId && token.ApplicationId == clientId;
+    }
+
     /// <inheritdoc />
     public async ValueTask<OidcToken?> FindByReferenceIdAsync(string identifier, CancellationToken cancellationToken) =>
         await store.FindUniqueOwnerAsync(this.Tenant, ReferenceKind, identifier, cancellationToken).ConfigureAwait(false) is { } owner
