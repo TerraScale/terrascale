@@ -1,14 +1,15 @@
 # ts-dotnet package pin
 
-The dashboard consumes TerraScale.DotNet 0.0.12 from merged ts-dotnet revision
-`75877b6003689aa34cf015d682085450c9b2e95e` (PR65). It adds bounded project user
-export pages and optional plain-text branding copy for authentication emails.
+The dashboard consumes TerraScale.DotNet `0.0.12-q08unicode.ge7b1fffb45f3` from
+merged ts-dotnet revision `e7b1fffb45f37563adc26fb1739213bc582d896e` (PR82).
+Document and schema requests use compact Unicode JSON, preserving admitted
+values within the producer’s UTF-8 request limits.
 
-Two clean locked builds produced identical package bytes. Installed-package
-HTTP fake consumers passed on net10.0 and net11.0. This is a locally built
-package; publication is not claimed. Dashboard HTTP journeys exercise the
-installed export operation against its controlled ts-auth producer.
+This unpublished, revision-qualified identity avoids replacing bytes under the
+existing 0.0.12 package identity. Only the pack-time version differs from that
+source revision. Two clean locked builds produced identical bytes; installed
+HTTP consumers passed on net10.0 and net11.0. NuGet publication is not claimed.
 
-`provenance.json` records the source revision, toolchain, package and assembly
-hashes and every packed contract hash. CI verifies these bytes and the central
-pin. Earlier artifacts are retained; only 0.0.12 is selected.
+`provenance.json` records the immutable source revision/tree, toolchain, package,
+assembly and contract hashes. CI verifies these bytes and the central pin.
+Earlier artifacts remain retained; only the revision-qualified package is selected.
