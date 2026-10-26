@@ -1,4 +1,5 @@
 using System.Text;
+using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
@@ -28,6 +29,103 @@ public sealed class HistoryErasureBackupTests
     private const string Jobs = "deletion_jobs";
     private const double Day20 = 20 * 86_400;
     private static readonly TenantContext Auth = HistoryErasures.AuthDatabase;
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task Staggered_erasures_share_each_files_rewrite_window_and_all_complete(CancellationToken _1)
+    {
+        await using var host = new Host();
+        RecordingRewrite recording = null!;
+        await using var api = await host.StartAsync(services => services.AddSingleton<IHealthyRewrite>(provider =>
+            recording = new RecordingRewrite(provider.GetRequiredService<TursoStorageEngine>(), host.Clock)));
+        await Host.SeedAsync(api);
+        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+        List<(string Fence, string Erasure, DateTimeOffset Requested)> erasures = [];
+
+        async Task<HistoryErasureStatus> RequestAsync(string erasure, DateTimeOffset requested, string? token = null)
+        {
+            using var response = await api.Server.Client.PutAsJsonAsync(new Uri("/admin/history-erasures/" + erasure, UriKind.Relative),
+                new HistoryErasureRequest(1, requested, token), Hosting.TerraBaseJsonContext.Default.HistoryErasureRequest);
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync(Hosting.TerraBaseJsonContext.Default.HistoryErasureStatus))!;
+        }
+
+        for (var index = 0; index < 3; index++)
+        {
+            var (fence, erasure, requested) = (Id(), Id(), host.Clock.GetUtcNow());
+            erasures.Add((fence, erasure, requested));
+            await Host.PutAsync(api, Jobs, fence, """{"scope":"account"}""");
+            await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
+            await RequestAsync(erasure, requested);
+            await Host.PassAsync(api);
+            var settled = await RequestAsync(erasure, requested);
+            await Assert.That(settled.SettlementToken).IsNotNull();
+            await RequestAsync(erasure, requested, settled.SettlementToken);
+            await Host.PassAsync(api);
+            await Assert.That(recording.Starts.Count(call => call.Database is not null)).IsEqualTo(1);
+            await Assert.That(recording.Starts.Count(call => call.Database is null)).IsEqualTo(1);
+            await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(index == 0 ? HistoryErasure.Residue : HistoryErasure.Rewriting);
+            host.Clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        host.Clock.Advance(TimeSpan.FromMinutes(7) - TimeSpan.FromTicks(1));
+        await Host.PassAsync(api);
+        await Assert.That(recording.Starts.Count).IsEqualTo(2);
+        host.Clock.Advance(TimeSpan.FromTicks(1));
+        await Host.PassAsync(api);
+        await Assert.That(recording.Starts.Count).IsEqualTo(4).Because("one auth/SYSTEM pair covers both later final cuts");
+        var second = await Host.OwnAsync(api, erasures[1].Erasure);
+        var third = await Host.OwnAsync(api, erasures[2].Erasure);
+        await Assert.That(second.Auth).IsEqualTo(third.Auth);
+        await Assert.That(second.System).IsEqualTo(third.System);
+
+        host.Clock.Advance(TimeSpan.FromDays(8));
+        await Host.CollectAndTrimAsync(api);
+        await Host.PassWithBackupAsync(api, backup);
+        await Assert.That(recording.Starts.Count).IsEqualTo(5).Because("residue is also batched");
+        await DaysOfBackupAsync(host, backup, 3);
+        await Host.PassWithBackupAsync(api, backup);
+        await DaysOfBackupAsync(host, backup, 15);
+        await Host.PassWithBackupAsync(api, backup);
+        foreach (var (fence, erasure, requested) in erasures)
+        {
+            var status = await RequestAsync(erasure, requested);
+            await Assert.That(status.Status).IsEqualTo(HistoryErasure.Retire);
+            await Assert.That(status.ActiveDueAt).IsEqualTo(requested.AddDays(30));
+            await Assert.That(status.BackupDueAt).IsEqualTo(requested.AddDays(31));
+            await Assert.That(status.ActiveOverdue || status.BackupOverdue).IsFalse();
+            await Host.RetireAsync(api, fence, erasure);
+        }
+
+        await Host.PassWithBackupAsync(api, backup);
+        host.Clock.Advance(TimeSpan.FromDays(8));
+        await Host.CollectAndTrimAsync(api);
+        await Host.PassWithBackupAsync(api, backup);
+        foreach (var (_, erasure, requested) in erasures)
+        {
+            await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(HistoryErasure.Complete);
+        }
+
+        await Assert.That(recording.Starts.Count).IsEqualTo(6).Because("four auth rewrites and two SYSTEM rewrites complete three erasures");
+        foreach (var file in recording.Starts.GroupBy(call => call.Database is null))
+        {
+            foreach (var (earlier, later) in file.Zip(file.Skip(1)))
+            {
+                await Assert.That(later.Started - earlier.Started).IsGreaterThanOrEqualTo(TimeSpan.FromMinutes(10));
+            }
+        }
+    }
+
+    private sealed class RecordingRewrite(IHealthyRewrite engine, TimeProvider clock) : IHealthyRewrite
+    {
+        public List<(TenantContext? Database, DateTimeOffset Started)> Starts { get; } = [];
+
+        public ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
+        {
+            Starts.Add((database, clock.GetUtcNow()));
+            return engine.RewriteAsync(database, minimumOffset, cancellationToken);
+        }
+    }
 
     [Test]
     public async Task An_offline_listed_holder_keeps_erasure_and_purge_pending_and_the_age_gauges_cross_day_20()
