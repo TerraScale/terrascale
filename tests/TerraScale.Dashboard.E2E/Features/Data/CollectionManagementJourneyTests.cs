@@ -297,64 +297,83 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
 
     [Test]
     [Category("Slow")]
-    [Arguments("create")]
-    [Arguments("replace")]
-    [Arguments("patch")]
-    public async Task C1PresentationReachesSdkButRealDocumentOversizeDoesNot(string operation)
+    [Arguments("create", false)]
+    [Arguments("replace", false)]
+    [Arguments("patch", false)]
+    [Arguments("create", true)]
+    [Arguments("replace", true)]
+    [Arguments("patch", true)]
+    public async Task C1PresentationUsesCompactSdkWireAndPreservesDocumentValues(string operation, bool escapedDraft)
     {
         using var expected = JsonDocument.Parse("{\"text\":\"" + new string('\u0080', 200000) + "\"}");
+        var active = expected.RootElement.Clone();
         var writes = 0;
+        var reject = false;
         await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
             if (!http.Request.Path.Value!.EndsWith("/documents/by-key", StringComparison.Ordinal)) return null;
-            if (http.Request.Method == "GET") return Results.Json(new { id = "01K78D0C000000000000000198", version = "tbv1-seeded", state = "value", document = expected.RootElement });
+            if (http.Request.Method == "GET") return Results.Json(new { id = http.Request.Query["id"].ToString(), version = "tbv1-seeded", state = "value", document = active });
             Interlocked.Increment(ref writes);
             await Assert.That(http.Request.Headers.Authorization.ToString()).StartsWith("Bearer ");
             await Assert.That(operation == "create" ? http.Request.Headers.IfNoneMatch.ToString() : http.Request.Headers.IfMatch.ToString()).IsEqualTo(operation == "create" ? "*" : "\"tbv1-seeded\"");
+            await Assert.That(http.Request.ContentType).IsEqualTo(operation == "patch" ? "application/merge-patch+json" : "application/json");
             using var wire = new MemoryStream();
             await http.Request.Body.CopyToAsync(wire);
-            await Assert.That(wire.Length).IsEqualTo(1200011L).Because("The installed SDK still expands C1; the producer admits at most 1 MiB.");
+            await Assert.That(wire.Length).IsEqualTo(400011L).Because("The installed SDK emits compact C1 within the unchanged 1 MiB admission.");
             using var value = JsonDocument.Parse(wire.ToArray());
             await Assert.That(JsonElement.DeepEquals(expected.RootElement, value.RootElement)).IsTrue();
-            return Results.Json(new { error = new { code = "payload_too_large", message = "A document is at most 1 MiB." } }, statusCode: 413);
+            if (reject) return Results.Json(new { error = new { code = "payload_too_large", message = "A document is at most 1 MiB." } }, statusCode: 413);
+            active = value.RootElement.Clone();
+            return Results.Json(new { id = http.Request.Query["id"].ToString(), version = "tbv1-seeded", offset = "1", durability = "local_durable" }, statusCode: operation == "create" ? 201 : 200);
         });
         using var client = host.CreateClient();
         var (id, csrf) = await SetupAsync(client);
+        var documentId = operation == "create" ? "01K78D0C000000000000000199" : "01K78D0C000000000000000198";
+        var path = $"/databases/{id}/documents/items?edit={documentId}";
         var draft = await DraftAsync(await client.GetStringAsync($"/databases/{id}/documents/items?edit=01K78D0C000000000000000198"), "document-json");
         await Assert.That(System.Text.Encoding.UTF8.GetByteCount(draft)).IsEqualTo(1200011);
-        var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["operation"] = operation, ["id"] = "01K78D0C000000000000000198", ["version"] = "tbv1-seeded", ["document"] = draft };
-        foreach (var submitted in new[] { draft, expected.RootElement.GetRawText() })
+        var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["operation"] = operation, ["id"] = documentId, ["version"] = "tbv1-seeded", ["document"] = escapedDraft ? draft : expected.RootElement.GetRawText() };
         {
-            form["document"] = submitted;
-            using var refused = await MultipartAsync(client, "/api/v1/dashboard/data/documents", form);
+            using var accepted = await MultipartAsync(client, "/api/v1/dashboard/data/documents", form);
+            await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var read = JsonDocument.Parse(await DraftAsync(await client.GetStringAsync(path), "document-json"));
+            await Assert.That(JsonElement.DeepEquals(expected.RootElement, read.RootElement)).IsTrue();
+        }
+        reject = true;
+        using (var refused = await MultipartAsync(client, "/api/v1/dashboard/data/documents", form))
+        {
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
-            var refusedHtml = await refused.Content.ReadAsStringAsync();
-            await Assert.That(WebUtility.HtmlDecode(refusedHtml)).Contains("The encoded document exceeds the data API's 1 MiB request limit.").And.Contains("Your draft has been kept.");
-            using var retained = JsonDocument.Parse(await DraftAsync(refusedHtml, operation == "create" ? "new-document-json" : "document-json"));
+            var html = await refused.Content.ReadAsStringAsync();
+            await Assert.That(WebUtility.HtmlDecode(html)).Contains("The encoded document exceeds the data API's 1 MiB request limit.").And.Contains("Your draft has been kept.");
+            using var retained = JsonDocument.Parse(await DraftAsync(html, operation == "create" ? "new-document-json" : "document-json"));
             await Assert.That(JsonElement.DeepEquals(expected.RootElement, retained.RootElement)).IsTrue();
         }
         form["document"] = "{\"text\":\"" + new string('x', 1024 * 1024 - 10) + "\"}";
         using (var oversized = await MultipartAsync(client, "/api/v1/dashboard/data/documents", form)) await Assert.That(oversized.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-        await Assert.That(writes).IsEqualTo(2).Because("Only a logically valid compact document reaches the SDK, despite its larger display draft.");
+        await Assert.That(writes).IsEqualTo(2).Because("A genuinely oversized compact document is rejected before the SDK call.");
     }
 
     [Test]
     [Category("Slow")]
-    public async Task C1SchemaPresentationReachesSdkButRealSchemaOversizeDoesNot()
+    public async Task C1SchemaPresentationUsesCompactSdkWireAndPreservesDeclaredValues()
     {
         using var expected = JsonDocument.Parse("{\"description\":\"" + new string('\u0080', 32000) + "\"}");
+        var active = expected.RootElement.Clone();
         var writes = 0;
+        var reject = false;
         await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
             if (!http.Request.Path.Value!.EndsWith("/collections/items/schema", StringComparison.Ordinal)) return null;
-            if (http.Request.Method == "GET") return Results.Json(new { schema = expected.RootElement });
+            if (http.Request.Method == "GET") return Results.Json(new { schema = active });
             Interlocked.Increment(ref writes);
             using var wire = new MemoryStream();
             await http.Request.Body.CopyToAsync(wire);
-            await Assert.That(wire.Length).IsEqualTo(192018L).Because("The installed SDK still expands C1 beyond the producer's 64 KiB admission.");
+            await Assert.That(wire.Length).IsEqualTo(64018L).Because("The installed SDK emits compact C1 within the unchanged 64 KiB admission.");
             using var value = JsonDocument.Parse(wire.ToArray());
             await Assert.That(JsonElement.DeepEquals(expected.RootElement, value.RootElement)).IsTrue();
-            return Results.Json(new { error = new { code = "payload_too_large", message = "A collection schema is at most 64 KiB." } }, statusCode: 413);
+            if (reject) return Results.Json(new { error = new { code = "payload_too_large", message = "A collection schema is at most 64 KiB." } }, statusCode: 413);
+            active = value.RootElement.Clone();
+            return Results.Json(new { schema = active });
         });
         using var client = host.CreateClient();
         var (id, csrf) = await SetupAsync(client);
@@ -367,7 +386,14 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
         foreach (var submitted in new[] { draft, expected.RootElement.GetRawText() })
         {
             form["schema"] = submitted;
-            using var refused = await MultipartAsync(client, path, form);
+            using var accepted = await MultipartAsync(client, path, form);
+            await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var read = JsonDocument.Parse(await DraftAsync(await client.GetStringAsync(path), "declared-schema"));
+            await Assert.That(JsonElement.DeepEquals(expected.RootElement, read.RootElement)).IsTrue();
+        }
+        reject = true;
+        using (var refused = await MultipartAsync(client, path, form))
+        {
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
             var refusedHtml = await refused.Content.ReadAsStringAsync();
             await Assert.That(WebUtility.HtmlDecode(refusedHtml)).Contains("The encoded schema exceeds the data API's 64 KiB request limit.").And.Contains("Your draft has been kept.");
@@ -376,6 +402,43 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
         }
         form["schema"] = "{\"description\":\"" + new string('x', 65519) + "\"}";
         using (var oversized = await MultipartAsync(client, path, form)) await Assert.That(oversized.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(writes).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments("create")]
+    [Arguments("replace")]
+    [Arguments("patch")]
+    public async Task InstalledSdkKeepsCompactUnicodeDocumentAndSchemaRequestsWithinProducerAdmission(string operation)
+    {
+        var document = "{\"text\":\"" + new string('\u0080', 200000) + "\"}";
+        var schema = "{\"description\":\"" + new string('\u0080', 32000) + "\"}";
+        var writes = 0;
+        await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+        {
+            var isSchema = http.Request.Path.Value!.EndsWith("/collections/items/schema", StringComparison.Ordinal);
+            if (http.Request.Method is not ("PUT" or "PATCH") || (!isSchema && !http.Request.Path.Value.EndsWith("/documents/by-key", StringComparison.Ordinal))) return null;
+            using var wire = new MemoryStream();
+            await http.Request.Body.CopyToAsync(wire);
+            await Assert.That(wire.Length).IsEqualTo(isSchema ? 64018L : 400011L);
+            await Assert.That(http.Request.Headers.Authorization.ToString()).StartsWith("Bearer ");
+            await Assert.That(http.Request.Headers["X-TerraScale-Region-Pin"].ToString()).IsEqualTo("gru");
+            using var body = JsonDocument.Parse(wire.ToArray());
+            using var expected = JsonDocument.Parse(isSchema ? schema : document);
+            await Assert.That(JsonElement.DeepEquals(body.RootElement, expected.RootElement)).IsTrue();
+            if (!isSchema) await Assert.That(operation == "create" ? http.Request.Headers.IfNoneMatch.ToString() : http.Request.Headers.IfMatch.ToString()).IsEqualTo(operation == "create" ? "*" : "\"tbv1-seeded\"");
+            Interlocked.Increment(ref writes);
+            return isSchema ? Results.Json(new { schema = body.RootElement.Clone() })
+                : Results.Json(new { id = http.Request.Query["id"].ToString(), version = "tbv1-saved", offset = "1", durability = "local_durable" }, statusCode: operation == "create" ? 201 : 200);
+        });
+        using var client = host.CreateClient();
+        var (id, csrf) = await SetupAsync(client);
+        using (var saved = await MultipartAsync(client, "/api/v1/dashboard/data/documents", new()
+        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["operation"] = operation, ["id"] = "01K78D0C000000000000000198", ["version"] = "tbv1-seeded", ["document"] = document }))
+            await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using (var applied = await MultipartAsync(client, $"/databases/{id}/schema?collection=items", new()
+        { ["_csrf"] = csrf, ["collection"] = "items", ["operation"] = "apply", ["schema"] = schema }))
+            await Assert.That(applied.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(writes).IsEqualTo(2);
     }
 
