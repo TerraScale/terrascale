@@ -64,6 +64,7 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           name; -yes before db delete consents
                                           explicitly for unattended use
   db branch <source> <db>                 copy a database into a new one
+  db rename <db name or id> <new name>     rename a database by immutable ID
   db info <db>                            print a database's metadata as JSON
   db regions <db> <region>... | none      set the replica regions (gru, sjc,
                                           fra) besides the home region, or
@@ -210,6 +211,8 @@ var commands = map[string][]int{
 	"import":             {3},
 	"import status":      {1},
 	"import cancel":      {1},
+	"db rename": {2},
+	"databases rename": {2},
 	"db list":            {0},
 	"db create":          {1},
 	"db delete":          {1},
@@ -1002,6 +1005,24 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			return err
 		}
 		return emitJSON(out, m)
+	case "db rename":
+		id := args[0]
+		if v1.ValidateID(id) != nil {
+			m, err := db.Info(ctx)
+			if err != nil {
+				return err
+			}
+			id = m.ID
+		}
+		m, err := s.tb.RenameDatabase(ctx, s.project, id, args[1])
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
+		}
+		_, err = fmt.Fprintf(out, "Renamed %s to %s (%s)\n", args[0], m.Name, m.ID)
+		return err
 	case "db regions":
 		regions := args[1:]
 		if slices.Equal(regions, []string{"none"}) {

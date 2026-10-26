@@ -17,6 +17,7 @@ var commandSyntax = map[string]string{
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
 	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
+	"db rename":  "db rename <database-name-or-id> <new-name>",
 	"db regions": "db regions <database> <region>...|none", "db changes": "db changes <database> [<collection>...]",
 	"export": "export <database>", "shell": "shell <database>",
 	"backup list": "backup list <database>", "backup create": "backup create <database>",
