@@ -387,8 +387,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 // terrascale e30ffdc2 (region-identity.md): every answer names its region; api.terrascale.tech answers in ApiRegion.
                 var answering = http.Request.Host.Host switch
                 {
-                    "gru.api.terrascale.tech" => "gru", "sfo.api.terrascale.tech" => "sfo",
-                    "sjc.api.terrascale.tech" => "sjc", "fra.api.terrascale.tech" => "fra", _ => ApiRegion
+                    "gru.api.terrascale.tech" => "gru",
+                    "sfo.api.terrascale.tech" => "sfo",
+                    "sjc.api.terrascale.tech" => "sjc",
+                    "fra.api.terrascale.tech" => "fra",
+                    _ => ApiRegion
                 };
                 http.Response.Headers["X-TerraBase-Region"] = answering;
                 if (http.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin) && (pin.Count != 1 || pin[0] != answering))
