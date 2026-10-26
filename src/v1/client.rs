@@ -692,6 +692,7 @@ impl Client {
                     "platform"
                         | "databases"
                         | "saved-queries"
+                        | "buckets"
                         | "backup-destination"
                         | "usage"
                         | "analytics"

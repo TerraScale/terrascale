@@ -25,6 +25,7 @@
 
 mod auth;
 mod backups;
+mod buckets;
 mod changes;
 mod client;
 mod documents;
@@ -47,6 +48,7 @@ mod types;
 mod webhooks;
 
 pub use backups::RestoredDatabase;
+pub use buckets::{FileBucket, FileBucketPage};
 pub use changes::{
     ChangeBytes, ChangeEvent, ChangeEvents, ChangeOp, ChangesOptions, DocumentChange,
 };
