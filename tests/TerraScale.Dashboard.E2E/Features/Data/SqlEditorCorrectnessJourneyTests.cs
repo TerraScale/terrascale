@@ -92,6 +92,11 @@ public sealed class SqlEditorCorrectnessJourneyTests(DashboardRootFixture fixtur
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
         using var client = scenario.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        using var producer = scenario.CreateProviderClient();
+        using var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+        var organizationId = identity.RootElement.GetProperty("organizationId").GetString()!;
+        using (var admission = await producer.PostAsJsonAsync("/__test/control", new { command = "plan", organizationId, value = OrganizationRecord.StarterPlanId }))
+            await Assert.That(admission.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var origin = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "query-origin");
         var other = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "query-other");
         var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + origin + "/sql");
