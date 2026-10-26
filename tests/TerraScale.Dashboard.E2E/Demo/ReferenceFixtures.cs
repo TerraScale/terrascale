@@ -110,7 +110,9 @@ internal static class ReferenceFixtures
         // Keep the archived Go capture intact; bind its obsolete region values to today's demo catalog
         // when constructing test inputs and expectations. This never changes production routing.
         var source = await File.ReadAllTextAsync(ManifestPath(root));
-        var manifest = JsonDocument.Parse(source.Replace("\"SFO\"", "\"SJC\"", StringComparison.Ordinal));
+        var manifest = JsonDocument.Parse(source
+            .Replace("\"SFO\"", "\"SJC\"", StringComparison.Ordinal)
+            .Replace("\"SFO \\u00B7 San Francisco\"", "\"SJC\"", StringComparison.Ordinal));
         if (manifest.RootElement.GetProperty("version").GetInt32() == 1) return manifest;
         manifest.Dispose();
         throw new InvalidDataException("Unsupported reference workspace fixture version.");
