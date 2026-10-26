@@ -1,4 +1,9 @@
 // Bound incomplete frames as well as individual lines; the feed is an owned read connection.
+// UTF-16 characters, not wire bytes: RequestJson.MaxDocumentBytes (1 MiB) may escape 6x.
+// SDK 0.0.12 bounds each change cursor at 19,246 characters (id plus JSON cursor).
+// 4 KiB covers escaped collection/id/region and identity/envelope keys; see the feature note.
+export const maxChangesFrameCharacters = 6 * 1024 * 1024 + 2 * 19246 + 4096;
+
 export class ChangesProtocolError extends Error {}
 
 export async function readChanges(body, signal, receive) {
@@ -10,14 +15,13 @@ export async function readChanges(body, signal, receive) {
       const chunk = await reader.read();
       if (chunk.done) break;
       buffer += decoder.decode(chunk.value, { stream: true });
-      if (buffer.length + size > 1024 * 1024) throw new ChangesProtocolError('Changes frame exceeds the supported size.');
       let ending;
       while ((ending = buffer.search(/[\r\n]/)) >= 0) {
         if (buffer[ending] === '\r' && ending === buffer.length - 1) break;
         const line = buffer.slice(0, ending);
         buffer = buffer.slice(ending + (buffer[ending] === '\r' && buffer[ending + 1] === '\n' ? 2 : 1));
         size += line.length;
-        if (size > 1024 * 1024) throw new ChangesProtocolError('Changes frame exceeds the supported size.');
+        if (size > maxChangesFrameCharacters) throw new ChangesProtocolError('Changes frame exceeds the supported size.');
         if (!line) {
           if (data.length) {
             let update;
@@ -37,6 +41,8 @@ export async function readChanges(body, signal, receive) {
           if (field === 'id' && !value.includes('\0')) id = value;
         }
       }
+      // Complete frames do not count; a final CR is a pending delimiter, not content.
+      if (buffer.length - (buffer.endsWith('\r') ? 1 : 0) + size > maxChangesFrameCharacters) throw new ChangesProtocolError('Changes frame exceeds the supported size.');
     }
   } finally {
     await reader.cancel().catch(() => {});
