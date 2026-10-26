@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Shared.Formatting;
 using System.Globalization;
 
 namespace TerraScale.Dashboard.Shared.Formatting;
@@ -9,7 +8,7 @@ public static class ValueFormat
         (number ?? count.ToString("N0", CultureInfo.InvariantCulture)) + " " + (count == 1 ? singular : plural ?? singular + "s");
 
     public static string UtcDate(DateTimeOffset value) =>
-        ValueFormat.UtcDate(value);
+        value.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture);
 
     // Keep the measured ratio for chart geometry and structured tool responses.
     public static double? Percent(long? part, long? total) => part is null || total is null ? null

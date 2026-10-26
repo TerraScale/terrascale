@@ -106,7 +106,7 @@ public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
         foreach (var counter in new[] { "reads", "writes" }) await Assert.That(row.GetProperty(counter).ValueKind).IsEqualTo(JsonValueKind.Null);
         var knownBody = WebUtility.HtmlDecode(await first.GetStringAsync("/usage?project=" + projectId + "&database=" + databaseId));
         await Assert.That(knownBody).Contains("<dd class=\"ts-stat-value\">1.0 kB</dd>");
-        await Assert.That(knownBody).Contains("1 documents");
+        await Assert.That(knownBody).Contains("<span class=\"ts-meta\">1 document</span>");
         await Assert.That(knownBody.Contains("Storage isn't measured here.", StringComparison.Ordinal)).IsFalse();
 
         storagePath = "/v1/projects/" + projectId + "/databases/independent-storage/schema";
@@ -155,7 +155,7 @@ public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
         await Assert.That(partial.GetProperty("projects").EnumerateArray().Single(row => row.GetProperty("id").GetString() != projectId).GetProperty("logicalBytes").ValueKind).IsEqualTo(JsonValueKind.Null);
         var partialBody = WebUtility.HtmlDecode(await first.GetStringAsync("/usage"));
         await Assert.That(partialBody).Contains("Storage isn't measured here.");
-        await Assert.That(partialBody.Contains("percent of logical storage in this organization", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(partialBody.Contains("of logical storage in this organization", StringComparison.Ordinal)).IsFalse();
         meters.Complete = true;
         var complete = await UsageAsync(first);
         await Assert.That(complete.GetProperty("allowances")[0].GetProperty("used").GetInt64()).IsEqualTo(29);
