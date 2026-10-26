@@ -18,7 +18,7 @@ const latencyFixture = `{"generated_at":"2026-10-08T12:00:00Z","window":"1h","re
 	 "consensus":{"median_ms":12,"p95_ms":25,"samples":100},"vantages":[
 		{"code":"sfo","name":"San Francisco","median_ms":0,"p95_ms":1,"samples":50},
 		{"code":"fra","name":"Frankfurt","median_ms":null,"p95_ms":null,"samples":0}]},
-	{"code":"sfo","name":"San Francisco","ping_url":"https://sfo.terrascale.tech/ping","status":"planned","consensus":null,"vantages":[]}
+	{"code":"sfo","name":"San Francisco","ping_url":null,"status":"planned","consensus":null,"vantages":[]}
 ]}`
 
 func TestStatusLatency(t *testing.T) {
@@ -53,7 +53,7 @@ func TestStatusLatency(t *testing.T) {
 				t.Fatalf("unexpected response: %+v", out)
 			}
 			region := out.Regions[0]
-			if region.Code != "gru" || region.Name != "São Paulo" || region.PingURL != "https://gru.terrascale.tech/ping" || region.Status != "operational" || region.Consensus == nil {
+			if region.Code != "gru" || region.Name != "São Paulo" || region.PingURL == nil || *region.PingURL != "https://gru.terrascale.tech/ping" || region.Status != "operational" || region.Consensus == nil {
 				t.Fatalf("unexpected region: %+v", region)
 			}
 			stats := region.Consensus
@@ -65,7 +65,7 @@ func TestStatusLatency(t *testing.T) {
 				t.Fatalf("unexpected vantage: %+v", vantage)
 			}
 			missing := region.Vantages[1]
-			if missing.MedianMS != nil || missing.P95MS != nil || missing.Samples != 0 || out.Regions[1].Consensus != nil {
+			if missing.MedianMS != nil || missing.P95MS != nil || missing.Samples != 0 || out.Regions[1].Consensus != nil || out.Regions[1].PingURL != nil {
 				t.Fatal("missing measurements were converted to measured zeroes")
 			}
 		})

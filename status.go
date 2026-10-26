@@ -31,9 +31,10 @@ type LatencyStats struct {
 
 // RegionLatency is one region's consensus and individual vantage measurements.
 type RegionLatency struct {
-	Code      string           `json:"code"`
-	Name      string           `json:"name"`
-	PingURL   string           `json:"ping_url"`
+	Code string `json:"code"`
+	Name string `json:"name"`
+	// PingURL is nil when the region has no public browser ping target.
+	PingURL   *string          `json:"ping_url"`
 	Status    string           `json:"status"` // operational, degraded, down, or planned
 	Consensus *LatencyStats    `json:"consensus"`
 	Vantages  []VantageLatency `json:"vantages"`

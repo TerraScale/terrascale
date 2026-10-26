@@ -55,8 +55,13 @@ func TestStatusLatencyLive(t *testing.T) {
 		t.Fatal("latency response must contain generated_at, the 1h window, and regions")
 	}
 	for _, region := range out.Regions {
-		ping, err := url.Parse(region.PingURL)
-		if region.Code == "" || region.Code != strings.ToLower(region.Code) || region.Name == "" || err != nil || ping.Scheme != "https" || ping.Host == "" ||
+		if region.PingURL != nil {
+			ping, err := url.Parse(*region.PingURL)
+			if err != nil || ping.Scheme != "https" || ping.Host == "" {
+				t.Fatalf("region %q has an invalid public ping URL", region.Code)
+			}
+		}
+		if region.Code == "" || region.Code != strings.ToLower(region.Code) || region.Name == "" ||
 			!slices.Contains([]string{"operational", "degraded", "down", "planned"}, region.Status) || region.Vantages == nil {
 			t.Fatalf("region %q does not match the latency contract", region.Code)
 		}
