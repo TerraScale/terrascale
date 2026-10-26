@@ -156,7 +156,7 @@ public sealed class DocumentBrowserRecoveryJourneyTests(DashboardRootFixture fix
         var csrf = await HttpJourney.CsrfAsync(client, $"/databases/{id}/documents/items");
         const string documentId = "01K78D0C000000000000000001";
         using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
-        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["operation"] = "create", ["id"] = documentId, ["document"] = "{}" });
+        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "items", ["operation"] = "create", ["id"] = documentId, ["document"] = "{\"name\":\"Ada\"}" });
         created.EnsureSuccessStatusCode();
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
         using var response = rejectedDraft
@@ -204,6 +204,9 @@ public sealed class DocumentBrowserRecoveryJourneyTests(DashboardRootFixture fix
         var field = dialog.Locator("textarea[name=document]");
         var original = await field.InputValueAsync();
         if (rejectedDraft) await Assert.That(original).IsEqualTo("{ rejected draft");
+        else if (operation == "replace")
+            // Encoded CRLF survives in defaultValue; the textarea value API normalizes it to LF.
+            await Assert.That(await field.EvaluateAsync<bool>("el => el.defaultValue.includes('\\r') && !el.value.includes('\\r')")).IsTrue();
         if (!fallback)
         {
             var editor = dialog.Locator("ts-code-editor[data-ready]");
