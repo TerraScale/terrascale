@@ -253,7 +253,15 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         this.DisableAsync(caller, code, null, cancellationToken);
 
     /// <summary>Consumes the caller's validated authorization atomically with disabling and epoch advancement.</summary>
-    internal async Task<bool> DisableAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal async Task<bool> DisableAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default) =>
+        await this.DisabledUserAsync(caller, code, authorization, cancellationToken).ConfigureAwait(false) is not null;
+
+    /// <summary>
+    /// As <see cref="DisableAsync(UserRecord, string, MfaAuthorization?, CancellationToken)"/>, returning the exact user state the
+    /// transaction committed (advanced epoch and stamp), or null. A replacement session opened from it is refused when a
+    /// later sign-out everywhere has moved the account on; never reread the user for that authority.
+    /// </summary>
+    internal async Task<UserRecord?> DisabledUserAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
@@ -261,12 +269,14 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is null)
         {
-            return false;
+            return null;
         }
 
         var disabled = current.Record with { SecretBox = null, Enabled = false, EnrollmentExpiresAt = null, LastAcceptedStep = -1, RecoveryHashes = [], RecoveryExpiresAt = null };
         var advanced = Users.BindAuthenticationState(user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() });
-        return await this.CommitAsync(user.User, disabled, current.Version, (advanced, user.Version), authorization, cancellationToken).ConfigureAwait(false);
+        return await this.CommitAsync(user.User, disabled, current.Version, (advanced, user.Version), authorization, cancellationToken).ConfigureAwait(false)
+            ? advanced
+            : null;
     }
 
     private async Task<(UserRecord User, string Version)?> CurrentUserAsync(UserRecord caller, CancellationToken cancellationToken) =>
