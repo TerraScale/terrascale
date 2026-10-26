@@ -61,7 +61,7 @@
                     @foreach (var file in files.Items)
                     {
                         <tr><td><span class="ts-strong">@file.Name</span><details><summary>Metadata</summary><pre><code>@file.Metadata.GetRawText()</code></pre></details></td><td class="ts-num">@file.Size.ToString("N0", culture) bytes</td><td>@file.ContentType</td><td>
-                            <form method="post" action="/api/v1/dashboard/storage/download"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Download " + file.Name)">Download</button></form>
+                            <form method="post" action="/api/v1/dashboard/storage/download" target="_blank" rel="noopener"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Download " + file.Name + " (opens in a new tab)")">Download</button></form>
                             @if (canWrite)
                             {
                                 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, "This permanently deletes the file. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id })))

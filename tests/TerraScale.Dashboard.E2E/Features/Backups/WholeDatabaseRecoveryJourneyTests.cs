@@ -54,7 +54,11 @@ public sealed class WholeDatabaseRecoveryJourneyTests(DashboardRootFixture fixtu
         var window = await CallAsync("get_point_in_time_window", new { databaseId = id, destination = "customer" });
         await Assert.That(window.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(latest);
         using (var page = await client.GetAsync(path + "?destination=customer"))
-            await Assert.That(await page.Content.ReadAsStringAsync()).Contains("value=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("min=\"" + RecoveryWindow.Input(earliest) + "\"").And.Contains("one additional database slot");
+        {
+            var html = WebUtility.HtmlDecode(await page.Content.ReadAsStringAsync());
+            await Assert.That(html).Contains("value=\"" + RecoveryWindow.Input(latest) + "\"").And.Contains("min=\"" + RecoveryWindow.Input(earliest) + "\"").And.Contains("one additional database slot");
+            await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"").And.Contains(DatabaseService.NameHint);
+        }
         var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["destination"] = "customer", ["point"] = RecoveryWindow.Input(latest), ["name"] = "pitr-copy", ["operation"] = "plan" };
         using (var plan = await HttpJourney.PostFormAsync(client, path, form))
             await Assert.That(await plan.Content.ReadAsStringAsync()).Contains("metadata only").And.Contains("does not verify replay bytes").And.Contains("Type pitr-copy");

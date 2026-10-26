@@ -349,8 +349,11 @@ public sealed partial class TsAuthPlatformJourneyTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") });
             }
             if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath.EndsWith("/buckets", StringComparison.Ordinal))
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
-                { items = new[] { new TerraBaseFileBucket(BucketId, "avatars", "gru", new(null, new(false, false, []), new(false, false, []))) }, next = (string?)null }), System.Text.Encoding.UTF8, "application/json") });
+            {
+                var bucket = new TerraBaseFileBucket(BucketId, "avatars", "gru", new(null, new(false, false, []), new(false, false, [])));
+                var body = JsonSerializer.Serialize(new { items = new[] { bucket }, next = (string?)null });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") });
+            }
             return Task.FromResult(request.Method == HttpMethod.Get
                 ? new(HttpStatusCode.OK) { Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json") }
                 : new HttpResponseMessage(HttpStatusCode.NoContent));

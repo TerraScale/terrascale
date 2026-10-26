@@ -150,12 +150,12 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         await ShotAsync("2-unknown-create");
         await page.GetByRole(AriaRole.Link, new() { Name = "Reload webhooks", Exact = true }).ClickAsync();
         await page.Locator("#webhooks").WaitForAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).First.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook: https://receiver.example/events", Exact = true }).ClickAsync();
         await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).ClickAsync();
         await page.GetByText("No webhooks yet.", new() { Exact = true }).WaitForAsync();
         flow.CreateFault = "";
         await page.GetByLabel("HTTPS endpoint", new() { Exact = true }).FillAsync("https://receiver.example/events");
-        var created = await page.RunAndWaitForResponseAsync(() => page.Locator("form[action='/api/v1/dashboard/webhooks']")
+        var created = await page.RunAndWaitForResponseAsync(() => page.Locator("form:has(#webhook-url)")
             .EvaluateAsync("form => { form.requestSubmit(); form.requestSubmit(); }"),
             response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == "/api/v1/dashboard/webhooks");
         await Assert.That(created.Status).IsEqualTo(201);
@@ -176,12 +176,12 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         await page.WaitForLoadStateAsync(LoadState.Load);
         await BrowserAudit.AssertAccessibleAsync(page, "Webhook controls and delivery records remain accessible.");
         await ShotAsync("4-delivery");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).First.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook: https://receiver.example/events", Exact = true }).ClickAsync();
         await Assert.That(await page.Locator("dialog[open]").InnerTextAsync()).Contains("https://receiver.example/events");
         await ShotAsync("4a-named-delete-confirmation");
         await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
         await Assert.That(flow.Created).IsTrue();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).First.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook: https://receiver.example/events", Exact = true }).ClickAsync();
         await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).ClickAsync();
         await page.GetByText("No webhooks yet.", new() { Exact = true }).WaitForAsync();
         await Assert.That(flow.Created).IsFalse();

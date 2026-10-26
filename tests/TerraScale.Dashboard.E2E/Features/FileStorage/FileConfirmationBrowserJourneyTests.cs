@@ -29,6 +29,7 @@ public sealed class FileConfirmationBrowserJourneyTests(DashboardRootFixture fix
             {
                 "GET" when path.EndsWith("/buckets", StringComparison.Ordinal) => Results.Json(new { items = bucketExists ? new[] { bucket } : [], next = (string?)null }),
                 "GET" => Results.Json(new { items = fileExists ? new[] { file } : [], next = (string?)null }),
+                "POST" when path.EndsWith("/download", StringComparison.Ordinal) => Results.Json(new TerraBaseFileUrl(fileId, "https://fixture.r2.cloudflarestorage.com/files/avatar.png", DateTimeOffset.UtcNow.AddMinutes(5), new Dictionary<string, string>())),
                 "DELETE" => Deleted(path),
                 _ => Results.NotFound()
             };
@@ -55,24 +56,33 @@ public sealed class FileConfirmationBrowserJourneyTests(DashboardRootFixture fix
             await route.FulfillAsync(new() { Response = response, Body = await response.TextAsync() + "\n.ts-account-trigger,.ts-account-card{visibility:hidden!important}" });
         });
         await login.Context.CloseAsync();
+        var downloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await recording.RouteAsync("https://fixture.r2.cloudflarestorage.com/files/avatar.png", async route =>
+        {
+            await route.FulfillAsync(new() { ContentType = "image/png", Body = "synthetic-image", Headers = new Dictionary<string, string> { ["Content-Disposition"] = "attachment; filename=avatar.png" } });
+            downloaded.TrySetResult();
+        });
         var page = await recording.NewPageAsync();
         var errors = new List<string>();
         page.PageError += (_, error) => errors.Add(error);
         await page.GotoAsync(new Uri(scenario.Origin, "/storage").ToString());
         await Shot("files-before-confirmation");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Delete file", Exact = true }).First.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Download avatar.png (opens in a new tab)", Exact = true }).ClickAsync();
+        await downloaded.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await Assert.That(await page.Locator("body").GetAttributeAsync("class") ?? "").DoesNotContain("ts-nav-pending");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete file: avatar.png", Exact = true }).ClickAsync();
         var dialog = page.Locator("#delete-file-" + fileId);
         await Expect(dialog).ToBeVisibleAsync();
         await Expect(dialog).ToContainTextAsync("avatar.png");
         await Shot("file-named-confirmation");
         await dialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
         await Assert.That(deletes).IsEqualTo(0);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Delete file", Exact = true }).First.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete file: avatar.png", Exact = true }).ClickAsync();
         await SubmitTwice(dialog.Locator("form"), "/api/v1/dashboard/storage/delete");
         await Expect(page.GetByText("No completed files", new() { Exact = true })).ToBeVisibleAsync();
         await Assert.That(deletes).IsEqualTo(1);
         await Shot("file-deleted-empty-state");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Delete empty bucket", Exact = true }).First.ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete empty bucket: avatars", Exact = true }).ClickAsync();
         dialog = page.Locator("#delete-bucket-" + bucketId);
         await Expect(dialog).ToContainTextAsync("avatars");
         await dialog.GetByLabel("Type avatars to confirm").FillAsync("another-bucket");
