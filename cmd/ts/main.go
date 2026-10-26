@@ -43,9 +43,12 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   orgs                                    list every accessible organization
   orgs create <name> | info <org>          create or inspect an organization
   orgs rename <org> <name>                rename an organization (admin)
+  orgs delete <org>                       delete an empty organization (owner)
   projects                                list the projects you can reach
   projects info <project>                 inspect a project; -org restricts lookup
   projects rename <project> <name>        rename a project (admin)
+  projects delete <project>               delete identity project after all DBs;
+                                          requires typed ID or explicit -yes
   projects create <name>                  create a project (and an organization
                                           when you have none)
   usage [<db>]                            print the project's or a database's
@@ -158,8 +161,10 @@ var commands = map[string][]int{
 	"orgs create":       {1},
 	"orgs info":         {1},
 	"orgs rename":       {2},
+	"orgs delete":       {1},
 	"projects info":     {1},
 	"projects rename":   {2},
+	"projects delete":   {1},
 	"context show":      {0},
 	"context clear":     {0},
 	"context set":       {2, 3},
@@ -320,8 +325,11 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
 		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
 	}
-	if yesSet && name != "db delete" {
-		return fmt.Errorf("-yes is only accepted for db delete: %w", errUsage)
+	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete"}, name) {
+		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
+	}
+	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
+		return errors.New("resource deletion requires a terminal: pass -yes before the command to explicitly consent")
 	}
 	if name == "db delete" && !tty && !*yes {
 		if err := confirmDelete(operands[0], *project, *yes, in, prompt, tty); err != nil {
@@ -391,6 +399,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return err
 	}
 	u := auth.WithToken(token)
+	consent := func(kind, label, id string) error {
+		return confirmManagementTarget("Delete "+kind, label, id, *yes, in, prompt, tty)
+	}
 	if name == "context set" {
 		return selectCLIContext(ctx, u, token, operands, out)
 	}
@@ -426,10 +437,22 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return listOrganizations(ctx, u, out)
 	case "orgs create", "orgs info", "orgs rename":
 		return organizationLifecycle(ctx, u, name, operands, out)
+	case "orgs delete":
+		return deleteOrganizationLifecycle(ctx, u, operands[0], consent, out)
 	case "projects":
 		return listProjects(ctx, u, *org, out)
 	case "projects info", "projects rename":
 		return projectLifecycle(ctx, u, *org, name, operands, out)
+	case "projects delete":
+		p, err := selectProject(ctx, u, *org, operands[0])
+		if err != nil {
+			return err
+		}
+		selected, err := open(ctx, u, token, p.OrganizationID, p.ID)
+		if err != nil {
+			return err
+		}
+		return deleteProjectLifecycle(ctx, u, selected.tb, p, consent, out)
 	case "projects create":
 		return createProject(ctx, u, *org, operands[0], out)
 	}
