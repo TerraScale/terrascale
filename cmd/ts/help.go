@@ -25,6 +25,8 @@ var commandSyntax = map[string]string{
 	"backup policy":     "backup policy <database>", "backup policy-set": "backup policy-set <database> <five-field-UTC-cron|none> <days:1..35>",
 	"backup window": "backup window <database> [platform|customer]", "backup plan": "backup plan <database> <RFC3339-time> [platform|customer]",
 	"backup destination": "backup destination get|set|delete",
+	"recovery preview":   "recovery preview <database> <RFC3339-time> <selection.json>",
+	"recovery apply":     "recovery apply <database> <preview.json> <approved.json>",
 	"collection list":    "collection list <database>", "collection create": "collection create <database> <name>",
 	"collection drop": "collection drop <database> <name>",
 	"doc list":        "doc list <database> <collection>", "doc get": "doc get <database> <collection> <id>",

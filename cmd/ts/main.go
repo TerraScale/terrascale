@@ -82,6 +82,12 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           relational or document; session history
   export <db>                             stream all live documents (NDJSON);
                                           excludes relational tables and metadata
+  recovery preview <db> <time> <selection.json>
+                                          print historical/current records and
+                                          a short-lived approval token as JSON
+  recovery apply <db> <preview.json> <approved.json>
+                                          recover only explicitly approved IDs
+                                          into the original database
   db changes <db> [<collection>...]       print committed changes as JSON lines
                                           until interrupted; at most64 filters;
                                           -cursor <cursor|now|empty> resumes
@@ -185,6 +191,8 @@ var commands = map[string][]int{
 	"export":             {1},
 	"shell":              {1},
 	"backup restore-at":  {3, 4},
+	"recovery preview":   {3},
+	"recovery apply":     {3},
 	"backup policy":      {1},
 	"backup policy-set":  {3},
 	"backup window":      {1, 2},
@@ -909,6 +917,8 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		db = s.tb.Database(s.project, args[0])
 	}
 	switch name {
+	case "recovery preview", "recovery apply":
+		return recovery(ctx, db, name, args[1:], out)
 	case "sql":
 		return runSQL(ctx, db, "document", args[1], nil, out)
 	case "db list":
