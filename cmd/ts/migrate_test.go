@@ -64,7 +64,7 @@ func TestMigrateUpAppliesPendingOnce(t *testing.T) {
 		results := make([]map[string]any, len(req.Statements))
 		for i, st := range req.Statements {
 			sqls = append(sqls, st.SQL)
-			results[i] = map[string]any{"columns": []any{}, "rows": []any{}, "rows_affected": 0}
+			results[i] = map[string]any{"columns": []any{}, "rows": []any{}, "rows_affected": 0, "last_insert_rowid": nil}
 			switch {
 			case strings.HasPrefix(st.SQL, "CREATE TABLE IF NOT EXISTS ts_migrations"):
 				created = true
@@ -74,8 +74,8 @@ func TestMigrateUpAppliesPendingOnce(t *testing.T) {
 					io.WriteString(w, `{"error":{"code":"sql_error","message":"no such table: ts_migrations"}}`)
 					return
 				}
-				results[i]["columns"] = []map[string]any{{"name": "name"}, {"name": "checksum"}}
-				var rows [][]any
+				results[i]["columns"] = []map[string]any{{"name": "name", "decltype": "TEXT"}, {"name": "checksum", "decltype": "TEXT"}}
+				rows := make([][]any, 0)
 				for _, name := range slices.Sorted(maps.Keys(history)) {
 					rows = append(rows, []any{name, history[name]})
 				}

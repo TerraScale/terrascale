@@ -302,6 +302,8 @@ type Query struct {
 	Cursor string `json:"cursor,omitempty"`
 	// Count requests the total match count; ignored when Cursor is set.
 	Count bool `json:"count,omitzero"`
+	// Explain requests the engine plan and execution counters, bypassing the result cache.
+	Explain bool `json:"explain,omitzero"`
 	// Aggregate groups the matches into QueryResult.Groups instead of
 	// returning items. It takes no Sort, Project, Cursor or Count; Limit
 	// bounds the groups, and more groups fail the query.
@@ -349,6 +351,19 @@ type QueryResult struct {
 	Count *Count `json:"count,omitempty"`
 	// Groups is set when Query.Aggregate was requested; Items is then empty.
 	Groups []Group `json:"groups,omitempty"`
+	// Explain is present when Query.Explain was requested and a plan is available.
+	Explain *QueryExplain `json:"explain,omitempty"`
+}
+
+// QueryExplain describes how a document query ran. Counters are JSON integers.
+type QueryExplain struct {
+	Plan           []string `json:"plan"`
+	Indexes        []string `json:"indexes"`
+	FullScan       bool     `json:"full_scan"`
+	RowsScanned    int64    `json:"rows_scanned"`
+	WorkUnits      int64    `json:"work_units"`
+	ElapsedMs      float64  `json:"elapsed_ms"`
+	SuggestedIndex []string `json:"suggested_index,omitempty"`
 }
 
 // Query runs one page of q against the collection.
