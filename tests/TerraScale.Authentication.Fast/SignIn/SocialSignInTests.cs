@@ -1,17 +1,22 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using OtpNet;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Social;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.SignIn;
@@ -21,9 +26,11 @@ namespace TerraScale.Authentication.Fast.SignIn;
 public sealed class SocialSignInTests(TerraBaseFixture fixture)
 {
     [Test]
-    [Arguments("github")]
-    [Arguments("google")]
-    public async Task Verified_provider_creates_one_account_and_reuses_its_stable_subject(string provider)
+    [Arguments("github", false)]
+    [Arguments("google", false)]
+    [Arguments("github", true)]
+    [Arguments("google", true)]
+    public async Task Bound_subject_keeps_its_local_identity_when_verified_email_changes(string provider, bool collision)
     {
         using var fake = new Provider(provider);
         await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route);
@@ -43,11 +50,26 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         var user = (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!;
         await Assert.That(user.LinkedProviders.Count).IsEqualTo(1);
         await Assert.That(WebEncoders.Base64UrlEncode(System.Security.Cryptography.SHA256.HashData(Encoding.ASCII.GetBytes(fake.Verifier!)))).IsEqualTo(authorization["code_challenge"].ToString());
+        var originalEmail = fake.Email;
+        fake.Email = new Faker().Internet.Email();
+        var other = collision ? await ActivateAsync(oidc, (await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!) : null;
         var second = await StartAsync(oidc.Client, provider);
         using var signedIn = await CompleteAsync(oidc.Client, provider, second);
         await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!.Id).IsEqualTo(user.Id);
-        await Assert.That((await users.GetAsync(OidcIssuer.InstanceId, user.Id))!.AuthEpoch).IsEqualTo(user.AuthEpoch);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(OidcHarness.SessionCookie(signedIn)!, challenge), verifier);
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var userInfo = await oidc.UserInfoAsync((await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!);
+        var profile = await OidcHarness.JsonAsync(userInfo);
+        await Assert.That(profile.GetProperty("sub").GetString()).IsEqualTo(user.Id);
+        await Assert.That(profile.GetProperty("email").GetString()).IsEqualTo(originalEmail);
+        await UnchangedAsync(users, user);
+        await Assert.That((await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))?.Id).IsEqualTo(other?.Id);
+        if (other is not null)
+        {
+            await UnchangedAsync(users, other);
+        }
+
         // Callback replays cannot exchange a second time or issue a session.
         var calls = fake.Exchanges;
         using var replay = await CompleteAsync(oidc.Client, provider, second);
@@ -56,20 +78,41 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("github")]
-    [Arguments("google")]
-    public async Task Existing_email_code_account_is_linked_instead_of_duplicated(string provider)
+    [Arguments("github", false)]
+    [Arguments("google", false)]
+    [Arguments("github", true)]
+    [Arguments("google", true)]
+    public async Task Unknown_subject_with_existing_email_is_refused_without_attaching_a_credential(string provider, bool alreadyBound)
     {
         using var fake = new Provider(provider);
         await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route);
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
-        var existing = (await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!;
+        if (alreadyBound)
+        {
+            using var initial = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
+            await Assert.That(initial.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            fake.Subject = provider == SocialProviders.GitHub ? "1235" : fake.Subject.ToLowerInvariant();
+        }
+
+        var existing = (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email)
+            ?? await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!;
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var sessions = await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId);
         var start = await StartAsync(oidc.Client, provider);
         using var response = await CompleteAsync(oidc.Client, provider, start);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var linked = (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!;
-        await Assert.That(linked.Id).IsEqualTo(existing.Id);
-        await Assert.That(linked.LinkedProviders.Single().Provider).IsEqualTo(provider);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(response)).IsNull();
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("use your existing sign-in method");
+        await UnchangedAsync(users, existing);
+        await Assert.That((await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!.Id).IsEqualTo(existing.Id);
+        await Assert.That(await store.CountAsync(AuthStore.UserCollection, OidcIssuer.InstanceId)).IsEqualTo(1);
+        await Assert.That(await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId)).IsEqualTo(sessions);
+        // A refused attempt must not reserve the subject for the existing account or an orphan account.
+        fake.Email = new Faker().Internet.Email();
+        using var fresh = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
+        await Assert.That(fresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!.Id).IsNotEqualTo(existing.Id);
+        await UnchangedAsync(users, existing);
     }
 
     [Test]
@@ -167,6 +210,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         var body = await oidc.OkAsync(HttpMethod.Get, path, access);
         await Assert.That(body.GetProperty("providers")[0].GetString()).IsEqualTo("github");
         await Assert.That(body.ToString()).DoesNotContain("1234");
+        await Assert.That(body.ToString()).DoesNotContain("https://github.com");
         using var unauthorized = await oidc.CallAsync(HttpMethod.Get, path, null);
         await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         using var badCode = await oidc.CallAsync(HttpMethod.Delete, path + "/github", access, new { code = "invalid" });
@@ -226,6 +270,104 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(await services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, fake.Email)).IsNotNull();
     }
 
+    [Test]
+    [Arguments("issuer")]
+    [Arguments("client")]
+    [Arguments("structure")]
+    [Arguments("tenant")]
+    public async Task Trusted_identity_components_do_not_alias_another_binding(string difference)
+    {
+        using var fake = new Provider("google") { Subject = "part:subject" };
+        await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route);
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        var identity = new LinkedProvider("google", "https://accounts.google.com", "google-test", fake.Subject);
+        var shadow = difference switch
+        {
+            "issuer" => identity with { Issuer = "https://other.example.test" },
+            "client" => identity with { ClientId = "other-client" },
+            "structure" => identity with { ClientId = "google-test:part", Subject = "subject" },
+            _ => identity,
+        };
+        var tenant = difference == "tenant" ? AuthStore.NewId() : OidcIssuer.InstanceId;
+        var other = (await users.FromProviderAsync(tenant, shadow, new Faker().Internet.Email(), true, default))!;
+        using var signedIn = await CompleteAsync(oidc.Client, "google", await StartAsync(oidc.Client, "google"));
+        await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var current = (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!;
+        await Assert.That(current.Id).IsNotEqualTo(other.Id);
+        await Assert.That(current.LinkedProviders.Single()).IsEqualTo(identity);
+        await UnchangedAsync(users, other);
+    }
+
+    [Test]
+    [Arguments("github", false)]
+    [Arguments("google", false)]
+    [Arguments("github", true)]
+    [Arguments("google", true)]
+    public async Task Active_local_factor_refuses_provider_sign_in_without_account_or_session_mutation(string provider, bool bound)
+    {
+        using var fake = new Provider(provider);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, clock: clock, services: fake.Route);
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        UserRecord user;
+        if (bound)
+        {
+            using var initial = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
+            await Assert.That(initial.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            user = (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!;
+            fake.Email = new Faker().Internet.Email();
+        }
+        else
+        {
+            user = (await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!;
+        }
+
+        user = await ActivateAsync(oidc, user);
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var sessions = await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId);
+        var factor = (await store.GetAsync(AuthStore.MfaCollection, OidcIssuer.InstanceId, user.Id))!;
+        using var refused = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+        await UnchangedAsync(users, user);
+        await Assert.That((await store.GetAsync(AuthStore.MfaCollection, OidcIssuer.InstanceId, user.Id))!.Version).IsEqualTo(factor.Version);
+        await Assert.That(await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId)).IsEqualTo(sessions);
+        await Assert.That(await store.CountAsync(AuthStore.OidcTokenCollection, OidcIssuer.InstanceId)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Empty_google_subject_is_refused_without_creating_an_account()
+    {
+        using var fake = new Provider("google") { Subject = string.Empty };
+        await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route);
+        using var refused = await CompleteAsync(oidc.Client, "google", await StartAsync(oidc.Client, "google"));
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, fake.Email)).IsNull();
+    }
+
+    private static async Task<UserRecord> ActivateAsync(OidcHarness oidc, UserRecord user)
+    {
+        var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
+        var enrollment = (await mfa.BeginAsync(user))!;
+        var secret = Base32Encoding.ToBytes(enrollment.Secret);
+        try
+        {
+            var clock = oidc.Server.App.Services.GetRequiredService<TimeProvider>();
+            var active = await mfa.ConfirmAsync(user, new Totp(secret).ComputeTotp(clock.GetUtcNow().UtcDateTime));
+            await Assert.That(active).IsNotNull();
+            return active!.User;
+        }
+        finally
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret);
+        }
+    }
+
+    private static async Task UnchangedAsync(Users users, UserRecord expected) =>
+        await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))
+            .IsEqualTo(JsonSerializer.Serialize(expected, IdentityJson.Default.UserRecord));
+
     private static void Credentials(Dictionary<string, string> settings)
     {
         settings["github-oauth"] = "{\"client_id\":\"github-test\",\"client_secret\":\"synthetic-github-secret\"}";
@@ -260,7 +402,8 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
 
     private sealed class Provider(string provider) : HttpMessageHandler
     {
-        public string Email { get; } = new Faker().Internet.Email();
+        public string Email { get; set; } = new Faker().Internet.Email();
+        public string Subject { get; set; } = provider == SocialProviders.GitHub ? "1234" : "Google-Subject-1234";
         public bool Verified { get; init; } = true;
         public int Exchanges { get; private set; }
         public string? Verifier { get; private set; }
@@ -281,8 +424,8 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
             {
                 body = request.RequestUri!.AbsolutePath == "/user/emails"
                     ? new JsonArray(new JsonObject { ["email"] = this.Email, ["primary"] = true, ["verified"] = this.Verified })
-                    : provider == SocialProviders.GitHub ? new JsonObject { ["id"] = 1234, ["email"] = "untrusted-public@example.test" }
-                    : new JsonObject { ["sub"] = "google-subject-1234", ["email"] = this.Email, ["email_verified"] = this.Verified };
+                    : provider == SocialProviders.GitHub ? new JsonObject { ["id"] = long.Parse(this.Subject, System.Globalization.CultureInfo.InvariantCulture), ["email"] = "untrusted-public@example.test" }
+                    : new JsonObject { ["sub"] = this.Subject, ["email"] = this.Email, ["email_verified"] = this.Verified };
             }
 
             return new(HttpStatusCode.OK) { Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json") };

@@ -129,6 +129,7 @@ public sealed record CredentialBinding(string Kind, string Key, string OwnerId);
 
 /// <summary>A provider identity, scoped to the tenant and its OAuth client.</summary>
 /// <param name="Provider">Provider name.</param>
+/// <param name="Issuer">Trusted issuer or fixed OAuth provider authority, selected by the verifier.</param>
 /// <param name="ClientId">OAuth client that verified this subject.</param>
 /// <param name="Subject">Stable provider subject.</param>
-public sealed record LinkedProvider(string Provider, string ClientId, string Subject);
+public sealed record LinkedProvider(string Provider, string Issuer, string ClientId, string Subject);

@@ -109,14 +109,18 @@ public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, U
             return Refused(context, tenant);
         }
 
-        // Email-based linking cannot alter an MFA-protected account before its second factor is satisfied.
-        if (await users.FindByEmailAsync(tenant, email, cancellationToken) is { } existing
+        // The authority comes from these fixed, trusted backchannels, never from user-supplied claims.
+        var providerIdentity = new LinkedProvider(provider, provider == SocialProviders.Google ? "https://accounts.google.com" : "https://github.com", credential.ClientId, verified.Subject);
+        // Preserve the fail-closed local MFA gate until trusted hosted continuation is implemented.
+        var existing = await users.FindByProviderAsync(tenant, providerIdentity, cancellationToken)
+            ?? await users.FindByEmailAsync(tenant, email, cancellationToken);
+        if (existing is not null
             && !await mfa.AllowsPrimaryAuthenticationAsync(existing, cancellationToken))
         {
             return Refused(context, tenant);
         }
 
-        var user = await users.FromProviderAsync(tenant, new LinkedProvider(provider, credential.ClientId, verified.Subject), email, allowCreation: true, cancellationToken);
+        var user = await users.FromProviderAsync(tenant, providerIdentity, email, allowCreation: true, cancellationToken);
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user with { AuthenticationBindings = [.. user.AuthenticationBindings, binding] }, cancellationToken) is not { } session)
         {
             return Refused(context, tenant);
@@ -203,7 +207,7 @@ public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, U
     };
 
     private static IResult Refused(HttpContext context, string tenant) => SignInPageModel.Render(context,
-        new SignInPageModel(SignInStep.Email, tenant, Error: "Sign-in could not be completed. Try again from the application.")
+        new SignInPageModel(SignInStep.Email, tenant, Error: "Sign-in could not be completed. Try again from the application or use your existing sign-in method.")
         { ErrorTitle = "Provider sign-in failed" }, StatusCodes.Status401Unauthorized);
 }
 

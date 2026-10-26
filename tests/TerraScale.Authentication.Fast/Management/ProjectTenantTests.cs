@@ -81,9 +81,10 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
 
         // A renamed parent (linked_providers) must not leave its nested provider schema in camelCase.
         await oidc.Server.App.Services.GetRequiredService<Users>().FromProviderAsync(project,
-            new LinkedProvider("oidc", "public-client", "verified-subject"), this.Email(2), true, default);
+            new LinkedProvider("oidc", "https://idp.example.test", "public-client", "verified-subject"), this.Email(2), true, default);
         var directory = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export", token);
         await Assert.That(directory.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(directory.ToString()).DoesNotContain("\"issuer\"");
         await Assert.That(directory.GetProperty("items")[0].GetProperty("linked_providers")[0].GetProperty("client_id").GetString()).IsEqualTo("public-client");
         await SchemaMatchesAsync(schemas, ResponseSchema(paths.GetProperty("/v1/{project}/users/export").GetProperty("get"), "200"), directory);
 
@@ -123,7 +124,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var (_, outsiderToken) = await oidc.SignInUserAsync(this.Email(3));
         await Assert.That(await oidc.GrantAsync(project, viewer.Id, "viewer")).IsTrue();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
-        var linked = (await users.FromProviderAsync(project, new LinkedProvider("oidc", "public-client", "verified-subject"), this.Email(4), true, default))!;
+        var linked = (await users.FromProviderAsync(project, new LinkedProvider("oidc", "https://idp.example.test", "public-client", "verified-subject"), this.Email(4), true, default))!;
         var formula = (await users.CreateAsync(project, "+formula@example.test", "credential-must-never-leak", default))!;
         var third = (await users.CreateAsync(project, this.Email(5)))!;
         var first = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export?limit=1", token);
