@@ -15,6 +15,7 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        _quotaRegistered = _quotaRegistered || await RegisterQuotaRegionAsync(cancellationToken).ConfigureAwait(false);
         await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
         await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
         if (time.GetUtcNow() >= _nextFileAudit)
