@@ -36,15 +36,16 @@ public sealed record UsageMeasurements(UsageObservation Scope, IReadOnlyDictiona
     {
         var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
         long? units = null;
+        long projectUnits = 0;
         foreach (var id in projectIds)
         {
             if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { OrganizationUnits: { } organizationUnits } reading } ||
                 reading.Month != month || reading.ReadUnits < 0 || reading.WriteUnits < 0 || organizationUnits < reading.Units ||
                 units is not null && units != organizationUnits) return null;
-            try { if (checked(reading.ReadUnits + reading.WriteUnits) != reading.Units) return null; } catch (OverflowException) { return null; }
+            try { if (checked(reading.ReadUnits + reading.WriteUnits) != reading.Units) return null; projectUnits = checked(projectUnits + reading.Units); } catch (OverflowException) { return null; }
             units = organizationUnits;
         }
-        return units;
+        return units is { } total && total >= projectUnits ? total : null;
     }
 }
 public interface IUsageMeasurements

@@ -97,8 +97,9 @@ public sealed class ReportingMcpJourneyTests(DashboardRootFixture fixture)
             await Assert.That(missingOverview.GetProperty("activity").GetProperty("reads").GetArrayLength()).IsEqualTo(0);
             var missingTotals = missing.GetProperty("totals");
             await Assert.That(missingTotals.GetProperty("available").GetBoolean()).IsFalse();
-            await Assert.That(missingTotals.GetProperty("storageMeasured").GetBoolean()).IsTrue().Because("Operation-meter failures do not discard independent document storage reads.");
-            await Assert.That(missingTotals.GetProperty("logicalBytes").GetInt64()).IsGreaterThan(0);
+            await Assert.That(missingTotals.GetProperty("storageMeasured").GetBoolean()).IsFalse().Because("Project storage must include files; independent document bytes cannot replace it.");
+            await Assert.That(missingTotals.GetProperty("logicalBytes").ValueKind).IsEqualTo(JsonValueKind.Null);
+            await Assert.That(missing.GetProperty("projects").EnumerateArray().Single(row => row.GetProperty("id").GetString() == selectedProject).GetProperty("logicalBytes").ValueKind).IsEqualTo(JsonValueKind.Null);
             foreach (var counter in new[] { "reads", "writes" })
                 await Assert.That(missingTotals.GetProperty(counter).ValueKind).IsEqualTo(JsonValueKind.Null).Because(unavailable + " must not become measured zeroes");
             foreach (var allowance in missing.GetProperty("allowances").EnumerateArray())
@@ -118,6 +119,7 @@ public sealed class ReportingMcpJourneyTests(DashboardRootFixture fixture)
                 await Assert.That(row.GetProperty("unavailable").GetBoolean()).IsFalse();
                 await Assert.That(row.GetProperty("metered").GetBoolean()).IsFalse();
                 await Assert.That(row.GetProperty("documents").GetInt64()).IsGreaterThanOrEqualTo(0);
+                await Assert.That(row.GetProperty("logicalBytes").GetInt64()).IsGreaterThanOrEqualTo(0).Because("Independent database document storage remains known.");
                 foreach (var counter in new[] { "reads", "writes" })
                     await Assert.That(row.GetProperty(counter).ValueKind).IsEqualTo(JsonValueKind.Null);
             }

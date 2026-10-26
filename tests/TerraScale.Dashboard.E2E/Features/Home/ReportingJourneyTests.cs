@@ -109,13 +109,14 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
                 await flow.GotoAsync(ownerPage, value == "foreign-project" ? "/usage" : "/usage?database=" + orders);
                 await Assert.That(await Stat("#usage-summary", "Reads").CountAsync()).IsEqualTo(0).Because(value + " never presents lifetime reads as period usage");
                 await Assert.That(await Stat("#usage-summary", "Writes").CountAsync()).IsEqualTo(0).Because(value + " never presents lifetime writes as period usage");
-                await Assert.That(await Stat("#usage-summary", "Logical storage").InnerTextAsync()).IsEqualTo("0 B").Because(value + " keeps the independently read empty database storage known");
+                if (value == "foreign-project") await Assert.That(await Stat("#usage-summary", "Logical storage").CountAsync()).IsEqualTo(0);
+                else await Assert.That(await Stat("#usage-summary", "Logical storage").InnerTextAsync()).IsEqualTo("0 B").Because(value + " keeps the independently read empty database storage known");
             }
             await ScenarioAsync("valid");
             flow.Checks.Add("project-scoped analytics contract, tenant/scope/oversize failures and null-vs-zero observations through running routes");
 
             await flow.GotoAsync(ownerPage, "/usage?tab=settings");
-            await ownerPage.GetByRole(AriaRole.Heading, new() { Name = "Paid overages are unavailable", Exact = true }).WaitForAsync();
+            await ownerPage.GetByRole(AriaRole.Heading, new() { Name = "Spending and overages", Exact = true }).WaitForAsync();
             await Assert.That(await ownerPage.Locator("#spending-controls, #organization-spend-cap, #paid-excess").CountAsync()).IsEqualTo(0);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/usage/spending-controls", new() { ["spendCap"] = "50.25" }, 404);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/usage/internal-spending-cap", new() { ["spendCap"] = "50.25" }, 404);

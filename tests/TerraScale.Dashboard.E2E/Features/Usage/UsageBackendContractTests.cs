@@ -116,6 +116,8 @@ public sealed class UsageBackendContractTests
         await Assert.That(measured.OperationUnits(["a", "b"], Clock.Now)).IsEqualTo(29);
         await Assert.That(measured.OperationUnits(["a"], Clock.Now)).IsEqualTo(29).Because("Deleted projects remain in the organization ledger.");
         await Assert.That(measured.OperationUnits([], Clock.Now)).IsNull();
+        var undercount = measured with { Monthly = new Dictionary<string, UsageObservation> { ["a"] = Project("a", new("2026-10", 6, 3, 9, 9)), ["b"] = Project("b", new("2026-10", 6, 3, 9, 9)) } };
+        await Assert.That(undercount.OperationUnits(["a", "b"], Clock.Now)).IsNull().Because("The organization ledger cannot be smaller than its current projects combined.");
         foreach (var missing in new[] { "older", "stale", "down", "absent" })
             await Assert.That(measured.OperationUnits(["a", missing], Clock.Now)).IsNull();
         foreach (var invalid in new UsageMonth[] { new("2026-10", 1, 1, 2), new("2026-10", 1, 1, 2, 30), new("2026-10", 1, 1, 2, -1),

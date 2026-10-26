@@ -252,10 +252,11 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
                 reads,
                 writes,
                 period = new { period.from, period.to, period.granularity, reads, writes },
-                series = reads > 0 || writes > 0 ? new[] { new { start = from, reads, writes } } : []
+                series = Array.Empty<object>()
             };
         }).ToArray();
         long totalReads = items.Sum(item => item.reads), totalWrites = items.Sum(item => item.writes), totalBytes = items.Sum(item => item.logicalBytes);
+        var step = granularity == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
         return Results.Json(new
         {
             projectId = usageMode == "foreign-project" ? "foreign-project" : projectId,
@@ -266,7 +267,8 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
             reads = totalReads,
             writes = totalWrites,
             period = new { period.from, period.to, period.granularity, reads = totalReads, writes = totalWrites },
-            series = totalReads > 0 || totalWrites > 0 ? new[] { new { start = from, reads = totalReads, writes = totalWrites } } : [],
+            series = Enumerable.Range(0, (int)((to - from).Ticks / step))
+                .Select(index => new { start = from.AddTicks(index * step), reads = index == 0 ? totalReads : 0, writes = index == 0 ? totalWrites : 0 }).ToArray(),
             items
         });
     }
