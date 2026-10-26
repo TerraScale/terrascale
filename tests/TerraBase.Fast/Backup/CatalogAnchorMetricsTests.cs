@@ -1,5 +1,8 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Features.Replication;
+using TerraBase.Hosting;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -96,16 +99,24 @@ public sealed class CatalogAnchorMetricsTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellation);
             }
         };
-        var attempt = gate.TryAnchorAsync(caller.Token);
-        await entered.Task.WaitAsync(token);
-        if (failure != "caller")
+        try
         {
-            await Assert.That(await attempt.WaitAsync(token)).IsFalse();
+            var attempt = gate.TryAnchorAsync(caller.Token);
+            await entered.Task.WaitAsync(token);
+            if (failure != "caller")
+            {
+                await Assert.That(await attempt.WaitAsync(token)).IsFalse();
+            }
+            else
+            {
+                await caller.CancelAsync();
+                await Assert.That(async () => await attempt.WaitAsync(token)).Throws<OperationCanceledException>();
+            }
         }
-        else
+        finally
         {
+            host.S3.BeforePut = null;
             await caller.CancelAsync();
-            await Assert.That(async () => await attempt.WaitAsync(token)).Throws<OperationCanceledException>();
         }
 
         host.Time.Advance(CatalogGate.AnchorTimeout);
@@ -127,12 +138,45 @@ public sealed class CatalogAnchorMetricsTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellation);
             }
         };
-        await host.Api.CreateOrganizationAsync("periodic anchor change");
-        host.Time.Advance(TimeSpan.FromSeconds(15));
-        await entered.Task.WaitAsync(token);
-        await gate.StopAsync(token);
-        host.Time.Advance(CatalogGate.AnchorTimeout);
-        await CountAsync(host.Api.Server, 0);
+        var lifetime = host.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>();
+        var meter = host.Api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        long stoppedCount = -1;
+        var observations = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (instrument.Name == "terrabase.catalog.anchor.timeouts" && ReferenceEquals(instrument.Meter, meter))
+            {
+                observer.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            Interlocked.Exchange(ref stoppedCount, value);
+            Interlocked.Increment(ref observations);
+        });
+        listener.Start();
+        // Listeners close during host shutdown. Observe this host's counter after its services stop,
+        // before the meter is disposed, and retain the result outside the host.
+        using var stopped = lifetime.ApplicationStopped.Register(listener.RecordObservableInstruments);
+        try
+        {
+            await CountAsync(host.Api.Server, 0);
+            await host.Api.CreateOrganizationAsync("periodic anchor change");
+            host.Time.Advance(TimeSpan.FromSeconds(15));
+            await entered.Task.WaitAsync(token);
+            // The in-flight request retains its hook; let the final shutdown anchor proceed normally.
+            host.S3.BeforePut = null;
+            await host.DisposeAsync();
+            await Assert.That(lifetime.ApplicationStopping.IsCancellationRequested).IsTrue();
+            await Assert.That(gate.ExecuteTask!.IsCanceled).IsTrue();
+            await Assert.That(Volatile.Read(ref observations)).IsEqualTo(1);
+            await Assert.That(Interlocked.Read(ref stoppedCount)).IsEqualTo(0);
+        }
+        finally
+        {
+            host.S3.BeforePut = null;
+        }
     }
 
     private static async Task CountAsync(TerraBaseTestServer server, int expected)
