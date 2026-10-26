@@ -39,6 +39,13 @@ public static class DatabaseEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             await databases.SyncAsync(context, http.RequestAborted);
+            if (context.Organization is { } organization && !organization.ContainsMember(context.UserId))
+                return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).Select(database => new
+                {
+                    database.Id, database.ProjectId, database.Name, database.Region, database.Regions, database.AllRegions,
+                    database.Endpoint, database.Status, database.CreatedAt, SpendCapCents = (long?)null,
+                    OperationLimits = (OperationLimits?)null, BackupRetentionDays = (int?)null, BranchedFrom = (string?)null
+                }).ToArray() ?? []);
             return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).Select(DatabaseOutput).ToArray() ?? []);
         });
         foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })

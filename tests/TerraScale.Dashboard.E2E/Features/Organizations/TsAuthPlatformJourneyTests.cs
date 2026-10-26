@@ -24,6 +24,7 @@ public sealed class TsAuthPlatformJourneyTests
     [Test]
     [Arguments("viewer")]
     [Arguments("member")]
+    [Arguments("admin")]
     public async Task ProjectCollaboratorsReadOnlyTheirLiveProjectsWithoutOrganizationAuthority(string role)
     {
         await using var platform = await PlatformScenario.StartAsync();
@@ -86,6 +87,9 @@ public sealed class TsAuthPlatformJourneyTests
             using var body = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
             await Assert.That(body.RootElement.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray())
                 .IsEquivalentTo(new string?[] { database, discovered });
+            foreach (var record in body.RootElement.EnumerateArray())
+                foreach (var field in new[] { "spendCapCents", "operationLimits", "backupRetentionDays", "branchedFrom" })
+                    await Assert.That(record.GetProperty(field).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
         using (var page = await client.GetAsync("/databases" + scope))
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -152,6 +156,28 @@ public sealed class TsAuthPlatformJourneyTests
         using (var erased = await client.GetAsync("/databases" + scope))
             await Assert.That(erased.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("viewer", "admin", "admin")]
+    [Arguments("viewer", "member", "member")]
+    [Arguments("member", "viewer", "member")]
+    public async Task EffectiveProjectRolesAddAccessWithoutPromotingOrganizationMembership(string organizationRole, string grant, string expected)
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var user = platform.Principal("overlapping-roles");
+        using var client = platform.Client();
+        using var login = await HttpJourney.LoginAsync(client, user.Email, user.Password);
+        var org = platform.Producer.AddOrganization("Overlapping roles", platform.Principal("overlap-owner").Subject);
+        var project = platform.Producer.AddProject(org, "Explicit grant", platform.Principal("overlap-owner").Subject);
+        platform.Producer.AddMember(org, user.Subject, user.Email, organizationRole);
+        platform.Producer.AddCollaborator(org, user.Subject, project, grant);
+        using var response = await client.GetAsync("/api/v1/dashboard/context?organizationId=" + org + "&projectId=" + project);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var visible = body.RootElement.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("id").GetString() == org);
+        await Assert.That(visible.GetProperty("role").GetString()).IsEqualTo(organizationRole);
+        await Assert.That(visible.GetProperty("projects").GetProperty(project).GetProperty("role").GetString()).IsEqualTo(expected);
     }
 
     [Test]
@@ -1140,9 +1166,16 @@ public sealed class TsAuthPlatformJourneyTests
             issuer = "https://auth.terrascale.tech/" + project.Id,
             created_by = project.CreatedBy,
             created_at = project.CreatedAt,
-            role = project.CreatedBy == userId || org.Members.GetValueOrDefault(userId)?.Role is "owner" or "admin" ? "admin" :
-                org.Members.GetValueOrDefault(userId)?.Role ?? org.Collaborators.GetValueOrDefault(userId)?.GetValueOrDefault(project.Id)
+            role = EffectiveRole(org, project, userId)
         };
+        private static string? EffectiveRole(Organization org, Project project, string user)
+        {
+            var implied = project.CreatedBy == user || org.Members.GetValueOrDefault(user)?.Role == "owner"
+                ? "admin" : org.Members.GetValueOrDefault(user)?.Role;
+            var granted = org.Collaborators.GetValueOrDefault(user)?.GetValueOrDefault(project.Id);
+            static int Rank(string? role) => role switch { "admin" => 3, "member" => 2, "viewer" => 1, _ => 0 };
+            return Rank(implied) >= Rank(granted) ? implied : granted;
+        }
         private Organization? Find(string id) => organizations.FirstOrDefault(org => org.Id == id);
         private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status)
         { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, new MediaTypeHeaderValue("application/json")) };
