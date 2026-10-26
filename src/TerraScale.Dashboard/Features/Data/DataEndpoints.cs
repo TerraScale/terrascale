@@ -110,7 +110,11 @@ public static class DataEndpoints
             endpoints.MapPost(route, async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
             {
                 if (action == "documents" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = 1024 * 1024 + 4096;
-                if ((action.StartsWith("sql", StringComparison.Ordinal) || action == "saved-queries") && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit) sqlBodyLimit.MaxRequestBodySize = 16 * 1024 + 3 * 4 * 1024 + 4096;
+                if ((action.StartsWith("sql", StringComparison.Ordinal) || action == "saved-queries") && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit)
+                {
+                    // URL encoding can expand each SQL/history byte to three bytes; validation limits decoded SQL.
+                    sqlBodyLimit.MaxRequestBodySize = 3 * (16 * 1024 + 4 * 1024) + 4096;
+                }
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null) return Results.Unauthorized();
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
