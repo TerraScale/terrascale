@@ -59,7 +59,9 @@ pub use documents::{
     WriteResult,
 };
 pub use errors::{Error, Result, SqlError};
-pub use functions::{Function, FunctionDeployment, FunctionInvocation, FunctionLog, FunctionTrigger};
+pub use functions::{
+    Function, FunctionDeployment, FunctionInvocation, FunctionLog, FunctionTrigger,
+};
 pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use query::{
