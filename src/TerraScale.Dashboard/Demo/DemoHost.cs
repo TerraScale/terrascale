@@ -504,6 +504,10 @@ sealed class TestWorkspace : ITsAuthPlatform
     }
     public Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Manage(session.UserId, organizationId); if (!org.Members.ContainsKey(userId)) throw new AccountAccessException("Member is unavailable.", 404, "not_found"); LastOwner(org, userId); org.Members.Remove(userId); return Task.CompletedTask; } }
+    public Task<TerraScaleAuthPlatformProjectMember> SetProjectMemberRoleAsync(SessionRecord session, string organizationId, string projectId, string userId, string role, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Use PlatformScenario for project-grant transport journeys.");
+    public Task RemoveProjectMemberAsync(SessionRecord session, string organizationId, string projectId, string userId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Use PlatformScenario for project-grant transport journeys.");
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ListProjectMembersAsync(SessionRecord session, string organizationId, string projectId, string? after, CancellationToken cancellationToken) =>
         throw new NotSupportedException("Use PlatformScenario for project-grant transport journeys.");
     public Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
