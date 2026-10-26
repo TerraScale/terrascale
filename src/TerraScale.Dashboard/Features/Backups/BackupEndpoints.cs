@@ -21,7 +21,7 @@ public static class BackupEndpoints
                 var id = http.Request.Query["databaseId"].ToString();
                 var listing = await backups.ListAsync(context, id, http.RequestAborted);
                 var page = CursorPaging.Page(listing.Backups, backup => backup.Id, CursorPaging.Scope(context, "backups", id), limit, after);
-                return Results.Json(new McpBackupList(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit));
+                return Results.Json(new BackupRestList(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit));
             }
             catch (Exception error) when (KnownFailure(error) &&
                 (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))

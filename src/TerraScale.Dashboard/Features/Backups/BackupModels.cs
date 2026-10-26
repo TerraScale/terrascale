@@ -14,6 +14,12 @@ public sealed record BackupListing(
 {
     [JsonIgnore] public string PolicyUnavailable { get; init; } = "";
 }
+public sealed record BackupRestList(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupPolicyView? Policy,
+    IReadOnlyList<BackupView> Backups,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor,
+    bool HasMore,
+    int Limit);
 public sealed record BackupRestoreResult(string DatabaseId, string Name, string Status);
 public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
 public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
