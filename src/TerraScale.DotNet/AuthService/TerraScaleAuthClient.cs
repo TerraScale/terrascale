@@ -65,13 +65,11 @@ public sealed class TerraScaleAuthClient
         JwtTemplates = new TerraScaleAuthJwtTemplatesClient(this);
         Webhooks = new TerraScaleAuthWebhooksClient(this);
         AuditEvents = new TerraScaleAuthAuditClient(this);
-        Billing = new TerraScaleAuthBillingClient(this);
         Instance = new TerraScaleAuthInstanceClient(this);
         OAuthClients = new TerraScaleAuthOAuthClientsClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
-        Headless = new TerraScaleAuthHeadlessClient(this);
     }
 
     /// <summary>User, session-adjacent, MFA factor, and passkey management.</summary>
@@ -101,9 +99,6 @@ public sealed class TerraScaleAuthClient
     /// <summary>Instance audit event listing.</summary>
     public TerraScaleAuthAuditClient AuditEvents { get; }
 
-    /// <summary>Plan, quota, and Stripe checkout/portal operations.</summary>
-    public TerraScaleAuthBillingClient Billing { get; }
-
     /// <summary>Instance record and hosted-UI branding settings.</summary>
     public TerraScaleAuthInstanceClient Instance { get; }
 
@@ -118,9 +113,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Project tenant settings, end users, sessions and OAuth clients under <c>/v1/{project}</c>, using a user sign-in token.</summary>
     public TerraScaleAuthProjectsClient Projects { get; }
-
-    /// <summary>Confidential-client headless enrollment, sign-in and password recovery.</summary>
-    public TerraScaleAuthHeadlessClient Headless { get; }
 
     /// <summary>The validated instance slug every management route is scoped to.</summary>
     internal string InstanceSlug => options.InstanceSlug!;

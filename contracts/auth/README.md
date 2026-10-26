@@ -15,7 +15,7 @@ Use `TerraScaleAuthClient` with `InstanceSlug = "terrascale"` and the trusted au
 - Project methods: Create/List/Get/Rename/DeleteProjectAsync; ListProjectMembersAsync, SetProjectMemberRoleAsync, RemoveProjectMemberAsync. DeleteProjectAsync returns `bool` the same way (204 `true`, 202 `false`: the project still exists until a later call returns `true`); 409 `not_empty`, `closure_conflict` or `binding_conflict` changes nothing. Any other success status is `invalid_response`.
 - Key methods: Create/List/Get/Revoke/RotateOrganizationApiKey(s)Async and the equivalent Project methods. Create takes `TerraScaleAuthPlatformCreateApiKey`; rotate takes optional `TerraScaleAuthPlatformRotateApiKey`. Create/rotate return `TerraScaleAuthPlatformApiKeySecret(ApiKey, Key)`. Never persist/log Key as a DTO; display the secret once. Revocation prevents new issuance; already-issued exchanged tokens live at most 60 seconds. `LastUsedAt` is the last successful token exchange (null when never used; at most five minutes stale).
 
-Hosted sign-in uses OIDC authorization code with PKCE. The producer removed the headless routes and password/email-code grants on 2026-10-22; do not use their legacy SDK client or DTOs; callable cleanup follows separately.
+Hosted sign-in uses OIDC authorization code with PKCE. The producer removed the headless routes and password/email-code grants on 2026-10-22; the SDK no longer exposes their client or DTOs.
 
 Token methods:
 
@@ -81,3 +81,7 @@ Package all `contracts/auth` manifests/fixtures with the SDK candidate and regis
 ## Project tenant management
 
 `auth.Projects` is `TerraScaleAuthProjectsClient` for the producer's project tenant management API (`docs/auth/project-tenant-management.md` section 2, base `/v1/{project}`). Every method takes the caller's terrascale sign-in `accessToken` and the project ULID first and an optional `CancellationToken` last; viewer reads, admin changes, 404 hides projects the caller cannot see and 403 `forbidden` reports a role too low. Lists return `TerraScaleAuthPlatformPage<T>`. `TerraScaleAuthProjectOAuthClient.ClientSecret` appears only when creating a confidential client and is redacted from `ToString`. `fixtures/project-tenant.json` holds the HTTP-fake fixtures, with each operation's method, path and status; producer parity remains unproven. `ExportUsersAsync` returns one audited, admin-only directory page; see `user-export.md`.
+
+## Retired instance billing
+
+The unsupported `auth.Billing` client and its exclusive plan, seat-quota, checkout and portal DTOs have been removed. Its five operations used the legacy instance management key and `/v1/{slug}/billing...` routes; they are not wrappers for current public platform or dashboard billing. No replacement endpoint or adapter is provided. `Platform`, `Projects`, `Oidc` and their existing constructors/DTOs remain intact in this retirement phase.

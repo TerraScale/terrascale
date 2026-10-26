@@ -82,7 +82,7 @@ internal static class TerraScaleAuthErrors
 
     private sealed class ErrorBodyLimitException : Exception;
 
-    // Fixed error identities from the source-pinned C# platform/headless and legacy contracts and
+    // Fixed error identities from the source-pinned C# platform and legacy contracts and
     // the OAuth error vocabulary. No producer-supplied free text is retained.
     private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
     {

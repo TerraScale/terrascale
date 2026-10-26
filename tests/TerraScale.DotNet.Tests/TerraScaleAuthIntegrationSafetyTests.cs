@@ -91,12 +91,11 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
     }
 
     [Test]
-    public async Task HeadlessAndOAuthRequestsRejectOversizedBodiesBeforeDispatch()
+    public async Task OAuthRequestsRejectOversizedBodiesBeforeDispatch()
     {
         using var handler = new Handler((_, _) => Task.FromResult(Response("{}")));
         using var http = new HttpClient(handler);
         var client = Client(http);
-        await Assert.ThrowsAsync<ArgumentException>(() => client.Headless.SignUpAsync("fixture-id", "fixture-secret", new("synthetic@example.test", new string('x', 8192), IPAddress.Parse("192.0.2.1"))));
         await Assert.ThrowsAsync<ArgumentException>(() => client.Oidc.RefreshTokenAsync("fixture-id", "fixture-secret", new string('x', 1_048_576)));
         await Assert.That(handler.Calls).IsEqualTo(0);
     }
@@ -172,14 +171,8 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
     }
 
     [Test]
-    public async Task WrongHeadlessSuccessStatusIsRejectedAndSecretDtosRedactFormatting()
+    public async Task PlatformApiKeySecretsRedactFormatting()
     {
-        using var handler = new Handler((_, _) => Task.FromResult(Response("{}")));
-        using var http = new HttpClient(handler);
-        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Headless.StartPasswordResetAsync("fixture-id", "fixture-secret", new("synthetic@example.test", IPAddress.Parse("192.0.2.1"))));
-        await Assert.That(failure!.ErrorCode).IsEqualTo("invalid_response");
-        await Assert.That(new TerraScaleAuthHeadlessSignUp("synthetic@example.test", "fixture-canary", IPAddress.Parse("192.0.2.1")).ToString()).DoesNotContain("fixture-canary");
-        await Assert.That(new TerraScaleAuthHeadlessPendingSignUp("fixture-canary").ToString()).DoesNotContain("fixture-canary");
         await Assert.That(new TerraScaleAuthPlatformApiKeySecret(null!, "fixture-canary").ToString()).DoesNotContain("fixture-canary");
     }
 
@@ -209,7 +202,7 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
     }
 
     [Test]
-    public async Task HeadlessRedirectDoesNotReplayThePasswordRequest()
+    public async Task OAuthRedirectDoesNotReplayTheRefreshRequest()
     {
         using var handler = new Handler((_, _) =>
         {
@@ -218,7 +211,7 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
-        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Headless.SignUpAsync("fixture-id", "fixture-secret", new("synthetic@example.test", "fixture-password", IPAddress.Parse("192.0.2.1"))));
+        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Oidc.RefreshTokenAsync("fixture-id", "fixture-secret", "fixture-refresh"));
         await Assert.That(failure!.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await Assert.That(handler.Calls).IsEqualTo(1);
     }
