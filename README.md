@@ -468,7 +468,7 @@ and every tenant issues from `https://auth.terrascale.tech/<slug>`. There is no
 regional discovery or failover. `TSAuthBaseURL` overrides the origin only for
 dev and test deployments; an issuer must be that origin plus the slug.
 The supported platform management API, API-key tokens and device flow are in
-`terrascale.tech/sdk/tsauth`. Legacy headless declarations are inventoried below.
+`terrascale.tech/sdk/tsauth`. Retired headless methods are described below.
 
 Schema and SQL builders construct and validate statements locally and do not
 execute SQL over HTTP. The pgx-backed PostgreSQL client connects to
@@ -612,14 +612,14 @@ Management tests use the pinned local contract,
 `tsauth/testdata/platform-api.openapi.json`. They do not establish deployed
 platform compatibility; see the qualification limits in the matrix.
 
-### Legacy headless declarations
+### Retired headless authentication
 
-`tsauth.NewHeadless` still exists in this source, but its historical password/email-code
-grants and `/headless/v1/...` routes are not served by the current auth contract.
-Do not build new sign-in flows on those methods or treat their fake-server tests as
-production coverage. Use hosted sign-in or a registered OIDC client, and the shipped
-`tsauth.Device` flow for the CLI. Callbacks and grants remain client-specific;
-client credentials do not imply authorization to collect user passwords.
+The legacy `tsauth.NewHeadless` client and its password/email-code and JSON methods
+have been removed because the current auth contract does not serve those grants
+or `/headless/v1/...` routes. Use hosted sign-in or a registered OIDC client, and the
+shipped `tsauth.Device` flow for the CLI, including its refresh/revoke methods.
+Callbacks and grants remain client-specific; client credentials do not authorize
+collecting user passwords. Shared token and error types remain available.
 
 ### ts CLI (`cmd/ts`)
 

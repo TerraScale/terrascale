@@ -21,7 +21,7 @@ const publicAuthBaseURL = "https://auth.terrascale.tech"
 // TSAuthClient calls a hosted ts-auth deployment's OpenID Connect provider
 // for an application that signs users in with the redirect flow (authorization
 // code with PKCE). Call Instance with the tenant slug. The platform management
-// API, API key tokens and the headless sign-in API are in package
+// API, API key tokens and device sign-in are in package
 // terrascale.tech/sdk/tsauth.
 type TSAuthClient struct{ c *Client }
 
