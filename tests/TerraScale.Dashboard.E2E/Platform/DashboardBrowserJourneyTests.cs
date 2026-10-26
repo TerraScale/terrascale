@@ -218,6 +218,26 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
+    public async Task SharedTextLinksAndStepsMeetWcagAcrossViewports()
+    {
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        await using var context = await browser.NewContextAsync();
+        var page = await context.NewPageAsync();
+        await BrowserAudit.SignInAsync(page, fixture.Origin);
+        foreach (var width in new[] { 375, 768, 1280, 1920 })
+        {
+            await page.SetViewportSizeAsync(width, 900);
+            foreach (var path in new[] { "/support", "/?tab=connect", "/auth/danger", "/missing-shared-accessibility" })
+            {
+                await page.GotoAsync(new Uri(fixture.Origin, path).ToString());
+                await page.EvaluateAsync("() => document.fonts.ready");
+                await BrowserAudit.AssertAccessibleAsync(page, $"Shared link and step text on {path} at {width}px");
+            }
+        }
+    }
+
+    [Test]
     public async Task AccessibleSignInFailureAndNotFoundPages()
     {
         var output = BrowserAudit.Output(fixture.Root, "");
@@ -241,6 +261,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
             await page.GotoAsync(origin + "/missing");
             await page.GetByRole(AriaRole.Heading, new() { Name = "We can’t find that page." }).WaitForAsync();
             await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"notfound-{name}.png"), FullPage = true });
+            await BrowserAudit.AssertAccessibleAsync(page, "WCAG 2.2 AA on the not-found page " + name);
             await Assert.That(errors).IsEmpty().Because("No browser script errors");
         }
     }

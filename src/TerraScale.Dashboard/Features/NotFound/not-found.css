@@ -29,7 +29,7 @@
 .ts-notfound-num {
   font: 500 clamp(80px, 14vw, 120px) / 1 var(--ts-font-mono);
   letter-spacing: -0.06em;
-  color: var(--ts-surface-3);
+  color: var(--ts-ink-3);
 }
 
 .ts-notfound-copy .ts-auth-title {
