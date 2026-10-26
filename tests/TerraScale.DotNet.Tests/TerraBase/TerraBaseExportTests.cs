@@ -78,6 +78,50 @@ public sealed class TerraBaseExportTests
         await Assert.ThrowsAsync<ArgumentException>(() => DrainAsync(Database(http).ExportAsync(new TerraBaseExportCursor("items", "not-a-ulid"))));
     }
 
+    [Test]
+    [Arguments(65535, true)]
+    [Arguments(65536, true)]
+    [Arguments(65537, true)]
+    [Arguments(65537, false)]
+    [Arguments(65536, false)]
+    public async Task Export_checks_completed_and_incomplete_record_bounds(int lineBytes, bool newline)
+    {
+        const int limit = 64 * 1024;
+        var prefix = $"{{\"collection\":\"items\",\"id\":\"{First}\",\"document\":{{\"padding\":\"";
+        const string suffix = "\"}}";
+        var padding = new string('x', lineBytes - prefix.Length - suffix.Length);
+        // Sixteen reads reach the limit; the next read carries the excess byte and newline together.
+        var source = new FragmentedStream(Encoding.UTF8.GetBytes(prefix + padding + suffix + (newline ? "\n" : "")), 4096);
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Ndjson(source)));
+        using var http = new HttpClient(handler);
+        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            Region = "sjc",
+            AccessTokenProvider = _ => ValueTask.FromResult("test-token"),
+            MaxResponseBytes = limit,
+        }).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        var lines = new List<TerraBaseExportLine>();
+        async Task ReadAsync()
+        {
+            await foreach (var line in database.ExportAsync()) lines.Add(line);
+        }
+
+        if (newline && lineBytes <= limit)
+        {
+            await ReadAsync();
+            await Assert.That(lines.Count).IsEqualTo(1);
+            await Assert.That(lines[0].Document.GetProperty("padding").GetString()).IsEqualTo(padding);
+            await Assert.That(lines[0].Cursor).IsEqualTo(new TerraBaseExportCursor("items", First));
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<TerraBaseException>(ReadAsync);
+            await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+            await Assert.That(lines.Count).IsEqualTo(0);
+        }
+        await Assert.That(source.Disposed).IsTrue();
+    }
+
     private static TerraBaseDatabase Database(HttpClient http) => TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
 
     private static async Task DrainAsync(IAsyncEnumerable<TerraBaseExportLine> lines)
@@ -94,6 +138,14 @@ public sealed class TerraBaseExportTests
 
     private sealed class FragmentedStream(byte[] bytes, int fragment) : MemoryStream(bytes)
     {
+        internal bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
             base.ReadAsync(buffer[..Math.Min(buffer.Length, fragment)], cancellationToken);
     }

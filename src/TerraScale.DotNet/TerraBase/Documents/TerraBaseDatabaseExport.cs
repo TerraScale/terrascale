@@ -55,6 +55,7 @@ public sealed partial class TerraBaseDatabase
                 while (buffer.PositionOf((byte)'\n') is { } end)
                 {
                     var line = buffer.Slice(0, end);
+                    if (line.Length > connection.MaxResponseBytes) throw InvalidExport();
                     lines.Add(TerraBaseConnection.ReadResponse(line.IsSingleSegment ? line.FirstSpan : line.ToArray(), Json.TerraBaseExportLine, HttpStatusCode.OK));
                     buffer = buffer.Slice(buffer.GetPosition(1, end));
                 }
