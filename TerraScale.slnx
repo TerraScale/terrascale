@@ -26,7 +26,6 @@
     <Project Path="tests/TerraBase.E2E/TerraBase.E2E.csproj" />
   </Folder>
   <Folder Name="/cli/">
-    <Project Path="src/TerraScale.CLI/TerraScale.CLI.csproj" />
   </Folder>
   <Folder Name="/vendor/">
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj" />
