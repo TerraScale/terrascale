@@ -15,7 +15,9 @@ public sealed class WireProtocolTests
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task A_session_starts_only_with_a_hello_and_a_key_that_reaches_the_database()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_session_starts_only_with_a_hello_and_a_key_that_reaches_the_database(bool idRoute)
     {
         await using var api = await ManagementApi.StartAsync();
         var (database, key, _) = await DatabaseAsync(api, "documents:read");
@@ -28,11 +30,11 @@ public sealed class WireProtocolTests
         var (outOfReach, _) = await RefusedAsync(api, 0, Hello(key, other.Project, other.Name));
         using var tcp = await ConnectAsync(api);
         var stream = tcp.GetStream();
-        var (helloId, helloStatus, _) = await ExchangeAsync(stream, 1, 0, Hello(key, database.Project, database.Name));
+        var (helloId, helloStatus, _) = await ExchangeAsync(stream, 1, 0, Hello(key, database.Project, idRoute ? database.Id : database.Name));
         var operations = new List<(uint, int, string)>();
         for (var id = 2u; id < 2 + Faker.Random.UInt(1, 10); id++)
         {
-            var (answered, status, code) = await ExchangeAsync(stream, id, Faker.Random.Byte(3, 255), []);
+            var (answered, status, code) = await ExchangeAsync(stream, id, Faker.Random.Byte(4, 255), []);
             operations.Add((answered - id, status, code));
         }
 
@@ -43,6 +45,33 @@ public sealed class WireProtocolTests
         await Assert.That(outOfReach).IsEqualTo(404);
         await Assert.That((helloId, helloStatus)).IsEqualTo((1u, 200));
         await Assert.That(operations.Distinct()).IsEquivalentTo([(0u, 400, "unknown_operation")]);
+    }
+
+    [Test]
+    public async Task Deletes_validate_the_frame_and_preserve_the_session_after_refusals()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key, _) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, database.Project, database.Name);
+        var id = Ulid.NewUlid().ToString();
+        byte[] address = [(byte)Items.Length, .. Encoding.UTF8.GetBytes(Items), .. Encoding.ASCII.GetBytes(id)];
+        var missing = await session.DeleteAsync(Items, id);
+        var trailing = await session.SendAsync(3, [.. address, 0, 123]);
+        var noDurability = await session.SendAsync(3, address);
+        var badDurability = await session.SendAsync(3, [.. address, 2]);
+        var inserted = await session.PutAsync(Items, id, "{\"n\":1}");
+        var deleted = await session.DeleteAsync(Items, id);
+        var read = await session.GetAsync(Items, id);
+
+        await Assert.That((missing.Status, missing.Code)).IsEqualTo((404, "not_found"));
+        await Assert.That((trailing.Status, trailing.Code)).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(noDurability.Status).IsEqualTo(400);
+        await Assert.That(badDurability.Status).IsEqualTo(400);
+        await Assert.That(inserted.Status).IsEqualTo(201);
+        await Assert.That(deleted.Status).IsEqualTo(200);
+        await Assert.That(deleted.RemoteDurable).IsFalse();
+        await Assert.That(deleted.ETag).StartsWith("tbv1-");
+        await Assert.That((read.Status, read.Code)).IsEqualTo((404, "not_found"));
     }
 
     [Test]
@@ -71,11 +100,13 @@ public sealed class WireProtocolTests
         await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, database.Project, database.Name);
 
         var put = await session.PutAsync(Items, Ulid.NewUlid().ToString(), "{\"n\":1}");
+        var delete = await session.DeleteAsync(Items, Ulid.NewUlid().ToString());
         var missing = await session.GetAsync(Items, Ulid.NewUlid().ToString());
         var badId = await session.GetAsync(Items, "not-a-ulid-but-26-chars-xx");
         var badCollection = await session.GetAsync("Bad Collection!", Ulid.NewUlid().ToString());
 
         await Assert.That((put.Status, put.Code)).IsEqualTo((403, "forbidden_scope"));
+        await Assert.That((delete.Status, delete.Code)).IsEqualTo((403, "forbidden_scope"));
         await Assert.That((missing.Status, missing.Code)).IsEqualTo((404, "not_found"));
         await Assert.That((badId.Status, badId.Code)).IsEqualTo((400, "invalid_document_id"));
         await Assert.That(badCollection.Status).IsEqualTo(400);
@@ -90,7 +121,7 @@ public sealed class WireProtocolTests
         await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, database.Project, database.Name);
 
         // Every request is sent before any answer is awaited; more than run at once on one connection.
-        var answers = await Task.WhenAll(Enumerable.Range(0, Faker.Random.Int(200, 400)).Select(_ => session.SendAsync(Faker.Random.Byte(3, 255), Faker.Random.Bytes(Faker.Random.Int(0, 64)))));
+        var answers = await Task.WhenAll(Enumerable.Range(0, Faker.Random.Int(200, 400)).Select(_ => session.SendAsync(Faker.Random.Byte(4, 255), Faker.Random.Bytes(Faker.Random.Int(0, 64)))));
 
         await Assert.That(answers.Select(answer => (answer.Status, answer.Code)).Distinct()).IsEquivalentTo([(400, "unknown_operation")]);
         await Assert.That(session.Closed.IsCompleted).IsFalse();

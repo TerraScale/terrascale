@@ -834,8 +834,12 @@ public sealed class BackupApiTests
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             if (change == "success")
             {
-                await InsertAsync(api.Server.DataDirectory, $"databases/{database.Id}/backup_schedule", "last",
-                    JsonSerializer.Serialize(new { lastSucceededAt = time.GetUtcNow(), lastFailedAt = (DateTimeOffset?)null }));
+                // Share the engine's writer gate with the running catalog services.
+                var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+                await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+                _ = await transaction.PutAsync($"databases/{database.Id}/backup_schedule", "last",
+                    JsonSerializer.SerializeToUtf8Bytes(new { lastSucceededAt = time.GetUtcNow(), lastFailedAt = (DateTimeOffset?)null }), CancellationToken.None);
+                _ = await transaction.CommitAsync(CancellationToken.None);
             }
             else
             {

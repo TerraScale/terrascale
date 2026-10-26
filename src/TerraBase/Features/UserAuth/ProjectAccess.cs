@@ -6,7 +6,7 @@ namespace TerraBase.Features.UserAuth;
 /// <param name="Actor">The signed token's subject.</param>
 /// <param name="ProjectId">The signed token's project.</param>
 /// <param name="OrganizationId">The catalog's storage namespace; never read from a token.</param>
-/// <param name="DatabaseName">A database restriction from the signed token, when present.</param>
+/// <param name="DatabaseName">A database ULID or name restriction from the signed token, when present.</param>
 /// <param name="DatabaseId">The catalog id of that restricted database, when present.</param>
 public sealed record ProjectAccess(string Actor, string ProjectId, string OrganizationId, string? DatabaseName, string? DatabaseId)
 {

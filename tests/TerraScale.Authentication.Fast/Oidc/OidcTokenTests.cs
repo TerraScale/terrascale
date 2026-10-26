@@ -343,6 +343,8 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
             await Assert.That(await jwks.Content.ReadAsStringAsync()).DoesNotContain("\"kid\"");
             using var userInfo = await oidc.UserInfoAsync(forged, client);
             await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+            await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
+            await Assert.That(userInfo.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
             await Assert.That(await OidcHarness.EnvelopeCodeAsync(userInfo)).IsEqualTo("internal_error");
             using var organizations = await oidc.CallAsync(HttpMethod.Get, PlatformCalls.Organizations, forged, client: client);
             await Assert.That(organizations.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
@@ -366,6 +368,8 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(await jwks.Content.ReadAsStringAsync()).DoesNotContain("\"kid\"");
         using var userInfo = await oidc.UserInfoAsync(tokens.GetProperty("access_token").GetString()!);
         await Assert.That(userInfo.IsSuccessStatusCode).IsFalse();
+        await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
+        await Assert.That(userInfo.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
         using var organizations = await oidc.CallAsync(HttpMethod.Get, PlatformCalls.Organizations, tokens.GetProperty("access_token").GetString()!);
         await Assert.That(organizations.IsSuccessStatusCode).IsFalse();
         using var refused = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);

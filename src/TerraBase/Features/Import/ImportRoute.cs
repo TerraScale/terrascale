@@ -1,5 +1,4 @@
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.UserAuth;
@@ -40,15 +39,14 @@ public static class ImportRoute
         ArgumentNullException.ThrowIfNull(tenants);
         ArgumentNullException.ThrowIfNull(options);
         if (context.Features.Get<ProjectAccess>() is not { } access
-            // The project catalog resolved the route's database name to its id (databaseName keeps the name).
-            || !DatabaseName.TryParse((context.Request.RouteValues["databaseName"] ?? context.Request.RouteValues["database"]) as string, out var name)
-            || (access.DatabaseName is not null && access.DatabaseName != name.Value))
+            // Project middleware pins this route to the admitted database's immutable identity.
+            || context.Request.RouteValues["database"] is not string target)
         {
             return UnknownDatabase;
         }
 
-        var found = await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name.Value, cancellationToken).ConfigureAwait(false);
-        if (found is not TenantContext database || (access.DatabaseId is not null && access.DatabaseId != database.DatabaseId))
+        var found = await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, target, cancellationToken).ConfigureAwait(false);
+        if (found is not TenantContext database || (access.DatabaseName is not null && access.DatabaseId != database.DatabaseId))
         {
             return found switch
             {
@@ -62,7 +60,7 @@ public static class ImportRoute
             TenantDatabaseRecord record when record.Placement.Home != options.Region =>
                 new ImportElsewhere(DatabaseRegions.HomeRegion(record.Placement.Home, record.Placement.Regions)),
             // Usage metering attributes the request (and an upload's bytes) to the destination, as for document routes.
-            TenantDatabaseRecord => Attribute(context, new ImportDestination(database, name.Value)),
+            TenantDatabaseRecord record => Attribute(context, new ImportDestination(database, record.Name)),
             NotFound => UnknownDatabase,
             Unavailable error => error,
         };

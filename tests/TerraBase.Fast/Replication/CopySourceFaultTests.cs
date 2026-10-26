@@ -364,10 +364,13 @@ public sealed class CopySourceFaultTests
             await Assert.That(page).IsGreaterThan(1);
             offset = (page - 1) * size;
         }
-        using (var file = File.OpenWrite(path))
+        // Complement the page's first byte: a fixed 0xFF left an encrypted page unchanged whenever its ciphertext held 0xFF.
+        using (var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite))
         {
             file.Position = offset;
-            file.WriteByte(0xFF);
+            var original = file.ReadByte();
+            file.Position = offset;
+            file.WriteByte((byte)~original);
         }
         // Prove this is isolated collection damage, without establishing a tenant transaction intent on the next host.
         using var healthy = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));

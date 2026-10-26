@@ -162,7 +162,7 @@ internal sealed class UserAuthenticationHandler(
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
         {
-            if (!Engine.DatabaseName.TryParse(database, out _))
+            if (!EntityIds.IsValid(database) && !Engine.DatabaseName.TryParse(database, out _))
             {
                 return AuthenticateResult.Fail("invalid database claim");
             }

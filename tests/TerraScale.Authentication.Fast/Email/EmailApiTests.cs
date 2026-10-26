@@ -510,7 +510,8 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Test]
     public async Task The_next_sign_in_code_email_uses_the_saved_branding_and_copy()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         await oidc.CreateUserAsync();
         using (var branding = await SendAsync(oidc, HttpMethod.Put, Base + "/branding", Body(0, "branding", new JsonObject
         {
@@ -551,6 +552,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
+        clock.Advance(HostedAuth.MailCooldown);
         var (next, original) = await RequestCodeAsync(oidc);
         await Assert.That(original.Subject).IsEqualTo($"{next} is your TerraScale sign-in code");
         await Assert.That(original.FromName).IsEqualTo("TerraScale");

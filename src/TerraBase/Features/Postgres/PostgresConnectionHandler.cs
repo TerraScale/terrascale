@@ -279,12 +279,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             || !key.Scopes.Contains(ApiKeyScopes.DocumentsRead)
             || (slash < 0 ? key.ProjectId : database[..slash]) is not { } project
             || !EntityIds.IsValid(project)
-            || !DatabaseName.TryParse(database[(slash + 1)..], out var name))
+            || (!EntityIds.IsValid(database[(slash + 1)..]) && !DatabaseName.TryParse(database[(slash + 1)..], out _)))
         {
             return Denied;
         }
 
-        return await Tenants.FindDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken).ConfigureAwait(false) switch
+        return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
@@ -305,8 +305,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         if (grant is not TsAuthKeyGrant { } key
             || !key.Scopes.Contains(ApiKeyScopes.DocumentsRead)
             || (slash >= 0 && !string.Equals(database[..slash], key.ProjectId, StringComparison.Ordinal))
-            || !DatabaseName.TryParse(database[(slash + 1)..], out var name)
-            || (key.Database is not null && !string.Equals(key.Database, name.Value, StringComparison.Ordinal)))
+            || (!EntityIds.IsValid(database[(slash + 1)..]) && !DatabaseName.TryParse(database[(slash + 1)..], out _)))
         {
             return Denied;
         }
@@ -316,8 +315,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return new PgError("28000", "ip_not_allowed: " + IpAllowlists.Refusal(client));
         }
 
-        // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md).
-        var answer = (await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value;
+        // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md);
+        // a token from a ts-auth that predates key status has none to ask about.
+        var answer = key.Key is null ? null : (await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value;
         var until = (answer as KeyActive)?.Until;
         switch (answer)
         {
@@ -334,14 +334,30 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return new PgError("57P03", "the database is unavailable; retry");
         }
 
-        return organization is string found
-            ? await Tenants.FindDatabaseAsync(found, key.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) switch
+        if (organization is not string found)
+        {
+            return Denied;
+        }
+        var restriction = key.Database;
+        if (restriction is not null && !EntityIds.IsValid(restriction))
+        {
+            var narrowed = await Tenants.FindDatabaseAsync(found, key.ProjectId, restriction, cancellationToken).ConfigureAwait(false);
+            if (narrowed is Unavailable)
             {
-                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key, until),
-                Unavailable => new PgError("57P03", "the database is unavailable; retry"),
-                _ => Denied,
+                return new PgError("57P03", "the database is unavailable; retry");
             }
-            : Denied;
+            if (narrowed is not TenantContext restricted)
+            {
+                return Denied;
+            }
+            restriction = restricted.DatabaseId;
+        }
+        return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key, until),
+            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+            _ => Denied,
+        };
     }
 
     private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)

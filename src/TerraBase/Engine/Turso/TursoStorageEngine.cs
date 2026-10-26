@@ -479,7 +479,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented document, feed and shape SELECT executions, by path (point, query, feed, shape, shape_body).");
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
-            "How long a database's writer was held, by holder kind (a bounded set of names).",
+            "How long a database's writer was held, by holder kind and call site (bounded sets of names and file:line).",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _logger = logger;
         _shutdownGrace = shutdownGrace;

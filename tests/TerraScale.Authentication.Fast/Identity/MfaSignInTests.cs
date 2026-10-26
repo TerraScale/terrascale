@@ -136,6 +136,7 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
         var policy = $"{Organizations}/{organization}/mfa-policy";
         await Assert.That(await oidc.FailAsync(HttpMethod.Put, policy, ownerToken, new { require_mfa = true })).IsEqualTo((409, "mfa_not_enrolled"));
 
+        clock.UtcNow += HostedAuth.MailCooldown;
         var session = await oidc.SignInAsync(owner.Email);
         var (secret, _, enrolled) = await EnrolAsync(oidc, session, clock);
         var (verifier, pkce) = OidcHarness.Pkce();
@@ -167,6 +168,7 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
         }
 
         // Once the member enrols, the organization opens again; the owner's audit log has both changes.
+        clock.UtcNow += HostedAuth.MailCooldown;
         var memberSession = await oidc.SignInAsync(member.Email);
         var (_, _, memberEnrolled) = await EnrolAsync(oidc, memberSession, clock);
         var (memberVerifier, memberPkce) = OidcHarness.Pkce();

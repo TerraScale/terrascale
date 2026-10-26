@@ -166,20 +166,31 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
     public async ValueTask<ImportResult> GetAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
-        var read = await ReadAsync(database, cancellationToken).ConfigureAwait(false);
-        if (read is ImportRecords records && records.State.State is ImportStates.Analyzing or ImportStates.Queued or ImportStates.Running or ImportStates.Validating
-            && staging.Has(records.Job.DatabaseId))
+        var gate = Lock(database);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            // A job whose runner is gone (another machine, a lost volume) gets picked up again here.
-            queue.Ensure(database, name, records.State.State == ImportStates.Analyzing);
-        }
+            // State and staged bytes form one response: a checksum retry persists awaiting_source
+            // before discarding the source, under this same gate. Never expose that intermediate state.
+            var read = await ReadAsync(database, cancellationToken).ConfigureAwait(false);
+            if (read is ImportRecords records && records.State.State is ImportStates.Analyzing or ImportStates.Queued or ImportStates.Running or ImportStates.Validating
+                && staging.Has(records.Job.DatabaseId))
+            {
+                // A job whose runner is gone (another machine, a lost volume) gets picked up again here.
+                queue.Ensure(database, name, records.State.State == ImportStates.Analyzing);
+            }
 
-        return read switch
+            return read switch
+            {
+                ImportRecords found => Body(found),
+                NotFound error => error,
+                Unavailable error => error,
+            };
+        }
+        finally
         {
-            ImportRecords found => Body(found),
-            NotFound error => error,
-            Unavailable error => error,
-        };
+            gate.Release();
+        }
     }
 
     public async ValueTask<ImportResult> UploadAsync(TenantContext database, string name, long offset, long length, Stream body, CancellationToken cancellationToken)

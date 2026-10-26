@@ -214,6 +214,13 @@ public static class App
             context.Response.OnStarting(() =>
             {
                 BrowserSecurity.ApplyResponseHeaders(context.Response, options.PublicOrigin.Scheme == Uri.UriSchemeHttps);
+                if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == UserInfoEndpoint.RouteName)
+                {
+                    // Registered before authentication; survives protocol failures and the error envelope's Clear().
+                    context.Response.Headers.CacheControl = "no-store";
+                    context.Response.Headers.Pragma = "no-cache";
+                }
+
                 return Task.CompletedTask;
             });
             return next(context);
@@ -222,6 +229,8 @@ public static class App
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
         // Inside the envelope, so a failing page still answers 500; only empty, unstarted responses reach the handler.
         app.UseStatusCodePages(NotFoundPage.HandleAsync);
+        // Ahead of the rate-limit guards: their storage writes stall with every other write.
+        app.UseMiddleware<TokenEndpointDeadline>();
         TokenRateLimitMiddleware.UsePeerGuard(app);
         if (options.TrustedProxies.Count > 0)
         {

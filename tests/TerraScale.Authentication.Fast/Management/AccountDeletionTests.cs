@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
@@ -67,7 +68,8 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
     [Test]
     public async Task Deleting_an_account_deletes_its_own_organizations_leaves_shared_ones_and_frees_the_email()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var (alice, session, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
         var aliceToken = tokens.GetProperty("access_token").GetString()!;
@@ -103,6 +105,7 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
 
         // The email is unknown, and signs up again as a new account.
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().FindByEmailAsync("terrascale", "alice@example.test")).IsNull();
+        clock.Advance(HostedAuth.MailCooldown);
         var (again, againToken) = await oidc.SignInUserAsync("alice@example.test");
         await Assert.That(again.Id).IsNotEqualTo(alice.Id);
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, Organizations, againToken)).GetProperty("items").GetArrayLength()).IsEqualTo(0);

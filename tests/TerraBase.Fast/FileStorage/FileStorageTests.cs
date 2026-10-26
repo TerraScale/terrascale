@@ -4,7 +4,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.FileStorage;
+using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -12,6 +14,38 @@ namespace TerraBase.Fast.FileStorage;
 
 public sealed class FileStorageTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Empty_bucket_deletion_does_not_require_a_file_collection(bool missingCollection)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await WebhookApi.StartAsync(token);
+        var path = $"/v1/projects/{api.Database.Project}/buckets";
+        var rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, []));
+        string id;
+        if (missingCollection)
+        {
+            // Earlier bucket creation persisted its record without registering the empty file collection.
+            id = DocumentApi.NewId();
+            var store = await api.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+            await using var transaction = await store.BeginTransactionAsync(write: true, token);
+            await SystemCatalog.PutAsync(transaction, SystemCatalog.ProjectState(api.Database.Project) + "file-buckets", id,
+                new FileBucket(id, "files", "test-region", rules), TerraBaseJsonContext.Default.FileBucket, token);
+            _ = await transaction.CommitAsync(token);
+        }
+        else
+        {
+            var created = await Send(api.Client, HttpMethod.Post, path, new { name = "files", rules });
+            await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+            id = created.Json.GetProperty("id").GetString()!;
+        }
+        await Assert.That((await Send(api.Client, HttpMethod.Get, path + "/" + id + "/files")).Json.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await Send(api.Client, HttpMethod.Delete, path + "/" + id)).Status).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That((await Send(api.Client, HttpMethod.Get, path)).Json.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await Send(api.Client, HttpMethod.Delete, path + "/" + id)).Status).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
     [Test]
     public async Task Owner_upload_is_hidden_until_verified_and_second_user_gets_403()
     {

@@ -1224,6 +1224,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
+        '503':
+          description: temporarily_unavailable; the request could not be checked, or storage did not answer within 10 seconds (then with Retry-After).
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
 components:
   securitySchemes:
     platformUser:

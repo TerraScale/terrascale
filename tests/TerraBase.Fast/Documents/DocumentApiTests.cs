@@ -25,6 +25,7 @@ public sealed class DocumentApiTests
         const string Json = DocumentRoute.JsonMediaType;
         const string Ops = DocumentPatch.OpsMediaType;
         const string BadDatabase = "database must be a lowercase name of at most 63 characters";
+        const string BadDatabaseSelector = "database must be a canonical uppercase ULID or lowercase name of at most 63 characters";
         const string UnknownDatabase = "the database does not exist";
         var deepPath = string.Concat(Enumerable.Repeat("/a", 17));
         var tombstone = await api.GetAsync(deleted);
@@ -32,7 +33,7 @@ public sealed class DocumentApiTests
 
         (ApiResponse Response, HttpStatusCode Status, string Code, string Message)[] cases =
         [
-            (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/Not-Valid/collections"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
+            (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/Not-Valid/collections"), HttpStatusCode.BadRequest, "invalid_request", BadDatabaseSelector),
             (await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not-Valid"), HttpStatusCode.BadRequest, "invalid_request", BadDatabase),
             (await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/missing/collections"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),
             (await api.SendAsync(HttpMethod.Put, $"/v1/projects/{EntityIds.New()}/databases/fresh"), HttpStatusCode.NotFound, "unknown_database", UnknownDatabase),

@@ -1,10 +1,13 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
@@ -149,6 +152,39 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).IsEqualTo((401, "invalid_client"));
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{keys}/{id}", token)).IsEqualTo((404, "not_found"));
+    }
+
+    [Test]
+    public async Task Keys_stored_without_secret_bindings_exchange_and_rotate_without_a_step_up_proof()
+    {
+        // #699 refused every key whose record had no sign-in lineage with invalid_client, and demanded a step-up proof to
+        // create or rotate one. Keys written before it carry no binding fields; keys it wrote for such sign-ins carry empty lists.
+        await using var oidc = await StartAsync();
+        var (_, token) = await oidc.SignInUserAsync("legacy@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var keys = $"{Organizations}/{organization}/api-keys";
+        var key = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "legacy", scopes = ReadOnly }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+        var id = key[..26];
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        foreach (var emptyLists in new[] { false, true })
+        {
+            var stored = (await store.GetAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, id))!;
+            var record = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
+            record.Remove("secretBindings");
+            record.Remove("previousSecretBindings");
+            if (emptyLists)
+            {
+                record["secretBindings"] = new JsonArray();
+                record["previousSecretBindings"] = new JsonArray();
+            }
+
+            await Assert.That(await store.ReplaceAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, id, TerraBaseFixture.Json(record.ToJsonString()), stored.Version)).IsNotNull();
+            await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).IsEqualTo((200, null));
+        }
+
+        var rotated = (await oidc.OkAsync(HttpMethod.Post, $"{keys}/{id}/rotate", token, new { previous_secret_ttl = 0 })).GetProperty("key").GetString()!;
+        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(rotated))).IsEqualTo((200, null));
+        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).IsEqualTo((401, "invalid_client"));
     }
 
     [Test]
@@ -455,7 +491,8 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     [Test]
     public async Task Users_exchange_their_sign_in_for_organization_and_project_tokens_their_role_allows()
     {
-        await using var oidc = await StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock);
         var (alice, _, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
         var aliceToken = tokens.GetProperty("access_token").GetString()!;
         var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
@@ -515,6 +552,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(tokens.GetProperty("id_token").GetString()!, new() { ["organization"] = organization }))).Status).IsEqualTo(400);
 
         // A sign-in never carries TerraBase or billing scopes, although the dashboard holds their permissions.
+        clock.Advance(HostedAuth.MailCooldown);
         var (_, challenge) = OidcHarness.Pkce();
         using (var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid documents:write"), await oidc.SignInAsync("bob@example.test")))
         {
@@ -580,7 +618,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(new DateTimeOffset(shortToken.ValidTo, TimeSpan.Zero)).IsLessThanOrEqualTo(expires);
     }
 
-    private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience);
+    private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
 
     private Task<AuthTestServer> StartReplicaAsync(OidcHarness oidc, ManualClock clock) =>
         OidcHarness.StartServerAsync(fixture, oidc.Tenant, oidc.Email, values =>

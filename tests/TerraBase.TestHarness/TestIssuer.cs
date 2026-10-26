@@ -133,6 +133,9 @@ public sealed class TestIssuer : IDisposable
 
     public bool StatusAvailable { get; set; } = true;
 
+    /// <summary>False stands in for a ts-auth that predates key status: <c>/api-keys/self</c> answers 404.</summary>
+    public bool StatusServed { get; set; } = true;
+
     public static string KeyGeneration(string key) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16];
 
     public void ExpireClient(string key)
@@ -428,6 +431,11 @@ public sealed class TestIssuer : IDisposable
             if (!StatusAvailable)
             {
                 throw new HttpRequestException("test key status unavailable");
+            }
+
+            if (!StatusServed)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
             }
 
             var jwt = authorization?.StartsWith("Bearer ", StringComparison.Ordinal) == true ? new JsonWebToken(authorization[7..]) : null;

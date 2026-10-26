@@ -80,8 +80,8 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
 
             for (var attempt = 0; attempt < Passcodes.MaxIssuesPerWindow; attempt++)
             {
-                // Sign-in code mail has no cooldown, but still spends the same hourly budget as reset mail.
-                if (attempt > 1)
+                // All mail starts share the cooldown and still spend the same hourly budget.
+                if (attempt > 0)
                 {
                     clock.Advance(HostedAuth.MailCooldown);
                 }
@@ -103,17 +103,18 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(OidcHarness.SessionCookie(hosted)).IsNull();
             var page = await hosted.Content.ReadAsStringAsync();
             await Assert.That(page).Contains($"<form method=\"post\" action=\"{SignIn}\">");
-            await Assert.That(page).DoesNotContain($"action=\"{SignIn}/verify\"");
-            await Assert.That(page).Contains("id=\"sign-in-email\"");
-            await Assert.That(page).DoesNotContain("id=\"sign-in-code\"");
-            await Assert.That(page).DoesNotContain("Check your email");
+            await Assert.That(page).Contains($"action=\"{SignIn}/verify\"");
+            await Assert.That(page).DoesNotContain("id=\"sign-in-email\"");
+            await Assert.That(page).Contains("id=\"sign-in-code\"");
+            await Assert.That(page).Contains("This request sent no new code.");
             await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
             await Assert.That(page).Contains($"value=\"{email.ToUpperInvariant()}\"");
             await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
             await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {hosted.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+            clock.Advance(HostedAuth.MailCooldown);
             using var reset = await oidc.PostFormAsync(Reset, new() { ["email"] = email });
             await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(reset.Headers.RetryAfter!.Delta).IsEqualTo(remaining);
+            await Assert.That(reset.Headers.RetryAfter!.Delta).IsEqualTo(remaining - HostedAuth.MailCooldown);
         }
     }
 
@@ -208,10 +209,10 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
         var page = await refused.Content.ReadAsStringAsync();
         await Assert.That(page).Contains($"<form method=\"post\" action=\"{SignIn}\">");
-        await Assert.That(page).DoesNotContain($"action=\"{SignIn}/verify\"");
-        await Assert.That(page).Contains("id=\"sign-in-email\"");
-        await Assert.That(page).DoesNotContain("id=\"sign-in-code\"");
-        await Assert.That(page).DoesNotContain("Check your email");
+        await Assert.That(page).Contains($"action=\"{SignIn}/verify\"");
+        await Assert.That(page).DoesNotContain("id=\"sign-in-email\"");
+        await Assert.That(page).Contains("id=\"sign-in-code\"");
+        await Assert.That(page).Contains("This request sent no new code.");
         await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
         await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {refused.Headers.GetValues("Retry-After").Single()} seconds.</p>");
         await Assert.That(oidc.Email.HasPending).IsFalse();

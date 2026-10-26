@@ -1,5 +1,6 @@
 using System.Net;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -73,7 +74,8 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     [Test]
     public async Task Logout_revokes_the_session_and_continues_only_to_a_registered_uri()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         await oidc.CreateUserAsync();
         var session = await oidc.SignInAsync("alice@example.test");
         var (_, challenge) = OidcHarness.Pkce();
@@ -101,6 +103,7 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         await Assert.That(after.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
 
+        clock.Advance(HostedAuth.MailCooldown);
         var second = await oidc.SignInAsync("alice@example.test");
         using var page = await oidc.AuthorizeAsync($"/{OidcIssuer.Slug}/oauth/logout", second);
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);

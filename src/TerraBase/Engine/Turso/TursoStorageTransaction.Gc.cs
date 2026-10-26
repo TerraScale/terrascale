@@ -108,6 +108,7 @@ internal sealed partial class TursoStorageTransaction
 
     private void AdvanceCollectedBefore(Hlc horizon)
     {
+        _collected = true;
         var command = Command("UPDATE _tb_gc_floor SET stamp = max(stamp, $stamp) WHERE id = 1;");
         command.Parameters.AddWithValue("$stamp", Version(horizon));
         command.ExecuteNonQuery();
@@ -239,6 +240,7 @@ internal sealed partial class TursoStorageTransaction
             forgotten++;
         }
 
+        _collected |= forgotten > 0;
         if (!refill && forgotten > 0)
         {
             AdvanceCollectedBefore(horizon);

@@ -46,7 +46,7 @@ internal static class HostedPageBehavior
     });
     group.append(toggle);
   });
-  document.querySelectorAll('input.code[name="code"]').forEach(function (value) {
+  document.querySelectorAll('input.code[name="code"][pattern="[0-9]{6}"][maxlength="6"]').forEach(function (value) {
     var group = document.createElement('div'), digits = [], label = document.querySelector('label[for="' + value.id + '"]');
     group.className = 'otp'; group.setAttribute('role', 'group');
     group.setAttribute('aria-label', label ? label.textContent : 'Verification code');

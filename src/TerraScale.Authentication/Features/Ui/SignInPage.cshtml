@@ -11,7 +11,14 @@ case SignInStep.Password:
 <p class="sub">@(Model.Theme.Passcode ? "Or get a one-time code by email." : "Use the password for your account.")</p>
 break;
 case SignInStep.Code:
+@if (Model.Limited)
+{
+<p class="sub">This request sent no new code. If you already received a sign-in code for <strong>@Model.Email</strong>, enter it below.</p>
+}
+else
+{
 <p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+}
 <p class="sub">If this code recovers access after repeated requests, using it signs out your older sessions.</p>
 break;
 case SignInStep.Continue:
@@ -215,6 +222,7 @@ case SignInStep.Rejected:
 {
 <p class="hint">Error code: @detail</p>
 }
+<a class="btn" href="@Model.Link("sign-in")">Back to sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignUp:
 <form id="sign-up-form" name="sign-up-form" method="post" action="/ui/@Model.Slug/sign-up">

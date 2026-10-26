@@ -509,18 +509,14 @@ internal sealed class TursoChangeTap : IWalTap
     }
 
     // Deletes the rows before the anchor that the peer streams also let go of: the rows they have not acknowledged stay
-    // (TursoStorageTransaction.Retention). Turso does not capture changes to turso_cdc itself.
+    // (TursoStorageTransaction.Trim, a bounded batch a call). Turso does not capture changes to turso_cdc itself.
     private bool Truncate(TursoSession writer)
     {
-        using var command = writer.Connection.CreateCommand();
         var now = _time.GetUtcNow().ToUnixTimeSeconds();
         // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25); the catalog has no shapes.
         var hold = _store.RequiresRemoteProof && !_store.IsSystem ? TursoStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
-        command.CommandText = TursoStorageTransaction.Retention;
-        command.Parameters.AddWithValue("$below", Math.Min(_anchor, hold ?? long.MaxValue));
-        command.Parameters.AddWithValue("$now", now);
-        command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
-        command.ExecuteNonQuery();
+        _ = TursoStorageTransaction.Trim(writer.Connection, null, Math.Min(_anchor, hold ?? long.MaxValue), now,
+            _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
         return true;
     }
 

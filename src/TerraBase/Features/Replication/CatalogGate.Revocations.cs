@@ -11,9 +11,8 @@ internal sealed partial class CatalogGate
 {
     internal const string Revocations = "catalog_revocations";
 
-    // A revocation snapshot holds this catalog's writer for the whole copy: minutes for a large catalog over the WAN, stalling
-    // the streams that deliver the same markers. So the first attempt is short, a failed one waits before the next while those
-    // streams catch up (a rolling restart misses only seconds of markers), and each cut-off attempt doubles the next one's
+    // A revocation snapshot stages the whole copy before atomic replay. The first attempt is short; a failed one waits
+    // before the next while the streams deliver the same markers. Each cut-off attempt doubles the next one's
     // budget up to the snapshot's own deadline, so a fresh catalog or one with an offline witness still completes.
     internal static readonly TimeSpan SnapshotBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MaxSnapshotBudget = TimeSpan.FromMinutes(10);

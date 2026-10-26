@@ -512,10 +512,10 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         {
             await RefusedAsync(userInfo, accessStatus);
             await Assert.That(await userInfo.Content.ReadAsStringAsync()).DoesNotContain("alice@example.test");
+            await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
+            await Assert.That(userInfo.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
             if (accessStatus == HttpStatusCode.ServiceUnavailable)
             {
-                await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
-                await Assert.That(userInfo.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
                 await Assert.That(await OidcHarness.ErrorAsync(userInfo)).IsEqualTo("temporarily_unavailable");
             }
         }

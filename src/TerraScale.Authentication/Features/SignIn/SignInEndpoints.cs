@@ -59,7 +59,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared sign-in limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -89,11 +89,9 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
             return sso;
         }
 
-        if ((await hosted.LimitIpAsync(ip, mails: true, cancellationToken)
-            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: true, cancellationToken)) is { } wait)
+        if (await hosted.LimitMailAsync(address, ip, cancellationToken) is { } wait)
         {
-            return SignInFlow.Limited(this.HttpContext, this.HttpContext.Request.Form["resend"] == "true" ? SignInStep.Code : SignInStep.Email,
-                wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
         }
 
         if (await passcodes.RequestAsync(SignInFlow.Tenant(this.HttpContext), address, cancellationToken) is { } issued)

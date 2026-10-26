@@ -64,6 +64,20 @@ internal sealed partial class TursoStorageTransaction
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
+    // A snapshot witness proves an origin's received prefix, not that the origin itself is alive. In particular, do not
+    // revive a retired epoch's seen=0 row with stable=0: that would pin GC and CDC retention on every recovery attempt.
+    internal async ValueTask RecordSnapshotAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken)
+    {
+        _ = await RunAsync(() =>
+        {
+            ThrowIfReadOnly();
+            var command = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, $applied, 0, 0, 0) ON CONFLICT(node) DO UPDATE SET applied = max(applied, excluded.applied);");
+            command.Parameters.AddWithValue("$node", unchecked((long)origin.Value));
+            command.Parameters.AddWithValue("$applied", Version(applied));
+            return command.ExecuteNonQuery();
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
     // Worker-only, inside a mutation.
     private bool Join(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken, bool baseline = false)
     {

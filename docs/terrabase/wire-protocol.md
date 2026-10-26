@@ -27,12 +27,16 @@ Statuses are the HTTP API's (200, 201, 400, 401, 403, 404, 409, 421, 429, 503, .
 | `0` hello | `u8 version` (1), then three `u16`-length UTF-8 strings: API key, project ULID, database name | 200, `u8 version` |
 | `1` get | `u8 collection length`, collection, the document's 26-character ULID | 200, `u8 ETag length`, ETag, the stored JSON document |
 | `2` put | as get, then `u8 durability` (0 `local_durable`, 1 `remote_durable`, as the HTTP API's `TB-Durability`), then the JSON document (an object of at most 1 MiB) | 201 (created) or 200, `u8 durability` (0 `local_durable`, 1 `remote_durable`), `u8 ETag length`, ETag |
+| `3` delete | as get, then `u8 durability` (0 `local_durable`, 1 `remote_durable`), with no JSON | 200, `u8 durability`, `u8 ETag length`, tombstone ETag; 404 when absent |
 
-v1 carries point gets and unconditional puts only: no preconditions (`If-Match`), deletes, patches, lists or queries; those
+v1 carries point gets, unconditional puts and unconditional deletes: no preconditions (`If-Match`), patches, lists or queries; those
 stay on the HTTP API. Any other operation answers `400 unknown_operation` and the connection stays open. A frame is at most 1 MiB + 1 KiB
 (4 KiB before the hello is accepted). A frame out of those bounds answers `400 invalid_frame` with request id 0 and closes
 the connection. The memory budget admits each frame before it is read (`429 tenant_memory` with request id 0 otherwise,
 which also closes the connection).
+
+Operation `3` is an additive extension: older nodes refuse it with `400 unknown_operation`; GET and PUT are unchanged.
+Invalid delete bodies return `400` for the request and keep the session open, including `invalid_frame` for trailing bytes.
 
 ## Handshake and authorization
 
@@ -40,7 +44,7 @@ The first frame must be a hello for version 1, sent within 10 seconds; anything 
 closes. The API key is checked as on the HTTP client listener: the key exists, has not expired and grants
 `documents:read`; the database is in the key's reach (organization, and project and database when the key is narrowed);
 the database is placed in this region (`421 wrong_region` otherwise). A refused hello answers its error and closes. Puts
-also need `documents:write`. ts-auth project tokens are not accepted.
+and deletes also need `documents:write`. ts-auth project tokens are not accepted.
 
 The connection keeps its authorization while the system catalog has not committed since it was checked. After any catalog
 commit (a revocation, a deletion, a placement change, or any other catalog write, local or replicated) and at the key's

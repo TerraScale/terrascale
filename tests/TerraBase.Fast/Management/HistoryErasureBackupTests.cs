@@ -30,6 +30,104 @@ public sealed class HistoryErasureBackupTests
     private static readonly TenantContext Auth = HistoryErasures.AuthDatabase;
 
     [Test]
+    [Timeout(300_000)]
+    public async Task Staggered_erasures_share_each_files_rewrite_window_and_all_complete(CancellationToken cancellationToken)
+    {
+        await using var host = new Host();
+        RecordingRewrite recording = null!;
+        await using var api = await host.StartAsync(services => services.AddSingleton<IHealthyRewrite>(provider =>
+            recording = new RecordingRewrite(provider.GetRequiredService<TursoStorageEngine>(), host.Clock)));
+        await Host.SeedAsync(api);
+        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+        List<(string Fence, string Erasure, DateTimeOffset Requested)> erasures = [];
+
+        async Task<HistoryErasureStatus> RequestAsync(string erasure, DateTimeOffset requested, string? token = null)
+        {
+            using var response = await api.Server.Client.PutAsJsonAsync(new Uri("/admin/history-erasures/" + erasure, UriKind.Relative),
+                new HistoryErasureRequest(1, requested, token), Hosting.TerraBaseJsonContext.Default.HistoryErasureRequest, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync(Hosting.TerraBaseJsonContext.Default.HistoryErasureStatus, cancellationToken))!;
+        }
+
+        for (var index = 0; index < 3; index++)
+        {
+            var (fence, erasure, requested) = (Id(), Id(), host.Clock.GetUtcNow());
+            erasures.Add((fence, erasure, requested));
+            await Host.PutAsync(api, Jobs, fence, """{"scope":"account"}""");
+            await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
+            await RequestAsync(erasure, requested);
+            await Host.PassAsync(api);
+            var settled = await RequestAsync(erasure, requested);
+            await Assert.That(settled.SettlementToken).IsNotNull();
+            await RequestAsync(erasure, requested, settled.SettlementToken);
+            await Host.PassAsync(api);
+            await Assert.That(recording.Starts.Count(call => call.Database is not null)).IsEqualTo(1);
+            await Assert.That(recording.Starts.Count(call => call.Database is null)).IsEqualTo(1);
+            await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(index == 0 ? HistoryErasure.Residue : HistoryErasure.Rewriting);
+            host.Clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        host.Clock.Advance(TimeSpan.FromMinutes(7) - TimeSpan.FromTicks(1));
+        await Host.PassAsync(api);
+        await Assert.That(recording.Starts.Count).IsEqualTo(2);
+        host.Clock.Advance(TimeSpan.FromTicks(1));
+        await Host.PassAsync(api);
+        await Assert.That(recording.Starts.Count).IsEqualTo(4).Because("one auth/SYSTEM pair covers both later final cuts");
+        var second = await Host.OwnAsync(api, erasures[1].Erasure);
+        var third = await Host.OwnAsync(api, erasures[2].Erasure);
+        await Assert.That(second.Auth).IsEqualTo(third.Auth);
+        await Assert.That(second.System).IsEqualTo(third.System);
+
+        host.Clock.Advance(TimeSpan.FromDays(8));
+        await Host.CollectAndTrimAsync(api);
+        await Host.PassAsync(api);
+        await Assert.That(recording.Starts.Count).IsEqualTo(5).Because("residue is also batched");
+        await DaysOfBackupAsync(host, backup, 3);
+        await Host.PassWithBackupAsync(api, backup);
+        await DaysOfBackupAsync(host, backup, 15);
+        await Host.PassWithBackupAsync(api, backup);
+        foreach (var (fence, erasure, requested) in erasures)
+        {
+            var status = await RequestAsync(erasure, requested);
+            await Assert.That(status.Status).IsEqualTo(HistoryErasure.Retire);
+            await Assert.That(status.ActiveDueAt).IsEqualTo(requested.AddDays(30));
+            await Assert.That(status.BackupDueAt).IsEqualTo(requested.AddDays(31));
+            await Assert.That(host.Clock.GetUtcNow()).IsLessThan(status.BackupDueAt);
+            await Assert.That(status.ActiveOverdue || status.BackupOverdue).IsFalse();
+            await Host.RetireAsync(api, fence, erasure);
+        }
+
+        await Host.PassWithBackupAsync(api, backup);
+        host.Clock.Advance(TimeSpan.FromDays(8));
+        await Host.CollectAndTrimAsync(api);
+        await Host.PassWithBackupAsync(api, backup);
+        foreach (var (_, erasure, requested) in erasures)
+        {
+            await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(HistoryErasure.Complete);
+        }
+
+        await Assert.That(recording.Starts.Count).IsEqualTo(6).Because("four auth rewrites and two SYSTEM rewrites complete three erasures");
+        foreach (var file in recording.Starts.GroupBy(call => call.Database is null))
+        {
+            foreach (var (earlier, later) in file.Zip(file.Skip(1)))
+            {
+                await Assert.That(later.Started - earlier.Started).IsGreaterThanOrEqualTo(TimeSpan.FromMinutes(10));
+            }
+        }
+    }
+
+    private sealed class RecordingRewrite(IHealthyRewrite engine, TimeProvider clock) : IHealthyRewrite
+    {
+        public List<(TenantContext? Database, DateTimeOffset Started)> Starts { get; } = [];
+
+        public ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
+        {
+            Starts.Add((database, clock.GetUtcNow()));
+            return engine.RewriteAsync(database, minimumOffset, cancellationToken);
+        }
+    }
+
+    [Test]
     public async Task An_offline_listed_holder_keeps_erasure_and_purge_pending_and_the_age_gauges_cross_day_20()
     {
         await using var host = new Host();
@@ -223,10 +321,22 @@ public sealed class HistoryErasureBackupTests
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark).Because("its own rewrite is no restore: no new fence marker");
 
         Volatile.Write(ref refusing, 0);
-        // Past the first backoff (10 s) and its jitter (up to a quarter more).
-        host.Clock.Advance(TimeSpan.FromSeconds(13));
+        // The per-file start interval also covers refusals, beyond the first backoff and its jitter.
+        host.Clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromTicks(1));
+        await Host.PassAsync(api);
+        await Assert.That(systemAttempts).IsEqualTo(1);
+        host.Clock.Advance(TimeSpan.FromTicks(1));
         await Host.PassAsync(api);
         own = await Host.OwnAsync(api, erasure);
+        // Ten minutes of backup shipping can hold native readers past auth's drain; that refusal waits one more window.
+        for (var window = 0; window < 3 && own.Phase != HistoryErasure.Rewritten; window++)
+        {
+            host.Clock.Advance(TimeSpan.FromMinutes(10));
+            await Host.PassAsync(api);
+            own = await Host.OwnAsync(api, erasure);
+        }
+
+        await Assert.That(systemAttempts).IsGreaterThanOrEqualTo(2);
         await Assert.That(own.Phase).IsEqualTo(HistoryErasure.Rewritten);
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark);
         await Assert.That(own.Auth!.Source).IsEqualTo(auth.ToString()).Because("the second auth rewrite replaced exactly the file its coverage read");

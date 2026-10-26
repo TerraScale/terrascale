@@ -9,6 +9,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Social;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Tests;
@@ -153,7 +154,8 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
     public async Task Profile_lists_providers_and_unlinks_only_after_a_fresh_email_code()
     {
         using var fake = new Provider("github");
-        await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, services: fake.Route, clock: clock);
         var start = await StartAsync(oidc.Client, "github");
         using var signedIn = await CompleteAsync(oidc.Client, "github", start);
         var session = OidcHarness.SessionCookie(signedIn)!;
@@ -177,6 +179,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         var user = (await oidc.Server.App.Services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!;
         await Assert.That(user.LinkedProviders.Count).IsEqualTo(0);
+        clock.Advance(HostedAuth.MailCooldown);
         await Assert.That(await oidc.SignInAsync(fake.Email)).IsNotNull();
     }
 

@@ -60,6 +60,11 @@ public static class ApiReferenceExtensions
                 foreach (var parameter in context.Description.ActionDescriptor.EndpointMetadata.OfType<OpenApiParameter>())
                 {
                     operation.Parameters ??= [];
+                    foreach (var inferred in operation.Parameters.Where(value => value.In == parameter.In && value.Name == parameter.Name).ToArray())
+                    {
+                        operation.Parameters.Remove(inferred);
+                    }
+
                     operation.Parameters.Add(parameter);
                 }
 
