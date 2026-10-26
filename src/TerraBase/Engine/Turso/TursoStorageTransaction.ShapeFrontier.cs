@@ -360,7 +360,7 @@ internal sealed partial class TursoStorageTransaction
 
     /// <summary>
     /// The change id CDC retention may delete below without taking rows the frontier has not walked yet (null: no hold).
-    /// The hold has a peer's own bounds (see <see cref="Retention"/> and <see cref="TrimAsync"/>): it lasts while the row
+    /// The hold has a peer's own bounds (see <see cref="RetentionCut"/> and <see cref="TrimAsync"/>): it lasts while the row
     /// after the walked prefix is younger than 24 h when any peer has been heard from, else 60 s (a peer
     /// whose stream has not arrived yet), and while the unwalked rows stay within both the far-behind row and byte bounds.
     /// The measurement reads at most one row beyond the row bound. Past either bound, or once

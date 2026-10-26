@@ -4,6 +4,7 @@ using System.Text.Json;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
@@ -20,12 +21,12 @@ internal sealed partial class TursoStorageTransaction
     private const long MaxUnknownReplayBytes = 64L * 1024 * 1024;
 
     /// <summary>
-    /// Deletes the CDC rows of a client database that are shipped (docs/terrabase/multi-region-replication.md section 7):
-    /// below the newest commit row that every peer heard from since <c>$gone</c> (Unix ms; 24 h ago, see
+    /// The cut below which retention deletes the CDC rows that are shipped (docs/terrabase/multi-region-replication.md section 7):
+    /// the newest commit row that every peer heard from since <c>$gone</c> (Unix ms; 24 h ago, see
     /// <see cref="LocalReplica.GoneBefore"/>) acknowledged, continuous backup read (at or
     /// below <c>$below</c>), and, once the database has peers, that committed at least 60 s before <c>$now</c> (Unix
     /// seconds). The 60 s hold covers a peer whose stream has not reached the database yet, so it has no <c>_tb_peers</c>
-    /// row; a database without peers keeps nothing back, and a peer that holds no row for longer refills (section 10). Deleting below a commit row keeps whole transactions and the newest row, since an empty
+    /// row; a database without peers keeps nothing back, and a peer that holds no row for longer refills (section 10). Deleting below a commit row keeps whole transactions above it and the newest row, since an empty
     /// <c>turso_cdc</c> restarts its ids at 1 after a reopen.
     /// <para>
     /// A peer's ack holds a row for at most 24 h after the row committed (its persisted <c>change_time</c>): <c>seen</c> is
@@ -37,9 +38,12 @@ internal sealed partial class TursoStorageTransaction
     /// oldest is younger than 24 h, an ack only reads that row. An evicted peer (<c>seen</c> 0, see <see cref="TrimAsync"/>)
     /// holds nothing, during the 24 h after a start too.
     /// </para>
+    /// <para>
+    /// One call deletes a bounded prefix of that (<see cref="Trim"/>), and later passes and acks delete the rest.
+    /// </para>
     /// </summary>
-    internal const string Retention = $"""
-        DELETE FROM turso_cdc WHERE change_id < max(coalesce((
+    private const string RetentionCut = $"""
+        SELECT max(coalesce((
             SELECT change_id FROM turso_cdc
             WHERE change_id <= min($below, coalesce((SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone), $below))
                 AND change_type = 2 AND (change_time <= $now - 60 OR NOT EXISTS (SELECT 1 FROM _tb_peers))
@@ -50,6 +54,62 @@ internal sealed partial class TursoStorageTransaction
                 (SELECT max(change_id) + 1 FROM turso_cdc))
             ORDER BY change_id DESC LIMIT 1) END, 0));
         """;
+
+    // Rows and after-image bytes one retention delete removes at most: Turso keeps a write transaction's dirty pages in memory
+    // until it commits, so deleting a long backlog in one statement (970k SYSTEM rows left by a freeze) ran a node out of
+    // memory on every pass.
+    private const int RetentionRows = 16_384;
+    private const long RetentionBytes = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// Deletes what <see cref="RetentionCut"/> allows, oldest first, at most <see cref="RetentionRows"/> rows and
+    /// <see cref="RetentionBytes"/> of after-images (at least one row). Reads only rows below the cut. A delete may stop inside
+    /// a transaction: no reader starts below the cut, whose commit row stays, and a peer whose ack the deletion passes
+    /// refills as for any cut (<see cref="RetainsAsync"/>). Returns the rows deleted.
+    /// </summary>
+    internal static int Trim(SqliteConnection connection, SqliteTransaction? transaction, long below, long now, long gone)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = RetentionCut;
+        command.Parameters.AddWithValue("$below", below);
+        command.Parameters.AddWithValue("$now", now);
+        command.Parameters.AddWithValue("$gone", gone);
+        if (command.ExecuteScalar() is not long cut || cut == 0)
+        {
+            return 0;
+        }
+
+        command.Parameters.Clear();
+        command.CommandText = """
+            SELECT change_id, coalesce(octet_length(after), 0) FROM turso_cdc
+            WHERE change_id < $cut ORDER BY change_id LIMIT $rows;
+            """;
+        command.Parameters.AddWithValue("$cut", cut);
+        command.Parameters.AddWithValue("$rows", RetentionRows + 1);
+        var bound = cut;
+        long bytes = 0;
+        var rows = 0;
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                bytes += reader.GetInt64(1);
+                if (rows == RetentionRows || (rows > 0 && bytes > RetentionBytes))
+                {
+                    bound = reader.GetInt64(0);
+                    break;
+                }
+
+                rows++;
+            }
+        }
+
+        command.Parameters.Clear();
+        command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $bound;";
+        command.Parameters.AddWithValue("$bound", bound);
+        return command.ExecuteNonQuery();
+    }
 
     /// <summary>
     /// A <c>_tb_peers</c> row's ack as retention may count it: an ack of another incarnation than the file's names rows of
@@ -112,7 +172,9 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    // Past maxRows rows with no group found it stops at the commit it reached: Quiet is then that commit's id.
+    // Past maxRows rows with no group found it stops, at a commit or inside a transaction: Quiet is then the last commit's id.
+    // Inside one, a transaction of joins holds its document rows until its commit, so a long one (a catalog import) is never
+    // read whole here; an ack waiting below it is released by age (<c>RetentionCut</c>) or as too far behind instead.
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, long maxRows,
         CancellationToken cancellationToken)
     {
@@ -143,6 +205,11 @@ internal sealed partial class TursoStorageTransaction
                     scanned++;
                     from = reader.GetInt64(0);
                     var type = reader.GetInt64(1);
+                    if (groups.Count == 0 && scanned > maxRows && type != 2)
+                    {
+                        return (groups, quiet, first);
+                    }
+
                     // Turso's commit rows carry no table and no after-image, its delete rows no after-image. A row whose type
                     // was damaged into one of those values still has its own table or image: taking it at its type would drop
                     // the write it captured, so the read is refused.
@@ -331,7 +398,7 @@ internal sealed partial class TursoStorageTransaction
     /// a peer more than <see cref="MaxBehindRows"/> change ids behind, or of <paramref name="farBehind"/>
     /// (<see cref="FarBehindAsync"/>: its unacknowledged CDC rows pass 1 GiB), stops
     /// holding them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
-    /// <see cref="Retention"/> allows is deleted, below <paramref name="backupAnchor"/> unless it too is more than
+    /// <see cref="Trim"/> allows is deleted, below <paramref name="backupAnchor"/> unless it too is more than
     /// <see cref="MaxBehindRows"/> change ids behind. Returns the CDC rows left, and the
     /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
     /// the oldest change id kept.
@@ -403,14 +470,11 @@ internal sealed partial class TursoStorageTransaction
                 evict.ExecuteNonQuery();
             }
 
-            var delete = Command(Retention);
             // The backup anchor and the shape frontier hold rows too, but no further back than a peer may: a backup tap that
             // cannot read (or ship) pinned SYSTEM's whole log, whatever its peers acknowledged (TS-982). Its next read finds
             // the rows gone, a hole, and its backup starts a new generation from a snapshot.
-            delete.Parameters.AddWithValue("$below", backupAnchor is { } below && newest - below <= MaxBehindRows ? below : long.MaxValue);
-            delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
-            delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
-            delete.ExecuteNonQuery();
+            _ = Trim(session.Connection, transaction, backupAnchor is { } below && newest - below <= MaxBehindRows ? below : long.MaxValue,
+                now.ToUnixTimeSeconds(), Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
             var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
@@ -485,7 +549,7 @@ internal sealed partial class TursoStorageTransaction
     /// Raises <paramref name="peer"/>'s acknowledged change id of <paramref name="incarnation"/>, or sets it to 0 (a new or
     /// stale row, or one of another incarnation), so its unshipped rows stay, and marks it heard from at
     /// <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Retires outgoing cursors of older
-    /// epochs while retaining their durable received prefixes. Then deletes what <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
+    /// epochs while retaining their durable received prefixes. Then deletes what <see cref="Trim"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
     /// Returns the CDC rows left, and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none);
     /// null, with nothing written, when the file is no longer <paramref name="incarnation"/>.
     /// </summary>
@@ -533,13 +597,10 @@ internal sealed partial class TursoStorageTransaction
             retire.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
             retire.ExecuteNonQuery();
 
-            var delete = Command(Retention);
             // Nor the rows the shape frontier has not walked yet, for a bounded time: this ack's proof comes after it (FR-25).
             var hold = !store.RequiresRemoteProof || store.IsSystem ? null : ShapeFrontierHold(session.Connection, transaction, now.ToUnixTimeSeconds());
-            delete.Parameters.AddWithValue("$below", Math.Min(backupAnchor ?? long.MaxValue, hold ?? long.MaxValue));
-            delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
-            delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
-            delete.ExecuteNonQuery();
+            _ = Trim(session.Connection, transaction, Math.Min(backupAnchor ?? long.MaxValue, hold ?? long.MaxValue),
+                now.ToUnixTimeSeconds(), Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             // change_id is turso_cdc's rowid alias: both ends are seeks, and deleted ids never come back between them.
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
             var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
