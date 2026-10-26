@@ -193,28 +193,96 @@ func completion(shell string, out io.Writer) error {
 		slices.Sort(v)
 		words[k] = slices.Compact(v)
 	}
+	words["completion"] = []string{"bash", "fish", "zsh"}
+	valueFlags := []string{"project", "org", "expires", "allow-cidr", "collection"}
+	var valuePatterns []string
+	flags := "-h -help --help -yes --yes"
+	for _, flag := range valueFlags {
+		valuePatterns = append(valuePatterns, "-"+flag, "--"+flag)
+		flags += " -" + flag + " --" + flag
+	}
 	b := new(strings.Builder)
 	switch shell {
 	case "bash", "zsh":
 		if shell == "zsh" {
-			b.WriteString("autoload -U +X bashcompinit && bashcompinit\n")
+			b.WriteString(`if (( ! $+functions[compdef] )); then
+  autoload -Uz compinit && compinit
+fi
+if (( ! $+functions[complete] )); then
+  autoload -Uz bashcompinit && bashcompinit
+fi
+`)
 		}
-		b.WriteString("_ts() {\n  local words=\"\"\n  case $COMP_CWORD:${COMP_WORDS[1]} in\n")
-		fmt.Fprintf(b, "    1:*) words=%q ;;\n", strings.Join(words[""], " "))
+		b.WriteString("_ts() {\n")
+		if shell == "zsh" {
+			b.WriteString("  emulate -L sh\n")
+		}
+		b.WriteString(`  local words="" cmd="" depth=0 pending=0 token i
+  COMPREPLY=()
+  for ((i=1; i<COMP_CWORD; i++)); do
+    token=${COMP_WORDS[i]}
+    if (( pending )); then
+      [[ $token == = ]] && continue
+      pending=0
+      continue
+    fi
+    case $token in
+`)
+		fmt.Fprintf(b, "      %s) pending=1 ;;\n", strings.Join(valuePatterns, "|"))
+		b.WriteString(`      -*) ;;
+      *) [[ $depth == 0 ]] && cmd=$token; ((depth+=1)) ;;
+    esac
+  done
+  (( pending )) && return 0
+  case ${COMP_WORDS[COMP_CWORD]} in
+`)
+		fmt.Fprintf(b, "    -*) words=%q ;;\n", flags)
+		b.WriteString("    *) case $depth:$cmd in\n")
+		fmt.Fprintf(b, "      0:*) words=%q ;;\n", strings.Join(words[""], " "))
 		for _, k := range slices.Sorted(maps.Keys(words)) {
 			if k != "" {
-				fmt.Fprintf(b, "    2:%s) words=%q ;;\n", k, strings.Join(words[k], " "))
+				fmt.Fprintf(b, "      1:%s) words=%q ;;\n", k, strings.Join(words[k], " "))
 			}
 		}
-		b.WriteString("  esac\n  COMPREPLY=($(compgen -W \"$words\" -- \"${COMP_WORDS[COMP_CWORD]}\"))\n}\ncomplete -F _ts ts\n")
+		b.WriteString("    esac ;;\n  esac\n  for token in $words; do\n    [[ $token == \"${COMP_WORDS[COMP_CWORD]}\"* ]] && COMPREPLY+=(\"$token\")\n  done\n  return 0\n}\ncomplete -F _ts ts\n")
 	case "fish":
-		fmt.Fprintf(b, "complete -c ts -f -n __fish_use_subcommand -a %q\n", strings.Join(words[""], " "))
+		b.WriteString(`function __ts_words
+  set -l args (commandline -opc)
+  set -e args[1]
+  set -l cmd ''
+  set -l depth 0
+  set -l pending 0
+  for token in $args
+    if test $pending -eq 1
+      set pending 0
+      continue
+    end
+    switch $token
+`)
+		fmt.Fprintf(b, "      case %s\n        set pending 1\n", strings.Join(valuePatterns, " "))
+		b.WriteString(`      case '-*'
+        continue
+      case '*'
+        if test $depth -eq 0
+          set cmd $token
+        end
+        set depth (math $depth + 1)
+    end
+  end
+  test $pending -eq 0; or return
+  switch "$depth:$cmd"
+`)
+		fmt.Fprintf(b, "    case '0:*'\n      printf '%%s\\n' %s\n", strings.Join(words[""], " "))
 		for _, k := range slices.Sorted(maps.Keys(words)) {
 			if k != "" {
-				fmt.Fprintf(b, "complete -c ts -f -n '__fish_seen_subcommand_from %s; and test (count (commandline -opc)) -eq 2' -a %q\n",
-					k, strings.Join(words[k], " "))
+				fmt.Fprintf(b, "    case '1:%s'\n      printf '%%s\\n' %s\n", k, strings.Join(words[k], " "))
 			}
 		}
+		b.WriteString("  end\nend\ncomplete -c ts -f -a '(__ts_words)'\n")
+		for _, flag := range valueFlags {
+			fmt.Fprintf(b, "complete -c ts -o %s -l %s -x\n", flag, flag)
+		}
+		b.WriteString("complete -c ts -o yes -l yes\ncomplete -c ts -s h -o help -l help\n")
 	default:
 		return errUsage
 	}
