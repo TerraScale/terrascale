@@ -3,6 +3,7 @@ stay compatible."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +20,7 @@ __all__ = [
     "DatabasePage",
     "SQLResult",
     "SQLStatementResult",
+    "SQLColumn",
     "TransactionResult",
 ]
 
@@ -136,7 +138,9 @@ class Collection:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Collection:
-        return cls(name=body.get("name", ""), raw=body)
+        if not isinstance(body["name"], str) or not body["name"]:
+            raise ValueError("invalid collection name")
+        return cls(name=body["name"], raw=body)
 
 
 @dataclass(frozen=True)
@@ -169,16 +173,18 @@ class Database:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
+        if any(not isinstance(body[k], str) or not body[k] for k in ("name", "createdAt", "region", "homeRegion")):
+            raise ValueError("invalid database metadata")
         return cls(
-            id=body.get("id", ""),
-            project_id=body.get("projectId", ""),
-            name=body.get("name", ""),
-            created_at=body.get("createdAt", ""),
-            region=body.get("region", ""),
-            home_region=body.get("homeRegion", ""),
-            replica_regions=list(body.get("replicaRegions") or []),
-            all_regions=bool(body.get("allRegions")),
-            branched_from=body.get("branchedFrom"),
+            id=validate_id(body["id"]),
+            project_id=validate_id(body["projectId"]),
+            name=body["name"],
+            created_at=body["createdAt"],
+            region=body["region"],
+            home_region=body["homeRegion"],
+            replica_regions=list(body["replicaRegions"]),
+            all_regions=bool(body["allRegions"]),
+            branched_from=body["branchedFrom"],
             raw=body,
         )
 
@@ -213,23 +219,49 @@ class SQLResult:
         )
 
 
+def _sql_integer(value: Any) -> int:
+    if type(value) is not int and (not isinstance(value, str) or not re.fullmatch(r"-?(0|[1-9][0-9]*)", value)):
+        raise ValueError("expected an integer")
+    return int(value)
+
+
+@dataclass(frozen=True)
+class SQLColumn:
+    """SQL column name and declared type (None for an expression)."""
+
+    name: str
+    decltype: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or self.decltype is not None and not isinstance(self.decltype, str):
+            raise ValueError("invalid SQL column")
+
+
 @dataclass(frozen=True)
 class SQLStatementResult:
     """One statement of :meth:`execute`/:meth:`batch`."""
 
-    columns: list[str]
+    columns: list[SQLColumn]
     rows: list[list[Any]]
     rows_affected: int
     last_insert_rowid: int | None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> SQLStatementResult:
-        rowid = body.get("last_insert_rowid")
+        rowid = body["last_insert_rowid"]
+        columns, rows = body["columns"], body["rows"]
+        if not isinstance(columns, list) or not isinstance(rows, list):
+            raise ValueError("expected SQL columns and rows arrays")
+        if any(not isinstance(row, list) or len(row) != len(columns) for row in rows):
+            raise ValueError("invalid SQL row")
+        affected = _sql_integer(body["rows_affected"])
+        if affected < 0:
+            raise ValueError("negative rows affected")
         return cls(
-            columns=list(body.get("columns") or []),
-            rows=list(body.get("rows") or []),
-            rows_affected=int(body.get("rows_affected") or 0),
-            last_insert_rowid=int(rowid) if rowid is not None else None,
+            columns=[SQLColumn(c["name"], c["decltype"]) for c in columns],
+            rows=rows,
+            rows_affected=affected,
+            last_insert_rowid=_sql_integer(rowid) if rowid is not None else None,
         )
 
 

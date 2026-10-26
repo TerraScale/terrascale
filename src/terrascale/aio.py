@@ -272,8 +272,13 @@ class AsyncCollection:
     async def pages(self, filter: dict[str, Any] | None = None, *, sort: Sequence[dict[str, Any]] | None = None,
                     project: Sequence[str] | None = None, limit: int | None = None) -> AsyncIterator[models.Page]:
         cursor = None
+        seen: set[str] = set()
         while True:
             page = await self.query(filter, sort=sort, project=project, limit=limit, cursor=cursor)
+            if page.next_cursor:
+                if page.next_cursor in seen:
+                    raise InvalidResponseError(200, "invalid_response", "repeated pagination cursor")
+                seen.add(page.next_cursor)
             yield page
             if not page.next_cursor:
                 return

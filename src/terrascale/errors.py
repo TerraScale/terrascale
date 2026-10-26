@@ -64,6 +64,8 @@ class APIError(TerraScaleError):
         etag: str | None = None,
         region: str | None = None,
         request_id: str | None = None,
+        statement: int | None = None,
+        sqlite_code: str | None = None,
     ):
         self.status = status
         self.code = code
@@ -74,6 +76,8 @@ class APIError(TerraScaleError):
         self.etag = etag
         self.region = region
         self.request_id: str | None = request_id if is_valid_id(request_id) else None
+        self.statement = statement
+        self.sqlite_code = sqlite_code
         text = f"{status} {code}"
         if message:
             text += f": {message}"
@@ -179,6 +183,8 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         etag=etag,
         region=err.get("region"),
         request_id=response_request_id(headers),
+        statement=err.get("statement") if type(err.get("statement")) is int else None,
+        sqlite_code=err.get("sqlite_code") if isinstance(err.get("sqlite_code"), str) else None,
     )
 
 
