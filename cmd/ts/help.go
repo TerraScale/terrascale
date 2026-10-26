@@ -167,6 +167,8 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "db branch":
+		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"
 	case name == "db delete":
 		options["-expected-id <ULID>"] = "server-enforced identity match; unsupported servers fail closed; no name-only fallback"
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
