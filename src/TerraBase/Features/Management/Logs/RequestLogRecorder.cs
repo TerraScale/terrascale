@@ -34,7 +34,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private int _count;
     private bool _disposed;
 
-    public void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations)
+    public void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null)
     {
         if (!EntityIds.IsValid(database.OrganizationId) || !EntityIds.IsValid(database.ProjectId) || !EntityIds.IsValid(database.DatabaseId)
             || route.Length is 0 or > 512 || route.Contains('?', StringComparison.Ordinal) || route.EndsWith("/logs", StringComparison.Ordinal)
@@ -61,7 +61,8 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             entries ??= [];
             _pending[owner] = entries;
             entries.Add(new(new(EntityIds.New(time).ToString(), time.GetUtcNow(), options.Region, method, route, status,
-                elapsed.TotalMilliseconds, operations, route.EndsWith("/query", StringComparison.Ordinal) || route.EndsWith("/sql", StringComparison.Ordinal)), reserved));
+                elapsed.TotalMilliseconds, operations, route.EndsWith("/query", StringComparison.Ordinal) || route.EndsWith("/sql", StringComparison.Ordinal),
+                TerraScale.Endpoints.RequestIdentity.IsValid(requestId) ? requestId : null), reserved));
             _count++;
         }
     }

@@ -334,6 +334,9 @@ public sealed class QueryCacheIntegrationTests
 
     private sealed class TenantDocuments(IDocumentService inner) : IDocumentService
     {
+        public ValueTask<CollectionSchemaPreviewResult> PreviewCollectionSchemaAsync(TenantContext database, string name, JsonElement schema, string? cursor, CancellationToken cancellationToken) =>
+            inner.PreviewCollectionSchemaAsync(database, name, schema, cursor, cancellationToken);
+
         public int Reads { get; private set; }
 
         public int Writes { get; private set; }

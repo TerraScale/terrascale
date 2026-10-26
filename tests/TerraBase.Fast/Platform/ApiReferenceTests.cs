@@ -92,6 +92,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/collections TsAuth(documents:write) createCollection Collections
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:write) createDocument Documents
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/query TsAuth(documents:read) queryDocuments Queries
+        POST /v1/projects/{project}/databases/{database}/collections/{collection}/schema/preview TsAuth(documents:read,documents:write) previewCollectionSchema Collections
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read,documents:write) createCollectionWebhook Webhooks
         POST /v1/projects/{project}/databases/{database}/functions/{function}/invoke TsAuth(documents:read) invokeFunction Functions
         POST /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) createImport Imports
@@ -204,6 +205,7 @@ public sealed class ApiReferenceTests
             (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,429,503"),
+            (project + "/databases/{database}/collections/{collection}/schema/preview", "post", "200,400,401,403,404,409,413,415,421,503"),
         })
         {
             await Assert.That(string.Join(',', paths.GetProperty(path).GetProperty(method).GetProperty("responses")
@@ -212,6 +214,17 @@ public sealed class ApiReferenceTests
         }
 
         var destination = paths.GetProperty(project + "/backup-destination");
+        var preview = paths.GetProperty(project + "/databases/{database}/collections/{collection}/schema/preview").GetProperty("post");
+        await Assert.That(preview.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "cursor")
+            .GetProperty("in").GetString()).IsEqualTo("query");
+        await Assert.That(preview.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("example")
+            .GetProperty("type").GetString()).IsEqualTo("object");
+        var previewResponses = preview.GetProperty("responses");
+        await Assert.That(previewResponses.GetProperty("409").GetProperty("description").GetString()).Contains("preview_stale");
+        var previewExample = previewResponses.GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("example");
+        await Assert.That(previewExample.GetProperty("schema_hash").GetString()!.Length).IsEqualTo(64);
+        await Assert.That(previewExample.GetProperty("examined").GetInt32()).IsEqualTo(2);
+        await Assert.That(previewExample.GetProperty("complete").GetBoolean()).IsTrue();
         await Assert.That(destination.GetProperty("delete").GetProperty("responses").GetProperty("204").TryGetProperty("content", out _)).IsFalse();
         // Route or query can supply members, so the binder may inline this body with relaxed `required`; accept either form.
         var putSchema = destination.GetProperty("put").GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema");

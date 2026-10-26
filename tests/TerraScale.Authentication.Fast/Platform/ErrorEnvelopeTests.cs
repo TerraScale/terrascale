@@ -34,11 +34,17 @@ public sealed class ErrorEnvelopeTests
     }
 
     [Test]
-    public async Task Unhandled_exceptions_return_the_generic_envelope_without_details()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Unhandled_exceptions_return_the_generic_envelope_without_details(bool trusted)
     {
         await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
-
-        using var response = await server.Client.GetAsync("/__test/crash");
+        var id = TerraScale.Authentication.Store.AuthStore.NewId();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/__test/crash");
+        request.Headers.Add("X-Request-ID", id);
+        request.Headers.Add("X-TerraScale-Request-Proof", TerraScale.Endpoints.RequestIdentity.Sign(id,
+            trusted ? TerraBaseTestServer.PeerSecret : new string('0', 64)));
+        using var response = await server.Client.SendAsync(request);
         var text = await response.Content.ReadAsStringAsync();
         var body = JsonSerializer.Deserialize<JsonElement>(text);
 
@@ -46,6 +52,9 @@ public sealed class ErrorEnvelopeTests
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("internal_error");
         await Assert.That(text).DoesNotContain("hunter2");
         await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+        await Assert.That(TerraScale.Endpoints.RequestIdentity.IsValid(response.Headers.GetValues("X-Request-ID").Single())).IsTrue();
+        await Assert.That(response.Headers.GetValues("X-Request-ID").Single() == id).IsEqualTo(trusted);
+        await Assert.That(response.Headers.Contains("X-TerraScale-Request-Proof")).IsFalse();
     }
 
     [Test]

@@ -1,0 +1,9 @@
+# Proposed schema preview
+
+POST the raw schema to `/v1/projects/{project}/databases/{database}/collections/{collection}/schema/preview` with project credentials granting both `documents:read` and `documents:write`; end-user tokens are forbidden. The schema has the existing PUT admission limits. No active schema or document is changed.
+
+Each response contains `schema_hash` (SHA-256 of the exact schema JSON bytes), opaque copy-local `frontier`, page-only `examined`, `valid`, `invalid`, `complete`, `next_cursor`, and at most 16 `diagnostics` containing SHA-256 `id_hash`, `path_hash` (UTF-8 JSON Pointer), and `keyword`. Hashes are correlation redactions, not secrecy guarantees for guessable names. No document values are returned. Pages inspect at most 100 documents and 1 MiB of JSON, allowing one larger admitted document. Existing memory admission and cancellation apply; no hard evaluation-time guarantee is added.
+
+Repeat identical schema bytes with `?cursor=<next_cursor>` until `complete`; aggregate counts only after every page succeeds. Cursors are authenticated and encrypted with an ephemeral process key, bound to schema, database/collection identity, storage incarnation and committed offset. Modification yields `400 invalid_cursor`; any intervening database commit (including joined writes) yields `409 preview_stale`. A process restart or another node invalidates continuation. Pin the region and restart the entire preview on either error. Cursors are not durable jobs.
+
+Results observe one local frontier, not global convergence. A completed preview can become stale after later writes; applying a schema still validates future local writes prospectively and does not scan old documents or create a globally serialized schema gate. No storage format changes or migration are required.

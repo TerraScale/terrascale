@@ -8,11 +8,43 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 using TerraBase.Tenancy;
+using TerraScale.Endpoints;
 
 namespace TerraBase.Fast.Management;
 
 public sealed class RequestLogApiTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Request_identity_matches_success_failure_and_authorized_logs(bool trusted)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        using var project = Project(api, database.Project, "databases:read");
+        foreach (var method in new[] { HttpMethod.Get, HttpMethod.Put })
+        {
+            var supplied = EntityIds.New().ToString();
+            using var request = new HttpRequestMessage(method, ManagementApi.Uri(method == HttpMethod.Get
+                ? database.Data + "/collections" : ManagementApi.DocumentPath(database, "people", "validation")));
+            request.Headers.Add(RequestIdentity.Header, supplied);
+            request.Headers.Add(RequestIdentity.ProofHeader, RequestIdentity.Sign(supplied, trusted ? PeerTls.Secret : new string('0', 64)));
+            if (method == HttpMethod.Put) { request.Content = new StringContent("{", System.Text.Encoding.UTF8, "application/json"); }
+            using var response = await data.SendAsync(request);
+            await Assert.That(response.StatusCode).IsEqualTo(method == HttpMethod.Get ? HttpStatusCode.OK : HttpStatusCode.BadRequest);
+            var id = response.Headers.GetValues(RequestIdentity.Header).Single();
+            await Assert.That(EntityIds.IsValid(id)).IsTrue();
+            await Assert.That(id == supplied).IsEqualTo(trusted);
+            await Assert.That(response.Headers.Contains(RequestIdentity.ProofHeader)).IsFalse();
+            var rows = (await ReadAsync(project, database)).GetProperty("items").EnumerateArray();
+            await Assert.That(rows.Any(row => row.GetProperty("requestId").GetString() == id
+                && row.GetProperty("status").GetInt32() == (int)response.StatusCode)).IsTrue();
+        }
+    }
+
     [Test]
     public async Task Recording_capacity_is_reported_even_when_no_requests_could_be_admitted()
     {

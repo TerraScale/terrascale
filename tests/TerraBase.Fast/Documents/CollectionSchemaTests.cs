@@ -472,7 +472,7 @@ public sealed class CollectionSchemaTests
     private static long Offset(ApiResponse response) =>
         long.Parse(response.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
 
-    private sealed class CanceledSchemaRequest(CancellationToken cancellation) : IStartupFilter
+    internal sealed class CanceledSchemaRequest(CancellationToken cancellation) : IStartupFilter
     {
         public const string Header = "X-Cancel-Schema-Evaluation";
 

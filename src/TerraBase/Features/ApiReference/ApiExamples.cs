@@ -113,7 +113,7 @@ internal static class ApiExamples
         "createCollectionWebhook" => """{"url":"https://receiver.example/events"}""",
         "deployFunction" => """{"source":"function handler(event) { for (const c of event.changes) db.put(\"audit\", c.id, { source: c.id }); }","trigger":{"collection":"orders","events":["upsert"]},"cron":null}""",
         "invokeFunction" => """{"name":"Ada"}""",
-        "putDeclaredCollectionSchema" => DeclaredSchema,
+        "putDeclaredCollectionSchema" or "previewCollectionSchema" => DeclaredSchema,
         "putCollectionRules" => CollectionRules,
         "putCollectionTtl" => """{"path":"/expiresAt"}""",
         "declareCollectionSchema" => """{"fields":[{"name":"email","unique":true,"normalization":"lowercase"}],"indexes":[{"name":"tenant_handle","fields":["tenant","handle"],"unique":true}]}""",
@@ -179,6 +179,7 @@ internal static class ApiExamples
 
         "getCollectionRules" or "putCollectionRules" => "{\"rules\":" + CollectionRules + "}",
         "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" => "{\"schema\":" + DeclaredSchema + ",\"dialect\":\"https://json-schema.org/draft/2020-12/schema\"}",
+        "previewCollectionSchema" => """{"schema_hash":"78f9197ddd038592a802490c0febed471e8f3a0a8de4504c1844d0f24bae2b0d","frontier":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","examined":2,"valid":2,"invalid":0,"complete":true,"next_cursor":null,"diagnostics":[]}""",
         "deleteDeclaredCollectionSchema" => """{"schema":null}""",
         "getCollectionTtl" or "putCollectionTtl" => """{"path":"/expiresAt"}""",
         "deleteCollectionTtl" => """{"path":null}""",
@@ -206,6 +207,7 @@ internal static class ApiExamples
         "400" when id is "getDatabaseSchema" or "getCollectionSchema" or "runSql" or "checkSql" or "explainSql" or "getDatabaseUsage" or "getProjectUsage" =>
             "invalid_request, invalid_query",
         "400" when id == "putDeclaredCollectionSchema" => "invalid_request, invalid_schema",
+        "400" when id == "previewCollectionSchema" => "invalid_request, invalid_schema, invalid_cursor",
         "400" when id == "putCollectionRules" => "invalid_request, invalid_rules",
         "400" when id == "putCollectionTtl" => "invalid_request, invalid_ttl",
         "400" when id is "createDocument" or "putDocument" => "invalid_request, schema_validation_failed",
@@ -218,10 +220,11 @@ internal static class ApiExamples
         "400" => "invalid_request",
         "401" => "invalid_key",
         "403" when id is "createDatabase" or "branchDatabase" or "updateDatabase" or "deleteDatabase" or "restoreBackup" or "setBackupPolicy" or "setExportSchedule" or "setAutoIndexPolicy" or "createIndex" or "dropIndex" or "applyIndexRecommendation" or "createSavedQuery" or "updateSavedQuery" or "deleteSavedQuery" or "declareCollectionSchema" => "forbidden_scope, forbidden_role",
+        "403" when id == "previewCollectionSchema" => "forbidden_scope, forbidden",
         "403" => "forbidden_scope",
         "404" when id is "createCollection" or "listCollections" => "unknown_database",
         "404" when id is "getDocument" or "patchDocument" or "deleteDocument" or "runTransaction" => "unknown_database, unknown_collection, not_found",
-        "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema"
+        "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema" or "previewCollectionSchema"
             or "getCollectionTtl" or "putCollectionTtl" or "deleteCollectionTtl"
             or "getCollectionRules" or "putCollectionRules" => "unknown_database, unknown_collection",
         "404" when id is "getCollection" or "dropCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
@@ -233,6 +236,7 @@ internal static class ApiExamples
         "409" when id is "patchDocument" or "runTransaction" => "patch_conflict, unique_violation",
         "409" when id is "createDocument" or "putDocument" or "getDocument" => "unique_violation",
         "409" when id == "declareCollectionSchema" => "schema_requires_empty_collection",
+        "409" when id == "previewCollectionSchema" => "preview_stale",
         "409" when id == "deleteDatabase" => "database_replicated, wrong_region",
         "409" when id == "createIndex" => "index_exists",
         "409" when id == "setExportSchedule" => "conflict",

@@ -9,7 +9,7 @@ internal static class ClientCors
         cors.AddPolicy(Policy, policy => policy.AllowAnyOrigin()
             .WithMethods("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
             .WithHeaders("Authorization", "Content-Type", "If-Match", "If-None-Match", "Last-Event-ID", "TB-Shape-Resume", "X-TerraScale-Region-Pin")
-            .WithExposedHeaders("ETag", "Location", "Retry-After", "TB-Shape-Cursor", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "X-TerraBase-Region", "X-TerraBase-Machine")));
+            .WithExposedHeaders("ETag", "Location", "Retry-After", "TB-Shape-Cursor", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "X-TerraBase-Region", "X-TerraBase-Machine", "X-Request-ID")));
 
     public static WebApplication UseTerraBaseClientCors(this WebApplication app)
     {
