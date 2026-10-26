@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -15,9 +16,12 @@ using TerraScale.Authentication.Security;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary>What a provider's sign-in proved: an email address the provider verified.</summary>
+/// <summary>A validated external identity and its verified contact address; neither replaces the local user ID.</summary>
 /// <param name="Email">The verified address.</param>
-public sealed record SocialIdentity(string Email);
+/// <param name="Issuer">The validated authority: Google aliases are canonicalized; other OIDC issuers stay exact.</param>
+/// <param name="Subject">The stable external subject.</param>
+/// <param name="ClientId">The client whose token was validated.</param>
+public sealed record SocialIdentity(string Email, string Issuer, string Subject, string ClientId);
 
 /// <summary>A sign-in in flight, sealed into the browser's state cookie.</summary>
 /// <param name="Provider">The provider.</param>
@@ -26,7 +30,8 @@ public sealed record SocialIdentity(string Email);
 /// <param name="Verifier">The PKCE verifier.</param>
 /// <param name="Next">The validated page to resume.</param>
 /// <param name="ExpiresAt">Unix seconds after which the callback is refused.</param>
-public sealed record SocialState(string Provider, string State, string Nonce, string Verifier, string? Next, long ExpiresAt);
+/// <param name="ConfigurationHash">The provider configuration and sealed credential generation at start.</param>
+public sealed record SocialState(string Provider, string State, string Nonce, string Verifier, string? Next, long ExpiresAt, string ConfigurationHash);
 
 /// <summary>
 /// A project's end users sign in with the project's own OAuth client at Google, GitHub, Apple or an OpenID Connect
@@ -59,7 +64,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
     public async Task<(Uri Location, string Sealed)> StartAsync(string tenant, SocialProviderRecord provider, string? next, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        var state = new SocialState(provider.Provider, Tokens.RandomToken(32), Tokens.RandomToken(32), Tokens.RandomToken(43), next, (clock.GetUtcNow() + Lifetime).ToUnixTimeSeconds());
+        var state = new SocialState(provider.Provider, Tokens.RandomToken(32), Tokens.RandomToken(32), Tokens.RandomToken(43), next, (clock.GetUtcNow() + Lifetime).ToUnixTimeSeconds(), ConfigurationHash(provider));
         var query = new Dictionary<string, string>
         {
             ["response_type"] = "code",
@@ -117,11 +122,16 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         }
     }
 
-    /// <summary>Redeems the code and returns the provider-verified email, or null when the provider refused or proved none.</summary>
+    /// <summary>Redeems the code and returns the validated identity, or null when its proof or configuration changed.</summary>
     public async Task<SocialIdentity?> CompleteAsync(string tenant, SocialProviderRecord provider, SocialState state, string code, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(state);
+        if (state.Provider != provider.Provider || state.ConfigurationHash != ConfigurationHash(provider))
+        {
+            return null;
+        }
+
         var secret = provider.Provider == SocialProviders.Apple ? this.AppleSecret(tenant, provider) : SocialProviders.Open(options, tenant, provider);
         var form = new Dictionary<string, string>
         {
@@ -162,15 +172,18 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         }).ConfigureAwait(false);
         object? Claim(string name) => validated.Claims.TryGetValue(name, out var value) ? value : null;
         if (!validated.IsValid || Claim("nonce") is not string nonce || !Tokens.FixedTimeEquals(nonce, state.Nonce)
+            || Claim("iss") is not string issuer || Claim("sub") is not string subject
+            || string.IsNullOrWhiteSpace(subject) || subject.Length > 256
             || Claim("email") is not string email || Claim("email_verified") is not (true or "true"))
         {
             return null;
         }
 
-        return new(email);
+        // Both accepted Google spellings name one authority; map only after token validation.
+        return new(email, provider.Provider == SocialProviders.Google ? GoogleIssuer : issuer, subject, provider.ClientId);
     }
 
-    // GitHub: the token, then the account's verified primary email.
+    // GitHub: stable account ID and verified primary email from the same access token.
     private static async Task<SocialIdentity?> GitHubAsync(HttpClient client, Dictionary<string, string> form, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, GitHubToken) { Content = new FormUrlEncodedContent(form) };
@@ -178,6 +191,17 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode || await ReadAsync(response, cancellationToken).ConfigureAwait(false) is not { } body
             || !body.TryGetProperty("access_token", out var token) || token.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        using var profile = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user");
+        profile.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.GetString());
+        profile.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        profile.Headers.UserAgent.Add(new ProductInfoHeaderValue("ts-auth", "1"));
+        using var account = await client.SendAsync(profile, cancellationToken).ConfigureAwait(false);
+        if (!account.IsSuccessStatusCode || await ReadAsync(account, cancellationToken).ConfigureAwait(false) is not { } user
+            || !user.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.Number || !id.TryGetInt64(out var number) || number <= 0)
         {
             return null;
         }
@@ -196,7 +220,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
             .Where(address => address.ValueKind == JsonValueKind.Object && address.TryGetProperty("primary", out var primary) && primary.ValueKind == JsonValueKind.True
                 && address.TryGetProperty("verified", out var verified) && verified.ValueKind == JsonValueKind.True
                 && address.TryGetProperty("email", out var email) && email.ValueKind == JsonValueKind.String)
-            .Select(address => new SocialIdentity(address.GetProperty("email").GetString()!))
+            .Select(address => new SocialIdentity(address.GetProperty("email").GetString()!, "https://github.com", number.ToString(CultureInfo.InvariantCulture), form["client_id"]))
             .FirstOrDefault();
     }
 
@@ -256,9 +280,14 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
         }
     }
 
+    private static string ConfigurationHash(SocialProviderRecord provider) =>
+        Tokens.Sha256Hex(JsonSerializer.Serialize(provider, SocialJson.Default.SocialProviderRecord));
+
     private static string StateContext(string tenant) => "social-state:" + tenant;
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(SocialState))]
+[JsonSerializable(typeof(SocialProviderRecord))]
+[JsonSerializable(typeof(SocialIdentity))]
 internal sealed partial class SocialJson : JsonSerializerContext;

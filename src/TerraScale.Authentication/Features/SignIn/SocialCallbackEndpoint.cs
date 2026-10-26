@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -37,7 +38,7 @@ public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutReq
 /// <summary>The callback logic both callback endpoints share.</summary>
 public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessions, HostedAuth hosted, ILogger<SocialFlow> logger)
 {
-    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The provider must prove a verified email: an account with it signs in, otherwise one is created when the project allows sign-up. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Shares the hosted IP budget.";
+    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account only with an unused verified email when the project allows sign-up; matching email never links accounts. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Shares the hosted IP budget.";
 
     /// <summary>Redeems the provider's answer and signs the browser in.</summary>
     public async Task<IResult> CompleteAsync(HttpContext context, string? code, string? state, CancellationToken cancellationToken)
@@ -54,7 +55,7 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             return SignInFlow.Limited(context, SignInStep.Email, wait, string.Empty, null);
         }
 
-        // The cookie is single-use: whatever happens next, this sign-in cannot be resumed again.
+        // Clear browser state on every attempt; the provider independently enforces single-use code redemption.
         var resumed = social.Resume(tenant, provider.Provider, context.Request.Cookies[SocialSignIn.Cookie(tenant)], state);
         context.Response.Cookies.Delete(SocialSignIn.Cookie(tenant), CookieOptions(tenant));
         if (resumed is null || string.IsNullOrEmpty(code) || code.Length > 4096)
@@ -74,20 +75,19 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             identity = null;
         }
 
-        var user = identity is null ? null : await users.FindByEmailAsync(tenant, identity.Email, cancellationToken);
-        if (identity is not null && user is null && HostedTheme.Of(context).SignUp && Users.NormalizeEmail(identity.Email) is not null)
+        if (identity is not null && await ProviderAsync(context, cancellationToken) != provider)
         {
-            user = await users.CreateAsync(tenant, identity.Email, cancellationToken) ?? await users.FindByEmailAsync(tenant, identity.Email, cancellationToken);
-            if (user is not null)
-            {
-                logger.ZLogInformation($"Audit: hosted {provider.Provider:@Provider} sign-in created user {user.Id:@UserId}");
-            }
+            identity = null;
         }
+
+        var user = identity is null ? null : await users.FromProviderAsync(tenant,
+            new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject),
+            identity.Email, HostedTheme.Of(context).SignUp, cancellationToken);
 
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_social", "refused");
-            return Failed(context, resumed.Next, StatusCodes.Status401Unauthorized, $"{SocialProviders.Label(provider.Provider)} did not confirm an email address this project accepts. Try another method.");
+            return Failed(context, resumed.Next, StatusCodes.Status401Unauthorized, $"{SocialProviders.Label(provider.Provider)} could not complete this sign-in. Try an existing sign-in method; connecting another method requires proof of your existing account.");
         }
 
         AuthMetrics.SignIn("hosted_social", "succeeded");
