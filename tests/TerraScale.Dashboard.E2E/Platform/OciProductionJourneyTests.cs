@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Platform;
@@ -30,6 +31,20 @@ public sealed class OciProductionJourneyTests(DashboardRootFixture fixture)
         builder.Logging.ClearProviders();
         await using var terraBase = builder.Build();
         // Test-only HTTP fake of TerraBase's private listener: every seeded collection exists.
+        terraBase.MapGet("/v1/projects/{project}/databases/ts-dashboard/collections", (HttpContext http) =>
+        {
+            if (http.Request.Headers["X-TerraBase-Peer-Credential"] == peerSecret) Interlocked.Increment(ref credentialed);
+            return Results.Json(new
+            {
+                items = DashboardStateSchema.Collections.Select(name => new
+                {
+                    id = ids.NewId(),
+                    name,
+                    created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture)
+                }),
+                next_cursor = (string?)null
+            });
+        });
         terraBase.MapGet("/v1/projects/{project}/databases/ts-dashboard/collections/{name}", (HttpContext http, string name) =>
         {
             if (http.Request.Headers["X-TerraBase-Peer-Credential"] == peerSecret) Interlocked.Increment(ref credentialed);

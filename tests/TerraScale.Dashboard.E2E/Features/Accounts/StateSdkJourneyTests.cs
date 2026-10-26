@@ -135,11 +135,15 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         rpc = await HttpJourney.McpAsync(coldReplica, secret, "tools/call", new { name = "get_profile", arguments = new { } });
         Check(rpc.GetProperty("result").GetProperty("structuredContent").GetProperty("locale").GetString() == "pt-BR", "The native-issued PAT remains valid on a cold replacement replica.");
 
-        var beforePrivateReads = (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32();
+        var beforeReady = await ObserveAsync(controls);
         await ReadyAsync(coldClient);
+        var afterReady = await ObserveAsync(controls);
+        Check(afterReady.GetProperty("collectionLists").GetInt32() == beforeReady.GetProperty("collectionLists").GetInt32() + 1 &&
+            afterReady.GetProperty("privateRequests").GetInt32() > beforeReady.GetProperty("privateRequests").GetInt32(),
+            "Readiness checks the required schema in one collection listing through the private listener.");
         Check((await MeAsync(coldReplica)).GetProperty("email").GetString() == account.Email &&
-            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 16,
-            "Readiness and encrypted account/session reads use the private listener without a durable API key or public data bearer.");
+            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() > afterReady.GetProperty("privateRequests").GetInt32(),
+            "Encrypted account/session reads independently use the private listener without a durable API key or public data bearer.");
         using (var deleted = await HttpJourney.PostFormAsync(coldReplica, "/api/v1/dashboard/data/saved-queries/delete", new()
         { ["_csrf"] = localeCsrf, ["id"] = queryId }))
             Check(deleted.StatusCode == HttpStatusCode.NoContent, "Native cleanup deletes the saved query through an opaque producer If-Match.");
