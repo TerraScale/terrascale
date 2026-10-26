@@ -226,6 +226,9 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var scope = Scope(context);
             var catalog = await backend.RegionsAsync(cancellationToken);
             var seen = project.Databases.Values.ToArray();
+            // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
+            var observed = seen.ToDictionary(record => record.Id, record =>
+                (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
             var listings = await Task.WhenAll(homes.Select(async home =>
@@ -239,21 +242,45 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var gone = seen.Where(record => DatabaseRegion.Resolve(catalog, record.Region) is { } home && answered.Contains(home.Id) &&
                 remote.All(database => database.Id != record.Id)).Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
             var imported = new List<DatabaseRecord>();
-            foreach (var database in remote.Where(database => !project.Databases.ContainsKey(database.Id)))
+            var refreshed = new List<DatabaseRecord>();
+            foreach (var database in remote)
             {
-                try { imported.Add(Record(database, await RemotePlacementAsync(database, cancellationToken), "ready")); }
+                try
+                {
+                    var record = Record(database, await RemotePlacementAsync(database, cancellationToken, catalog), "ready");
+                    if (!observed.TryGetValue(record.Id, out var before)) imported.Add(record);
+                    // Existing identity and immutable home must match; refresh configuration, never inferred health/status.
+                    else if (record.Name == before.Name && record.ProjectId == before.ProjectId && record.Region.Equals(before.Region, StringComparison.OrdinalIgnoreCase) &&
+                        (record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
+                        refreshed.Add(record);
+                }
                 catch (HttpRequestException) { }
             }
-            if (gone.Count == 0 && imported.Count == 0) return;
+            if (gone.Count == 0 && imported.Count == 0 && refreshed.Count == 0) return;
+            bool Unchanged(DatabaseRecord record) => observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
+                record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
             void Apply(ProjectRecord target)
             {
-                // Only records this sync saw can be dropped: one recorded since was created after the listings were read.
-                foreach (var id in gone) target.Databases.Remove(id);
+                // Rechecked on every storage CAS attempt: a newer dashboard placement must survive an older listing.
+                foreach (var id in gone)
+                    if (target.Databases.TryGetValue(id, out var current) && Unchanged(current)) target.Databases.Remove(id);
+                foreach (var record in refreshed)
+                    if (target.Databases.TryGetValue(record.Id, out var current) && Unchanged(current))
+                    {
+                        current.Regions = record.Regions.ToList();
+                        current.AllRegions = record.AllRegions;
+                        current.Endpoint = record.Endpoint;
+                    }
                 foreach (var record in imported.Where(record => !target.Databases.ContainsKey(record.Id) && target.Databases.Values.All(database => database.Name != record.Name)))
                     target.Databases[record.Id] = record;
             }
-            await accounts.UpdateOrganizationAsync(context, org => { if (org.Projects.GetValueOrDefault(project.Id) is { } stored) Apply(stored); }, cancellationToken);
-            Apply(project);
+            ProjectRecord? saved = null;
+            await accounts.UpdateOrganizationAsync(context, org =>
+            {
+                if (org.Projects.GetValueOrDefault(project.Id) is { } stored) { Apply(stored); saved = stored; }
+            }, cancellationToken);
+            // The response follows the successful CAS too, including mutations that made this sync skip a stale update.
+            if (saved is not null) project.Databases = saved.Databases;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error))) { }
     }
@@ -271,6 +298,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     public static string PreviewName(string name) => name[..Math.Min(name.Length, 48)].TrimEnd('-') + "-preview-branch";
     public static string Path(string id, string tab = "overview", string collection = "") => "/databases/" + Uri.EscapeDataString(id) + (tab == "overview" ? "" : "/" + tab) + (collection.Length == 0 ? "" : "?collection=" + Uri.EscapeDataString(collection));
     public static IReadOnlyList<string> Regions(DatabaseRecord record) => record.Regions.Count > 0 ? record.Regions : string.IsNullOrEmpty(record.Region) ? [] : [record.Region];
+    public static IReadOnlyList<string> ServingRegions(DatabaseRecord record, IReadOnlyList<DatabaseRegion> catalog) => record.AllRegions
+        ? Regions(record).Concat(catalog.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : Regions(record);
     internal static void DemandName(ProjectRecord project, string name)
     {
         if (project.Databases.Values.Any(database => database.Name == name)) throw new AccountAccessException("A database with this name already exists.", 409);
@@ -303,13 +332,13 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         Endpoint = placement[0].Api.ToString(),
         Status = status
     };
-    internal async Task<IReadOnlyList<DatabaseRegion>> RemotePlacementAsync(ManagedDatabase remote, CancellationToken cancellationToken)
+    internal async Task<IReadOnlyList<DatabaseRegion>> RemotePlacementAsync(ManagedDatabase remote, CancellationToken cancellationToken, IReadOnlyList<DatabaseRegion>? knownCatalog = null)
     {
         if (string.IsNullOrWhiteSpace(remote.HomeRegion) || remote.ReplicaRegions is null ||
             remote.ReplicaRegions.Any(string.IsNullOrWhiteSpace)) throw new HttpRequestException("The database service did not return its canonical placement.");
         var ids = remote.ReplicaRegions.Prepend(remote.HomeRegion).ToArray();
         if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) throw new HttpRequestException("The database service returned ambiguous placement.");
-        var catalog = await backend.RegionsAsync(cancellationToken);
+        var catalog = knownCatalog ?? await backend.RegionsAsync(cancellationToken);
         return ids.Select(id => (catalog.SingleOrDefault(region => region.Id == id) ?? DatabaseRegion.FromId(id))
             ?? throw new HttpRequestException("The database service returned an invalid region.")).ToArray();
     }
