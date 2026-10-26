@@ -41,7 +41,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
 
         var databaseId = "";
         using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-        { ["_csrf"] = csrf, ["name"] = "everywhere", ["region"] = "SFO", ["allRegions"] = "true" }))
+        { ["_csrf"] = csrf, ["name"] = "everywhere", ["homeRegion"] = "SFO", ["allRegions"] = "true" }))
         {
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             var body = await BodyAsync(created);
@@ -49,7 +49,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
             await Assert.That(body.GetProperty("allRegions").GetBoolean()).IsTrue();
         }
         using (var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases")
-        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "everywhere", ["allRegions"] = "true" }) })
+        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "everywhere", ["homeRegion"] = "SFO", ["allRegions"] = "true" }) })
         {
             request.Headers.Accept.ParseAdd("text/html");
             using var duplicate = await client.SendAsync(request);
@@ -57,6 +57,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
             var rejected = WebUtility.HtmlDecode(await duplicate.Content.ReadAsStringAsync());
             await Assert.That(rejected).Contains("name=\"name\" value=\"everywhere\"");
             await Assert.That(rejected).Contains("_allRegions: true");
+            await Assert.That(Regex.IsMatch(rejected, "<option value=\"SFO\" selected(?:[ >]|=)")).IsTrue();
             await Assert.That(IsChecked(Regex.Match(rejected, "<input[^>]+name=\"allRegions\"[^>]*>").Value)).IsTrue();
             await Assert.That(Regex.IsMatch(rejected, "<fieldset class=\"ts-field ts-db-regions\"[^>]* disabled(?:[ >]|=)")).IsTrue();
         }
@@ -87,7 +88,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
             await Assert.That(conflict.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             var rejected = WebUtility.HtmlDecode(await conflict.Content.ReadAsStringAsync());
             await Assert.That(IsChecked(Regex.Match(rejected, "<input[^>]+name=\"allRegions\"[^>]*>").Value)).IsTrue();
-            await Assert.That(rejected).Contains("{_allRegions: true}");
+            await Assert.That(rejected).Contains("_allRegions: true, _regionCount: 2");
             await Assert.That(Regex.IsMatch(rejected, "<fieldset class=\"ts-field ts-db-regions\"[^>]* disabled(?:[ >]|=)")).IsTrue();
             await Assert.That(RegionInput(rejected, "GRU")).Contains("checked");
             await Assert.That(RegionInput(rejected, "FRA").Contains("checked", StringComparison.Ordinal)).IsFalse();
@@ -120,7 +121,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
         {
             await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             var rejected = WebUtility.HtmlDecode(await invalid.Content.ReadAsStringAsync());
-            await Assert.That(rejected).Contains("{_allRegions: false}");
+            await Assert.That(rejected).Contains("_allRegions: false, _regionCount: 1");
             await Assert.That(IsChecked(Regex.Match(rejected, "<input[^>]+name=\"allRegions\"[^>]*>").Value)).IsFalse();
             await Assert.That(Regex.IsMatch(rejected, "<fieldset class=\"ts-field ts-db-regions\"[^>]* disabled(?:[ >]|=)")).IsFalse();
             await Assert.That(rejected).Contains("<dt>Placement policy</dt><dd>All serving regions, including regions added later</dd>");

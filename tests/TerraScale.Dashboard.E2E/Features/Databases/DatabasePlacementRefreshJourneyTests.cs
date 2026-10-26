@@ -11,6 +11,7 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
     [Test]
     public async Task CanonicalPlacementRefreshesDetailAndMcpButCannotOverwriteANewerDashboardSave()
     {
+        using var diagnostics = new InitializationDiagnostics();
         var id = "";
         var projectId = "";
         var mode = "normal";
@@ -48,7 +49,8 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
         projectId = identity.GetProperty("projectId").GetString()!;
         await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sfo", "fra" } });
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-        using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "refresh", ["region"] = "GRU" }))
+        using (var created = await PostAsync("/api/v1/dashboard/databases",
+            [new("_csrf", csrf), new("name", "refresh"), new("homeRegion", "GRU"), new("region", "GRU"), new("region", "SFO")]))
         { await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created); id = (await JsonAsync(created)).GetProperty("id").GetString()!; }
         var secret = await HttpJourney.CreatePatAsync(client, "Placement refresh", account.Password);
         // A direct detail GET must discover an external placement change without first visiting the list.
@@ -112,7 +114,11 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
         {
             var fields = new List<KeyValuePair<string, string>> { new("_csrf", csrf), new("databaseId", id), new("region", "GRU"), new("allRegions", all ? "true" : "false") };
             if (!all) fields.Add(new("region", "FRA"));
-            var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases/regions") { Content = new FormUrlEncodedContent(fields) };
+            return PostAsync("/api/v1/dashboard/databases/regions", fields);
+        }
+        Task<HttpResponseMessage> PostAsync(string path, IEnumerable<KeyValuePair<string, string>> fields)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(fields) };
             request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
             return client.SendAsync(request);
         }
@@ -122,4 +128,23 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
     { using var response = await client.GetAsync(path); await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK); return await JsonAsync(response); }
     private static async Task<JsonElement> JsonAsync(HttpResponseMessage response)
     { using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); return json.RootElement.Clone(); }
+
+    private sealed class InitializationDiagnostics : IDisposable
+    {
+        public InitializationDiagnostics() => AppDomain.CurrentDomain.FirstChanceException += Record;
+        private static void Record(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs args)
+        {
+            if (args.Exception is not TypeInitializationException error) return;
+            var chain = new List<string>();
+            for (Exception? cause = error; cause is not null; cause = cause.InnerException)
+            {
+                chain.Add(cause.GetType().FullName!);
+                var methods = new System.Diagnostics.StackTrace(cause).GetFrames().Select(frame => frame.GetMethod())
+                    .OfType<System.Reflection.MethodBase>().Select(method => method.DeclaringType?.FullName + "." + method.Name);
+                Console.Error.WriteLine("Initializer: " + error.TypeName + "; exception: " + cause.GetType().FullName + "; methods: " + string.Join(" > ", methods));
+            }
+            Console.Error.WriteLine("Initializer exception chain: " + string.Join(" > ", chain));
+        }
+        public void Dispose() => AppDomain.CurrentDomain.FirstChanceException -= Record;
+    }
 }
