@@ -6,6 +6,8 @@ title: Dashboard usage
 
 Use the dashboard's native account pages to manage access to TerraScale. Use TerraBase SDKs for your application's documents.
 
+For team setup, follow [organization roles, invitations and ownership](/guides/organization-access). It covers project-only access, plan capacity and offboarding with API-key rotation.
+
 ## Prepare a database connection
 
 1. Sign in at [dash.terrascale.tech](https://dash.terrascale.tech/login), or [create an account](https://dash.terrascale.tech/register).

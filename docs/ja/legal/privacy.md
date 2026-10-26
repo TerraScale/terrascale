@@ -62,7 +62,7 @@ We give at least 30 days' notice of a new subprocessor by updating this list and
 
 ## International transfers
 
-We store Customer Data only in the regions you select for each database. Account and billing data may be processed in the United States, the EU and Brazil. Transfers outside the European Economic Area, the UK or Brazil rely on the European Commission's Standard Contractual Clauses (and the UK Addendum), on adequacy decisions, or on the transfer mechanisms in LGPD Article 33.
+We store live database copies in the regions you select for each database. Encrypted backups and object storage use the subprocessor locations listed above; the [DPA](/ja/legal/dpa#annex-3-authorized-subprocessors) states the backup exception. Account and billing data may be processed in the United States, the EU and Brazil. Transfers outside the European Economic Area, the UK or Brazil rely on the European Commission's Standard Contractual Clauses (and the UK Addendum), on adequacy decisions, or on the transfer mechanisms in LGPD Article 33.
 
 ## Retention
 

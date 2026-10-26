@@ -21,6 +21,14 @@ A restore always creates a new database, so it counts toward your plan's databas
 
 Deleting a database also deletes its backups: they expire with it and their files are removed. Restore anything you need before you delete it.
 
+## Placement and residency
+
+A restore allocates an independent database; it does not promise to preserve the source's home, explicit replica list or `allRegions` setting. The restore requests below do not accept a destination-placement override. Confirm that the current creation policy and available regions meet your residency requirements **before** starting a restore. Do not restore sensitive data first and rely on removing an unwanted copy afterward.
+
+After an allowed restore, inspect the returned `homeRegion`, `replicaRegions` and `allRegions`, and verify the new database's placement before sending application traffic. An empty replica list with `allRegions: true` means copies follow the serving catalog. A writable target requires at least two regions; a successful creation response alone does not prove that every regional copy is current. [Branches](/fr/guides/branches) are also independent databases, with their own returned placement.
+
+For routing refusals, follow the [421 placement and pin guidance](/fr/guides/errors#region-routing-errors-421). Database placement controls live copies, while encrypted backup and object-storage locations follow [DPA Annex 3](/fr/legal/dpa#annex-3-authorized-subprocessors), including United States processing. See [replication and residency](/fr/concepts/replication#residency-and-backups) before selecting a recovery destination.
+
 ## Over the HTTP API
 
 The published `@terrascale/sdk@0.0.3` does not wrap these routes yet. The examples use `curl` against the HTTP API.

@@ -14,6 +14,8 @@ Drizzle talks to TerraBase through `@libsql/client` over the libSQL remote proto
 
 A complete app is in [`examples/orm-drizzle`](https://github.com/TerraScale/ts-docs/tree/main/examples/orm-drizzle): schema, migration, CRUD, a relation and transactions.
 
+This example reserves `drizzle_authors` and `drizzle_posts`, separate from the Documents quickstart's `posts` collection and the other ORM examples. Use these tables only for the sample data. Treat the complete app and inline walkthrough as alternatives: both insert the same sample rows, so start with empty reserved tables.
+
 ## Install
 
 ```sh
@@ -62,18 +64,18 @@ Project API-key access tokens last **60 seconds**. These snippets obtain one tok
 import { relations } from 'drizzle-orm'
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
-export const authors = sqliteTable('authors', {
+export const authors = sqliteTable('drizzle_authors', {
   id: integer('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
 })
 
-export const posts = sqliteTable('posts', {
+export const posts = sqliteTable('drizzle_posts', {
   id: integer('id').primaryKey(),
   authorId: integer('author_id').notNull().references(() => authors.id),
   title: text('title').notNull(),
   published: integer('published', { mode: 'boolean' }).notNull().default(false),
-}, (t) => [index('posts_author_id_idx').on(t.authorId)])
+}, (t) => [index('drizzle_posts_author_id_idx').on(t.authorId)])
 
 export const authorsRelations = relations(authors, ({ many }) => ({ posts: many(posts) }))
 export const postsRelations = relations(posts, ({ one }) => ({
@@ -135,7 +137,6 @@ const rows = await db.select({ title: posts.title, author: authors.name })
   .from(posts).innerJoin(authors, eq(posts.authorId, authors.id))
 
 await db.update(posts).set({ published: true }).where(eq(posts.title, 'Draft'))
-await db.delete(posts).where(eq(posts.authorId, ada.id))
 ```
 
 ## Transactions
@@ -145,6 +146,9 @@ await db.transaction(async (tx) => {
   const [grace] = await tx.insert(authors).values({ name: 'Grace', email: 'grace@example.com' }).returning()
   await tx.update(posts).set({ authorId: grace.id }).where(eq(posts.title, 'Draft'))
 })
+
+// Delete after the transaction has reassigned the draft.
+await db.delete(posts).where(eq(posts.authorId, ada.id))
 ```
 
 If the callback throws, Drizzle rolls back and nothing is written. Transactions are optimistic: a commit that conflicts with another writer fails with `SQLITE_BUSY`. Retry the whole transaction. A unique violation fails with `SQLITE_CONSTRAINT_UNIQUE` (`error.cause.code`).

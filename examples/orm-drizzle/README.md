@@ -14,5 +14,5 @@ npm run migrate    # applies drizzle/*.sql that are not applied yet
 npm start          # CRUD, relations and transactions
 ```
 
-`npm start` inserts the same rows each run: drop the `authors` and `posts`
+`npm start` inserts the same rows each run: drop the `drizzle_authors` and `drizzle_posts`
 tables (and `drizzle_migrations`) to run it again on a clean database.

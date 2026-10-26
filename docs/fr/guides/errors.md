@@ -39,9 +39,20 @@ The snippet assumes a collection handle, ID, observed version and deadline signa
 | `401` / `403` | Obtain valid authorized access; do not auto-retry |
 | `404` | Check the selected resource; absence differs from denied access |
 | `409` / `412` | Resolve the deterministic conflict or stale version |
+| `421 wrong_region` / `421 misdirected_request` | Check placement, home region and any explicit region pin; see the routing guidance below |
 | `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline |
 
 C# errors derive from `TerraBaseException` and expose `StatusCode`, `ErrorCode` and `OperationIndex`; named subclasses include authentication, forbidden, not found, conflict, precondition failed and unavailable. C# `GetDocumentAsync` returns `null` for a missing document, whereas JavaScript `get` throws a typed not-found error. Go exposes `APIError`; check the SDK's operation-specific result and error semantics.
+
+## Region routing errors (421)
+
+`wrong_region` means the database is served or managed elsewhere. When supplied, `X-TerraBase-Database-Home` names its home and `X-TerraBase-Database-Regions` is a comma-separated list of placed regions. Data access may use a placed region; home-only management operations, such as placement changes and branching, must use home. `X-TerraBase-Region` identifies the region that answered this request.
+
+`misdirected_request` can mean an explicit `X-TerraScale-Region-Pin` could not be satisfied, or a pin is empty, duplicated or inconsistent with the regional entrypoint. This refusal may contain only the code, without database placement headers. Missing headers do not establish that the database is absent.
+
+Refresh the public [`GET /v1/regions` catalog](/fr/concepts/replication#discover-and-route-to-regions) and the database's authorized placement metadata. Choose an available placed region, or home for a home-only operation, and make the hostname and pin agree. Keep a required residency pin. Use the unpinned global endpoint only when execution in any permitted placed region is acceptable. If a valid pin still returns 421, stop after bounded attempts and retain the request ID and safe response headers for support.
+
+Do not turn every 421 into an automatic mutation retry. An explicit rejection is different from a timeout, disconnected response or uncertain write; reconcile those outcomes as described below.
 
 ## Retry behavior by SDK
 
