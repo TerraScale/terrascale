@@ -35,6 +35,7 @@ mod imports;
 mod management;
 mod query;
 mod reporting;
+mod rules;
 mod shape_crypto;
 mod shapes;
 mod sql;
@@ -68,6 +69,7 @@ pub use query::{
     Aggregate, Area, Count, Filter, GeoNear, Group, Metric, Near, Order, Pages, Path, Query,
     QueryPage, Scalar, SortKey,
 };
+pub use rules::{CollectionRules, ReadWriteGrants};
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};
 pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
 pub use sql_exec::{
