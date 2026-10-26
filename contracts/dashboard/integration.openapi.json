@@ -1013,6 +1013,9 @@
           "isActive": {
             "type": "boolean"
           },
+          "createdByUserId": {
+            "type": "string"
+          },
           "databaseName": {
             "type": [
               "null",
@@ -1108,6 +1111,9 @@
           },
           "isActive": {
             "type": "boolean"
+          },
+          "createdByUserId": {
+            "type": "string"
           },
           "databaseName": {
             "type": [
