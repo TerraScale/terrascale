@@ -31,7 +31,7 @@ public sealed class EndpointReplicationTests
                 readers.Add(await Clients.OpenAsync(machine));
             }
 
-            foreach (var source in readers)
+            await Task.WhenAll(readers.Select(async source =>
             {
                 var table = "rows_" + source.Machine.Region;
                 // A ULID TEXT key makes this SQL table addressable by the document and Wire APIs too.
@@ -57,7 +57,7 @@ public sealed class EndpointReplicationTests
                     await EverywhereAsync(readers, table, id, "committed");
                     await EverywhereAsync(readers, table, other, "transaction");
                 }
-            }
+            }));
         }
         finally
         {
@@ -202,6 +202,26 @@ public sealed class EndpointReplicationTests
 
         public async Task<(bool Ready, string? Value)> ReadAsync(string endpoint, string table, string id)
         {
+            try
+            {
+                return await ReadOnceAsync(endpoint, table, id);
+            }
+            catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable or HttpStatusCode.MisdirectedRequest)
+            {
+                return (false, null);
+            }
+            catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.CannotConnectNow)
+            {
+                return (false, null);
+            }
+            catch (NpgsqlException error) when (error.IsTransient)
+            {
+                return (false, null);
+            }
+        }
+
+        private async Task<(bool Ready, string? Value)> ReadOnceAsync(string endpoint, string table, string id)
+        {
             if (endpoint == "wire")
             {
                 var answer = await wire.GetAsync(table, id);
@@ -209,6 +229,7 @@ public sealed class EndpointReplicationTests
                 {
                     200 => (true, JsonElement.Parse(answer.Json).GetProperty("value").GetString()),
                     404 => (true, null),
+                    429 or 503 or 421 => (false, null),
                     _ => throw new InvalidOperationException($"wire: {answer.Status} {answer.Code}"),
                 };
             }
@@ -222,7 +243,7 @@ public sealed class EndpointReplicationTests
                 }
 
                 response.EnsureSuccessStatusCode();
-                return (true, JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("value").GetString());
+                return (true, JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("document").GetProperty("value").GetString());
             }
 
             var sql = $"SELECT value FROM {table} WHERE id = '{id}'";

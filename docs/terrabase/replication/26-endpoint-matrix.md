@@ -8,6 +8,7 @@ creation and a committed transaction containing two inserts and an update.
 The shared data model is a SQL table with a ULID `TEXT PRIMARY KEY`. Its rows are documents addressable by REST and
 Wire; ordinary document collections without a SQL table definition are not relational tables. Integer and composite
 SQL primary keys are outside the document API's ULID address contract.
+The matrix uses conforming JSON: REST and Wire writes do not enforce SQL column constraints or affinities.
 
 Wire operation `3` adds unconditional deletion: the GET address followed by one durability byte (`0` local,
 `1` remote), with no JSON. Success is `200` followed by the same durability and ETag fields as PUT. Authentication,

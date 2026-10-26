@@ -48,6 +48,33 @@ public sealed class WireProtocolTests
     }
 
     [Test]
+    public async Task Deletes_validate_the_frame_and_preserve_the_session_after_refusals()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key, _) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, database.Project, database.Name);
+        var id = Ulid.NewUlid().ToString();
+        byte[] address = [(byte)Items.Length, .. Encoding.UTF8.GetBytes(Items), .. Encoding.ASCII.GetBytes(id)];
+        var missing = await session.DeleteAsync(Items, id);
+        var trailing = await session.SendAsync(3, [.. address, 0, 123]);
+        var noDurability = await session.SendAsync(3, address);
+        var badDurability = await session.SendAsync(3, [.. address, 2]);
+        var inserted = await session.PutAsync(Items, id, "{\"n\":1}");
+        var deleted = await session.DeleteAsync(Items, id);
+        var read = await session.GetAsync(Items, id);
+
+        await Assert.That((missing.Status, missing.Code)).IsEqualTo((404, "not_found"));
+        await Assert.That((trailing.Status, trailing.Code)).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(noDurability.Status).IsEqualTo(400);
+        await Assert.That(badDurability.Status).IsEqualTo(400);
+        await Assert.That(inserted.Status).IsEqualTo(201);
+        await Assert.That(deleted.Status).IsEqualTo(200);
+        await Assert.That(deleted.RemoteDurable).IsFalse();
+        await Assert.That(deleted.ETag).StartsWith("tbv1-");
+        await Assert.That((read.Status, read.Code)).IsEqualTo((404, "not_found"));
+    }
+
+    [Test]
     public async Task A_frame_beyond_its_bound_answers_invalid_frame_and_closes_the_connection()
     {
         await using var api = await ManagementApi.StartAsync();
