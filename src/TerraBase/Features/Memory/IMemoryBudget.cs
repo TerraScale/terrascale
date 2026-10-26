@@ -40,4 +40,10 @@ public interface IMemoryBudget
     /// A null tenant charges only the process, independently of the ambient request.
     /// </summary>
     IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant);
+
+    /// <summary>
+    /// Adds bytes to a live reservation this budget issued, against the same process and organization limits but without
+    /// another reservation table entry. False when refused or unsupported; the caller then reserves anew.
+    /// </summary>
+    bool TryGrow(IMemoryReservation reservation, long bytes) => false;
 }
