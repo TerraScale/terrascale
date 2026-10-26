@@ -99,6 +99,11 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
         var all = (await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "get_database", arguments = new { databaseId = id, organizationId, projectId } })).GetProperty("result").GetProperty("structuredContent");
         await Assert.That(all.GetProperty("placement").GetArrayLength()).IsEqualTo(3);
         await Assert.That(all.GetProperty("regions").GetArrayLength()).IsEqualTo(3);
+        var page = (await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "list_databases", arguments = new { organizationId, projectId, limit = 1 } })).GetProperty("result").GetProperty("structuredContent");
+        await Assert.That(page.GetProperty("databases")[0].GetProperty("placement").GetArrayLength()).IsEqualTo(3);
+        await Assert.That(page.GetProperty("limit").GetInt32()).IsEqualTo(1);
+        await Assert.That(page.GetProperty("hasMore").GetBoolean()).IsFalse();
+        await Assert.That(page.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
         var list = await client.GetStringAsync("/databases");
         await Assert.That(list).Contains("<span class=\"ts-badge ts-badge-info\">All regions</span>");
         await Assert.That(list).Contains("<dt class=\"ts-stat-label\"><span class=\"ts-dot\" aria-hidden=\"true\"></span>Regions</dt><dd class=\"ts-stat-value\">3</dd>");
