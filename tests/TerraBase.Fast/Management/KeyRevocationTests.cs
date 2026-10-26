@@ -151,6 +151,25 @@ public sealed class KeyRevocationTests
         }
     }
 
+    [Test]
+    public async Task A_token_issued_before_key_status_keeps_reading_without_a_status_check()
+    {
+        // Keys and tokens that predate key status keep working after TerraBase starts checking it.
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var id = EntityIds.New().ToString();
+        var token = api.Issuer.Mint(id, descriptor =>
+        {
+            descriptor.Claims["project_id"] = database.Project;
+            descriptor.Claims["scope"] = "documents:read databases:read";
+        });
+        using var client = api.WithToken(token);
+        using var response = await client.GetAsync(ManagementApi.Uri(database.Data + "/collections"));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(api.Issuer.StatusRequests).IsEqualTo(0);
+    }
+
     private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false)
     {
         var id = EntityIds.New().ToString();

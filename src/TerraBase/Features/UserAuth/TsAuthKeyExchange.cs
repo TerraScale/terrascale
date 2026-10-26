@@ -208,7 +208,14 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return new NotFound();
         }
 
-        // key_id and key_gen come together from a ts-auth that serves key status; neither from an older one.
+        // key_id and key_gen come together from a ts-auth that serves key status; neither from an older one. Like the
+        // bearer handler, a non-string value is refused rather than read as absent.
+        if (jwt.TryGetPayloadValue<object>("key_id", out var rawId) && rawId is not string
+            || jwt.TryGetPayloadValue<object>("key_gen", out var rawGeneration) && rawGeneration is not string)
+        {
+            return new NotFound();
+        }
+
         var hasKey = jwt.TryGetPayloadValue<string>("key_id", out var keyId);
         if ((hasKey | jwt.TryGetPayloadValue<string>("key_gen", out var generation)) && (!hasKey || keyId != subject || !KeyToken.IsGeneration(generation)))
         {
