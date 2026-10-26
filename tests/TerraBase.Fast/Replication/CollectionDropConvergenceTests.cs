@@ -377,7 +377,7 @@ public sealed class CollectionDropConvergenceTests
         await Assert.That(written.Groups.All(group => OriginOf(group) == originA)).IsTrue();
         await DeliverCapturedAsync(apiB.Server, database, written);
 
-        SourceGroups wrote = new(Ulid.Empty, []);
+        SourceGroups wrote = new(Ulid.Empty, [], Retained: true);
         if (writeBeforeDrop)
         {
             await PutDocumentAsync(dataB, managed, "items", "new", """{"v":2}""");
@@ -759,7 +759,7 @@ public sealed class CollectionDropConvergenceTests
         TerraBaseTestServer server, TenantContext database, long after, Func<IReadOnlyList<OriginGroup>, bool> ready)
     {
         var source = server.Services.GetRequiredService<IChangeGroupSource>();
-        SourceGroups groups = new(Ulid.Empty, []);
+        SourceGroups groups = new(Ulid.Empty, [], Retained: true);
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
             var incarnation = await IncarnationAsync(server, database, token);

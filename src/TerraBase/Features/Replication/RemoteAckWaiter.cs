@@ -75,6 +75,18 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
     }
 
     /// <summary>
+    /// Whether a write of <paramref name="database"/> holds a waiter slot: only then can an ack confirm anything
+    /// (<see cref="Acked"/>). A write admitted later commits after any ack already received.
+    /// </summary>
+    public bool Waits(TenantContext database)
+    {
+        lock (_gate)
+        {
+            return _databases.ContainsKey(Key(database));
+        }
+    }
+
+    /// <summary>
     /// An eligible ack: a peer of another placed region holds durably every own group of <paramref name="incarnation"/>
     /// after <paramref name="from"/> up to <paramref name="to"/>, each received in a live batch.
     /// </summary>

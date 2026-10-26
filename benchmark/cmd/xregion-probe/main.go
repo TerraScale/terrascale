@@ -80,6 +80,13 @@ func main() {
 
 	rtt := tcpRTT(*origin, *rttSamples)
 	floor := rtt / 2
+	// Open both clients' connections before the first probe: its write would otherwise also pay a TCP connect to the
+	// origin, one more round trip that is the client's and not replication's (in every earlier run, probe 0 was the slowest).
+	for _, warm := range []*replbench.Region{from, to} {
+		if _, err := warm.Do(ctx, http.MethodGet, replbench.DocPath(*collection, ulid.Make().String()), nil, ""); err != nil {
+			log.Fatal(err)
+		}
+	}
 	lat, over, ack := replbench.NewLatency(), replbench.NewLatency(), replbench.NewLatency()
 	missing := 0
 	// Sustained load beside the probes, on clients of its own so probes never queue behind it.

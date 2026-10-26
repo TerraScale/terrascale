@@ -162,7 +162,7 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
                 page.Add(group);
             }
 
-            snapshot = new SourceGroups(expected, page);
+            snapshot = new SourceGroups(expected, page, _groups.GetValueOrDefault(database) is not [var first, ..] || first.ChangeId <= after + 1);
             if (page.Count == 0)
             {
                 _ = _afterEmptyReads.Remove(database, out afterEmptyRead);

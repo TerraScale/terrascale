@@ -271,10 +271,28 @@ internal sealed partial class TursoStorageTransaction
     /// the oldest row left is at most the next one. A file that never captured anything holds every group (none).
     /// </summary>
     internal ValueTask<bool> RetainsAsync(long after, CancellationToken cancellationToken) =>
+        RunAsync(() => Retains(Oldest(), after), cancellationToken);
+
+    /// <summary>
+    /// A sender's page (<see cref="ReadChangeGroupsAsync"/>) with, in the same call and snapshot, the oldest row still here
+    /// (<see cref="Retains"/>): no cut can fall between the page and that proof.
+    /// </summary>
+    internal ValueTask<(List<OriginGroup> Groups, long Quiet, long? Oldest)> ReadShippableAsync(
+        long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken) =>
         RunAsync(() =>
-            Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null
-            || Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is not long first
-            || first <= after + 1, cancellationToken);
+        {
+            var (groups, quiet, _) = ReadChangeGroups(after, maxGroups, maxBytes, self, cancellationToken);
+            return (groups, quiet, Oldest());
+        }, cancellationToken);
+
+    /// <summary>Whether every row after <paramref name="after"/> is still here, given the oldest row left (null: none).</summary>
+    internal static bool Retains(long? oldest, long after) => oldest is not { } first || first <= after + 1;
+
+    // Worker-only. The oldest change id, or null when the file holds no row or never captured anything.
+    private long? Oldest() =>
+        Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null
+            ? null
+            : Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() as long?;
 
     /// <summary>The newest change id, or 0: where a refilled peer's stream goes on.</summary>
     internal ValueTask<long> GetHeadAsync(CancellationToken cancellationToken) =>
