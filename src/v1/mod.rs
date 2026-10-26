@@ -30,6 +30,7 @@ mod changes;
 mod client;
 mod documents;
 mod errors;
+mod files;
 mod functions;
 mod ids;
 mod imports;
@@ -62,6 +63,7 @@ pub use documents::{
     WriteResult,
 };
 pub use errors::{Error, Result, SqlError};
+pub use files::{FileObject, FileObjectPage, FileSignedUrl, FileUploadRequest};
 pub use functions::{
     Function, FunctionDeployment, FunctionInvocation, FunctionLog, FunctionTrigger,
 };
