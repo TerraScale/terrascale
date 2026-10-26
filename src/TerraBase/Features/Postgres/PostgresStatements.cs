@@ -406,7 +406,7 @@ internal static partial class PostgresStatements
             "INSERT" or "REPLACE" => $"INSERT 0 {result.RowsAffected}",
             "UPDATE" => $"UPDATE {result.RowsAffected}",
             "DELETE" => $"DELETE {result.RowsAffected}",
-            "CREATE" or "DROP" when columns is null => $"{verb.Groups[1].Value.ToUpperInvariant()} {verb.Groups[2].Value.ToUpperInvariant()}",
+            "CREATE" or "DROP" or "ALTER" when columns is null => $"{verb.Groups[1].Value.ToUpperInvariant()} {verb.Groups[2].Value.ToUpperInvariant()}",
             _ => $"SELECT {result.Rows.Count}",
         };
         return new PgResult(columns, result.Rows, tag);

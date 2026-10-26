@@ -231,6 +231,24 @@ public sealed class PostgresWireTests
         await Assert.That(count[0][0]).IsEqualTo("3");
     }
 
+    [Test]
+    public async Task Alter_add_column_refuses_a_prepared_result_whose_width_changed()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        await ExecuteAsync(connection, "INSERT INTO t VALUES (1)");
+        await using var select = new NpgsqlCommand("SELECT * FROM t", connection);
+        await select.PrepareAsync();
+        await ExecuteAsync(connection, "ALTER TABLE t ADD extra TEXT");
+        var changed = await Assert.ThrowsAsync<PostgresException>(async () => await select.ExecuteScalarAsync());
+        await Assert.That(changed!.SqlState).IsEqualTo("0A000");
+        var rows = await ReadAsync(connection, "SELECT id, extra FROM t");
+        await Assert.That(rows[0]).IsEquivalentTo(["1", null]);
+    }
+
     // Needs SQ1-d (writes) and SQ1-e (transactions).
     [Test]
     public async Task Transactions_commit_roll_back_and_abort_after_an_error()

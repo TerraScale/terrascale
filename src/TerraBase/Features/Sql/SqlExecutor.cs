@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
+using SqlParser;
+using SqlParser.Ast;
+using SqlParser.Dialects;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
@@ -82,6 +85,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             InsertSql insert => await InsertAsync(transaction, insert, command, keys, tally, cancellationToken).ConfigureAwait(false),
             ChangeSql change => await ChangeAsync(transaction, change, command, tally, cancellationToken).ConfigureAwait(false),
             CreateTableSql create => await CreateAsync(transaction, create, tally, cancellationToken).ConfigureAwait(false),
+            AddColumnSql add => await AddColumnAsync(transaction, add, tally, cancellationToken).ConfigureAwait(false),
             DropTableSql drop => await DropAsync(transaction, drop, tally, cancellationToken).ConfigureAwait(false),
             CreateIndexSql index => await CreateIndexAsync(transaction, index, tally, cancellationToken).ConfigureAwait(false),
             DropIndexSql drop => await DropIndexAsync(transaction, drop, tally, cancellationToken).ConfigureAwait(false),
@@ -108,6 +112,54 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         }
 
         return Empty;
+    }
+
+    private static async ValueTask<SqlOutcome> AddColumnAsync(IStorageTransaction transaction, AddColumnSql add, SqlTally tally, CancellationToken cancellationToken)
+    {
+        if (await TableAsync(transaction, add.Table, tally, cancellationToken).ConfigureAwait(false) is not { } table)
+        {
+            return SqlErrors.Error("no such table");
+        }
+
+        if (table.Columns.Any(column => column.Name.Equals(add.Column.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return SqlErrors.Error("already exists: the table has a column with this name");
+        }
+
+        if (table.Columns.Count >= SqlTable.MaxColumns)
+        {
+            return SqlErrors.Error("a table has 1 to 256 columns");
+        }
+
+        tally.Tables.Remove(add.Table);
+        await SqlTable.WriteAsync(transaction, add.Table, table with
+        {
+            Columns = [.. table.Columns, add.Column],
+            Sql = WithColumn(table.Sql, add.Definition),
+        }, cancellationToken).ConfigureAwait(false);
+        return Empty;
+    }
+
+    private static string? WithColumn(string? sql, ColumnDef column)
+    {
+        try
+        {
+            if (sql is not null && new Parser().ParseSql(sql, new SQLiteDialect()) is [Statement.CreateTable { Element: var create }])
+            {
+                var text = (create with { Columns = new Sequence<ColumnDef>([.. create.Columns, column]) }).ToSql();
+                return new Parser().ParseSql(text, new SQLiteDialect()) is [Statement.CreateTable] ? text : null;
+            }
+        }
+        catch (ParserException)
+        {
+            // Older catalog text can be reconstructed from the stored columns instead.
+        }
+        catch (TokenizeException)
+        {
+            // The structured definition remains authoritative.
+        }
+
+        return null;
     }
 
     private static async ValueTask<SqlOutcome> DropAsync(IStorageTransaction transaction, DropTableSql drop, SqlTally tally, CancellationToken cancellationToken)

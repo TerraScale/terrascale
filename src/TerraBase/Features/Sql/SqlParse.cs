@@ -159,6 +159,12 @@ internal static partial class SqlParse
         {
             var (numbered, names) = SqlRead.Number(sql);
             var statements = new Parser().ParseSql(numbered, new SQLiteDialect());
+            // SQLiteDialect drops ADD IF NOT EXISTS; GenericDialect retains it so it can be refused.
+            if (statements is [Statement.AlterTable])
+            {
+                statements = new Parser().ParseSql(numbered, new GenericDialect());
+            }
+
             return statements.Count == 1
                 ? Translate(statements[0]) with { Params = names }
                 : throw new FormatException("exactly one statement is supported");
@@ -225,6 +231,7 @@ internal static partial class SqlParse
         Statement.Update update => SqlWrite.Update(update),
         Statement.Delete { DeleteOperation: var delete } => SqlWrite.Delete(delete),
         Statement.CreateTable { Element: var create } => CreateTable(create),
+        Statement.AlterTable alter => AddColumn(alter),
         Statement.Drop { ObjectType: ObjectType.Table } drop => DropTable(drop),
         Statement.CreateIndex { Element: var index } => CreateIndex(index),
         Statement.Drop { ObjectType: ObjectType.Index } drop => DropIndex(drop),
