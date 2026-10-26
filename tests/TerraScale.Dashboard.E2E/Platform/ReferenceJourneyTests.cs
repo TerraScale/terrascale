@@ -106,8 +106,9 @@ public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
         await Assert.That(plans.GetProperty("currentInterval").GetString()).IsEqualTo("monthly");
         await Assert.That(plans.GetProperty("plans").GetArrayLength()).IsEqualTo(3);
         var pro = plans.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("key").GetString() == "pro");
-        await Assert.That(pro.GetProperty("monthlyPriceCents").GetInt64()).IsEqualTo(2000);
-        await Assert.That(pro.GetProperty("annualPriceCents").GetInt64()).IsEqualTo(0);
+        await Assert.That(pro.GetProperty("priceCents").GetInt64()).IsEqualTo(2000);
+        await Assert.That(pro.GetProperty("monthlyEquivalentCents").GetInt64()).IsEqualTo(2000);
+        await Assert.That(pro.GetProperty("price").GetString()).IsEqualTo("$20.00 / month");
         await Assert.That(pro.GetProperty("billingInterval").GetString()).IsEqualTo("month");
         var result = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "list_invoices", arguments = new { page = 2 } });
         var listing = result.GetProperty("result").GetProperty("structuredContent");
