@@ -32,4 +32,6 @@ The [JSON Schema](https://docs.terrascale.tech/cli-output.schema.json) maps indi
 | `functions`, server `import` | Metadata/list/log arrays; invoke `{body}` or `{bodyBase64}`; delete receipt; final import job |
 | `migrate`, `context`, backup settings | Path/run/status/diff objects or arrays; saved selectors/clear receipt; policy/window/plan/destination metadata |
 
+See [access and execution context](./access) for scopes, consent and dashboard billing.
+
 </div>
