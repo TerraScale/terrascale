@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { page } from '$app/stores'
+  import { page } from '$app/state'
+  import type { Snippet } from 'svelte'
+
   import '@/index.css'
   import Footer from '@/components/Footer.svelte'
   import Header from '@/components/Header.svelte'
   import { initLocale } from '@/lib/i18n'
+
+  let { children }: { children: Snippet } = $props()
 
   const publicOrigin = 'https://terrascale.tech'
   const metadataByPath: Record<string, { title: string; description: string }> = {
@@ -34,9 +38,9 @@
     },
   }
 
-  $: canonicalPath = $page.url.pathname === '/' ? '/' : $page.url.pathname.replace(/\/$/, '')
-  $: canonicalUrl = `${publicOrigin}${canonicalPath}`
-  $: metadata = metadataByPath[canonicalPath] ?? metadataByPath['/404']
+  const canonicalPath = $derived(page.url.pathname === '/' ? '/' : page.url.pathname.replace(/\/$/, ''))
+  const canonicalUrl = $derived(`${publicOrigin}${canonicalPath}`)
+  const metadata = $derived(metadataByPath[canonicalPath] ?? metadataByPath['/404'])
 
   onMount(() => {
     initLocale()
@@ -57,7 +61,7 @@
   <Header />
 
   <main style="padding-top: 60px">
-    <slot />
+    {@render children()}
   </main>
 
   <Footer />

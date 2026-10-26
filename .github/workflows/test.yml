@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: Audit every npm lockfile (high and critical)
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' lockfile; do
+            echo "Auditing ${lockfile}"
+            (cd "$(dirname "$lockfile")" && npm audit --package-lock-only --ignore-scripts --audit-level=high)
+          done < <(git ls-files -z -- 'package-lock.json' '**/package-lock.json')
+      - run: npm ci
+      - run: npm run build

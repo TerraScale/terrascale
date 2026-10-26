@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores'
+  import { afterNavigate } from '$app/navigation'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import LanguageSelector from '@/components/LanguageSelector.svelte'
@@ -12,9 +12,9 @@
   // The logo is the home link, so the bar lists the other pages only.
   const links = navigation.filter((item) => item.href !== '/')
 
-  $: if ($page.url.pathname) {
+  afterNavigate(() => {
     isMenuOpen = false
-  }
+  })
 
 </script>
 
