@@ -126,12 +126,26 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
     }
 
     [Test]
-    public async Task OAuthFormRefusesInheritedDefaultAuthorization()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OAuthFormRefusesInheritedDefaultAuthorization(bool raw)
     {
+        const string marker = "=synthetic-marker";
         using var handler = new Handler((_, _) => Task.FromResult(Response("{}")));
         using var http = new HttpClient(handler);
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "fixture-other-credential");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Client(http).Oidc.RefreshTokenAsync("fixture-id", "fixture-secret", "fixture-refresh"));
+        if (raw)
+        {
+            await Assert.That(http.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", marker)).IsTrue();
+            await Assert.That(http.DefaultRequestHeaders.Authorization).IsNull();
+        }
+        else http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "fixture-other-credential");
+        var original = http.DefaultRequestHeaders.NonValidated["Authorization"].ToArray();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Client(http).Oidc.RefreshTokenAsync("fixture-id", "fixture-secret", "fixture-refresh"));
+        await Assert.That(error!.Message).IsEqualTo("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
+        await Assert.That(error.ToString()).DoesNotContain(marker);
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => Client(http).Oidc.RefreshTokenAsync("fixture-id", "fixture-secret", "fixture-refresh", cancellationToken: cancellation.Token));
+        await Assert.That(http.DefaultRequestHeaders.NonValidated["Authorization"].SequenceEqual(original)).IsTrue();
         await Assert.That(handler.Calls).IsEqualTo(0);
     }
 

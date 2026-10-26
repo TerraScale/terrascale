@@ -85,6 +85,7 @@ databases, collections, documents, queries and transactions.
 `TerraBaseManagementClient` covers the Management API: organizations, the
 current organization, plans, projects, databases, branches, members,
 invitations, ownership transfer, audit retention and audit events.
+`TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md) for placement metadata.
 `TerraBaseShapeClient` follows a collection's shape protocol v1 into local state;
 see [shape reads and qualification](docs/terrabase-shapes.md). `ExportAsync` streams live documents; import methods stage, validate and run one
 user-confirmed source upload. Export is not a database backup.

@@ -35,7 +35,8 @@ public sealed class TerraBaseHealthClient
     private readonly TerraBaseConnection connection;
     private static readonly TerraBaseJsonContext Json = TerraBaseJsonContext.Wire;
 
-    /// <summary>Creates a probe client. Disable automatic redirects using TerraBaseHttp.CreateHandler; optional region pins the answering region.</summary>
+    /// <summary>Creates a probe client. Use TerraBaseHttp.CreateHandler to disable redirects and cookies; optional region pins the answering region.
+    /// Default Authorization or Cookie headers are rejected before dispatch; use a separate credential-free HttpClient.</summary>
     public TerraBaseHealthClient(HttpClient httpClient, Uri? baseAddress = null, string? region = null) =>
         connection = new TerraBaseConnection(httpClient, baseAddress, null, null, "credential", TimeSpan.FromSeconds(30),
             TerraBaseConnection.DefaultMaxResponseBytes, region: region, publicAnonymous: true);

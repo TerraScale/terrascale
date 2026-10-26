@@ -30,6 +30,7 @@ internal sealed class TerraBaseConnection
     private readonly AuthenticationHeaderValue? authorization;
     private readonly Func<CancellationToken, ValueTask<string>>? accessTokenProvider;
     private readonly bool anonymous;
+    private readonly bool publicAnonymous;
     private readonly TimeSpan timeout;
     private readonly TimeProvider timeProvider;
     private readonly int maxResponseBytes;
@@ -44,6 +45,7 @@ internal sealed class TerraBaseConnection
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
+        this.publicAnonymous = publicAnonymous;
         if (region is not null)
         {
             if (!TerraBaseRegion.IsValid(region))
@@ -266,6 +268,9 @@ internal sealed class TerraBaseConnection
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             }
             request.RequestUri = new Uri(origin, path);
+            // Null request headers do not suppress HttpClient's inherited defaults.
+            if (publicAnonymous && (http.DefaultRequestHeaders.Contains("Authorization") || http.DefaultRequestHeaders.Contains("Cookie")))
+                throw new InvalidOperationException("Anonymous TerraBase requests require an HttpClient without default Authorization or Cookie headers; use a separate credential-free HttpClient with TerraBaseHttp.CreateHandler().");
             response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
             if (throwOnError && !response.IsSuccessStatusCode)
                 throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);

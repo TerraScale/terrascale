@@ -468,7 +468,7 @@ public sealed class TerraScaleAuthClient
             // Every attempt rebuilds the request: content cannot be reused across sends.
             cancellationToken.ThrowIfCancellationRequested();
             using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
-            if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Authorization is not null)
+            if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Contains("Authorization"))
             {
                 throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
             }
