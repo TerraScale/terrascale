@@ -2,6 +2,7 @@ import { resolveAccessToken, resolveTsAuthRuntimeConfig } from "./config.js";
 import { err, ok, sanitizeDiagnostic } from "./result.js";
 import { parseDatabaseJson } from "./database-codec.js";
 import { validateTsAuthIds } from "./ts-auth-ids.js";
+import { isValidId } from "./ids.js";
 /** @import { ResolvedTsAuthRuntimeConfig, TsAuthRuntimeConfig, FetchLike } from "./config.js" */
 /** @import { TerraScaleError, TerraScaleErrorCategory, TerraScaleResult, TerraScaleValidationIssue } from "./result.js" */
 
@@ -18,6 +19,7 @@ import { validateTsAuthIds } from "./ts-auth-ids.js";
  *   readonly formBody?: URLSearchParams | string | undefined;
  *   readonly userinfoAccessToken?: string | undefined;
  *   readonly resourceIntrospectionBasic?: string | undefined;
+ *   readonly deletionReceipt?: string | undefined;
  *   readonly signal?: AbortSignal | undefined;
  * }} TsAuthRequest
  */
@@ -81,6 +83,17 @@ export class TsAuthHttp {
         let fetchStarted = false;
         try {
           const headers = new Headers({ accept: "application/json" });
+          const receiptRead = accountReceiptRead(options);
+          if (options.deletionReceipt !== undefined) {
+            if ((!receiptRead && !(options.routeName === "tsauth.platform.delete_account" && options.method === "DELETE" &&
+                /^\/?v1\/terrascale\/account$/u.test(options.path))) ||
+                !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u.test(options.deletionReceipt))
+              throw new TypeError("Deletion receipts belong only to named account deletion operations.");
+            headers.set("X-TerraScale-Deletion-Receipt", options.deletionReceipt);
+          }
+          if (receiptRead && (options.deletionReceipt === undefined || this.#accessToken !== undefined ||
+              options.userinfoAccessToken !== undefined || options.resourceIntrospectionBasic !== undefined))
+            throw new TypeError("Account deletion reads require a receipt without bearer credentials.");
           const oidc = options.routeName.startsWith("tsauth.oidc.");
           const token = oidc
             ? undefined
@@ -180,7 +193,7 @@ export class TsAuthHttp {
           }
           const parsed = await readResponseBody(
             response,
-            options.routeName,
+            options,
             signal,
           );
           signal?.throwIfAborted();
@@ -324,13 +337,21 @@ function strictOauthRoute(routeName) {
   );
 }
 
+/** @param {TsAuthRequest<unknown>} request */
+function accountReceiptRead(request) {
+  return request.method === "GET" && (
+    request.routeName === "tsauth.platform.account_deletion_status" && /^\/?v1\/terrascale\/account\/deletion$/u.test(request.path) ||
+    request.routeName === "tsauth.platform.account_deletion_history" && /^\/?v1\/terrascale\/account\/deletion\/history$/u.test(request.path));
+}
+
 /**
  * @param {Response} response
- * @param {TsAuthRouteName} routeName
+ * @param {TsAuthRequest<unknown>} request
  * @param {AbortSignal} [signal]
  * @returns {Promise<ParsedBody>}
  */
-async function readResponseBody(response, routeName, signal) {
+async function readResponseBody(response, request, signal) {
+  const routeName = request.routeName;
   const reader = response.body?.getReader();
   /** @type {Uint8Array[]} */
   const chunks = [];
@@ -359,6 +380,15 @@ async function readResponseBody(response, routeName, signal) {
     offset += chunk.byteLength;
   }
   const raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  // Published closure/status operations return empty 202 while still pending.
+  // Keep exceptions bound to exact named paths, methods and status.
+  const closure = /^\/?v1\/terrascale\/organizations\/([^/]+)\/projects\/([^/]+)$/u.exec(request.path);
+  const pendingClosure = request.method === "DELETE" && (
+    routeName === "tsauth.platform.delete_project" && isValidId(closure?.[1]) && isValidId(closure?.[2]) ||
+    routeName === "tsauth.platform.delete_account" && /^\/?v1\/terrascale\/account$/u.test(request.path));
+  const pendingReceipt = routeName === "tsauth.platform.account_deletion_status" && accountReceiptRead(request);
+  if (raw.length === 0 && response.status === 202 && (pendingClosure || pendingReceipt))
+    return { ok: true, value: undefined };
   const jsonRequired =
     response.ok &&
     response.status !== 204 &&

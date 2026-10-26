@@ -15,7 +15,7 @@ import { runSql, checkSql } from "./sql.js";
 import { executeSql, sqlRowObjects, sqlStatement } from "./sql-execute.js";
 import { streamChanges } from "./changes.js";
 import { exportDocuments } from "./export.js";
-import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema, getCollectionTtl, putCollectionTtl, deleteCollectionTtl } from "./catalog.js";
+import { V1Databases, getCollectionSchema, putCollectionSchema, previewCollectionSchema, deleteCollectionSchema, getCollectionTtl, putCollectionTtl, deleteCollectionTtl } from "./catalog.js";
 import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform } from "./system.js";
 import { V1Imports } from "./imports.js";
@@ -538,6 +538,8 @@ export class V1Collection {
   getSchema(options = {}) { return getCollectionSchema(this.#transport, this.#params, options); }
   /** @param {import("./json.js").JsonInputObject | boolean} schema @param {V1RequestOptions} [options] */
   putSchema(schema, options = {}) { return putCollectionSchema(this.#transport, this.#params, schema, options); }
+  /** @param {import("./json.js").JsonInputObject | boolean} schema @param {{readonly cursor?: string}} [request] @param {V1RequestOptions} [options] */
+  previewSchema(schema, request = {}, options = {}) { return previewCollectionSchema(this.#transport, this.#params, schema, request, options); }
   /** @param {V1RequestOptions} [options] */
   deleteSchema(options = {}) { return deleteCollectionSchema(this.#transport, this.#params, options); }
   /** @param {V1RequestOptions} [options] */

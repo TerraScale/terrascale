@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.12 — public management and administration
+
+`./management` exposes project-scoped database, placement, backup/import, usage,
+index and schema operations through the existing root client, plus a separate
+platform sign-in client for organization, project, member, key, invitation,
+ownership, SSO, MFA, audit and account operations. Receipt-based deletion status
+and backend end-user assertions use separate credential boundaries.
+`./admin` exposes role-protected platform exploration. Deprecated `require*`
+aliases now construct clients with explicit credentials. Schema preview supports
+bounded continuation and redacted diagnostics. The capability inventory tracks
+remaining producer contracts; the server-only Better Auth adapter remains held
+on public auth primitives and durable mutation receipts.
+
 ## 0.0.11 — read replica isolation and freshness
 
 Persisted shape replicas bind to their service, project, database, collection and

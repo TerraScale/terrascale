@@ -1,0 +1,9 @@
+{
+  "revision": "a3cbf8b1c73d304189a489fa8033d41f3b508de3",
+  "source": "src/TerraBase/Features/Documents/PreviewCollectionSchemaEndpoint.cs",
+  "sourceSha256": "bdc2fc1611a5156f362f68ccd46f776b1940274853de9021233209195309f803",
+  "openApiUrl": "https://api.terrascale.tech/openapi/v1.json",
+  "observedAt": "2026-10-26T03:11:24Z",
+  "fullOpenApiSha256": "8385039bdd57259c95f61ed066fbe1011942e3421d31d9d4310bd26b16a14d8a",
+  "selectedOpenApiSha256": "7016759672ad00d644a24a5dbd9e0bfd76bdbe4bee494719c11d741ff9baa115"
+}

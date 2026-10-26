@@ -1,5 +1,5 @@
 import { requireId } from "../ids.js";
-import { array, malformed, object, string } from "./decode.js";
+import { array, boolean, malformed, object, string } from "./decode.js";
 import { requireName } from "./ids.js";
 import { isJsonPointer } from "./filter.js";
 import { isJsonObject, stringifyExactJson } from "./json.js";
@@ -27,6 +27,7 @@ import { isJsonObject, stringifyExactJson } from "./json.js";
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
 /** @typedef {{ readonly schema: JsonObject | boolean | null; readonly dialect?: string | null | undefined }} V1CollectionSchema */
+/** @typedef {{ readonly schemaHash: string; readonly frontier: string; readonly examined: number; readonly valid: number; readonly invalid: number; readonly complete: boolean; readonly nextCursor: string | null; readonly diagnostics: readonly {readonly idHash: string; readonly pathHash: string; readonly keyword: string}[] }} V1SchemaPreview */
 /** The expiry member, or null when documents never expire. @typedef {{ readonly path: string | null }} V1CollectionTtl */
 
 /** @param {unknown} value @param {readonly string[]} allowed @returns {void} */
@@ -203,6 +204,47 @@ export async function putCollectionSchema(transport, params, schema, options = {
   return collectionSchema((await transport.call("putCollectionSchema", params, {
     body: schemaText(schema), signal: options.signal,
   })).value);
+}
+
+/**
+ * Observes one bounded page; continuation needs identical schema bytes and the same process/frontier.
+ * A preview does not reserve a schema change. Applying a schema remains prospective.
+ * @param {V1Transport} transport @param {Readonly<Record<string, string>>} params
+ * @param {boolean | JsonInputObject} schema @param {{readonly cursor?: string}} [request]
+ * @param {V1RequestOptions} [options] @returns {Promise<V1SchemaPreview>}
+ */
+export async function previewCollectionSchema(transport, params, schema, request = {}, options = {}) {
+  members(request, ["cursor"]);
+  const query = new URLSearchParams();
+  if (request.cursor !== undefined) {
+    if (typeof request.cursor !== "string" || request.cursor.length === 0 || request.cursor.length > 2048)
+      throw new TypeError("Schema preview cursor must be 1-2048 characters.");
+    query.set("cursor", request.cursor);
+  }
+  const raw = object((await transport.call("previewCollectionSchema", params, {
+    body: schemaText(schema), query, signal: options.signal,
+  })).value, "schema preview");
+  /** @param {JsonValue | undefined} value */
+  const hash = value => {
+    if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) return malformed("preview SHA-256");
+    return value;
+  };
+  /** @param {JsonValue | undefined} value */
+  const count = value => {
+    if (typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)) value = Number(value);
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) return malformed("preview page count");
+    return value;
+  };
+  const examined = count(raw.examined), valid = count(raw.valid), invalid = count(raw.invalid);
+  const complete = boolean(raw.complete, "preview complete");
+  const nextCursor = raw.next_cursor === null ? null : string(raw.next_cursor, "preview cursor");
+  const diagnostics = array(raw.diagnostics, "preview diagnostics").map(value => {
+    const diagnostic = object(value, "preview diagnostic");
+    return Object.freeze({ idHash: hash(diagnostic.id_hash), pathHash: hash(diagnostic.path_hash), keyword: string(diagnostic.keyword, "schema keyword") });
+  });
+  if (valid + invalid !== examined || diagnostics.length > 16 || complete !== (nextCursor === null)) malformed("preview page");
+  return Object.freeze({ schemaHash: hash(raw.schema_hash), frontier: hash(raw.frontier), examined, valid, invalid,
+    complete, nextCursor, diagnostics: Object.freeze(diagnostics) });
 }
 
 /** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @param {V1RequestOptions} [options] @returns {Promise<V1CollectionSchema>} */

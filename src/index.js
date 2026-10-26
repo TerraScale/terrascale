@@ -103,6 +103,7 @@ export { V1SavedQueries } from "./v1/saved-queries.js";
 /** @typedef {import("./v1/catalog.js").V1DatabaseListRequest} V1DatabaseListRequest */
 /** @typedef {import("./v1/catalog.js").V1DatabasePage} V1DatabasePage */
 /** @typedef {import("./v1/catalog.js").V1CollectionSchema} V1CollectionSchema */
+/** @typedef {import("./v1/catalog.js").V1SchemaPreview} V1SchemaPreview */
 /** @typedef {import("./v1/catalog.js").V1CollectionTtl} V1CollectionTtl */
 
 export { V1DatabaseSchemaClient } from "./v1/database-schema.js";

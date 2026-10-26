@@ -53,7 +53,17 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
 });
 
 const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal, TerraBaseV1Error } from "@terrascale/sdk";
+import { createTerraScaleManagementClient, createTerraScaleIdentityManagementClient, createTerraScaleAccountDeletionClient, createTerraScaleProjectIdentityClient, requireTerraScaleManagement } from "@terrascale/sdk/management";
+import { createTerraScaleAdministrationClient, requireTerraScaleAdministration } from "@terrascale/sdk/admin";
 const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoicHJvamVjdCJ9.c2lnbmF0dXJl";
+const config = { project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "http://127.0.0.1:18447", token };
+const management: import("@terrascale/sdk/management").TerraScaleManagementClient = createTerraScaleManagementClient(config);
+const administration: import("@terrascale/sdk/admin").TerraScaleAdministrationClient = createTerraScaleAdministrationClient(config);
+const identity = createTerraScaleIdentityManagementClient({ apiBaseUrl: "http://127.0.0.1:18447", signInToken: token });
+const deletion: import("@terrascale/sdk/management").TerraScaleAccountDeletionClient = createTerraScaleAccountDeletionClient({ apiBaseUrl: "http://127.0.0.1:18447" });
+const assertion: import("@terrascale/sdk/management").TerraScaleProjectIdentityClient = createTerraScaleProjectIdentityClient({ apiBaseUrl: "http://127.0.0.1:18447", project: config.project, projectApiKey: config.project + "_" + "a".repeat(52) });
+if (!deletion.accountDeletionStatus || !assertion.mintEndUserToken || !identity.getAccountMfa || !identity.lookupInvitation) throw new Error("Missing typed identity boundaries.");
+if (!requireTerraScaleManagement(config).databases || !requireTerraScaleAdministration(config).databases || !identity.createProject || !management.database || !administration.document) throw new Error("Missing named management APIs.");
 const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "http://127.0.0.1:18447", token });
 const tokenProvider: import("@terrascale/sdk").V1TokenProvider = () => token;
 for (const token of [tokenProvider, async () => tokenProvider()]) {
@@ -71,8 +81,9 @@ for (const name of ["sql", "checkSql", "explainSql", "changes"] as const) if (ty
 for (const name of ["create", "list", "get", "update", "delete", "branch"] as const) if (typeof client.databases[name] !== "function") throw new Error(name);
 const sql: (statement: string, options?: import("@terrascale/sdk").V1RequestOptions) => Promise<import("@terrascale/sdk").V1SqlResult> = db.sql.bind(db);
 const schema: (value: boolean | import("@terrascale/sdk").V1JsonInputObject) => Promise<import("@terrascale/sdk").V1CollectionSchema> = collection.putSchema.bind(collection);
+const preview: (value: boolean | import("@terrascale/sdk").V1JsonInputObject, request?: { cursor?: string }) => Promise<import("@terrascale/sdk").V1SchemaPreview> = collection.previewSchema.bind(collection);
 const changes: (request?: import("@terrascale/sdk").V1ChangeStreamRequest) => AsyncGenerator<import("@terrascale/sdk").V1DatabaseChange | import("@terrascale/sdk").V1DatabaseChangeCursor, void, undefined> = db.changes.bind(db);
-if (!sql || !schema || !changes) throw new Error("Missing typed APIs.");
+if (!sql || !schema || !preview || !changes) throw new Error("Missing typed APIs.");
 const error = new TerraBaseV1Error({ status: 403, code: "forbidden_scope", body: { error: { code: "forbidden_scope", details: ["kept"] } }, responseText: "fixture", headers: new Headers({ "x-request-id": "fixture-id" }) });
 const errorBody: import("@terrascale/sdk").V1JsonValue | undefined = error.body;
 if (!errorBody || error.requestId !== "fixture-id" || error.responseText !== "fixture") throw new Error("Lost typed diagnostics.");
