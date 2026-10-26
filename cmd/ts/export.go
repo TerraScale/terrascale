@@ -10,7 +10,8 @@ import (
 
 // exportDatabase preserves raw import-compatible NDJSON by default. JSON mode
 // wraps each record and signals completion only after clean HTTP EOF. The server
-// reads one document snapshot; relational tables and metadata are excluded.
+// reads one document snapshot, including stored SQL row representations but
+// excluding relational definitions and other metadata.
 func exportDatabase(ctx context.Context, db *v1.Database, out io.Writer) error {
 	beginJSONStream(out)
 	for document, err := range db.Export(ctx, v1.ExportOptions{}) {

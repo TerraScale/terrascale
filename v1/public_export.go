@@ -30,9 +30,11 @@ type ExportDocument struct {
 }
 
 // Export streams all live documents from one server read snapshot, ordered by
-// collection then ID. It requires documents:read. Relational tables, empty
-// collections, schemas, indexes, TTL rules and other metadata are not included;
-// this is a document export, not a database backup.
+// collection then ID. It requires documents:read. Stored SQL rows and migration
+// records may appear as document representations with their original keys.
+// Empty collections, table definitions, schemas, indexes, TTL rules and other
+// metadata are not included; importing records does not recreate relational
+// definitions or constraints. This is a document export, not a database backup.
 //
 // Each record is bounded by DefaultMaxResponseBytes; the total stream is not.
 // Success requires complete newline-terminated records and clean HTTP EOF.
