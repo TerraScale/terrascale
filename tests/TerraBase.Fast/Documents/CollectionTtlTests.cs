@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Documents;
 
 namespace TerraBase.Fast.Documents;
@@ -11,6 +12,41 @@ namespace TerraBase.Fast.Documents;
 public sealed class CollectionTtlTests
 {
     private static readonly Faker Fake = new();
+
+    [Test]
+    [Arguments("2000-01-01", false)]
+    [Arguments("2000-01-01T00:00:00", false)]
+    [Arguments("01/01/2000", false)]
+    [Arguments("01 Jan 2000", false)]
+    [Arguments("2000-01-01 00:00:00Z", false)]
+    [Arguments("2000-01-01T00:00:00+01:00", false)]
+    [Arguments("2000-01-01T00:00:00-01:00", false)]
+    [Arguments("2000-01-01T00:00:00-00:00", false)]
+    [Arguments("2000-01-01T00:00:00.Z", false)]
+    [Arguments("2000-02-30T00:00:00Z", false)]
+    [Arguments("2000-01-01T00:00:00Z trailing", false)]
+    [Arguments("2000-01-01T00:00:00Z", true)]
+    [Arguments("2000-01-01T00:00:00+00:00", true)]
+    [Arguments("2000-01-01T00:00:00.125Z", true)]
+    [Arguments("2000-01-01T00:00:00.12345678Z", true)]
+    [Arguments("2000-01-01T00:00:00.1234567+00:00", true)]
+    [Arguments("2026-10-26t11:59:59z", true)]
+    [Arguments("2026-10-26t11:59:59.125+00:00", true)]
+    [Arguments("2026-10-26T12:00:00.5000000Z", false)]
+    [Arguments("2026-10-26T12:00:00.5000001Z", false)]
+    [Arguments("2099-01-01T00:00:00Z", false)]
+    public async Task Only_expired_RFC3339_UTC_timestamps_are_deleted(string expiresAt, bool expired)
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 26, 12, 0, 0, 500, TimeSpan.Zero));
+        await using var api = await DocumentApi.StartAsync(time: clock);
+        (await api.SendAsync(HttpMethod.Put, $"{api.Collections}/{DocumentApi.Collection}/ttl", new { path = "/expiresAt" })).Status.ShouldBe(HttpStatusCode.OK);
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { expiresAt })).Status.ShouldBe(HttpStatusCode.Created);
+
+        await api.Server.Services.GetRequiredService<CollectionTtlSweeper>().SweepAsync(CancellationToken.None);
+
+        (await api.GetAsync(id)).Status.ShouldBe(expired ? HttpStatusCode.NotFound : HttpStatusCode.OK);
+    }
 
     [Test]
     public async Task An_expired_document_is_swept_and_a_live_one_stays()

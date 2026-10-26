@@ -815,6 +815,41 @@ public sealed class DocumentApiTests
         await Assert.That(query.GetProperty("requestBody").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
         await Assert.That(patch.GetProperty("requestBody").GetProperty("content").EnumerateObject().Select(media => media.Name))
             .IsEquivalentTo(["application/merge-patch+json", "application/vnd.terrabase.ops+json"]);
+
+        // The served contract must describe the size/media refusals exercised over HTTP by the document tests.
+        var byId = paths.EnumerateObject().SelectMany(path => path.Value.EnumerateObject())
+            .ToDictionary(operation => operation.Value.GetProperty("operationId").GetString()!, operation => operation.Value);
+        var indexDescription = byId["listIndexes"].GetProperty("description").GetString();
+        await Assert.That(indexDescription).Contains("state building");
+        await Assert.That(indexDescription).Contains("then active");
+        foreach (var operationId in new[]
+        {
+            "createCollection", "createDocument", "putDocument", "patchDocument", "queryDocuments", "runTransaction",
+            "putDeclaredCollectionSchema", "previewCollectionSchema", "putCollectionTtl", "putCollectionRules",
+        })
+        {
+            foreach (var status in new[] { "413", "415" })
+            {
+                var responses = byId[operationId].GetProperty("responses");
+                await Assert.That(responses.TryGetProperty(status, out _)).IsTrue().Because($"{operationId} can return {status}");
+                await Assert.That(responses.GetProperty(status).GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
+            }
+        }
+
+        var read = byId["getDocument"];
+        var readResponses = read.GetProperty("responses");
+        await Assert.That(readResponses.TryGetProperty("412", out _)).IsTrue();
+        await Assert.That(readResponses.GetProperty("412").GetProperty("content").TryGetProperty("application/json", out _)).IsTrue();
+        await Assert.That(readResponses.TryGetProperty("304", out var notModified)).IsTrue();
+        await Assert.That(notModified.TryGetProperty("content", out _)).IsFalse();
+        var headers = read.GetProperty("parameters").EnumerateArray().Where(parameter => parameter.GetProperty("in").GetString() == "header")
+            .ToDictionary(parameter => parameter.GetProperty("name").GetString()!, parameter => parameter);
+        foreach (var name in new[] { "If-Match", "If-None-Match" })
+        {
+            await Assert.That(headers.ContainsKey(name)).IsTrue();
+            await Assert.That(headers[name].TryGetProperty("required", out var required) && required.GetBoolean()).IsFalse();
+            await Assert.That(headers[name].GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
+        }
     }
 
     private static string Nested(int depth) => string.Concat(Enumerable.Repeat("""{"a":""", depth)) + "1" + new string('}', depth);
