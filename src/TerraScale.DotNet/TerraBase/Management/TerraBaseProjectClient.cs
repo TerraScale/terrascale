@@ -19,7 +19,9 @@ public sealed partial class TerraBaseProjectClient
     }
 
     /// <summary>
-    /// Creates a database in the called region, or the specified home. Sent once; a regional pin may refuse a different home.
+    /// Creates a database managed in the called region, or the specified home. Sent once; a regional pin may refuse a different home.
+    /// A writable database requires at least two regions. Omitting <paramref name="replicaRegions"/> uses every other current serving region;
+    /// an explicit list must include at least one region other than the home. An empty list returns 400 placement_needs_two_regions.
     /// <paramref name="allRegions"/> true copies it to every serving region, including regions that join later; it cannot be combined with <paramref name="replicaRegions"/>.
     /// </summary>
     public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, string? homeRegion = null,
@@ -39,11 +41,18 @@ public sealed partial class TerraBaseProjectClient
     public async Task<TerraBaseManagedDatabase> GetDatabaseAsync(string databaseName, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, DatabasePath(databaseName), null, Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Deletes at the home region; 409 database_replicated requires removal of replicas first. Sent once.</summary>
+    /// <summary>
+    /// Deletes at the home region; 409 database_replicated requires an empty replica list via SetDatabaseRegionsAsync
+    /// immediately before deletion. This is teardown, not supported single-region placement. Sent once.
+    /// </summary>
     public Task DeleteDatabaseAsync(string databaseName, CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, DatabasePath(databaseName), null, null, cancellationToken);
 
-    /// <summary>Replaces the complete replica list in the home region and turns all-regions placement off. Home and name cannot change. Sent once.</summary>
+    /// <summary>
+    /// Replaces the complete replica list in the home region and turns all-regions placement off. A writable database needs
+    /// at least one replica besides the home. An empty list is allowed only as a transient step immediately before deletion;
+    /// document writes then return 409 placement_needs_two_regions. Home and name cannot change. Sent once.
+    /// </summary>
     public async Task<TerraBaseManagedDatabase> SetDatabaseRegionsAsync(string databaseName, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(replicaRegions);

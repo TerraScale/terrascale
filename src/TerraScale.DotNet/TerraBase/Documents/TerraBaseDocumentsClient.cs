@@ -97,7 +97,9 @@ public sealed partial class TerraBaseDatabase
 
     /// <summary>
     /// Deletes the database and its data (<c>DELETE</c>). Branches are independent and stay. While replica regions exist,
-    /// throws <see cref="TerraBaseConflictException"/> (<c>database_replicated</c>): remove them first.
+    /// throws <see cref="TerraBaseConflictException"/> (<c>database_replicated</c>): first set an empty replica list through
+    /// <see cref="TerraBaseProjectClient.SetDatabaseRegionsAsync"/>, then delete immediately. This is transient teardown;
+    /// document writes return 409 placement_needs_two_regions until deletion, not a supported single-region database.
     /// </summary>
     public Task DeleteAsync(CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, path, null, null, cancellationToken);
