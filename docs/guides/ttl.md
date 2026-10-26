@@ -49,7 +49,7 @@ api -H 'Content-Type: application/json' \
 
 - A document expires when its member holds a UTC time earlier than now, such as `"2026-10-24T12:00:00Z"` or `"2026-10-24T12:00:00.250Z"`.
 - Documents without the member, or with a number, `null` or any other value, never expire. Remove or rewrite the member to keep a document.
-- Always write `Z`. A time with another offset, such as `+02:00`, expires only once the UTC clock passes its local text.
+- Always write a complete UTC timestamp ending in `Z`. Date-only values, timestamps without a timezone and non-UTC offsets such as `+02:00` are unsupported TTL inputs. Validate expiry values in your application or declared collection schema; do not rely on unsupported timestamps being retained or deleted at a particular time.
 
 ## Lag: when expired documents disappear
 
