@@ -16,6 +16,14 @@ pack with the same version cannot be reused. See the [pinned C# quickstart](http
 These are source/API availability claims. The included producer contracts and HTTP fixtures
 carry their own pins; deployment, scope, plan and live-method qualification remain separate gates.
 
+## Database request observations
+
+Read recent authorized request observations with `await database.ListRequestLogsAsync(status: "2xx", cancellationToken: ct)`.
+Omit `status` to read all status classes. The response preserves `DatabaseId`, `Items`,
+`Truncated`, `RecordingLimited` and each nullable `RequestId`. The server returns at most
+100 observations from the last 24 hours; recording is best effort. See the
+[pinned request-log contract](contracts/terrabase/request-logs.md).
+
 ## Entity IDs (TS-754)
 
 TerraScale's target entity ID contract is a plain 26-character uppercase
