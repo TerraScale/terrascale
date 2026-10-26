@@ -31,7 +31,7 @@ public sealed class WriterHoldTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await ManagementApi.StartAsync(services: services =>
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
-        var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        var store = (TursoDatabaseStore)await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
         var importer = api.Server.Services.GetRequiredService<IReplicaSnapshotImporter>();
         var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,6 +69,17 @@ public sealed class WriterHoldTests
         await Assert.That(await final.GetAsync("writer_hold_probe", id, token) is not null).IsEqualTo(interruption == 0);
         await Assert.That((await final.GetAppliedAsync(token)).ContainsKey(origin)).IsEqualTo(interruption == 0);
         await Assert.That(holds.Longest).IsLessThan(1);
+        if (interruption == 0)
+        {
+            var seen = await store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT seen FROM _tb_peers WHERE node = $node;";
+                command.Parameters.AddWithValue("$node", unchecked((long)origin.Value));
+                return (long)command.ExecuteScalar()!;
+            }, "a test reading snapshot witness presence", token);
+            await Assert.That(seen).IsEqualTo(0L).Because("a snapshot witness must not revive a retired origin and pin stable progress");
+        }
 
         async Task<bool> ReceiveAsync()
         {

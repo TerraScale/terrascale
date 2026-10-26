@@ -1,19 +1,16 @@
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
 
 /// <summary>Imports a whole pinned snapshot, then its obsolete-origin prefix proofs. Partial transfers certify nothing.</summary>
-internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IReplicaStates states,
-    PeerCredential credential, IMemoryBudget memory)
+internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IReplicaStates states, PeerCredential credential)
 {
     internal async Task<bool> PullAsync(TenantContext database, ClusterMember peer, IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
     {
-        using var reservation = memory.TryReserve(MemoryLane.Replication, 16L * ReplicationProtocol.MaxApplicationBytes, tenant: null);
-        if (reservation is null || await states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
+        if (await states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
         {
             return false;
         }

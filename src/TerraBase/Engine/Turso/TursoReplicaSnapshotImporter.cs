@@ -1,15 +1,28 @@
+using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
+using Google.Protobuf;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
 
 /// <summary>A whole pinned source snapshot becomes one durable receiver transaction; incomplete streams roll back.</summary>
-internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, StorageChangeGroupSink sink, StampingStorageEngine stamps) : IReplicaSnapshotImporter
+internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, StorageChangeGroupSink sink, StampingStorageEngine stamps,
+    IMemoryBudget memory) : IReplicaSnapshotImporter
 {
     public async Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
         IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
     {
+        // One decoded/encoded page at a time, including the network enumerator's buffers. The private spool is bounded
+        // separately and never survives disposal. No transaction is opened until the terminal frame AND clean EOF arrive.
+        using var admission = memory.TryReserve(MemoryLane.Replication, 16L * ReplicationProtocol.MaxApplicationBytes, tenant: null);
+        if (admission is null)
+        {
+            return false;
+        }
+
         var store = database == ChangeGroups.System ? (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)
             : (TursoDatabaseStore?)await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
         if (store is null)
@@ -17,16 +30,97 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             return false;
         }
 
+        var file = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.ReadWrite, Share = FileShare.None,
+            Options = FileOptions.Asynchronous | FileOptions.DeleteOnClose | FileOptions.SequentialScan };
+        if (!OperatingSystem.IsWindows())
+        {
+            file.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        await using var staged = new FileStream(Path.Combine(Path.GetTempPath(), $"terrabase-import-{Ulid.NewUlid()}.tmp"), file);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.Delete(staged.Name); // An unlinked private spool also disappears after a process crash.
+        }
+
+        var terminal = await StageAsync(staged, database, incarnation, pages, cancellationToken).ConfigureAwait(false);
+        if (terminal is null)
+        {
+            return false;
+        }
+
+        staged.Position = 0;
         stamps.InvalidateAll();
         try
         {
-            return await ImportHeldAsync(store, database, incarnation, pages, origins, cancellationToken).ConfigureAwait(false);
+            return await ImportHeldAsync(store, database, incarnation, ReadStagedAsync(staged, database, incarnation, terminal, cancellationToken),
+                origins, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             // Imported states and forgotten tombstones bypass the public transaction wrapper.
             stamps.InvalidateAll();
         }
+    }
+
+    private static async Task<ReplicaSnapshotPage?> StageAsync(FileStream staged, TenantContext database, Ulid incarnation,
+        IAsyncEnumerable<ReplicaSnapshotPage> pages, CancellationToken cancellationToken)
+    {
+        int[] buckets = [.. Enumerable.Range(0, 4096)];
+        BucketCursor? after = null;
+        Hlc? floor = null;
+        ReplicaSnapshotPage? terminal = null;
+        var count = 0;
+        var header = new byte[sizeof(int)];
+        await foreach (var page in pages.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            if (++count > 65_536 || terminal is not null || floor is { } previous && previous != page.CollectedBefore
+                || page.Applied is not null && (page.States.Count != 0 || page.Applied.Count > 1024))
+            {
+                throw new InvalidDataException("inconsistent or oversized snapshot");
+            }
+
+            floor = page.CollectedBefore;
+            TursoStorageTransaction.ValidateRefillPage(database, buckets, after, page.States);
+            if (page.Applied is not null)
+            {
+                terminal = new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc>(page.Applied), page.CollectedBefore);
+                continue;
+            }
+
+            var bytes = AntiEntropy.Encode(page.States, incarnation).ToByteArray();
+            if (bytes.Length > ReplicationProtocol.MaxMessageBytes || staged.Position + header.Length + bytes.Length > 1024L * 1024 * 1024)
+            {
+                return null;
+            }
+
+            BinaryPrimitives.WriteInt32LittleEndian(header, bytes.Length);
+            await staged.WriteAsync(header, cancellationToken).ConfigureAwait(false);
+            await staged.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            if (page.States.Count > 0)
+            {
+                var last = page.States[^1];
+                after = new BucketCursor(TursoStorageTransaction.Bucket(last.Collection, last.Id), last.Collection, last.Id);
+            }
+        }
+
+        return terminal;
+    }
+
+    private static async IAsyncEnumerable<ReplicaSnapshotPage> ReadStagedAsync(FileStream staged, TenantContext database, Ulid incarnation,
+        ReplicaSnapshotPage terminal, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var header = new byte[sizeof(int)];
+        while (staged.Position < staged.Length)
+        {
+            await staged.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
+            var bytes = new byte[BinaryPrimitives.ReadInt32LittleEndian(header)];
+            await staged.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
+            yield return new ReplicaSnapshotPage(AntiEntropy.Decode(database, Features.Replication.V1.StatePage.Parser.ParseFrom(bytes), incarnation),
+                CollectedBefore: terminal.CollectedBefore);
+        }
+
+        yield return terminal;
     }
 
     private async Task<bool> ImportHeldAsync(TursoDatabaseStore store, TenantContext database, Ulid incarnation,
@@ -97,7 +191,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
 
         foreach (var cut in terminal.Applied!.Where(cut => origins.Contains(cut.Key.Value)))
         {
-            await transaction.RecordAppliedAsync(cut.Key, cut.Value, cancellationToken).ConfigureAwait(false);
+            await transaction.RecordSnapshotAppliedAsync(cut.Key, cut.Value, cancellationToken).ConfigureAwait(false);
         }
 
         await transaction.InheritCollectedBeforeAsync(floor!.Value, cancellationToken).ConfigureAwait(false);

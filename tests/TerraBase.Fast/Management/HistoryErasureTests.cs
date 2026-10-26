@@ -342,7 +342,7 @@ public sealed class HistoryErasureTests
     }
 
     [Test]
-    public async Task A_retired_epoch_without_original_cuts_does_not_reimport_on_every_pass()
+    public async Task Retired_epochs_without_advancing_witnesses_do_not_reimport_on_every_pass()
     {
         var snapshots = 0;
         await using var cluster = await StartAsync((region, services) =>
@@ -356,28 +356,35 @@ public sealed class HistoryErasureTests
             }
         });
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
-        var (fence, erasure) = (Id(), Id());
-        await PutAsync(gru, Jobs, fence, """{"scope":"account"}""");
-        await RequestDocumentAsync(gru, erasure, fence);
+        var erasures = Enumerable.Range(0, 3).Select(_ => Id()).ToArray();
         var requested = DateTimeOffset.UtcNow;
-        await RequestAsync(gru, erasure, requested);
-        await Assert.That(await UntilAsync(gru, async () =>
+        foreach (var erasure in erasures)
         {
-            await RunAsync(gru);
-            await RunAsync(sjc);
-            return await ReceiptsAsync(gru, erasure);
-        }, 2)).IsTrue();
+            var fence = Id();
+            await PutAsync(gru, Jobs, fence, """{"scope":"account"}""");
+            await RequestDocumentAsync(gru, erasure, fence);
+            await RequestAsync(gru, erasure, requested);
+            await Assert.That(await UntilAsync(gru, async () =>
+            {
+                await RunAsync(gru);
+                await RunAsync(sjc);
+                return await ReceiptsAsync(gru, erasure);
+            }, 2)).IsTrue();
+        }
 
-        var service = Service(gru);
-        var record = (await RecordAsync(gru, erasure))!;
-        var (_, receipts) = await service.StatusAsync(record, CancellationToken.None);
-        var own = receipts.Single(receipt => receipt.MachineId == gru.Name);
-        var system = await Engine(gru).OpenSystemDatabaseAsync(CancellationToken.None);
-        await using (var transaction = await system.BeginDurableTransactionAsync(CancellationToken.None))
+        foreach (var erasure in erasures)
         {
-            // A legacy retired epoch has no original cut to prove: snapshots alone cannot discharge that debt.
+            var (_, receipts) = await Service(gru).StatusAsync((await RecordAsync(gru, erasure))!, CancellationToken.None);
+            var own = receipts.Single(receipt => receipt.MachineId == gru.Name);
+            var system = await Engine(gru).OpenSystemDatabaseAsync(CancellationToken.None);
+            await using var transaction = await system.BeginDurableTransactionAsync(CancellationToken.None);
+            // A retired member never reports again. Neither its original markers nor legacy missing cuts can be
+            // manufactured by repeatedly importing a witness whose old-epoch frontier does not advance.
+            var old = ReplicaId.Of(gru.Node.Region, gru.Node.Member ^ 1U, 0).Value;
+            OriginCut[] cuts = erasure == erasures[0] ? [] : [new(old, own.AuthMark)];
             await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(erasure), gru.Name,
-                own with { PreviousReplicas = [ReplicaId.Of(99, 7, 0).Value], RecutReplicas = [.. receipts.Select(receipt => receipt.Replica).Order()] },
+                own with { PreviousReplicas = [old], PreviousAuth = cuts, PreviousSystem = cuts,
+                    RecutReplicas = [.. receipts.Select(receipt => receipt.Replica).Order()] },
                 Hosting.TerraBaseJsonContext.Default.HistoryErasureReceipt, CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
         }
@@ -385,16 +392,19 @@ public sealed class HistoryErasureTests
         Interlocked.Exchange(ref snapshots, 0);
         await RunAsync(gru);
         var first = Volatile.Read(ref snapshots);
-        await Assert.That(first).IsEqualTo(2);
+        await Assert.That(first).IsEqualTo(6);
         for (var pass = 0; pass < 4; pass++)
         {
             await RunAsync(gru);
         }
 
         await Assert.That(Volatile.Read(ref snapshots)).IsEqualTo(first);
-        var stalled = await RequestAsync(gru, erasure, requested);
-        await Assert.That(stalled.Status).IsEqualTo(HistoryErasure.EpochStalled);
-        await Assert.That(stalled.SettlementToken).IsNull();
+        foreach (var erasure in erasures)
+        {
+            var stalled = await RequestAsync(gru, erasure, requested);
+            await Assert.That(stalled.Status).IsEqualTo(HistoryErasure.EpochStalled);
+            await Assert.That(stalled.SettlementToken).IsNull();
+        }
     }
 
     private static async Task RecoveryCursorAsync(ReplicaMachine machine, string erasure, string after)
