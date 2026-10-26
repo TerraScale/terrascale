@@ -95,9 +95,10 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
                 };
             }
             """);
-        foreach (var role in new[] { "keyword", "string", "number", "comment" })
+        var roles = new[] { "keyword", "string", "number", "comment" };
+        foreach (var role in roles)
             await Assert.That(colors.GetProperty(role).GetString()).IsEqualTo(await ResolveAsync("--ts-syn-" + role));
-        await Assert.That(colors.EnumerateObject().Select(property => property.Value.GetString()).Distinct().Count()).IsEqualTo(4)
+        await Assert.That(roles.Select(role => colors.GetProperty(role).GetString()).Distinct().Count()).IsEqualTo(4)
             .Because("Keyword, string, number and comment colours must differ: " + colors);
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Save query", Exact = true }).ClickAsync();
