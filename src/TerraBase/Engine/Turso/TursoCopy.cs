@@ -1,5 +1,6 @@
 using TerraBase.Primitives;
 using Turso;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
@@ -51,7 +52,7 @@ internal static class TursoCopy
         }
 
         var version = Scalar(source, "PRAGMA user_version;");
-        using var copy = new TursoConnection(target);
+        using var copy = new SqliteConnection(target);
         copy.Open();
         // Tables and their rows first, then indexes, which build faster over the loaded rows.
         foreach (var (_, name, _, sql) in objects.Where(item => item.Type == "table"))
@@ -78,7 +79,7 @@ internal static class TursoCopy
         {
             using var identity = copy.CreateCommand();
             identity.CommandText = "UPDATE commit_offset SET incarnation = $incarnation;";
-            identity.Parameters.Add(new TursoParameter("$incarnation", EntityIds.New().ToString()));
+            identity.Parameters.AddWithValue("$incarnation", EntityIds.New().ToString());
             identity.ExecuteNonQuery();
         }
 
@@ -92,7 +93,7 @@ internal static class TursoCopy
         Execute(copy, "PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
-    private static void CopyRows(TursoConnection source, TursoConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
+    private static void CopyRows(TursoConnection source, SqliteConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
     {
         var (columns, alias) = TableShape.Read(source, table);
         // The rowid alias column is the rowid: name it once.
@@ -100,6 +101,15 @@ internal static class TursoCopy
         var insert = $"INSERT INTO {TableShape.Quote(table)} ({string.Join(", ", names)}) VALUES ({string.Join(", ", names.Select((_, i) => $"$v{i}"))});";
         using var read = source.CreateCommand();
         read.CommandText = alias >= 0 ? $"SELECT * FROM {TableShape.Quote(table)};" : $"SELECT rowid, * FROM {TableShape.Quote(table)};";
+        // One native program per table, reset and rebound by the driver across chunk commits. No DDL runs until it is disposed.
+        using var write = copy.CreateCommand();
+        write.CommandText = insert;
+        write.ReuseStatement = true;
+        for (var i = 0; i < names.Count; i++)
+        {
+            write.Parameters.AddWithValue($"$v{i}", DBNull.Value);
+        }
+
         var rowsInChunk = 0L;
         var bytesInChunk = 0L;
         // An unfinished chunk rolls back when the connection closes: the target is scratch until Write returns.
@@ -108,12 +118,10 @@ internal static class TursoCopy
         while (rows.Read())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var write = copy.CreateCommand();
-            write.CommandText = insert;
             for (var i = 0; i < rows.FieldCount; i++)
             {
                 var value = rows.GetValue(i);
-                write.Parameters.Add(new TursoParameter($"$v{i}", value));
+                write.Parameters[i].Value = value;
                 bytesInChunk += value switch { string text => text.Length, byte[] blob => blob.LongLength, null => 0, _ => sizeof(long) };
             }
 
@@ -132,7 +140,7 @@ internal static class TursoCopy
         Execute(copy, "COMMIT;");
     }
 
-    private static void Execute(TursoConnection connection, string sql)
+    private static void Execute(System.Data.Common.DbConnection connection, string sql)
     {
         using var command = connection.CreateCommand();
         command.CommandText = sql;
