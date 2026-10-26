@@ -11,7 +11,7 @@ for (const entry of await readdir('docs/.vitepress/dist', { recursive: true })) 
 
 // Public revision metadata travels with the same static assets as the site.
 await writeFile('docs/.vitepress/dist/build-info.json', JSON.stringify({
-  commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' }).trim(),
   revision: 1,
 }) + '\n');
 
