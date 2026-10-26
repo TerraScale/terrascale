@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Platform.Observability;
 using System.Net.Http.Headers;
+using Microsoft.AspNetCore.Http.Features;
 using System.Reflection;
 using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
@@ -120,6 +121,9 @@ public static class DashboardMcp
                 context.Response.StatusCode = 401;
                 return;
             }
+            // A 1 MiB opaque cursor can occupy six times that size in escaped JSON.
+            if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
+                bodyLimit.MaxRequestBodySize = 6 * 1024 * 1024 + 16 * 1024;
             context.Items[ContextKey] = principal;
             await next(context);
         });

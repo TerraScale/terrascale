@@ -25,32 +25,36 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         return result;
     }
 
-    public async Task<DocumentBrowse> BrowseAsync(AccountContext context, string databaseId, string collection, string search, string sort, bool descending, int page, CancellationToken cancellationToken)
+    public async Task<DocumentBrowse> BrowseAsync(AccountContext context, string databaseId, string collection, string search, string sort, bool descending, int page, CancellationToken cancellationToken, string cursor = "", int pageSize = 25)
     {
+        if (pageSize is < 1 or > 100) throw new AccountAccessException("Document limits use 1–100 rows.", 422);
         collection = ValidCollection(collection);
         var database = DatabaseService.Database(context, databaseId);
-        var home = await databases.HomeAsync(context, database, cancellationToken);
         var path = sort.Length == 0 ? "$id" : "/" + sort.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
         if (sort.Length > 128) throw new AccountAccessException("Sort field is too long.", 422);
-        page = Math.Clamp(page, 1, 40);
+        if (System.Text.Encoding.UTF8.GetByteCount(cursor) > 1024 * 1024) throw new AccountAccessException("The document continuation cursor exceeds 1 MiB.", 422);
+        if (page > 1 && cursor.Length == 0) throw new AccountAccessException("Use the document continuation link to open the next page.", 422);
+        if (cursor.Length > 0 && (string.IsNullOrWhiteSpace(cursor) || cursor.Any(char.IsControl))) throw new AccountAccessException("Enter a valid document continuation cursor.", 422);
+        var home = await databases.HomeAsync(context, database, cancellationToken);
+        page = Math.Clamp(page, 1, int.MaxValue - 1);
         search = search.Trim();
-        var budget = search.Length == 0 ? Math.Min(1000, page * 25 + 1) : 1000;
         var rows = new List<TerraBaseDocument>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal) { cursor };
         var query = new TerraBaseQuery { Sort = [new(path, descending ? "desc" : "asc")] };
-        string? cursor = null;
-        do
+        var next = cursor;
+        var scanned = 0;
+        // At most four reads and 100 scanned documents per response. Limit by remaining display
+        // slots so every match is returned before advancing the producer's opaque cursor.
+        for (var read = 0; read < (search.Length == 0 ? 1 : 4); read++)
         {
-            // TerraBase refuses one 1000-document page of real documents as "query too expensive"; 100 per page stays well inside its budget.
-            var result = await documents.DocumentsAsync(DatabaseService.Scope(context), home, database.Name, collection, query with { Limit = Math.Min(100, budget - rows.Count), Cursor = cursor }, cancellationToken);
-            rows.AddRange(result.Items);
-            cursor = result.NextCursor;
-            if (!string.IsNullOrEmpty(cursor) && !seen.Add(cursor)) throw new HttpRequestException("Document pagination did not advance.");
-        } while (!string.IsNullOrEmpty(cursor) && rows.Count < budget);
-        var matches = search.Length == 0 ? rows : rows.Where(row => (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase)).ToList();
-        var pages = Math.Max(1, (matches.Count + 24) / 25);
-        page = Math.Clamp(page, 1, pages);
-        return new(matches.Skip((page - 1) * 25).Take(25).ToArray(), matches.Count, page, pages, !string.IsNullOrEmpty(cursor));
+            var result = await documents.DocumentsAsync(DatabaseService.Scope(context), home, database.Name, collection, query with { Limit = Math.Min(pageSize - rows.Count, 100 - scanned), Cursor = next.Length == 0 ? null : next }, cancellationToken);
+            scanned += result.Items.Count;
+            rows.AddRange(result.Items.Where(row => search.Length == 0 || (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase)));
+            next = result.NextCursor ?? "";
+            if (next.Length > 0 && !seen.Add(next)) throw new HttpRequestException("Document pagination did not advance.");
+            if (next.Length == 0 || rows.Count == pageSize || scanned == 100) break;
+        }
+        return new(rows, rows.Count, page, next.Length > 0 ? page + 1 : page, next.Length > 0, cursor, next, scanned);
     }
 
     public async Task<IReadOnlyList<TerraBaseDocument>> DocumentsAsync(AccountContext context, string databaseId, string collection, CancellationToken cancellationToken)
@@ -247,7 +251,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
     private static partial Regex CollectionPattern();
 }
 
-public sealed record DocumentBrowse(IReadOnlyList<TerraBaseDocument> Documents, int Matched, int Page, int PageCount, bool More);
+public sealed record DocumentBrowse(IReadOnlyList<TerraBaseDocument> Documents, int Matched, int Page, int PageCount, bool More,
+    string Cursor = "", string NextCursor = "", int Scanned = 0);
 public sealed record SqlCatalog(IReadOnlyList<string> Keywords, IReadOnlyList<SqlCatalogCollection> Collections);
 public sealed record SqlCatalogCollection(string Name, long Documents, bool Approximate, string Source, IReadOnlyList<SqlCatalogField> Fields);
 public sealed record SqlCatalogField(string Path, string Type);

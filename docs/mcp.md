@@ -74,6 +74,14 @@ The browser document REST endpoint uses the same continuation fields and returns
 `documents`; native TerraBase cursors survive empty filtered pages. Its limit is
 1–100, default 100; upstream may end a page early for its byte budget.
 
+`list_documents` also accepts `after` with query ordering (`sort` or `descending`).
+Its effective `limit` defaults to 100 for native ID order and 25 for query order;
+explicit 1–100 overrides either default, and 0 retains that mode's default.
+Keep search/order unchanged and follow empty continuing pages. Query search reads
+at most 100 documents in four reads per response. Page numbers are labels, not
+random access; totals are unavailable. Browser continuation uses CSRF-checked POST
+forms so opaque cursors remain out of navigation URLs.
+
 ### Personal access tokens
 
 Each request needs `Authorization: Bearer <personal access token>`. Users
