@@ -22,9 +22,16 @@ public sealed class TerraBaseDocumentPaginationTests
                 : """{"items":[],"next_cursor":null}""");
         });
         using var http = new HttpClient(handler);
-        var query = new TerraBaseQuery { Cursor = "opaque/+initial=", Limit = 2, Count = true, Explain = true,
+        var query = new TerraBaseQuery
+        {
+            Cursor = "opaque/+initial=",
+            Limit = 2,
+            Count = true,
+            Explain = true,
             Filter = JsonSerializer.SerializeToElement(new { eq = new object[] { "/status", "open" } }),
-            Sort = [new("$id", "desc")], Project = ["/status"] };
+            Sort = [new("$id", "desc")],
+            Project = ["/status"]
+        };
         await using var pages = Database(http).QueryPagesAsync("items", query).GetAsyncEnumerator();
         await Assert.That(bodies.Count).IsEqualTo(0);
         await Assert.That(await pages.MoveNextAsync()).IsTrue();
@@ -112,8 +119,11 @@ public sealed class TerraBaseDocumentPaginationTests
         using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(TerraBaseIntegrationFixture.Json(
             """{"items":[],"next_cursor":null,"groups":[{"key":["open"],"count":2,"sum":{"/amount":3}}],"explain":{"plan":["SCAN items"],"indexes":[],"full_scan":true,"rows_scanned":2,"work_units":5,"elapsed_ms":0.5}}""")));
         using var http = new HttpClient(handler);
-        await using var pages = Database(http).QueryPagesAsync("items", new() { Explain = true,
-            Aggregate = new() { GroupBy = ["/status"], Sum = ["/amount"] } }).GetAsyncEnumerator();
+        await using var pages = Database(http).QueryPagesAsync("items", new()
+        {
+            Explain = true,
+            Aggregate = new() { GroupBy = ["/status"], Sum = ["/amount"] }
+        }).GetAsyncEnumerator();
         await Assert.That(await pages.MoveNextAsync()).IsTrue();
         await Assert.That(pages.Current.Groups!.Single().Key.Single().GetString()).IsEqualTo("open");
         await Assert.That(pages.Current.Groups!.Single().Sum!["/amount"]).IsEqualTo(3d);
