@@ -45,7 +45,7 @@ public sealed class SqlWorkspaceStateSdkJourneyTests(DashboardRootFixture fixtur
             await Assert.That(query.GetProperty("fields").GetArrayLength()).IsEqualTo(4);
             var conditions = query.GetProperty("filter").GetProperty("and").EnumerateArray().Select(term => term.GetProperty("eq")).ToArray();
             await Assert.That(conditions.Length).IsEqualTo(3);
-            await Assert.That(conditions.Select(eq => eq[0].GetString()).ToArray()).IsEquivalentTo(new[] { "/OrganizationId", "/ProjectId", "/DatabaseId" });
+            await Assert.That(conditions.Select(eq => eq[0].GetString()!).ToArray()).IsEquivalentTo(new[] { "/OrganizationId", "/ProjectId", "/DatabaseId" });
             if (query.GetProperty("items").GetInt32() > 0)
             {
                 await Assert.That(conditions.Single(eq => eq[0].GetString() == "/OrganizationId")[1].GetString()).IsEqualTo(org);
