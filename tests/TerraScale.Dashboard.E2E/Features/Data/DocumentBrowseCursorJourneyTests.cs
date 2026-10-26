@@ -60,7 +60,7 @@ public sealed class DocumentBrowseCursorJourneyTests(DashboardRootFixture fixtur
             return Results.Json(new { items = rows, next_cursor = offset + rows.Length < count ? large ? next.PadRight(1024 * 1024, '+') : next : null });
         });
         using var client = host.CreateClient();
-        var id = await SetupAsync(client);
+        var (id, password) = await SetupAsync(client);
         var path = $"/databases/{id}/documents/items?view=list&sort=a%2Fb~c&order=desc&q={search}";
         var displayed = new List<string>();
         var scans = 0;
@@ -123,10 +123,11 @@ public sealed class DocumentBrowseCursorJourneyTests(DashboardRootFixture fixtur
                     await Assert.That(readOnly.Contains("<span>View</span>", StringComparison.Ordinal) && !readOnly.Contains("Save document", StringComparison.Ordinal)).IsTrue();
                 }
                 using (var role = await controls.PostAsJsonAsync("/__test/control", new { command = "role", value = "admin" })) role.EnsureSuccessStatusCode();
-                var credential = await HttpJourney.CreatePatAsync(client, "Cursor transport");
+                var credential = await HttpJourney.CreatePatAsync(client, "Cursor transport", password);
                 var rpc = await HttpJourney.McpAsync(client, credential, "tools/call", new
                 {
-                    name = "list_documents", arguments = new { databaseId = id, collection = "items", sort = "a/b~c", descending = true, limit = 1, after = context["cursor"] }
+                    name = "list_documents",
+                    arguments = new { databaseId = id, collection = "items", sort = "a/b~c", descending = true, limit = 1, after = context["cursor"] }
                 });
                 var output = rpc.GetProperty("result").GetProperty("structuredContent");
                 await Assert.That(output.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
@@ -177,15 +178,15 @@ public sealed class DocumentBrowseCursorJourneyTests(DashboardRootFixture fixtur
                 : outcome == "failure" ? Results.StatusCode(503)
                 : Results.Json(new { items = Array.Empty<object>(), next_cursor = outcome == "repeat" ? "repeat" : null })));
         using var client = host.CreateClient();
-        var id = await SetupAsync(client);
+        var (id, _) = await SetupAsync(client);
         var html = await client.GetStringAsync($"/databases/{id}/documents/items" + (outcome == "repeat" ? "?q=needle" : ""));
         if (outcome == "empty") await Assert.That(html).Contains("This collection has no documents yet.").And.Contains("End of collection reached.");
         else await Assert.That(html).Contains("Documents could not be loaded.").And.Contains("Document results unavailable.").And.DoesNotContain("End of collection reached.");
     }
 
-    private static async Task<string> SetupAsync(HttpClient client)
+    private static async Task<(string Id, string Password)> SetupAsync(HttpClient client)
     {
-        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
         { ["_csrf"] = csrf, ["name"] = "cursor-browse", ["region"] = "GRU" });
@@ -195,6 +196,6 @@ public sealed class DocumentBrowseCursorJourneyTests(DashboardRootFixture fixtur
         using var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "items" });
         collection.EnsureSuccessStatusCode();
-        return id;
+        return (id, account.Password);
     }
 }
