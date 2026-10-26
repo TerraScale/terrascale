@@ -24,16 +24,13 @@ public sealed class TerraScaleAuthClientTests
     [Test]
     public async Task SecretBearingRecordsRedactSecretsInToString()
     {
-        var apiKey = new TerraScaleAuthCreatedApiKey("key_1", "ci", "sk_live_secretvalue", ["*"]);
         var webhook = new TerraScaleAuthCreatedWebhook("wh_1", "https://hook.example.test/", ["*"], "whsec_secretvalue");
         var tokens = new TerraScaleAuthTokenResponse("atk_secretvalue", "Bearer", 3600, null, "rtk_secretvalue", "idt_secretvalue");
 
-        await Assert.That(apiKey.ToString()).DoesNotContain("sk_live_secretvalue");
         await Assert.That(webhook.ToString()).DoesNotContain("whsec_secretvalue");
         await Assert.That(tokens.ToString()).DoesNotContain("atk_secretvalue")
             .And.DoesNotContain("rtk_secretvalue")
             .And.DoesNotContain("idt_secretvalue");
-        await Assert.That(apiKey.ToString()).Contains("[REDACTED]");
     }
 
     [Test]

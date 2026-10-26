@@ -59,5 +59,13 @@
       "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
     },
     "scope": "Legacy instance billing retirement only; public platform/dashboard billing authority is separate. No billing operations were present in the supported SDK route/DTO manifests."
+  },
+  "instance_api_key_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2",
+      "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "15bbed925cb72d200047b674a9679bdff3a3301e904f30479952248726e0ba51"
+    },
+    "scope": "Legacy sk_-credential instance API-key client retirement only; supported Platform organization/project keys retain their authority, models and routes. No retired operation or DTO was present in the supported SDK manifests."
   }
 }
