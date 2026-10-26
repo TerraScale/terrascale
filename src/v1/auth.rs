@@ -24,9 +24,23 @@ pub(super) enum Auth {
     },
 }
 
-pub(super) struct Cached {
-    header: Arc<HeaderValue>,
-    refresh_at: Instant,
+pub(super) enum Cached {
+    Token {
+        header: Arc<HeaderValue>,
+        refresh_at: Instant,
+    },
+    Refused {
+        code: &'static str,
+        message: Option<String>,
+    },
+}
+
+fn refusal(code: &'static str, message: Option<String>) -> Error {
+    match code {
+        "key_revoked" => Error::KeyRevoked { message },
+        "key_expired" => Error::KeyExpired { message },
+        _ => exchange_error(Some(401), "invalid_key"),
+    }
 }
 
 fn header(scheme: &str, value: &str) -> Result<HeaderValue> {
@@ -69,6 +83,12 @@ impl Auth {
         }
     }
 
+    pub(super) async fn reject(&self, code: &'static str, message: Option<String>) {
+        if let Self::Key { cached, .. } = self {
+            *cached.lock().await = Some(Cached::Refused { code, message });
+        }
+    }
+
     pub(super) fn refreshable(&self) -> bool {
         matches!(self, Self::Key { .. })
     }
@@ -90,11 +110,13 @@ impl Auth {
         // Hold the lock through exchange so clones share one refresh. Identity
         // prevents a late 401 from invalidating a newer (even identical) token.
         let mut cached = cached.lock().await;
-        if let Some(token) = cached.as_ref() {
-            if Instant::now() < token.refresh_at
-                && rejected.is_none_or(|old| !Arc::ptr_eq(old, &token.header))
+        if let Some(Cached::Refused { code, message }) = cached.as_ref() {
+            return Err(refusal(code, message.clone()));
+        }
+        if let Some(Cached::Token { header, refresh_at }) = cached.as_ref() {
+            if Instant::now() < *refresh_at && rejected.is_none_or(|old| !Arc::ptr_eq(old, header))
             {
-                return Ok(token.header.clone());
+                return Ok(header.clone());
             }
         }
         *cached = None;
@@ -112,6 +134,13 @@ impl Auth {
             .map_err(|_| exchange_error(None, "token_transport_error"))?;
         let status = Some(response.status().as_u16());
         if status != Some(200) {
+            if status == Some(401) {
+                *cached = Some(Cached::Refused {
+                    code: "invalid_key",
+                    message: None,
+                });
+                return Err(refusal("invalid_key", None));
+            }
             return Err(exchange_error(status, "token_exchange_refused"));
         }
         let invalid = || exchange_error(status, "invalid_token_response");
@@ -147,7 +176,7 @@ impl Auth {
             .filter(|at| *at > Instant::now())
             .ok_or_else(invalid)?;
         let header = Arc::new(header("Bearer", &grant.access_token).map_err(|_| invalid())?);
-        *cached = Some(Cached {
+        *cached = Some(Cached::Token {
             header: header.clone(),
             refresh_at,
         });

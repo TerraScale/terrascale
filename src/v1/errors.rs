@@ -78,6 +78,12 @@ pub enum Error {
     /// `401 invalid_key`: unknown, expired or revoked key.
     #[error("terrabase: 401 invalid_key")]
     InvalidKey,
+    /// `401 key_revoked`: permanent; replace the key without retry or exchange.
+    #[error("terrabase: 401 key_revoked{}", fmt_msg(message))]
+    KeyRevoked { message: Option<String> },
+    /// `401 key_expired`: permanent; replace the key without retry or exchange.
+    #[error("terrabase: 401 key_expired{}", fmt_msg(message))]
+    KeyExpired { message: Option<String> },
     /// `500 internal_error`: a mutation may have taken effect.
     #[error("terrabase: 500 internal_error")]
     InternalError,
@@ -185,7 +191,7 @@ impl Error {
             Self::CommitUncertain => 503,
             Self::RateLimited { .. } => 429,
             Self::Forbidden { .. } => 403,
-            Self::InvalidKey => 401,
+            Self::InvalidKey | Self::KeyRevoked { .. } | Self::KeyExpired { .. } => 401,
             Self::InternalError => 500,
             Self::CursorExpired => 410,
             Self::Api { status, .. } | Self::Sql { status, .. } => *status,
@@ -211,6 +217,8 @@ impl Error {
             Self::RateLimited { .. } => "rate_limited",
             Self::Forbidden { .. } => "forbidden_scope",
             Self::InvalidKey => "invalid_key",
+            Self::KeyRevoked { .. } => "key_revoked",
+            Self::KeyExpired { .. } => "key_expired",
             Self::InternalError => "internal_error",
             Self::CursorExpired => "cursor_expired",
             Self::Api { code, .. } => code,
@@ -418,6 +426,8 @@ pub(crate) fn from_response(
         (429, "rate_limited") => Error::RateLimited { retry_after },
         (403, "forbidden_scope") => Error::Forbidden { op },
         (401, "invalid_key") => Error::InvalidKey,
+        (401, "key_revoked") => Error::KeyRevoked { message },
+        (401, "key_expired") => Error::KeyExpired { message },
         (500, "internal_error") => Error::InternalError,
         (410, "cursor_expired") => Error::CursorExpired,
         _ => Error::Api {
