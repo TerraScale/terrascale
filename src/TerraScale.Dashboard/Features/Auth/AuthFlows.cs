@@ -65,7 +65,7 @@ public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity
         context.Response.Cookies.Delete(cookie, Options(context));
     }
 
-    private static JsonElement Seal<T>(T value, string key, string purpose)
+    internal static JsonElement Seal<T>(T value, string key, string purpose)
     {
         var plain = JsonSerializer.SerializeToUtf8Bytes(value);
         var nonce = RandomNumberGenerator.GetBytes(12);
@@ -80,7 +80,7 @@ public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
-    private static T Open<T>(JsonElement json, string key, string purpose)
+    internal static T Open<T>(JsonElement json, string key, string purpose)
     {
         var sealedValue = json.Deserialize<SealedSession>() ?? throw new JsonException("Invalid auth flow.");
         var cipher = Convert.FromBase64String(sealedValue.Ciphertext);
