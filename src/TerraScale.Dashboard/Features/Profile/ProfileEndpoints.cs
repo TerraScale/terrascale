@@ -9,6 +9,7 @@ public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", strin
 {
     public string? DraftName { get; init; }
     public string? DraftPhone { get; init; }
+    public string? InvalidField { get; init; }
     public IReadOnlyList<string>? Providers { get; init; }
     public string? ConfirmProvider { get; init; }
     public string[] Permissions
@@ -80,11 +81,12 @@ public static class ProfileEndpoints
             if (language)
             {
                 var locale = form["locale"].ToString();
-                if (locale is not ("en" or "pt-BR")) throw new AccountAccessException("Choose an available language.", 422);
+                if (locale is not ("en" or "pt-BR")) throw new AccountAccessException("Choose an available language.", 422, "invalid_profile_locale");
                 await accounts.UpdateAccountAsync(context.Session, account => account.Locale = locale, http.RequestAborted);
             }
             else
             {
+                if (string.IsNullOrWhiteSpace(form["name"])) throw new AccountAccessException("Enter a display name.", 422, "invalid_profile_name");
                 await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
             }
             return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));
@@ -94,6 +96,13 @@ public static class ProfileEndpoints
             var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
             {
                 Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),
+                InvalidField = error.Code switch
+                {
+                    "invalid_profile_name" => "displayName",
+                    "invalid_profile_phone" => "phoneNumber",
+                    "invalid_profile_locale" => "interfaceLanguage",
+                    _ => null
+                },
                 DraftName = language ? null : form["name"].ToString(),
                 DraftPhone = language ? null : form["phoneNumber"].ToString()
             });
