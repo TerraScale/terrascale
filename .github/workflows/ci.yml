@@ -26,6 +26,29 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
+      - name: Restore the pinned advisory scanner
+        id: advisory
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/osv-scanner-bin
+          key: advisory-osv-2.7.0-go1.27.3-linux-amd64
+      - name: Select the patched scanner compiler on a cache miss
+        if: steps.advisory.outputs.cache-hit != 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Audit every committed dependency graph
+        run: |
+          mkdir -p ~/.cache/osv-scanner-bin
+          scanner=~/.cache/osv-scanner-bin/osv-scanner
+          if [[ ! -f "$scanner" ]]; then
+            GOBIN="$HOME/.cache/osv-scanner-bin" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 GOFLAGS='' GOTOOLCHAIN=go1.27.3 go install -trimpath github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
+          fi
+          echo "1a7e2584c17db2e523c13f41ae4a4d1d13ee221dbc4abc19a6bba00aac3f40f2  $scanner" | sha256sum --check
+          chmod +x "$scanner"
+          python3 scripts/ci/audit-dependencies.py "$scanner"
+          python3 scripts/ci/audit-runtime-images.py "$scanner"
       - name: Select affected checks (required test still reports for docs)
         id: changes
         env:
