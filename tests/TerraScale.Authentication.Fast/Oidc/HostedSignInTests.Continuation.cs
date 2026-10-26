@@ -169,7 +169,7 @@ public sealed partial class HostedSignInTests
     {
         Console.WriteLine("Mobile forwarding headers start");
         var headers = await route.Request.AllHeadersAsync().WaitAsync(TimeSpan.FromSeconds(5));
-        Console.WriteLine("Mobile forwarding headers complete");
+        Console.WriteLine($"Mobile forwarding headers complete cookie={headers.ContainsKey("cookie")} origin={headers.ContainsKey("origin")}");
         using var request = new HttpRequestMessage(new HttpMethod(route.Request.Method), new Uri(route.Request.Url).PathAndQuery);
         if (route.Request.PostDataBuffer is { } body)
         {

@@ -100,8 +100,15 @@ public sealed partial class HostedSignInTests
         await page.Locator("#sign-in-email").FillAsync(email);
         await MobilePasswordStepAsync(page);
         await page.Locator("#sign-in-password").FillAsync("replacement synthetic acceptance password");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        var signedIn = await page.RunAndWaitForResponseAsync(
+            () => page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync(),
+            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == SignIn + "/password");
         await page.GetByRole(AriaRole.Heading, new() { Name = "Signed in", Exact = true }).WaitForAsync();
+        await page.WaitForLoadStateAsync();
+        var cookieHeader = await signedIn.HeaderValueAsync("set-cookie");
+        var issued = cookieHeader?.Split(';')[0];
+        await Assert.That(issued is not null && (await context.CookiesAsync()).Any(cookie =>
+            cookie.Name == "tsauth_session" && $"{cookie.Name}={cookie.Value}" == issued)).IsTrue();
         await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/device");
         await MobileFieldAsync(page, "device-code", "user_code", "one-time-code", "Device code");
         await MobileAuditAsync(page);
