@@ -75,7 +75,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "project", "org", "scope", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit", "cursor", "home-region", "replica-regions", "placement":
+			case "project", "org", "expected-id", "scope", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit", "cursor", "home-region", "replica-regions", "placement":
 				if !equal {
 					i++
 				}
@@ -167,6 +167,11 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "db branch":
+		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"
+	case name == "db delete":
+		options["-expected-id <ULID>"] = "server-enforced identity match; unsupported servers fail closed; no name-only fallback"
+		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db changes":

@@ -198,7 +198,7 @@ func completion(shell string, out io.Writer) error {
 	}
 	words["completion"] = []string{"bash", "fish", "zsh"}
 	words["backup destination"] = []string{"get", "set", "delete"}
-	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement", "cursor"}
+	valueFlags := []string{"project", "org", "expected-id", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement", "cursor"}
 	var valuePatterns []string
 	flags := "-h -help --help -yes --yes"
 	for _, flag := range valueFlags {

@@ -83,8 +83,8 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 		if jsonMode(out) {
 			return emitJSON(out, fn)
 		}
-		fmt.Fprintf(out, "Deployed function %s\n", fn.Name)
-		return nil
+		_, err = fmt.Fprintf(out, "Deployed function %s\n", fn.Name)
+		return err
 	case "functions list":
 		list, err := db.Functions(ctx)
 		if err != nil {
@@ -97,7 +97,9 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			return emitJSON(out, list)
 		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tTRIGGER\tCRON\tUPDATED")
+		if _, err := fmt.Fprintln(w, "NAME\tTRIGGER\tCRON\tUPDATED"); err != nil {
+			return err
+		}
 		for _, fn := range list {
 			trigger, cron := "none", "none"
 			if fn.Trigger != nil {
@@ -106,7 +108,9 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			if fn.Cron != nil {
 				cron = *fn.Cron
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", fn.Name, trigger, cron, fn.UpdatedAt.Format(time.RFC3339))
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", fn.Name, trigger, cron, fn.UpdatedAt.Format(time.RFC3339)); err != nil {
+				return err
+			}
 		}
 		return w.Flush()
 	case "functions invoke":
@@ -132,9 +136,13 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			}
 		}
 		if len(res) > 0 {
-			out.Write(res)
+			if _, writeErr := out.Write(res); writeErr != nil {
+				return errors.Join(err, writeErr)
+			}
 			if !bytes.HasSuffix(res, []byte("\n")) {
-				fmt.Fprintln(out)
+				if _, writeErr := fmt.Fprintln(out); writeErr != nil {
+					return errors.Join(err, writeErr)
+				}
 			}
 		}
 		return err
@@ -166,8 +174,8 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 				Deleted bool   `json:"deleted"`
 			}{args[0], true})
 		}
-		fmt.Fprintf(out, "Deleted function %s\n", args[0])
-		return nil
+		_, err := fmt.Fprintf(out, "Deleted function %s\n", args[0])
+		return err
 	}
 	return errUsage
 }

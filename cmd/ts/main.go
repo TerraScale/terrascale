@@ -25,6 +25,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"terrascale.tech/sdk/internal/entityid"
 	"terrascale.tech/sdk/tsauth"
 	v1 "terrascale.tech/sdk/v1"
 )
@@ -284,6 +285,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	replicaRegions := fs.String("replica-regions", "", "db create: comma-separated replicas, or none")
 	placementMode := fs.String("placement", "", "db create: all for every serving region")
 	cursor := fs.String("cursor", "now", "db changes: server cursor, now, or empty for retained history")
+	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
 	if err := fs.Parse(args); err != nil {
 		return parserError(err)
 	}
@@ -311,9 +313,11 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
 	}
 	var collectionSet, yesSet, scopeSet, keyOptionsSet bool
-	var placementSet, replicasSet, cursorSet bool
+	var placementSet, replicasSet, cursorSet, expectedIDSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "expected-id":
+			expectedIDSet = true
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
 		case "cursor":
@@ -333,6 +337,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			collectionSet = true
 		}
 	})
+	if expectedIDSet && ((name != "db delete" && name != "db branch") || entityid.Check(*expectedID) != nil) {
+		return fmt.Errorf("-expected-id requires db branch or db delete and a canonical database ULID: %w", errUsage)
+	}
+	if name == "db branch" && operands[0] == operands[1] {
+		return fmt.Errorf("branch source and target names must differ: %w", errUsage)
+	}
 	if cursorSet && name != "db changes" {
 		return fmt.Errorf("-cursor is only accepted for db changes: %w", errUsage)
 	}
@@ -400,6 +410,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	dispatch := func(s *session) error {
+		if expectedIDSet {
+			database := s.tb.Database(s.project, operands[0])
+			if name == "db branch" {
+				return branchExpectedDatabase(ctx, database, operands[1], *expectedID, out)
+			}
+			return deleteExpectedDatabase(ctx, database, *expectedID, out)
+		}
 		if name == "backup destination" {
 			action := "Replace backup destination; start a new generation"
 			if operands[0] == "delete" {
