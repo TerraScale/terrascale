@@ -211,6 +211,13 @@ public static class App
             context.Response.OnStarting(() =>
             {
                 BrowserSecurity.ApplyResponseHeaders(context.Response, options.PublicOrigin.Scheme == Uri.UriSchemeHttps);
+                if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == UserInfoEndpoint.RouteName)
+                {
+                    // Registered before authentication; survives protocol failures and the error envelope's Clear().
+                    context.Response.Headers.CacheControl = "no-store";
+                    context.Response.Headers.Pragma = "no-cache";
+                }
+
                 return Task.CompletedTask;
             });
             return next(context);

@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
@@ -37,21 +40,36 @@ public sealed class TursoSchedulingQosTests
         var io = api.Server.Services.GetRequiredService<TursoStorageEngine>().Io;
         using var cancelQueued = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var pending = new List<Task<HttpResponseMessage>>();
+        var diagnostics = new TursoRunnerDiagnostics();
+        var probeStarted = Stopwatch.GetTimestamp();
+        Task<HttpResponseMessage>? running = null;
+        Task<HttpResponseMessage>? queued = null;
+        io.Diagnostics = diagnostics;
+        Task ProbeAsync(string phase)
+        {
+            return ProbeRequestsAsync(phase, probeStarted, io, diagnostics, running, queued,
+                TUnit.Core.TestContext.Current!.Execution.CancellationToken, cancelQueued.Token);
+        }
         clock.Hold = true;
         try
         {
-            var running = QueryAsync(hobbyData, hobby, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            running = QueryAsync(hobbyData, hobby, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             pending.Add(running);
             await clock.Entered.Task.WaitAsync(TUnit.Core.TestContext.Current.Execution.CancellationToken);
-            var queued = QueryAsync(hobbyData, hobby, cancelQueued.Token);
+            await ProbeAsync("worker-held");
+            queued = QueryAsync(hobbyData, hobby, cancelQueued.Token);
             pending.Add(queued);
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(io.Admitted == 2 && io.Queued == 1));
+            await ProbeAsync("global-barrier");
             // The two admitted Hobby operations consume their lane; a third cannot take the paid slots.
             using var refused = await QueryAsync(hobbyData, hobby, TUnit.Core.TestContext.Current.Execution.CancellationToken);
+            await ProbeAsync("third-response");
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             using var paidResponse = await QueryAsync(paidData, paid, TUnit.Core.TestContext.Current.Execution.CancellationToken).WaitAsync(TUnit.Core.TestContext.Current.Execution.CancellationToken);
+            await ProbeAsync("paid-response");
             await Assert.That(paidResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var healthy = await api.Server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), TUnit.Core.TestContext.Current.Execution.CancellationToken);
+            await ProbeAsync("ready-response");
             await Assert.That(healthy.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(running.IsCompleted).IsFalse();
             await Assert.That(queued.IsCompleted).IsFalse();
@@ -72,8 +90,14 @@ public sealed class TursoSchedulingQosTests
             await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(io.Admitted == 0));
         }
+        catch
+        {
+            await ProbeAsync("failure-before-cleanup");
+            throw;
+        }
         finally
         {
+            io.Diagnostics = null;
             clock.Release();
             cancelQueued.Cancel();
             foreach (var request in pending)
@@ -94,6 +118,54 @@ public sealed class TursoSchedulingQosTests
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(api.Server.Services.GetRequiredService<TursoStorageEngine>().Io.Admitted == 0));
+    }
+
+    // Diagnostic capture only: keep the original request tasks, policies and assertions intact.
+    private static async Task ProbeRequestsAsync(
+        string phase, long started, TursoIoPool io, TursoRunnerDiagnostics diagnostics,
+        Task<HttpResponseMessage>? running, Task<HttpResponseMessage>? queued, CancellationToken execution, CancellationToken queuedToken)
+    {
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
+        var sample = diagnostics.Sample();
+        output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"QOS_PROBE phase={phase} elapsed_s={Stopwatch.GetElapsedTime(started).TotalSeconds:F6} execution_cancelled={execution.IsCancellationRequested} queued_cancelled={queuedToken.IsCancellationRequested} admitted={io.Admitted} queued={io.Queued} running={io.Running} submitted={sample.Submitted} begun={sample.Begun} completed={sample.Completed} resumed={sample.Resumed} cancelled={sample.Cancelled} cancelled_resumed={sample.CancelledResumed} aborted={sample.Aborted} lost={sample.Lost} oldest_queue_ticks={sample.OldestQueuedTicks} oldest_running_ticks={sample.OldestRunningTicks} oldest_resume_ticks={sample.OldestResumeTicks}"));
+        foreach (var (name, request) in new[] { ("running", running), ("queued", queued) })
+        {
+            if (request is null)
+            {
+                continue;
+            }
+
+            var exception = request.Exception?.Flatten().InnerExceptions.FirstOrDefault()?.GetType().Name ?? "none";
+            var status = 0;
+            var code = "none";
+            try
+            {
+                if (request.IsCompletedSuccessfully)
+                {
+                    var response = await request;
+                    status = (int)response.StatusCode;
+                    // PostAsJsonAsync has buffered the content. Never print bodies or exception messages.
+                    using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    if (body.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object
+                        && error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.String
+                        && value.GetString() is { Length: > 0 and <= 64 } stable
+                        && stable.All(character => char.IsAsciiLetterLower(character) || character == '_'))
+                    {
+                        code = stable;
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OutOfMemoryException)
+            {
+                // A diagnostic read must not replace the original assertion or request outcome.
+                code = "diagnostic_unavailable";
+                exception = error.GetType().Name;
+            }
+
+            output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"QOS_PROBE phase={phase} request={name} state={request.Status} faulted={request.IsFaulted} cancelled={request.IsCanceled} exception_type={exception} http_status={status} error_code={code}"));
+        }
     }
 
     private static Task<HttpResponseMessage> QueryAsync(HttpClient data, ManagedDatabaseRef database, CancellationToken cancellationToken = default) =>
