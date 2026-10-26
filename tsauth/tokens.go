@@ -249,6 +249,9 @@ func (s *TokenSource) run(ctx context.Context, f *flight) {
 	defer f.cancel()
 	start := s.now()
 	res, err := s.fetch(ctx, s.hc)
+	if err == nil {
+		err = ctx.Err()
+	}
 	var lifetime time.Duration
 	if err == nil {
 		// Its lifetime counts from before the request: a short-lived token

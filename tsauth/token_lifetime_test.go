@@ -59,3 +59,24 @@ func TestCanceledTokenCallerDoesNotStartFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExpiredTokenFetchCannotReturnEmptySuccess(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		if deadline {
+			cancel()
+			ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+		}
+		cancel()
+		s := newSource(nil, func(ctx context.Context, _ *http.Client) (*tokenResponse, error) {
+			<-ctx.Done()
+			return &tokenResponse{AccessToken: "late", ExpiresIn: 900}, nil
+		})
+		f := &flight{done: make(chan struct{}), cancel: cancel, waiters: 1}
+		s.flight = f
+		s.run(ctx, f)
+		if !errors.Is(f.err, ctx.Err()) || f.token != "" || s.token != "" {
+			t.Fatalf("deadline=%v token=%q error=%v", deadline, f.token, f.err)
+		}
+	}
+}
