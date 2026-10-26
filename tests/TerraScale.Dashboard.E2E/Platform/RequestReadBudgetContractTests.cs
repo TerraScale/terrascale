@@ -10,6 +10,40 @@ namespace TerraScale.Dashboard.E2E.Platform;
 public sealed class RequestReadBudgetContractTests
 {
     [Test]
+    public async Task ReadsDuringAWriteCannotBecomeFreshContextsOrCachedPostWriteReads()
+    {
+        using var wire = new Wire();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Mutating = () => finished.Task;
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, async () =>
+        {
+            var before = ServerTiming.Now();
+            var reads = 0;
+            Task<int> Read() => ServerTiming.ReadAsync("membership", () => Task.FromResult(++reads));
+            await Read();
+            using var client = wire.CreateClient("mutation");
+            var pending = client.PostAsync("https://auth.terrascale.tech/v1/membership", null);
+            await Assert.That(before?.Current).IsFalse();
+            await Assert.That(ServerTiming.Now() is null).IsTrue();
+            await Read();
+            finished.SetResult();
+            using var response = await pending;
+            await Read();
+            await Read();
+            await Assert.That(reads).IsEqualTo(3);
+            await Assert.That(before?.Current).IsFalse();
+            await Assert.That(ServerTiming.Now()?.Current).IsTrue();
+        }, NullLogger.Instance);
+    }
+
+    [Test]
+    public async Task ResourceNamesThatMatchOperationWordsAreStillRedacted()
+    {
+        await Assert.That(ServerTiming.Handler.Operation(new("https://api.terrascale.tech/v1/projects/organizations/databases/members/collections/query/documents/userinfo?token=secret")))
+            .IsEqualTo("v1/projects/:value/databases/:value/collections/:value/documents/:value");
+    }
+
+    [Test]
     public async Task FormActionContextRemainsCurrentOnlyUntilItSendsAWrite()
     {
         using var wire = new Wire();
@@ -112,9 +146,11 @@ public sealed class RequestReadBudgetContractTests
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Catalogs { get; private set; }
         public int Listings { get; private set; }
+        public Func<Task>? Mutating { get; set; }
         public HttpClient CreateClient(string name) => new(new ServerTiming.Handler { InnerHandler = this }, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.Method == HttpMethod.Post && Mutating is { } mutate) await mutate();
             var catalog = request.RequestUri!.AbsolutePath == "/v1/regions";
             if (catalog) { Catalogs++; await Release.Task.WaitAsync(cancellationToken); }
             else if (request.Method == HttpMethod.Get) Listings++;

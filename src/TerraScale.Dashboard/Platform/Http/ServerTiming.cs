@@ -15,18 +15,19 @@ public sealed class ServerTiming
     private ILogger? logger;
     private readonly Dictionary<object, (int Writes, object Task)> readTasks = [];
     private int writes;
+    private int pendingWrites;
     private bool reads;
 
     // A point in this request's upstream history: it stays current until the request sends something that can change
     // state (a state write, or a ts-auth or Stripe mutation), so a value read before it is still as fresh as a re-read.
     public sealed record Mark(ServerTiming Request, int Writes)
     {
-        public bool Current => ServerTiming.Current.Value == Request && Volatile.Read(ref Request.writes) == Writes;
+        public bool Current => ServerTiming.Current.Value == Request && Volatile.Read(ref Request.writes) == Writes && Volatile.Read(ref Request.pendingWrites) == 0;
     }
 
     // A freshly authorized context also serves a form action until that action sends a write.
     // Individual read memoization below remains limited to GET/HEAD.
-    public static Mark? Now() => Current.Value is { } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
+    public static Mark? Now() => Current.Value is { pendingWrites: 0 } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
 
     // Coalesce identical reads only within this GET/HEAD. A mutation invalidates earlier reads;
     // failed reads can be retried and no task or authority survives into another request.
@@ -43,6 +44,7 @@ public sealed class ServerTiming
         if (Current.Value is not { reads: true } timing) return read();
         lock (timing.gate)
         {
+            if (!publicMetadata && Volatile.Read(ref timing.pendingWrites) != 0) return read();
             var generation = publicMetadata ? -1 : Volatile.Read(ref timing.writes);
             if (timing.readTasks.TryGetValue(key, out var entry) && entry.Writes == generation &&
                 entry.Task is Task<T> pending && !pending.IsFaulted && !pending.IsCanceled) return pending;
@@ -141,23 +143,48 @@ public sealed class ServerTiming
         {
             var timing = Current.Value;
             if (timing is null) return await base.SendAsync(request, cancellationToken);
-            if (Mutates(request)) Interlocked.Increment(ref timing.writes);
+            var mutation = Mutates(request);
+            if (mutation)
+            {
+                Interlocked.Increment(ref timing.pendingWrites);
+                Interlocked.Increment(ref timing.writes);
+            }
             var started = timing.clock.Elapsed.TotalMilliseconds;
             HttpResponseMessage? response = null;
             try { return response = await base.SendAsync(request, cancellationToken); }
             finally
             {
+                if (mutation)
+                {
+                    Interlocked.Increment(ref timing.writes);
+                    Interlocked.Decrement(ref timing.pendingWrites);
+                }
                 var ended = timing.clock.Elapsed.TotalMilliseconds;
                 var upstream = Upstream(request.RequestUri);
                 timing.Record(upstream, started, ended);
                 // Only fixed operation names escape: no URL, query, token, document ID or customer name.
-                var operation = string.Join('/', (request.RequestUri?.AbsolutePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(part => Operations.Contains(part) ? part : ":value"));
+                var operation = Operation(request.RequestUri);
                 timing.logger?.LogInformation("Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms",
                     upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
                     response is null ? 0 : (int)response.StatusCode, started, ended - started);
             }
         }
+
+        internal static string Operation(Uri? uri)
+        {
+            var parts = (uri?.AbsolutePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var identifier = false;
+            for (var index = 0; index < parts.Length; index++)
+            {
+                var part = parts[index];
+                parts[index] = identifier || !Operations.Contains(part) ? ":value" : part;
+                identifier = !identifier && IdentifiedResources.Contains(part);
+            }
+            return string.Join('/', parts);
+        }
+
+        private static readonly HashSet<string> IdentifiedResources = new(StringComparer.Ordinal)
+        { "organizations", "projects", "databases", "collections", "documents", "members", "invitations" };
 
         private static readonly HashSet<string> Operations = new(StringComparer.Ordinal)
         {
