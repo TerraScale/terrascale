@@ -14,6 +14,8 @@ The `ts` CLI signs you into TerraScale and manages databases, collections,
 documents, read-only SQL and project API keys as your user.
 You need a [TerraScale account](https://dash.terrascale.tech).
 
+See the [automation and JSON reference](/de/cli/automation) for machine output contracts.
+
 ## Install
 
 macOS and Linux, Intel/AMD 64-bit (`amd64`) and ARM64 (`arm64`):

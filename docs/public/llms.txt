@@ -16,6 +16,7 @@
 - [Python SDK installation and sync/async document, query, SQL and vector quickstart](https://docs.terrascale.tech/getting-started/python)
 - [Browser todos with an existing end-user session and collection owner rules](https://docs.terrascale.tech/getting-started/browser-todos)
 - [Connect an existing app backend session to project-scoped end-user tokens](https://docs.terrascale.tech/getting-started/browser-backend-tokens)
+- [Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records](https://docs.terrascale.tech/cli/automation)
 - [Supported runtimes, installation and SDK contracts](https://docs.terrascale.tech/guides/sdks)
 - [API keys, token exchange and scoped access](https://docs.terrascale.tech/guides/authentication)
 - [JSON filters, projection, opaque pagination and version preconditions](https://docs.terrascale.tech/guides/queries)
