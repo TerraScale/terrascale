@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +18,8 @@ internal sealed class DatabaseEscrowCell : IAsyncDisposable
 {
     private readonly List<ManagementApi> _regions = [];
     private readonly HashSet<int> _stopped = [];
+    private readonly FakeMemberStore _members = new();
+    private Socket? _unreachablePeer;
 
     public IReadOnlyList<ManagementApi> Regions => _regions;
 
@@ -29,7 +33,6 @@ internal sealed class DatabaseEscrowCell : IAsyncDisposable
     public static async Task<DatabaseEscrowCell> StartAsync(string plan = "starter")
     {
         var cell = new DatabaseEscrowCell();
-        var members = new FakeMemberStore();
         var user = EntityIds.New().ToString();
         try
         {
@@ -45,8 +48,10 @@ internal sealed class DatabaseEscrowCell : IAsyncDisposable
                 {
                     s3.Route(services);
                     ManualBackupHosting.Configure(services);
-                    services.AddSingleton<IMemberDirectory>(members);
+                    services.AddSingleton<IMemberDirectory>(cell._members);
                     services.Replace(ServiceDescriptor.Singleton(new DatabaseAllowance()));
+                    services.Replace(ServiceDescriptor.Singleton<IEscrowPeers>(provider =>
+                        new ObservedEscrowPeers(ActivatorUtilities.CreateInstance<EscrowPeers>(provider))));
                 }, userId: user));
 
                 // Registered in start order, so gru's registration is the earliest.
@@ -110,6 +115,30 @@ internal sealed class DatabaseEscrowCell : IAsyncDisposable
     public Task CountEverywhereAsync(int count) => TerraBaseTestServer.EventuallyAsync(async _ =>
         (await Task.WhenAll(Enumerable.Range(0, _regions.Count).Select(ListAsync))).All(ids => ids.Length == count), timeout: TimeSpan.FromSeconds(30));
 
+    // A partition keeps the donors listed. Stopping them would instead remove their placement regions.
+    public async Task IsolateAsync(int region)
+    {
+        var membership = _regions[region].Server.Services.GetRequiredService<IMembership>();
+        _unreachablePeer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        // Own the port without listening: real donor RPCs fail, and no parallel test can take this endpoint.
+        _unreachablePeer.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)_unreachablePeer.LocalEndPoint!).Port;
+        _members.Map = (viewer, member) => viewer == membership.Self.Name && member.Region != membership.Self.Region
+            ? member with { PeerAddress = new UriBuilder(member.PeerAddress) { Host = IPAddress.Loopback.ToString(), Port = port }.Uri.ToString() }
+            : member;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            var view = await membership.RefreshAsync(token);
+            return view.Elsewhere.Length == 2 && view.Elsewhere.All(member => new Uri(member.PeerAddress).Port == port);
+        }, timeout: TimeSpan.FromSeconds(30));
+    }
+
+    public async Task<string> DonorRegionsAsync(int region) =>
+        string.Join(',', await _regions[region].Server.Services.GetRequiredService<IEscrowPeers>().RegionsAsync(CancellationToken.None));
+
+    public string FailedDonorRegions(int region) =>
+        string.Join(',', ((ObservedEscrowPeers)_regions[region].Server.Services.GetRequiredService<IEscrowPeers>()).FailedRegions.Order(StringComparer.Ordinal));
+
     public async Task DeleteAsync(int region, string id)
     {
         using var response = await _regions[region].Client.DeleteAsync(ManagementApi.Uri($"{Databases}/{id}"));
@@ -126,9 +155,38 @@ internal sealed class DatabaseEscrowCell : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        for (var region = _regions.Count - 1; region >= 0; region--)
+        _members.Map = null;
+        try
         {
-            await StopAsync(region);
+            for (var region = _regions.Count - 1; region >= 0; region--)
+            {
+                await StopAsync(region);
+            }
+        }
+        finally
+        {
+            _unreachablePeer?.Dispose();
+        }
+    }
+
+    // Observe the production escrow client; never replace its RPCs or manufacture a grant/refusal.
+    private sealed class ObservedEscrowPeers(EscrowPeers inner) : IEscrowPeers
+    {
+        private readonly ConcurrentDictionary<string, byte> _failed = new(StringComparer.Ordinal);
+
+        public IEnumerable<string> FailedRegions => _failed.Keys;
+
+        public ValueTask<IReadOnlyList<string>> RegionsAsync(CancellationToken cancellationToken) => inner.RegionsAsync(cancellationToken);
+
+        public async ValueTask<long?> TransferAsync(string region, string organizationId, long received, int want, CancellationToken cancellationToken)
+        {
+            var granted = await inner.TransferAsync(region, organizationId, received, want, cancellationToken);
+            if (granted is null)
+            {
+                _ = _failed.TryAdd(region, 0);
+            }
+
+            return granted;
         }
     }
 }
