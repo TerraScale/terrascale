@@ -85,7 +85,16 @@ export class V1Databases {
   /** @param {V1Transport} transport */
   constructor(transport) { this.#transport = transport; Object.freeze(this); }
 
-  /** @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
+  /**
+   * Creates a database managed in homeRegion, or the called region when omitted.
+   * A writable database requires at least two regions. Omitting replicaRegions
+   * uses every other current serving region; an explicit list must include at
+   * least one region other than the home. An empty list on create returns
+   * 400 placement_needs_two_regions.
+   * allRegions: true also follows regions that join later and cannot be combined
+   * with replicaRegions. The home selects management routing, not single-region placement.
+   * @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
+   */
   async create(request, options = {}) {
     members(request, ["name", "homeRegion", "replicaRegions", "allRegions"]);
     mutationOptions(options);
@@ -129,7 +138,15 @@ export class V1Databases {
     return database(response.value);
   }
 
-  /** @param {string} name @param {V1DatabaseUpdateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
+  /**
+   * Replaces the replica list from the database's home region, which cannot change.
+   * An explicit list turns allRegions off. A writable database needs at least
+   * one replica besides the home. An empty list can temporarily make document
+   * writes return 409 placement_needs_two_regions; it is not required for
+   * deletion and does not provide supported single-region placement.
+   * allRegions: true instead includes every serving region and regions that join later.
+   * @param {string} name @param {V1DatabaseUpdateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
+   */
   async update(name, request, options = {}) {
     members(request, ["homeRegion", "replicaRegions", "allRegions"]);
     mutationOptions(options);
@@ -149,7 +166,13 @@ export class V1Databases {
     return database(response.value);
   }
 
-  /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>} */
+  /**
+   * Deletes directly in the home region without a preceding placement update.
+   * Permanent purge authority removes every replica, including all-regions placement;
+   * branches remain independent. A 204 response records logical deletion and local
+   * cleanup; remote erasure is retried durably, not guaranteed synchronous.
+   * @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>}
+   */
   async delete(name, options = {}) {
     mutationOptions(options);
     await this.#transport.call("deleteDatabase", { database: requireName("database", name) }, { signal: options.signal });
