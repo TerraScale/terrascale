@@ -43,6 +43,9 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
     private static readonly TimeSpan FarBehindEvery = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
 
+    // Bounded retention batches one pass deletes after its own (each at most 16,384 rows): 4 million rows, then the next pass.
+    private const int MaxTrimBatches = 256;
+
     public TursoChangeGroupSource(TursoStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger, Func<IRemoteDurability?>? durability = null)
     {
         _engine = engine;
@@ -573,20 +576,24 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             }
         }
 
+        bool more;
+        long? below;
+        DateTimeOffset now;
+        Ulid incarnation;
         var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             // The file this transaction holds, which a reopen may have made another than the store's cached one.
-            var incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
+            incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
             // Before the cut: commits that need no new proof pass the shape frontier while capture still holds them, joined
             // ones of an origin held now included.
             var moved = store.RequiresRemoteProof && await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, null, held, cancellationToken).ConfigureAwait(false);
-            var now = _engine.HostTime.GetUtcNow();
+            now = _engine.HostTime.GetUtcNow();
             // The cut keeps what the frontier has not walked yet, for a bounded time (a pass's budget, or a proof to come).
-            var below = await transaction.ShapeFrontierHoldAsync(now.ToUnixTimeSeconds(), cancellationToken).ConfigureAwait(false) is { } hold
+            below = await transaction.ShapeFrontierHoldAsync(now.ToUnixTimeSeconds(), cancellationToken).ConfigureAwait(false) is { } hold
                 ? Math.Min(store.BackupAnchor ?? long.MaxValue, hold)
                 : store.BackupAnchor;
-            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(below, now, _engine.ReplicaId, farBehind, cancellationToken).ConfigureAwait(false);
+            (var left, floor, var raised, var oldest, more) = await transaction.TrimAsync(below, now, _engine.ReplicaId, farBehind, cancellationToken).ConfigureAwait(false);
             // Before the commit wakes a stream: its RetainsAsync then already sees the ranges the raises proved quiet (which
             // hold whether or not the commit lands; the rows are unchanged until a later cut).
             foreach (var (from, to) in raised)
@@ -604,6 +611,24 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             {
                 // Wakes shape sealing and live reads waiting for the frontier.
                 store.MoveCommitCount();
+            }
+        }
+
+        // The rest of a long releasable backlog goes in further bounded batches, each committed (its pages released) before the
+        // next takes the writer; a pass stops after MaxTrimBatches and the next one continues.
+        for (var batch = 0; more && batch < MaxTrimBatches; batch++)
+        {
+            var next = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+            await using (next.ConfigureAwait(false))
+            {
+                if (await next.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
+                {
+                    break;
+                }
+
+                (var left, more) = await next.TrimBatchAsync(below, now, cancellationToken).ConfigureAwait(false);
+                _ = await next.CommitAsync(cancellationToken).ConfigureAwait(false);
+                _backlog[incarnation] = left;
             }
         }
 

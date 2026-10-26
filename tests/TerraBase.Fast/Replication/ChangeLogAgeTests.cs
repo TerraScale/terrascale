@@ -156,6 +156,12 @@ public sealed class ChangeLogAgeTests
         await peer.ReportFrontierAsync();
         await peer.AckAsync(pending);
         await Assert.That(await gru.UntilAckedAsync(peer.Replica, ScriptedPeer.ChangeId(pending))).IsTrue();
+        // An ack or a pass deletes a bounded batch; the passes that follow take the rest.
+        for (var pass = 0; pass < 10 && await OldestAsync(store) != newest; pass++)
+        {
+            await gru.TrimAsync();
+        }
+
         await Assert.That(await OldestAsync(store)).IsEqualTo(newest);
         await Assert.That(await ScalarAsync(store, $"SELECT count(*) FROM turso_cdc WHERE change_id <= {newest};")).IsEqualTo(1L)
             .Because("the entire oversized transaction went; only its final commit anchor stays below newer frontier bookkeeping");
