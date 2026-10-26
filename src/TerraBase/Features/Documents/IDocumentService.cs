@@ -15,7 +15,8 @@ public sealed record DocumentKey(TenantContext Database, string Collection, stri
 /// <param name="IfMatch">Versions one of which must be current (strong comparison); <see langword="null"/> for none.</param>
 /// <param name="IfMatchAny">Whether the document must be live (<c>If-Match: *</c>).</param>
 /// <param name="IfNoneMatch">Whether the document must be absent or deleted (<c>If-None-Match: *</c>).</param>
-public sealed record Precondition(IReadOnlyList<string>? IfMatch, bool IfMatchAny, bool IfNoneMatch)
+/// <param name="IfNeverWritten">Requires no retained state, including a tombstone; used by historical recovery.</param>
+public sealed record Precondition(IReadOnlyList<string>? IfMatch, bool IfMatchAny, bool IfNoneMatch, bool IfNeverWritten = false)
 {
     /// <summary>The document must be absent or deleted: a create.</summary>
     public static Precondition Absent { get; } = new(null, IfMatchAny: false, IfNoneMatch: true);

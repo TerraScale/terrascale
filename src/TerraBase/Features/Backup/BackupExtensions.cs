@@ -61,6 +61,9 @@ public static class BackupExtensions
         public Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) =>
             Task.FromResult<PointInTimePlanResult>(new NotFound("continuous backup holds nothing of this database"));
 
+        public Task<HistoricalSnapshotResult> ReadSnapshotAsync(TenantContext source, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) =>
+            Task.FromResult<HistoricalSnapshotResult>(new NotFound("continuous backup holds nothing of this database"));
+
         public Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform) =>
             Task.FromResult<PointInTimeRestoreResult>(new NotFound("continuous backup holds nothing of this database"));
     }

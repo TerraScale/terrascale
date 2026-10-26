@@ -64,6 +64,7 @@ public static class EngineExtensions
         });
         services.AddSingleton<IOrphanDatabaseFiles>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<TursoStorageEngine>());
+        services.AddSingleton<IRecoverySnapshotReader>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IRebuildStorage>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IHealthyRewrite>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IRebuildLedger>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);

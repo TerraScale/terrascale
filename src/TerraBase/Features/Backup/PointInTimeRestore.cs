@@ -47,6 +47,9 @@ public interface IPointInTimeRestore
     /// <summary>Reads bounded backup metadata without downloading, decrypting or importing any backup.</summary>
     Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
+    /// <summary>Reads an isolated, caller-owned historical snapshot without publishing a tenant database.</summary>
+    Task<HistoricalSnapshotResult> ReadSnapshotAsync(TenantContext source, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
+
     /// <summary>
     /// Creates <paramref name="target"/>, a new engine database, holding <paramref name="source"/> as of <paramref name="at"/>:
     /// every transaction committed before then and none recorded as committed at or after it, whole. Validates its restore
@@ -60,7 +63,7 @@ public interface IPointInTimeRestore
 
 /// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
 internal sealed class PointInTimeRestore(
-    IWalBackup engine, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time)
+    IWalBackup engine, IRecoverySnapshotReader scratch, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time)
     : IPointInTimeRestore
 {
     private const int MaxPlanItems = 10_000;
@@ -237,6 +240,58 @@ internal sealed class PointInTimeRestore(
 
     public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
+        var built = await BuildSnapshotAsync(source, at, destination, cancellationToken).ConfigureAwait(false);
+        if (built is not RestoredBackup restored)
+        {
+            return built switch
+            {
+                NotFound error => error,
+                Conflict error => error,
+                Validation error => error,
+                Unavailable error => error,
+                RestoredBackup => throw new System.Diagnostics.UnreachableException(),
+            };
+        }
+        try
+        {
+            await engine.ImportDatabaseAsync(target, restored.Path, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }
+        finally
+        {
+            restored.Dispose();
+        }
+    }
+
+    public async Task<HistoricalSnapshotResult> ReadSnapshotAsync(TenantContext source, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
+    {
+        var built = await BuildSnapshotAsync(source, at, destination, cancellationToken).ConfigureAwait(false);
+        if (built is not RestoredBackup restored)
+        {
+            return built switch
+            {
+                NotFound error => error,
+                Conflict error => error,
+                Validation error => error,
+                Unavailable error => error,
+                RestoredBackup => throw new System.Diagnostics.UnreachableException(),
+            };
+        }
+        try
+        {
+            return new HistoricalSnapshot(await scratch.OpenAsync(restored.Path, source, cancellationToken).ConfigureAwait(false), restored);
+        }
+        catch
+        {
+            restored.Dispose();
+            throw;
+        }
+    }
+
+    private readonly union SnapshotFileResult(RestoredBackup, NotFound, Conflict, Validation, Unavailable);
+
+    private async Task<SnapshotFileResult> BuildSnapshotAsync(TenantContext source, DateTimeOffset at, string destination, CancellationToken cancellationToken)
+    {
         // Every caller must preserve the canonical erasure boundary, even before any receipt exists.
         if (PlatformDatabases.IsPlatform(source.OrganizationId))
         {
@@ -314,15 +369,7 @@ internal sealed class PointInTimeRestore(
             return new Conflict("continuous backup of this database cannot be read: an object fails authentication or its integrity check", "backup_unreadable");
         }
 
-        try
-        {
-            await engine.ImportDatabaseAsync(target, restored.Path, cancellationToken).ConfigureAwait(false);
-            return new Done();
-        }
-        finally
-        {
-            restored.Dispose();
-        }
+        return restored;
     }
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");

@@ -933,7 +933,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         CancellationToken cancellationToken, ReadOnlyMemory<byte>? json = null)
     {
         string? version = null;
-        if (precondition.IfMatch is not null && current is { } state)
+        if ((precondition.IfMatch is not null || precondition.IfNeverWritten) && current is { } state)
         {
             // Wildcards and unconditional writes need only existence. Exact tags also identify equal-version body winners.
             var body = state.Deleted ? ReadOnlyMemory<byte>.Empty
