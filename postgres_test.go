@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -23,6 +24,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func postgresTestConfig(t *testing.T) PostgresConfig {
@@ -288,6 +291,252 @@ func TestPostgresTLSBeforeStartup(t *testing.T) {
 			}
 			if count := <-sent; count != tc.startup {
 				t.Fatalf("startup bytes=%d", count)
+			}
+		})
+	}
+}
+
+// Uses the real pgx extended-query parser/codecs; no SQL engine or live resources.
+type postgresFixture struct {
+	fields           []pgproto3.FieldDescription
+	rows             [][][]byte
+	tag              string
+	binds            chan *pgproto3.Bind
+	entered, release chan struct{}
+	stalled          chan error
+}
+
+func postgresFixtureClient(t *testing.T, f postgresFixture) *PostgresClient {
+	t.Helper()
+	wire, peer := net.Pipe()
+	t.Cleanup(func() { wire.Close(); peer.Close() })
+	go func() {
+		defer peer.Close()
+		peer.SetDeadline(time.Now().Add(5 * time.Second))
+		backend := pgproto3.NewBackend(peer, peer)
+		if _, err := backend.ReceiveStartupMessage(); err != nil {
+			return
+		}
+		backend.Send(&pgproto3.AuthenticationOk{})
+		backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+		if backend.Flush() != nil {
+			return
+		}
+		for {
+			msg, err := backend.Receive()
+			if err != nil {
+				return
+			}
+			switch m := msg.(type) {
+			case *pgproto3.Parse:
+				backend.Send(&pgproto3.ParseComplete{})
+			case *pgproto3.Describe:
+				if m.ObjectType == 'S' {
+					backend.Send(&pgproto3.ParameterDescription{ParameterOIDs: nil})
+				}
+				backend.Send(&pgproto3.RowDescription{Fields: f.fields})
+			case *pgproto3.Bind:
+				if f.binds != nil {
+					f.binds <- m
+				}
+				backend.Send(&pgproto3.BindComplete{})
+			case *pgproto3.Execute:
+				if f.entered != nil {
+					close(f.entered)
+					<-f.release
+				}
+				for _, row := range f.rows {
+					backend.Send(&pgproto3.DataRow{Values: row})
+				}
+				if f.stalled != nil {
+					backend.Flush() // First row only; withhold all remaining rows and completion.
+					for {
+						message, err := backend.Receive()
+						if err != nil {
+							f.stalled <- nil
+							return
+						}
+						switch message.(type) {
+						case *pgproto3.Sync, *pgproto3.Terminate:
+						default:
+							f.stalled <- fmt.Errorf("unexpected replay: %T", message)
+							return
+						}
+					}
+				}
+				backend.Send(&pgproto3.CommandComplete{CommandTag: []byte(f.tag)})
+			case *pgproto3.Sync:
+				backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+				if backend.Flush() != nil {
+					return
+				}
+			case *pgproto3.Terminate:
+				return
+			}
+		}
+	}()
+	config, err := pgx.ParseConfig("host=localhost user=fixture password=fixture sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.DialFunc = func(context.Context, string, string) (net.Conn, error) { return wire, nil }
+	config.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	driver, err := pgx.ConnectConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &PostgresClient{driver: driver}
+}
+func postgresFields(oids ...uint32) []pgproto3.FieldDescription {
+	fields := make([]pgproto3.FieldDescription, len(oids))
+	for i, oid := range oids {
+		fields[i] = pgproto3.FieldDescription{Name: []byte("value"), DataTypeOID: oid, DataTypeSize: -1, TypeModifier: -1}
+	}
+	return fields
+}
+func TestPostgresNativeScalarsRowsNullAndAlias(t *testing.T) {
+	fields := postgresFields(16, 20, 21, 23, 701, 1700, 25, 1043, 114, 3802, 1082, 1114, 1184, 25, 1700, 1700, 1700)
+	raw := []string{"t", "9223372036854775807", "-32768", "2147483647", "1.25", "9007199254740993.125", "text", "varchar", `{"n":9007199254740993}`, `{"n":1e9999}`, "2026-10-26", "2026-10-26 12:34:56", "2026-10-26 12:34:56+00", "1", "1e+20", "1e-7", "-1.25E+3"}
+	data := make([][]byte, len(raw))
+	for i, v := range raw {
+		data[i] = []byte(v)
+	}
+	binds := make(chan *pgproto3.Bind, 4)
+	c := postgresFixtureClient(t, postgresFixture{fields: fields, rows: [][][]byte{data, make([][]byte, len(raw)), data}, tag: "SELECT 3", binds: binds})
+	result, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT CAST(1 AS BIGINT) AS value"})
+	if err != nil || len(result.Rows) != 3 || result.CommandTag != "SELECT 3" {
+		t.Fatalf("rows: %v", err)
+	}
+	values := make([]any, len(raw))
+	for i, v := range result.Rows[0] {
+		values[i] = v.Value()
+		if v.OID() != fields[i].DataTypeOID || result.Rows[1][i].Value() != nil {
+			t.Fatal("metadata or NULL lost")
+		}
+	}
+	if values[0] != true || values[1] != int64(math.MaxInt64) || values[2] != int16(math.MinInt16) || values[3] != int32(math.MaxInt32) || values[4] != 1.25 || values[6] != "text" || values[7] != "varchar" {
+		t.Fatal("native scalar decoding")
+	}
+	numeric := values[5].(pgtype.Numeric)
+	if numeric.Int.String() != "9007199254740993125" || numeric.Exp != -3 {
+		t.Fatal("numeric precision lost")
+	}
+	for i, exponent := range []int32{20, -7, 1} {
+		numeric := result.Rows[0][14+i].Value().(pgtype.Numeric)
+		coefficient := "1"
+		if i == 2 {
+			coefficient = "-125"
+		}
+		if numeric.Int.String() != coefficient || numeric.Exp != exponent {
+			t.Fatal("scientific numeric changed")
+		}
+	}
+	for _, i := range []int{8, 9} {
+		if string(values[i].(json.RawMessage)) != raw[i] {
+			t.Fatal("JSON precision lost")
+		}
+	}
+	for _, i := range []int{10, 11, 12} {
+		if _, ok := values[i].(time.Time); !ok {
+			t.Fatal("native temporal decoding")
+		}
+	}
+	if text, ok := result.Rows[0][13].Text(); !ok || text != "1" {
+		t.Fatal("aliased expression TEXT must remain TEXT")
+	}
+	if _, ok := result.Rows[0][13].Int8(); ok {
+		t.Fatal("aliased TEXT silently coerced to INT8")
+	}
+	// A returns NULL but retains non-null parameter restrictions until B.
+	t.Run("returned NULL rejected before wire", func(t *testing.T) {
+		for index, column := range []int{1, 6} {
+			before := len(binds)
+			_, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT $1", Parameters: []PostgresValue{result.Rows[1][column]}})
+			expected := []string{"query_requires_non_null_int8", "query_requires_valid_non_null_text"}[index]
+			var failure *PostgresError
+			if !errors.As(err, &failure) || failure.Kind != expected || err.Error() != "terrascale PostgreSQL "+expected+" failure" || len(binds) != before {
+				t.Fatalf("NULL was not rejected before binding: %v", err)
+			}
+			if _, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT still_usable"}); err != nil || c.driver.IsClosed() || len(binds) != before+1 {
+				t.Fatalf("validation damaged session: %v", err)
+			}
+		}
+	})
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestPostgresAbortStalledResults(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		oid       uint32
+		raw, kind string
+		cancel    bool
+	}{
+		{"limit", 25, strings.Repeat("x", postgresResultBytes), "limit", false},
+		{"smallint overflow", 21, "32768", "decode", false},
+		{"row shape", 25, "text", "decode", false},
+		{"numeric exponent bound", 1700, "1e2147483647", "decode", false},
+		{"nonfinite coefficient", 1700, "NaNe2", "decode", false},
+		{"caller cancellation", 21, "32768", "canceled", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			stalled, binds := make(chan error, 1), make(chan *pgproto3.Bind, 2)
+			fixture := postgresFixture{fields: postgresFields(tc.oid), rows: [][][]byte{{[]byte(tc.raw)}}, tag: "UPDATE 3", entered: entered, release: release, stalled: stalled, binds: binds}
+			if tc.name == "row shape" {
+				fixture.fields = postgresFields(tc.oid, tc.oid)
+			}
+			c := postgresFixtureClient(t, fixture)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				result, err := c.Query(ctx, PostgresQuery{Statement: "UPDATE active RETURNING value"})
+				if len(result.Rows) != 0 {
+					done <- errors.New("partial result retained")
+					return
+				}
+				done <- err
+			}()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("query did not enter")
+			}
+
+			if tc.cancel {
+				cancel()
+			}
+			close(release)
+			select {
+			case err := <-done:
+				var failure *PostgresError
+				if !errors.As(err, &failure) || failure.Kind != tc.kind || tc.cancel && !errors.Is(err, context.Canceled) {
+					t.Fatalf("wrong failure: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("query drained a stalled remainder")
+			}
+			if !c.driver.IsClosed() {
+				t.Fatal("failed session retained")
+			}
+			select {
+			case err := <-stalled:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("physical session not disposed")
+			}
+			if len(binds) != 1 {
+				t.Fatal("mutation replayed")
+			}
+			if err := c.Close(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT closed"}); err == nil {
+				t.Fatal("closed session reused")
 			}
 		})
 	}

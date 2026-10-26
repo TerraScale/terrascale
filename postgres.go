@@ -1,13 +1,16 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +18,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
 	postgresMaxBytes       = 16 * 1024
+	postgresResultBytes    = 16 * 1024 * 1024
 	postgresConnectTimeout = 5 * time.Second
 )
 
@@ -76,18 +81,21 @@ func postgresFailure(err error) error {
 	return &PostgresError{Kind: "connection"}
 }
 
-// PostgresValue is one non-null INT8 or TEXT parameter/result value.
+// PostgresValue holds a native pgx scalar or nil for SQL NULL.
+// JSON results are json.RawMessage; numeric results retain pgtype.Numeric precision.
 type PostgresValue struct {
-	oid     uint32
-	integer int64
-	text    string
+	oid   uint32
+	value any
 }
 
-func PostgresInt8(value int64) PostgresValue     { return PostgresValue{oid: 20, integer: value} }
-func PostgresText(value string) PostgresValue    { return PostgresValue{oid: 25, text: value} }
-func (value PostgresValue) Int8() (int64, bool)  { return value.integer, value.oid == 20 }
-func (value PostgresValue) Text() (string, bool) { return value.text, value.oid == 25 }
+func PostgresInt8(value int64) PostgresValue     { return PostgresValue{oid: 20, value: value} }
+func PostgresText(value string) PostgresValue    { return PostgresValue{oid: 25, value: value} }
+func (value PostgresValue) Int8() (int64, bool)  { v, ok := value.value.(int64); return v, ok }
+func (value PostgresValue) Text() (string, bool) { v, ok := value.value.(string); return v, ok }
 func (value PostgresValue) OID() uint32          { return value.oid }
+
+// Value returns the decoded pgx value, or nil for SQL NULL.
+func (value PostgresValue) Value() any { return value.value }
 
 type PostgresQuery struct {
 	Statement  string
@@ -98,7 +106,9 @@ type PostgresColumn struct {
 	OID  uint32
 }
 type PostgresResult struct {
-	Command      string
+	Command string
+	// CommandTag preserves the complete server tag, including DDL object and row counts.
+	CommandTag   string
 	AffectedRows uint64
 	Columns      []PostgresColumn
 	Rows         [][]PostgresValue
@@ -116,12 +126,17 @@ func postgresParameters(query PostgresQuery) ([]any, error) {
 	for index, value := range query.Parameters {
 		switch value.oid {
 		case 20:
-			values[index] = value.integer
-		case 25:
-			if !postgresTextValid(value.text) {
-				return nil, &PostgresError{Kind: "query"}
+			integer, ok := value.Int8()
+			if !ok {
+				return nil, &PostgresError{Kind: "query_requires_non_null_int8"}
 			}
-			values[index] = value.text
+			values[index] = integer
+		case 25:
+			text, ok := value.Text()
+			if !ok || !postgresTextValid(text) {
+				return nil, &PostgresError{Kind: "query_requires_valid_non_null_text"}
+			}
+			values[index] = text
 		default:
 			return nil, &PostgresError{Kind: "query"}
 		}
@@ -214,6 +229,51 @@ func ConnectPostgres(ctx context.Context, config PostgresConfig) (*PostgresClien
 	return &PostgresClient{driver: connection}, nil
 }
 
+// Decode without Rows.Scan: its error path drains Rows before returning.
+func postgresDecode(types *pgtype.Map, field pgconn.FieldDescription, raw []byte) (any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if field.DataTypeOID == 1700 && field.Format == pgx.TextFormatCode {
+		if index := bytes.IndexAny(raw, "eE"); index >= 0 {
+			// Producer finite reals use scientific text. Shift the native decimal scale
+			// exactly; never expand a string or coerce through floating point.
+			exponent, err := strconv.ParseInt(string(raw[index+1:]), 10, 32)
+			if err != nil || exponent < -postgresMaxBytes || exponent > postgresMaxBytes {
+				return nil, &PostgresError{Kind: "decode"}
+			}
+			var numeric pgtype.Numeric
+			if err := types.Scan(1700, field.Format, raw[:index], &numeric); err != nil {
+				return nil, err
+			}
+			if numeric.Int == nil {
+				return nil, &PostgresError{Kind: "decode"}
+			}
+			numeric.Exp += int32(exponent)
+			return numeric, nil
+		}
+	}
+	if field.DataTypeOID == 114 || field.DataTypeOID == 3802 {
+		var value json.RawMessage
+		err := types.Scan(field.DataTypeOID, field.Format, raw, &value)
+		return value, err
+	}
+	var value any
+	err := types.Scan(field.DataTypeOID, field.Format, raw, &value)
+	return value, err
+}
+
+func (client *PostgresClient) abort(ctx context.Context) {
+	physical := client.driver.PgConn().Conn()
+	if secure, ok := physical.(*tls.Conn); ok {
+		physical = secure.NetConn()
+	}
+	physical.Close() // Unblock I/O before pgx/Rows cleanup, including TLS close_notify.
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	client.driver.PgConn().Close(canceled)
+}
+
 // Query sends the SQL and typed values separately through PostgreSQL binding.
 // BEGIN, COMMIT and ROLLBACK remain distinct statements; callbacks are never retried.
 func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
@@ -226,58 +286,58 @@ func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (P
 	if client.driver == nil || client.driver.IsClosed() {
 		return PostgresResult{}, &PostgresError{Kind: "connection"}
 	}
-	rows, err := client.driver.Query(ctx, query.Statement, values...)
+
+	// The producer sends numeric and temporal scalars as text even when binary is requested.
+	// Request text explicitly: pgx ExecStatement trusts the requested formats without Describe.
+	arguments := append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, values...)
+	rows, err := client.driver.Query(ctx, query.Statement, arguments...)
 	if err != nil {
 		return PostgresResult{}, postgresFailure(err)
 	}
 	defer rows.Close()
 	result := PostgresResult{Columns: make([]PostgresColumn, len(rows.FieldDescriptions())), Rows: [][]PostgresValue{}}
+	budget := postgresResultBytes
 	for index, field := range rows.FieldDescriptions() {
-		if field.DataTypeOID != 20 && field.DataTypeOID != 25 {
-			return PostgresResult{}, &PostgresError{Kind: "protocol"}
-		}
+		budget -= len(field.Name) + 64
 		result.Columns[index] = PostgresColumn{Name: field.Name, OID: field.DataTypeOID}
 	}
 	for rows.Next() {
-		if len(result.Rows) == 1 {
-			return PostgresResult{}, &PostgresError{Kind: "protocol"}
+		rawValues := rows.RawValues()
+		if len(rawValues) != len(result.Columns) {
+			client.abort(ctx)
+			return PostgresResult{}, &PostgresError{Kind: "decode"}
 		}
-		values, err := rows.Values()
-		if err != nil {
-			return PostgresResult{}, postgresFailure(err)
+		budget -= 24 + 64*len(result.Columns)
+		for _, raw := range rawValues {
+			budget -= len(raw)
 		}
-		if len(values) != len(result.Columns) {
-			return PostgresResult{}, &PostgresError{Kind: "protocol"}
+		if budget < 0 {
+			// Do not drain an unbounded result or leave an ambiguous session reusable.
+			client.abort(ctx)
+			return PostgresResult{}, &PostgresError{Kind: "limit"}
 		}
-		row := make([]PostgresValue, len(values))
-		for index, value := range values {
-			switch result.Columns[index].OID {
-			case 20:
-				integer, ok := value.(int64)
-				if !ok {
-					return PostgresResult{}, &PostgresError{Kind: "protocol"}
+		row := make([]PostgresValue, len(result.Columns))
+		for index, field := range rows.FieldDescriptions() {
+			value, err := postgresDecode(client.driver.TypeMap(), field, rawValues[index])
+			if err != nil {
+				client.abort(ctx)
+				if ctx.Err() != nil {
+					return PostgresResult{}, postgresFailure(ctx.Err())
 				}
-				row[index] = PostgresInt8(integer)
-			case 25:
-				text, ok := value.(string)
-				if !ok || !postgresTextValid(text) {
-					return PostgresResult{}, &PostgresError{Kind: "protocol"}
-				}
-				row[index] = PostgresText(text)
+				return PostgresResult{}, &PostgresError{Kind: "decode"}
 			}
+			row[index] = PostgresValue{oid: field.DataTypeOID, value: value}
 		}
 		result.Rows = append(result.Rows, row)
 	}
 	if err := rows.Err(); err != nil {
+		client.abort(ctx)
 		return PostgresResult{}, postgresFailure(err)
 	}
 	tag := rows.CommandTag()
-	result.Command, _, _ = strings.Cut(tag.String(), " ")
-	count := tag.RowsAffected()
-	if count < 0 || count > 2 {
-		return PostgresResult{}, &PostgresError{Kind: "protocol"}
-	}
-	result.AffectedRows = uint64(count)
+	result.CommandTag = tag.String()
+	result.Command, _, _ = strings.Cut(result.CommandTag, " ")
+	result.AffectedRows = uint64(tag.RowsAffected())
 	switch result.Command {
 	case "SELECT", "INSERT", "UPDATE", "DELETE", "BEGIN", "COMMIT", "ROLLBACK", "SET":
 		return result, nil
