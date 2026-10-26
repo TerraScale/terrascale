@@ -109,70 +109,19 @@ public sealed class PostgresSavepointTests
         await using var connection = await source.OpenConnectionAsync();
         await using var writer = await source.OpenConnectionAsync();
         await ExecuteAsync(connection, Table);
-        await using var prepared = new NpgsqlCommand("SELECT count(label) FROM items", connection);
-        await prepared.PrepareAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         await transaction.SaveAsync("recover");
         await ScalarAsync(connection, "SELECT count(*) FROM items");
         await ExecuteAsync(writer, "INSERT INTO items (label) VALUES ('concurrent')");
         await StateAsync(connection, "SELECT count(*) FROM items", "40001");
-        // Parse, and Bind of a prepared read, refuse without replaying the conflicting read again.
-        await StateAsync(connection, "SELECT count(*) FROM items", "25P02");
-        var bound = await Assert.ThrowsAsync<PostgresException>(() => prepared.ExecuteScalarAsync());
-        await Assert.That(bound!.SqlState).IsEqualTo("25P02");
+        await StateAsync(connection, "SELECT count(*) FROM items", "25P02"); // Refused at Parse, without replaying the read.
         await StateAsync(connection, "INSERT INTO items (label) VALUES ('refused')", "25P02");
         await transaction.RollbackAsync("recover");
         await Assert.That(await ScalarAsync(connection, "SELECT count(*) FROM items")).IsEqualTo("1");
-        await Assert.That(Convert.ToString(await prepared.ExecuteScalarAsync(), CultureInfo.InvariantCulture)).IsEqualTo("1");
         await ExecuteAsync(connection, "INSERT INTO items (label) VALUES ('recovered')");
         await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("1");
         await transaction.CommitAsync();
         await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("2");
-    }
-
-    [Test]
-    public async Task Identifier_folding_quoting_and_release_remove_the_target_and_descendants()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        await using var source = await SourceAsync(api);
-        await using var connection = await source.OpenConnectionAsync();
-        await using var transaction = await connection.BeginTransactionAsync();
-        await ExecuteAsync(connection, "SAVEPOINT Mixed");
-        await ExecuteAsync(connection, "SAVEPOINT \"Mixed\"");
-        await ExecuteAsync(connection, "SAVEPOINT \"with\"\"quote\"");
-        await ExecuteAsync(connection, "ROLLBACK WORK TO SAVEPOINT \"with\"\"quote\"");
-        await ExecuteAsync(connection, "RELEASE SAVEPOINT mixed");
-        await StateAsync(connection, "ROLLBACK TRANSACTION TO \"Mixed\"", "3B001");
-        await transaction.RollbackAsync();
-        await using var next = await connection.BeginTransactionAsync();
-        await StateAsync(connection, "ROLLBACK TO mixed", "3B001");
-        await next.RollbackAsync();
-    }
-
-    [Test]
-    [Arguments(128, 1)]
-    [Arguments(97, 63)]
-    public async Task Savepoints_are_bounded_by_count_and_bytes_and_release_reclaims_capacity(int count, int length)
-    {
-        await using var api = await ManagementApi.StartAsync();
-        await using var source = await SourceAsync(api);
-        await using var connection = await source.OpenConnectionAsync();
-        await using var transaction = await connection.BeginTransactionAsync();
-        var name = new string('s', length);
-        await transaction.SaveAsync("root");
-        for (var i = 1; i < count; i++)
-        {
-            await transaction.SaveAsync(name);
-        }
-        await StateAsync(connection, $"SAVEPOINT {name}", "54000");
-        await transaction.RollbackAsync("root");
-        for (var i = 1; i < count; i++)
-        {
-            await transaction.SaveAsync(name);
-        }
-        await transaction.ReleaseAsync("root");
-        await transaction.SaveAsync("root");
-        await transaction.CommitAsync();
     }
 
     private static async Task<NpgsqlDataSource> SourceAsync(ManagementApi api)

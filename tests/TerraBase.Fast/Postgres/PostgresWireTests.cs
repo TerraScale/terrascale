@@ -176,6 +176,46 @@ public sealed class PostgresWireTests
             ["id,bigint,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
     }
 
+    [Test]
+    public async Task An_aborted_transaction_refuses_every_portal_and_rollback_discards_reads_run_at_describe()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var wire = await RawClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        await wire.QueryAsync(People);
+        await wire.SyncAsync(RawClient.Parse("described", "SELECT name FROM people"), RawClient.Describe('S', "described"),
+            RawClient.Parse("plain", "SELECT name FROM people"));
+        await wire.QueryAsync("BEGIN; SAVEPOINT s; INSERT INTO people (name) VALUES ('ghost')");
+        // "inherited" takes its statement's columns; Describe runs the reads of "cached" and "ghost" ahead of Execute.
+        var bound = await wire.SyncAsync(RawClient.Bind("inherited", "described"), RawClient.Bind("fresh", "plain"),
+            RawClient.Bind("cached", "plain"), RawClient.Describe('P', "cached"), RawClient.Bind("ghost", "plain"), RawClient.Describe('P', "ghost"));
+        var failed = await wire.QueryAsync("INSERT INTO people (name) VALUES (NULL)");
+        List<string> refused = [Tags(await wire.QueryAsync("SELECT oid FROM pg_type AS typ JOIN pg_namespace ns ON ns.oid = typnamespace"))];
+        foreach (var message in new[] { RawClient.Parse("again", "SELECT 1"), RawClient.Bind("rebound", "plain"), RawClient.Describe('S', "described"),
+            RawClient.Describe('S', "plain"), RawClient.Describe('P', "inherited"), RawClient.Describe('P', "cached"), RawClient.Describe('P', "fresh"),
+            RawClient.Execute("cached") })
+        {
+            refused.Add(Tags(await wire.SyncAsync(message)));
+        }
+
+        await wire.QueryAsync("ROLLBACK TO s");
+        var recovered = await wire.SyncAsync(RawClient.Execute("ghost"));
+        await wire.QueryAsync("INSERT INTO people (name) VALUES ('kept'); SAVEPOINT t; INSERT INTO people (name) VALUES ('late')");
+        await wire.SyncAsync(RawClient.Bind("late", "plain"), RawClient.Describe('P', "late"));
+        await wire.QueryAsync("ROLLBACK TO t");
+        var kept = await wire.SyncAsync(RawClient.Execute("late"));
+        await wire.SyncAsync(RawClient.Bind("ended", "plain"), RawClient.Describe('P', "ended"));
+        await wire.QueryAsync("ROLLBACK");
+        var ended = await wire.SyncAsync(RawClient.Execute("ended"));
+
+        await Assert.That(Tags(bound)).IsEqualTo("Z:T");
+        await Assert.That(Tags(failed)).IsEqualTo("E:23502,Z:E");
+        await Assert.That(refused).IsEquivalentTo(Enumerable.Repeat("E:25P02,Z:E", 9));
+        await Assert.That(Tags(recovered)).IsEqualTo("C:SELECT 0,Z:T");
+        await Assert.That(Tags(kept)).IsEqualTo("D:kept,C:SELECT 1,Z:T");
+        await Assert.That(Tags(ended)).IsEqualTo("C:SELECT 0,Z:I");
+    }
+
     // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).
     [Test]
     public async Task Rows_are_written_with_parameters_and_read_with_joins()
@@ -291,6 +331,8 @@ public sealed class PostgresWireTests
         }
     }
 
+    private static string Tags(List<(char Type, string?[] Fields)> messages) => string.Join(',', messages.Select(message => $"{message.Type}:{message.Fields[0]}"));
+
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
         await using var source = Source(api, key, database);
@@ -374,6 +416,37 @@ public sealed class PostgresWireTests
         public async Task<List<(char Type, string?[] Fields)>> QueryAsync(string sql)
         {
             await SendAsync('Q', CString(sql));
+            return await ReadyAsync();
+        }
+
+        // Extended-protocol messages, then Sync: errors skip to it, so each refusal is its own call.
+        public async Task<List<(char Type, string?[] Fields)>> SyncAsync(params (char Type, byte[] Body)[] messages)
+        {
+            foreach (var (type, body) in messages)
+            {
+                await SendAsync(type, body);
+            }
+
+            await SendAsync('S', []);
+            return await ReadyAsync();
+        }
+
+        public static (char, byte[]) Parse(string name, string sql) => ('P', [.. CString(name), .. CString(sql), 0, 0]);
+
+        public static (char, byte[]) Bind(string portal, string statement) => ('B', [.. CString(portal), .. CString(statement), 0, 0, 0, 0, 0, 0]);
+
+        public static (char, byte[]) Describe(char kind, string name) => ('D', [(byte)kind, .. CString(name)]);
+
+        public static (char, byte[]) Execute(string portal) => ('E', [.. CString(portal), 0, 0, 0, 0]);
+
+        public async ValueTask DisposeAsync()
+        {
+            await stream.DisposeAsync();
+            tcp.Dispose();
+        }
+
+        private async Task<List<(char Type, string?[] Fields)>> ReadyAsync()
+        {
             var messages = new List<(char Type, string?[] Fields)>();
             for (var message = await ReadAsync(); ; message = await ReadAsync())
             {
@@ -391,12 +464,6 @@ public sealed class PostgresWireTests
                     return [.. messages.Where(entry => entry.Type is 'D' or 'E' or 'C' or 'Z')];
                 }
             }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await stream.DisposeAsync();
-            tcp.Dispose();
         }
 
         private static string?[] Values(byte[] body)

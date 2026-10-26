@@ -32,6 +32,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private const int MaxStartupBytes = 10_000, MaxMessageBytes = 1024 * 1024, MaxNamed = 256;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     private static readonly PgError Denied = new("28P01", "password authentication failed");
+    private static readonly PgError AbortedTransaction = new("25P02", "current transaction is aborted, commands ignored until end of transaction block");
 
     // PROXY protocol v2 (HAProxy's proxy-protocol.txt §2.2): the signature, then version/command, family and length.
     private static ReadOnlySpan<byte> ProxySignature => [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
@@ -383,6 +384,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         output.Error(error.Code, error.Message);
         session.Failed = !session.Sql.IsAutocommit;
+        session.Invalidate();
     }
 
     private static async ValueTask SyncAsync(Session session, PgWriter output, CancellationToken cancellationToken)
@@ -397,6 +399,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         if (PgCatalog.IsTypeLoad(sql))
         {
+            if (session.Failed)
+            {
+                return AbortedTransaction;
+            }
+
             Array.ForEach(PgCatalog.TypeLoad(), result => Write(output, result, [], describe: true));
             return null;
         }
@@ -506,6 +513,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return null;
             case 'D':
                 var (kind, described) = (message.Byte(), message.CString());
+                if ((kind == 'S' ? session.Statements.GetValueOrDefault(described)?.Statement : session.Portals.GetValueOrDefault(described)?.Statement)
+                    is { } target && Aborted(session, target) is { } describeAborted)
+                {
+                    return describeAborted;
+                }
+
                 if (kind == 'S' && session.Statements.TryGetValue(described, out var statement))
                 {
                     var (columns, _, error) = await DescribeAsync(session, statement.Statement, cancellationToken).ConfigureAwait(false);
@@ -573,12 +586,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
                 }
 
-                if (Aborted(session, running.Statement) is { } executeAborted)
-                {
-                    running.Pending = null;
-                    return executeAborted;
-                }
-
                 var executedOutcome = running.Pending ?? await RunAsync(session, running.Statement, running.Args, cancellationToken).ConfigureAwait(false);
                 running.Pending = null;
                 if (executedOutcome is PgError executeError)
@@ -606,11 +613,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     // A statement's result columns before it runs, and whether it only reads; SHOW and catalog reads run to find out.
     private async ValueTask<(PgColumn[]? Columns, bool ReadOnly, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
     {
-        if (Aborted(session, statement) is { } aborted)
-        {
-            return (null, false, aborted);
-        }
-
         switch (statement.Kind)
         {
             case PgKind.Show or PgKind.Catalog:
@@ -640,12 +642,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
-    // As in PostgreSQL, Parse, Bind, Describe and Execute in an aborted transaction refuse everything but its exits, so
-    // nothing replays the failed transaction's log until ROLLBACK or ROLLBACK TO SAVEPOINT.
+    // An aborted transaction refuses every statement but its exits, so nothing replays its log. Unlike PostgreSQL, Describe
+    // refuses statements without rows too: telling them apart would replay the log.
     private static PgError? Aborted(Session session, PgStatement statement) =>
-        session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.RollbackTo or PgKind.Empty)
-            ? new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block")
-            : null;
+        session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.RollbackTo or PgKind.Empty) ? AbortedTransaction : null;
 
     private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken)
     {
@@ -708,6 +708,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         if (kind == SqlSavepointKind.RollbackTo)
         {
             session.Failed = false;
+            session.Invalidate();
         }
 
         return new[] { new PgResult(null, [], kind switch { SqlSavepointKind.Create => "SAVEPOINT", SqlSavepointKind.Release => "RELEASE", _ => "ROLLBACK" }) };
@@ -724,6 +725,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 : new[] { new PgResult(null, [], verb) };
         }
 
+        session.Invalidate();
         var verb = kind switch { PgKind.Begin => "BEGIN", PgKind.Commit => "COMMIT", _ => "ROLLBACK" };
         if (session.Sql.IsAutocommit != (kind == PgKind.Begin))
         {
@@ -947,6 +949,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         // The ReadyForQuery status: idle, in a transaction, or in an aborted transaction.
         public char Status => Sql.IsAutocommit ? 'I' : Failed ? 'E' : 'T';
+
+        // Drops reads run at Describe once the transaction they read in fails, rolls back or ends: Execute reads again.
+        public void Invalidate()
+        {
+            foreach (var portal in Portals.Values)
+            {
+                portal.Pending = null;
+            }
+        }
 
         public void Track(CancellationTokenSource? running)
         {
