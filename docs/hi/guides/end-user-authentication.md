@@ -27,7 +27,7 @@ Open **Authentication** for your project.
 
 1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Redirect URIs must be `https`, or `http` on `localhost` and loopback addresses.
 2. **Sign-in methods**: choose email codes, passwords, or both, and whether people can create their own accounts. At least one of email codes and passwords stays on. A method you turn off disappears from the hosted pages.
-3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color for the hosted pages. Without a name, the pages show your project's name.
+3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color. They style the hosted pages and the verification, sign-in and password-reset emails; without a name, both show your project's name. Optionally set `email_message` in `branding` through `PUT /v1/{project}/settings`: up to 500 plain-text characters, newlines allowed, added to those emails. A sent `branding` replaces the previous one, so send every branding field each time or omitted fields are cleared. HTML and placeholders such as `{{code}}` appear as literal text.
 
 ## Social sign-in
 
@@ -97,9 +97,31 @@ The dashboard lists your project's users with search. For each user you can see 
 
 The same operations are available in the TerraScale SDKs for automation.
 
+### Export the directory
+
+Project admins export the directory with `GET /v1/{project}/users/export`. Each request needs your TerraScale sign-in token and the admin role. Each page is recorded in the organization audit log as `project.users_exported` before its data is returned.
+
+- `limit`: 1 to 100, default 100.
+- `format`: `json` (default) or `csv`.
+- `after`: the previous page's cursor, from `next` in the JSON body or the `X-Export-Next` header. Omit it on the first page.
+
+A JSON page has `items`, `next` and `created_before`. Both formats send the cutoff in `X-Export-Created-Before`. Repeat the request with `after` until the response has no `X-Export-Next` header. Save each page before you request the next one, and deduplicate by `id`, because a retried page may show updated fields.
+
+```bash
+# TERRASCALE_ACCESS_TOKEN comes from your secret manager, never a command-line argument.
+api() { curl -sS --fail-with-body -H @<(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN") "$@"; }
+api -G "https://auth.terrascale.tech/v1/$PROJECT/users/export" --data-urlencode limit=100 > page-1.json
+```
+
+This is a creation-cutoff scan, **not a transaction snapshot**. Accounts created at or after the first page's cutoff are left out. Deleted accounts disappear, and each page reads profile fields when it is fetched. Replication lag and clock skew at account creation can omit accounts. For a reconciled copy, pause identity changes and let replication catch up before the first page, then compare with the admin user list.
+
+Each user has `id` (a stable ULID), `email`, `email_verified` (always `true`: possession was proven at account creation), `created_at`, `disabled` (disabled users are included) and `linked_providers` (`provider`, `client_id` and `subject`). Nothing else is exported: no password or hash, MFA or recovery material, session, token, key or application metadata. Importing the directory elsewhere carries over no credentials or sessions.
+
+In CSV, `linked_providers` is a JSON array in one quoted cell. A cell that starts with `'`, `=`, `+`, `-`, `@`, a tab, CR or LF gets one extra leading apostrophe to stop spreadsheet formulas. On import, remove one leading apostrophe from any cell that starts with one. JSON keeps exact values.
+
 ## Current limits
 
-- Authentication emails, such as sign-in codes, carry TerraScale's branding, not your project's.
+- Verification, sign-in and password-reset emails use your project's name, logo, theme color and `email_message`. They are still sent from TerraScale's verified sender, with TerraScale's security copy and footer. Custom sender domains and your own mail credentials are not supported.
 - End-user tokens do not authorize requests to the TerraScale database API. Have your server call TerraScale with an API key ([Authentication](/hi/guides/authentication)) after checking the end user's token.
 
 </div>

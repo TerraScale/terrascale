@@ -10,7 +10,7 @@ description: Stream every live document of a TerraBase database as NDJSON, resum
 
 # Export your data
 
-`GET /v1/projects/{project}/databases/{database}/export` streams every live document of one database as newline-delimited JSON (`application/x-ndjson`). Use it to keep a copy of your data outside TerraScale, to move documents into another database or to feed your own tools.
+`GET /v1/projects/{project}/databases/{database}/export` streams every live document of one database as newline-delimited JSON (`application/x-ndjson`). Use it to keep a copy of your data outside TerraScale, to move documents into another database or to feed your own tools. To export the end-user accounts of a project's sign-in, see [Export the directory](/pt-br/guides/end-user-authentication#export-the-directory).
 
 ::: info Rolling out
 Export is rolling out with the current TerraBase release. If the route answers `404` for a database your token can read, your serving release does not provide it yet. The JavaScript `export()` method ships in `@terrascale/sdk` 0.0.5; `0.0.4` and older do not have it.
