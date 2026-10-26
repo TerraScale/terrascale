@@ -1,7 +1,10 @@
 {
   "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
   "cidr_producer": "cidr-provenance.json",
+  "mfa_policy_producer": "mfa-policy-provenance.json",
   "dtos": {
+    "MfaPolicyRequest": {"sdk_type": "TerraScaleAuthPlatformMfaPolicy", "fields": [{"name": "require_mfa", "type": "bool", "nullable": false, "default": null}]},
+    "AccountMfaBody": {"sdk_type": "TerraScaleAuthPlatformAccountMfa", "fields": [{"name": "enabled", "type": "bool", "nullable": false, "default": null}, {"name": "recovery_codes_remaining", "type": "int", "nullable": false, "default": null}, {"name": "manage_url", "type": "string", "nullable": false, "default": null}]},
     "NameRequest": {
       "sdk_type": "TerraScaleAuthPlatformName",
       "fields": [
@@ -56,7 +59,8 @@
           "type": "string?",
           "nullable": true,
           "default": null
-        }
+        },
+        {"name": "require_mfa", "type": "bool", "nullable": false, "default": null}
       ]
     },
     "OrganizationPageBody": {

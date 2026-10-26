@@ -14,13 +14,14 @@ public sealed record TerraScaleAuthPlatformName([property: JsonPropertyName("nam
 /// <summary>Wire DTO for the producer RoleRequest. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformRole([property: JsonPropertyName("role")] string? Role);
 
-/// <summary>Wire DTO for the producer OrganizationBody. See contracts/auth/dtos.json.</summary>
+/// <summary>Wire DTO for the producer OrganizationBody, including the required RequireMfa security policy. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformOrganization(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("role")] string? Role);
+    [property: JsonPropertyName("role")] string? Role,
+    [property: JsonPropertyName("require_mfa")] bool RequireMfa);
 
 /// <summary>Wire DTO for the producer MemberBody. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformMember(

@@ -13,6 +13,8 @@ public sealed class TerraScaleAuthIntegrationContractTests
     private const string ClientSecret = "fixture secret:+=/é";
 
     [Test]
+    [Arguments("get_account_mfa")]
+    [Arguments("set_organization_mfa_policy")]
     [Arguments("create_organization")]
     [Arguments("list_organizations")]
     [Arguments("get_organization")]
@@ -80,6 +82,8 @@ public sealed class TerraScaleAuthIntegrationContractTests
         var cancellationToken = CancellationToken.None;
         Task call = operation switch
         {
+            "get_account_mfa" => client.Platform.GetAccountMfaAsync("fixture-sign-in", cancellationToken),
+            "set_organization_mfa_policy" => client.Platform.SetOrganizationMfaPolicyAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformMfaPolicy)!, cancellationToken),
             "set_project_allowed_cidrs" => client.Platform.SetProjectAllowedCidrsAsync("fixture-sign-in", organizationId, projectId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAllowedCidrs)!, cancellationToken),
             "set_project_api_key_allowed_cidrs" => client.Platform.SetProjectApiKeyAllowedCidrsAsync("fixture-sign-in", organizationId, projectId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAllowedCidrs)!, cancellationToken),
             "set_organization_api_key_allowed_cidrs" => client.Platform.SetOrganizationApiKeyAllowedCidrsAsync("fixture-sign-in", organizationId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAllowedCidrs)!, cancellationToken),
@@ -436,12 +440,14 @@ public sealed class TerraScaleAuthIntegrationContractTests
                     foreach (var item in value.EnumerateArray()) await AssertFixtureShapeAsync(item, dtos, itemType);
             }
             else if (dtos.TryGetProperty(type, out _)) await AssertFixtureShapeAsync(value, dtos, type);
+            else if (type == "bool") await Assert.That(value.ValueKind is JsonValueKind.True or JsonValueKind.False).IsTrue();
             else await Assert.That(value.ValueKind).IsEqualTo(type is "int" or "long" ? JsonValueKind.Number : JsonValueKind.String);
         }
     }
 
     private static async Task<string?> ResultJsonAsync(Task call) => call switch
     {
+        Task<TerraScaleAuthPlatformAccountMfa> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAccountMfa),
         Task<TerraScaleAuthPlatformOrganization> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOrganization),
         Task<TerraScaleAuthPlatformMember> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformMember),
         Task<TerraScaleAuthPlatformProject> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformProject),
