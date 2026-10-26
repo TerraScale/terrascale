@@ -215,7 +215,10 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         {
             CreatedByUserId = key.CreatedBy ?? "",
             CreatedByEmail = context.Organization?.Members.GetValueOrDefault(key.CreatedBy ?? "")?.Email ?? "",
-            DatabaseName = key.Database, ExpiresAt = key.ExpiresAt, LastUsedAt = key.LastUsedAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
+            DatabaseName = key.Database,
+            ExpiresAt = key.ExpiresAt,
+            LastUsedAt = key.LastUsedAt,
+            IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
         };
     }
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
