@@ -82,7 +82,13 @@ public sealed partial class HostedSignInTests
         var headers = await approved.Request.AllHeadersAsync();
         await Assert.That(headers.TryGetValue("origin", out var origin) && origin == OidcHarness.PublicOrigin).IsTrue();
         await Assert.That(headers.TryGetValue("cookie", out var cookie) && cookie.Contains("tsauth_session=", StringComparison.Ordinal)).IsTrue();
-        await Assert.That(approved.Status).IsEqualTo((int)HttpStatusCode.OK);
+        var approvalHtml = await approved.TextAsync();
+        await Assert.That(approved.Status).IsEqualTo((int)HttpStatusCode.OK).Because(
+            $"wrong-code={approvalHtml.Contains("That code is wrong or expired", StringComparison.Ordinal)}; "
+            + $"unavailable={approvalHtml.Contains("Device request unavailable", StringComparison.Ordinal)}; "
+            + $"protocol-error={approvalHtml.Contains("The device could not be approved", StringComparison.Ordinal)}; "
+            + $"invalid-sign-in-scope={approvalHtml.Contains("A sign-in grants only openid, email, profile and offline_access.", StringComparison.Ordinal)}; "
+            + $"lineage-conflict={approvalHtml.Contains(CredentialLineage.ConflictNotice, StringComparison.Ordinal)}");
         await page.GetByRole(AriaRole.Heading, new() { Name = "Device connected", Exact = true }).WaitForAsync();
         await Assert.That(violations).IsEmpty();
     }
