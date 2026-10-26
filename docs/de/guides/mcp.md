@@ -38,8 +38,6 @@ Do not change anything.
 
 A new OAuth client registration expires after 24 hours if sign-in never completes. After sign-in completes, the registration expires after 30 days without a successful sign-in, token issuance or authenticated request using one of its tokens. Opening the consent page, denying access or sending an invalid token does not extend that period.
 
-Expired registrations that never completed sign-in are reclaimed asynchronously. Cleanup does not reactivate an expired client ID; reconnect to obtain a new registration.
-
 An expired registration stops its associated tokens from authenticating, even if their 90-day token deadline has not arrived. Remove and add TerraScale again in your client, then authenticate to create a new registration. Personal access tokens created separately in the dashboard keep their selected expiry.
 
 For custom MCP client integrations, use authorization-server discovery rather than constructing client IDs. Dynamic registration returns a canonical uppercase, 26-character ULID as `client_id`; keep it unchanged. Registration JSON is limited to 16 KiB, including whitespace and UTF-8 encoding. Oversized bodies return HTTP `413`; malformed or unsupported registration metadata returns an OAuth JSON error with HTTP `400`. Registration management endpoints are not advertised; knowing a public client ID does not authorize changing or deleting it.
