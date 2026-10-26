@@ -31,7 +31,7 @@ public sealed class WriterHoldTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await ManagementApi.StartAsync(services: services =>
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
-        var store = (TursoDatabaseStore)await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        var store = (TursoDatabaseStore)await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(token);
         var importer = api.Server.Services.GetRequiredService<IReplicaSnapshotImporter>();
         var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
