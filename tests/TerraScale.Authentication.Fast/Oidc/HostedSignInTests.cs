@@ -169,6 +169,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         {
             await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
+            await Assert.That(await wrong.Content.ReadAsStringAsync()).Contains(">Start over for a new code</a>");
         }
 
         using (var created = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new(verify) { ["code"] = code }))
@@ -684,7 +685,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
                 background_color = background,
                 title_size = 32,
                 default_theme = "dark",
-                footer_links = new[] { new { label = "Support", url = "https://example.test/support" } }
+                footer_links = new[] { new { label = "Support", url = "https://example.test/support" }, new { label = "Sign in", url = OidcHarness.PublicOrigin + "/ui/" + project + "/sign-in" } }
             },
         });
         var browser = await Chromium.BrowserAsync();
@@ -696,8 +697,11 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
             await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/{project}/{path}");
             await ExpectSchemeAsync(page, "dark");
             await Assert.That(await page.Locator("h1").EvaluateAsync<string>("el => getComputedStyle(el).fontSize")).IsEqualTo("32px");
-            await Assert.That(await page.Locator(".foot-links a").CountAsync()).IsEqualTo(1);
-            await Assert.That(await page.Locator(".foot-links a").GetAttributeAsync("href")).IsEqualTo("https://example.test/support");
+            await Assert.That(await page.Locator(".foot-links a").CountAsync()).IsEqualTo(2);
+            await Assert.That(await page.Locator(".foot-links a").First.GetAttributeAsync("href")).IsEqualTo("https://example.test/support");
+            await Assert.That(await page.Locator(".foot-links a").First.GetAttributeAsync("target")).IsEqualTo("_blank");
+            await Assert.That(await page.Locator(".foot-links a").Last.GetAttributeAsync("target")).IsNull();
+            await Assert.That(await page.Locator(".foot-links a").Last.GetAttributeAsync("rel")).IsNull();
 
             foreach (var mode in new[] { "light", "dark" })
             {

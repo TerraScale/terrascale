@@ -93,6 +93,10 @@ break;
 <div class="alert" data-state="@(Model.Limited ? "limited" : "error")" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#@(Model.Limited ? "i-clock" : "i-circle-alert")"></use></svg><div>@if (Model.ErrorTitle is { } errorTitle)
 {<strong>@errorTitle</strong>}<p>@error</p></div></div>
 }
+@if (Model.Error is not null || Model.Step is SignInStep.Rejected or SignInStep.NotFound)
+{
+<p class="hint">Request ID: @Model.RequestId</p>
+}
 @if (Model.Slug == TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Step is SignInStep.Email or SignInStep.SignUp && Model.Theme.Providers is { Count: > 0 } providers)
 {
 <div class="actions" aria-label="Social sign-in">
@@ -152,7 +156,7 @@ case SignInStep.Password:
 <input type="hidden" name="email" value="@Model.Email">
 <div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">Change</a></div>
 <div class="field">
-<label for="sign-in-password">Password <a href="@Model.Link("reset")">Forgot password?</a></label>
+<div class="row"><label for="sign-in-password">Password</label><a href="@Model.Link("reset")">Forgot password?</a></div>
 <input id="sign-in-password" name="password" type="password" autocomplete="current-password" required autofocus>
 </div>
 <button type="submit">Sign in</button>
@@ -243,7 +247,7 @@ case SignInStep.SignUpCode:
 </div>
 <button type="submit">Verify email</button>
 </form>
-<div class="row"><a href="@Model.Link("sign-up")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Change email</a></div>
+<div class="row"><a href="@Model.Link("sign-up")">Start over for a new code</a><a href="@Model.Link("sign-up")">Change email</a></div>
 break;
 case SignInStep.Reset:
 <form method="post" action="/ui/@Model.Slug/reset">
@@ -270,6 +274,11 @@ case SignInStep.ResetCode:
 <span class="hint">At least 8 characters. Every session ends when it changes.</span>
 </div>
 <button type="submit">Set new password</button>
+</form>
+<form method="post" action="/ui/@Model.Slug/reset">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<button type="submit" class="secondary">Send a new code</button>
 </form>
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
 break;
@@ -383,7 +392,7 @@ break;
     /// <inheritdoc />
     public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, Model.Theme.ThemeColor, Model.Theme.LogoUrl, Model.Theme.Name,
         Model.Theme.TitleSize, Model.Theme.FooterLinks?.Select(link => (link.Label, link.Url)).ToArray(), Model.Theme.DefaultTheme, Model.Slug,
-        Model.Theme.BackgroundColor, Model.Theme.TextColor);
+        Model.Theme.BackgroundColor, Model.Theme.TextColor) { PublicOrigin = Model.PublicOrigin };
 
     /// <inheritdoc />
     protected override Task ExecuteSectionAsync(string name)

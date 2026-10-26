@@ -511,7 +511,7 @@ internal static class SignInFlow
     }
 
     public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null) =>
-        SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, "This code is invalid, expired, already used, or superseded by a concurrent request. Check the latest email, or request a new code.")
+        SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, "This code is wrong, expired, or already used. Check the latest email, or request a new code.")
         {
             ErrorTitle = "That code is wrong or expired",
             PendingToken = pendingToken,

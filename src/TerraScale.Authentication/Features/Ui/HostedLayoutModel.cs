@@ -20,8 +20,8 @@ public sealed partial record HostedLayoutModel
     [
         ("Status", "https://status.terrascale.tech"),
         ("Docs", "https://docs.terrascale.tech"),
-        ("Privacy", "https://terrascale.tech/privacy"),
-        ("Terms", "https://terrascale.tech/terms"),
+        ("Privacy", "https://docs.terrascale.tech/legal/privacy"),
+        ("Terms", "https://docs.terrascale.tech/legal/terms"),
     ];
 
     /// <summary>
@@ -81,6 +81,14 @@ public sealed partial record HostedLayoutModel
 
     /// <summary>Derived text and accent tokens for both colour schemes and the page background.</summary>
     public string Palette { get; }
+
+    /// <summary>The hosted service's public origin, used to keep its own footer links in this tab.</summary>
+    public Uri? PublicOrigin { get; init; }
+
+    /// <summary>Whether a footer destination leaves the hosted service's origin.</summary>
+    public bool IsExternalFooterUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var destination)
+        && (this.PublicOrigin is not { } origin || destination.Scheme != origin.Scheme || destination.Port != origin.Port
+            || !string.Equals(destination.IdnHost, origin.IdnHost, StringComparison.OrdinalIgnoreCase));
 
     private static string? ValidColor(string? value) => value is not null && HexColor().IsMatch(value) ? value : null;
 
