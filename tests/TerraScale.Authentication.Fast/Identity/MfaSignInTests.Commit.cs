@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Identity;
 
@@ -91,4 +92,12 @@ public sealed partial class MfaSignInTests
     private static bool MfaRead(HttpRequestMessage request) => request.Method == HttpMethod.Get
         && request.RequestUri!.AbsolutePath.Contains($"/collections/{AuthStore.MfaCollection}/documents/", StringComparison.Ordinal);
 
+    private static async Task<(string Factors, string Users, string[] Sessions)> SnapshotAsync(OidcHarness oidc)
+    {
+        static string Join(IEnumerable<TerraBaseDocument> items) =>
+            string.Join('\n', items.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => $"{item.Id} {item.Version} {item.Document.GetRawText()}"));
+        return (Join((await oidc.Database.ListDocumentsAsync(AuthStore.MfaCollection)).Items),
+            Join((await oidc.Database.ListDocumentsAsync(AuthStore.UserCollection)).Items),
+            [.. (await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Select(item => item.Id)]);
+    }
 }
