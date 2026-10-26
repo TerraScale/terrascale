@@ -5,9 +5,14 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Features.FileStorage;
+using TerraScale.Dashboard.Features.Functions;
+using TerraScale.Dashboard.Features.Imports;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Features.Webhooks;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
@@ -22,17 +27,25 @@ public sealed partial class TsAuthPlatformJourneyTests
     [Arguments("member", true)]
     public async Task ProjectDataWritesRefreshRolesWithoutOrganizationMutationAuthority(string role, bool organizationViewer)
     {
+        var tokens = new WarmDataTokens();
+        var wire = new DataWire { Tokens = tokens };
         AccountContext? stale = null;
         DataBackend? backend = null;
         var stateAccess = 0;
+        var uploadToken = "";
         await using var platform = await PlatformScenario.StartAsync(builder =>
         {
+            var fallback = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
             var state = DispatchProxy.Create<IDashboardState, DataState>();
             ((DataState)state).Inner = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
             ((DataState)state).Accessed = () => Interlocked.Increment(ref stateAccess);
             builder.Services.Replace(ServiceDescriptor.Singleton(state));
+            wire.Fallback = fallback;
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(wire));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(tokens));
         }, app => app.MapGet("/__test/data/{operation}", async Task<IResult> (string operation, HttpContext http, DashboardSessions sessions,
-            AccountService accounts, DatabaseService databases, IDocumentBackend documents, IDatabaseBackend original, SavedQueryService saved) =>
+            AccountService accounts, DatabaseService databases, IDocumentBackend documents, IDatabaseBackend original, SavedQueryService saved,
+            FileStorageService files, FunctionBackend functions, WebhookService hooks, ImportService imports) =>
         {
             try
             {
@@ -40,6 +53,7 @@ public sealed partial class TsAuthPlatformJourneyTests
                 if (operation == "capture") { stale = context; return Results.NoContent(); }
                 var id = http.Request.Query["database"].ToString();
                 var ct = http.RequestAborted;
+                var destination = http.Request.Query["destination"].FirstOrDefault() ?? "canonical-db";
                 if (operation == "foreign-org") context = context with { Organization = new() { Id = AccountService.NewId() } };
                 if (operation == "foreign-project") context = context with { Project = new() { Id = AccountService.NewId() } };
                 if (operation == "identity") context = context with { Account = new() { UserId = "foreign" } };
@@ -56,6 +70,18 @@ public sealed partial class TsAuthPlatformJourneyTests
                     case "readonly-sql": await data.SqlAsync(context, id, "DELETE FROM records", false, ct); break;
                     case "index": await data.CreateIndexAsync(context, id, "items", "value", ct); break;
                     case "index-drop": await data.DropIndexAsync(context, id, "value", ct); break;
+                    case "import": uploadToken = await imports.AuthorizeUploadAsync(context, ct); break;
+                    case "import-read": await imports.JobAsync(context, destination, ct); break;
+                    case "import-upload": await imports.UploadAsync(context, destination, 0, new byte[] { 1 }, uploadToken, ct); break;
+                    case "import-options": await imports.UpdateAsync(context, destination, [], ct); break;
+                    case "import-cancel": await imports.CancelAsync(context, destination, ct); break;
+                    case "import-resume": await imports.ResumeAsync(context, destination, ct); break;
+                    case "import-start": await imports.StartAsync(context, destination, wire.PreviewId, true, ct); break;
+                    case "file": await files.DeleteBucketAsync(context, AccountService.NewId(), ct); break;
+                    case "function": await functions.DeleteAsync(context, new() { Id = id, Name = "forged-name" }, "worker", ct); break;
+                    case "function-read": await functions.ListAsync(context, DatabaseService.Database(context, id), ct); break;
+                    case "webhook": await hooks.DeleteAsync(context, id, "items", AccountService.NewId(), ct); break;
+                    case "webhook-read": await hooks.ListAsync(context, id, "items", ct); break;
                     case "list": return Results.Json(await saved.ListAsync(context, id, ct));
                     case "delete": await saved.DeleteAsync(context, id, http.Request.Query["query"].ToString(), ct); break;
                     default: return Results.Json(await saved.SaveAsync(context, id, "Shared", "SELECT 1", ct));
@@ -63,7 +89,9 @@ public sealed partial class TsAuthPlatformJourneyTests
                 return Results.NoContent();
             }
             catch (AccountAccessException error) { return Results.StatusCode(error.StatusCode); }
+            catch (HttpRequestException error) when (error.StatusCode is { } status) { return Results.StatusCode((int)status); }
         }));
+        tokens.ProjectRole = (userId, orgId, projectId) => platform.Producer.ProjectRole(orgId, projectId, userId);
         var user = platform.Principal("data-" + role);
         var owner = platform.Principal("data-owner");
         using var client = platform.Client();
@@ -80,8 +108,8 @@ public sealed partial class TsAuthPlatformJourneyTests
         foreach (var (projectId, databaseId) in new[] { (project, id), (sibling, otherId) })
         {
             projection.Projects[projectId] = new() { Id = projectId, Region = "GRU" };
-            projection.Projects[projectId].Databases[databaseId] = new() { Id = databaseId, ProjectId = projectId, Name = "canonical-db", Region = "GRU" };
-            platform.SeedDatabase(new(databaseId, projectId, "canonical-db", DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
+            projection.Projects[projectId].Databases[databaseId] = new() { Id = databaseId, ProjectId = projectId, Name = projectId == project ? "canonical-db" : "sibling-db", Region = "GRU" };
+            platform.SeedDatabase(new(databaseId, projectId, projection.Projects[projectId].Databases[databaseId].Name, DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
         }
         await platform.StoreAsync(projection);
         var version = await platform.VersionAsync(org);
@@ -94,7 +122,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         await Check("capture", HttpStatusCode.NoContent);
         // Member reads publish the plan normally; that system write confers no organization mutation authority.
         await Assert.That(platform.Producer.PlanPublications(org) > 0).IsEqualTo(organizationViewer);
-        var writes = new[] { "collection", "document", "sql", "drop", "save", "delete" };
+        var writes = new[] { "collection", "document", "sql", "drop", "import", "import-upload", "import-options", "import-cancel", "import-resume", "import-start", "file", "function", "webhook", "save", "delete" };
         var allowed = role is "member" or "admin";
         foreach (var operation in writes.Where(item => item != "delete"))
             await Check(operation, allowed ? operation == "save" ? HttpStatusCode.OK : HttpStatusCode.NoContent : HttpStatusCode.Forbidden);
@@ -102,6 +130,21 @@ public sealed partial class TsAuthPlatformJourneyTests
         await Check("readonly-sql", HttpStatusCode.UnprocessableEntity);
         await Check("index", HttpStatusCode.Forbidden);
         await Check("index-drop", HttpStatusCode.Forbidden);
+        await Check("function-read", allowed ? HttpStatusCode.NoContent : HttpStatusCode.Forbidden);
+        await Assert.That(wire.Paths.Any(path => path.Contains("/functions", StringComparison.Ordinal))).IsEqualTo(allowed);
+        await Check("import-read", HttpStatusCode.NoContent);
+        await Assert.That(tokens.Scopes.Last()).IsEqualTo("databases:read");
+        var importPath = $"/v1/projects/{project}/databases/canonical-db/import";
+        await Assert.That(wire.Imports).IsEquivalentTo(allowed
+            ? new[] { $"PUT {importPath}/source databases:write documents:write", $"PATCH {importPath} databases:write documents:write",
+                $"POST {importPath}/cancel databases:write", $"POST {importPath}/resume databases:write documents:write",
+                $"GET {importPath} databases:read", $"POST {importPath}/start databases:write documents:write", $"GET {importPath} databases:read" }
+            : new[] { $"GET {importPath} databases:read" });
+        await Check("webhook-read", HttpStatusCode.NoContent);
+        await Assert.That(tokens.Scopes.Any(scopes => scopes == "documents:read")).IsTrue();
+        await Assert.That(tokens.Scopes.Last()).IsEqualTo("documents:read");
+        await Assert.That(tokens.Scopes.Contains("documents:read documents:write")).IsTrue(); // Function reads need both.
+        await Assert.That(wire.Paths.Any(path => path.Contains("forged-name", StringComparison.Ordinal))).IsFalse();
         var captured = stale ?? throw new InvalidOperationException();
         await Assert.That(captured.CanManage || captured.CanWrite || captured.Organization!.CanProvision(user.Subject)).IsFalse();
         await Assert.That(captured.CanWriteProjectData).IsEqualTo(allowed);
@@ -139,26 +182,38 @@ public sealed partial class TsAuthPlatformJourneyTests
             scope = ownScope;
             await Check("capture", HttpStatusCode.NoContent);
         }
+        var dispatched = wire.Paths.Count;
         var sqlBackend = backend ?? throw new InvalidOperationException();
         var sqlCalls = sqlBackend.SqlCalls;
+        var exchanges = tokens.Scopes.Count;
         var queryAccesses = stateAccess;
         foreach (var fault in new[] { "foreign-org", "foreign-project", "identity" })
             await Check(fault, fault == "identity" ? HttpStatusCode.Unauthorized : HttpStatusCode.NotFound);
         var goodScope = scope;
         scope = goodScope.Replace(id, otherId, StringComparison.Ordinal);
-        foreach (var operation in new[] { "collection", "document", "sql", "drop", "save", "list", "delete" })
-            await Check(operation, role == "viewer" && (operation is "collection" or "document" or "drop") ? HttpStatusCode.Forbidden : HttpStatusCode.NotFound);
+        foreach (var operation in new[] { "collection", "document", "sql", "drop", "function", "webhook", "save", "list", "delete" })
+            await Check(operation, role == "viewer" && (operation is "collection" or "document" or "drop" or "webhook") ? HttpStatusCode.Forbidden : HttpStatusCode.NotFound);
         scope = goodScope;
+        foreach (var destination in new[] { "sibling-db", "missing-db", "invalid:name" })
+            foreach (var operation in new[] { "import-read", "import-upload", "import-options", "import-cancel", "import-resume", "import-start" })
+                await Check(operation, allowed || operation == "import-read" || destination == "invalid:name" ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, "&destination=" + destination);
+        await Assert.That(wire.Paths.Count).IsEqualTo(dispatched);
         await Assert.That(sqlBackend.SqlCalls).IsEqualTo(sqlCalls);
         await Assert.That(stateAccess).IsEqualTo(queryAccesses);
+        await Assert.That(tokens.Scopes.Count).IsEqualTo(exchanges);
+        // Member/admin requests above acquired write grants; keep those cached while ts-auth demotes the user.
+        await Assert.That(tokens.HasCachedWriteGrant).IsEqualTo(allowed);
         platform.Producer.AddCollaborator(org, user.Subject, project, "viewer");
         foreach (var operation in writes) await Check(operation, HttpStatusCode.Forbidden, "&query=" + queryId);
         await Check("list", HttpStatusCode.OK);
+        await Assert.That(wire.Paths.Count).IsEqualTo(dispatched);
+        await Assert.That(tokens.Scopes.Count).IsEqualTo(exchanges);
         platform.Producer.RemoveGrant(org, user.Subject, project);
         if (organizationViewer) platform.Producer.RemoveMember(org, user.Subject);
         foreach (var operation in writes.Append("list")) await Check(operation, HttpStatusCode.NotFound);
         await Assert.That(await platform.VersionAsync(org)).IsEqualTo(version);
         await Assert.That(platform.Producer.Mutations(org, user.Subject)).IsEqualTo(0);
+        if (!organizationViewer) await Assert.That(platform.Producer.PlanPublications(org)).IsEqualTo(0);
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
@@ -204,6 +259,35 @@ public sealed partial class TsAuthPlatformJourneyTests
         }
     }
 
+    private sealed class WarmDataTokens : IProjectAccessTokens
+    {
+        // Deliberately retains the first grant: guards must prevent dispatch after live-role changes.
+        private readonly Dictionary<(string, string, string, string), string> cached = [];
+        public List<string> Scopes { get; } = [];
+        public Dictionary<string, (string Project, string Scope)> Grants { get; } = [];
+        public Func<string, string, string, string?> ProjectRole { get; set; } = null!;
+        public bool HasCachedWriteGrant => cached.Keys.Any(key => key.Item4.Contains(":write", StringComparison.Ordinal));
+        public Task<string> GetAsync(SessionRecord session, string org, string project, IReadOnlyList<string> scopes, CancellationToken ct)
+        {
+            var scope = string.Join(' ', scopes.Order(StringComparer.Ordinal));
+            var key = (session.AccessToken, org, project, scope);
+            Scopes.Add(scope);
+            if (!cached.ContainsKey(key))
+            {
+                // PlatformGrants / TerraBaseScopes.For: cold grants use the producer's current effective role.
+                var role = ProjectRole(session.UserId, org, project);
+                if (role is not ("viewer" or "member" or "admin"))
+                    throw new HttpRequestException("invalid_target", null, HttpStatusCode.NotFound);
+                string[] allowed = role == "viewer" ? ["databases:read", "documents:read", "shapes:read"]
+                    : ["databases:read", "databases:write", "documents:read", "documents:write", "shapes:read"];
+                if (scopes.Except(allowed).Any()) throw new HttpRequestException("invalid_scope", null, HttpStatusCode.Forbidden);
+                cached[key] = "fixture-warmed-token-" + cached.Count;
+                Grants[cached[key]] = (project, scope);
+            }
+            return Task.FromResult(cached[key]);
+        }
+    }
+
     public class DataBackend : DispatchProxy
     {
         public IDatabaseBackend Inner { get; set; } = null!;
@@ -213,6 +297,66 @@ public sealed partial class TsAuthPlatformJourneyTests
             if (method!.Name != nameof(IDatabaseBackend.SqlAsync)) return method.Invoke(Inner, args);
             SqlCalls++;
             return Task.FromResult(new DatabaseSqlResult([], [], 0, null));
+        }
+    }
+
+    private sealed class DataWire : HttpMessageHandler, IHttpClientFactory
+    {
+        public IHttpClientFactory Fallback { get; set; } = null!;
+        public WarmDataTokens Tokens { get; init; } = null!;
+        public List<string> Imports { get; } = [];
+        public string PreviewId { get; } = AccountService.NewId();
+        public List<string> Paths { get; } = [];
+        public HttpClient CreateClient(string name) => new(new DataRouter(this, Fallback.CreateClient(name)));
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.Headers.Authorization?.Parameter is not { } token || !Tokens.Grants.TryGetValue(token, out var grant))
+                throw new InvalidOperationException("Missing fixture grant.");
+            Paths.Add(request.RequestUri!.AbsolutePath);
+            if (request.RequestUri.AbsolutePath.Contains("/import", StringComparison.Ordinal))
+            {
+                if (request.RequestUri.Host != "gru.api.terrascale.tech" || request.Headers.GetValues("X-TerraScale-Region-Pin").Single() != "gru")
+                    throw new InvalidOperationException("Import must use the destination home region and pin.");
+                var segments = request.RequestUri.AbsolutePath.Split('/');
+                if (grant.Project != segments[3]) throw new InvalidOperationException("Import token targets a different project.");
+                Imports.Add($"{request.Method} {request.RequestUri.AbsolutePath} {grant.Scope}");
+                if (request.Method == HttpMethod.Put && (request.RequestUri.Query != "?offset=0" || request.Content?.Headers.ContentLength != 1 ||
+                    request.Content.Headers.ContentType?.MediaType != "application/octet-stream"))
+                    throw new InvalidOperationException("The SDK must send the exact source part and offset.");
+                // Scripted producer wire reply: this journey checks routing and authority, not the import engine.
+                var body = JsonSerializer.Serialize(new
+                {
+                    id = AccountService.NewId(),
+                    project = segments[3],
+                    database = segments[5],
+                    region = "gru",
+                    state = "ready",
+                    cancelRequested = false,
+                    options = new { exclude = Array.Empty<string>() },
+                    source = new { format = "ndjson", bytes = 1, sha256 = new string('a', 64), receivedBytes = 1, staged = true, retainedUntil = (string?)null },
+                    preview = new { id = PreviewId, tables = Array.Empty<object>(), skipped = Array.Empty<object>(), skippedTruncated = false, blocking = 0, warnings = 0 },
+                    confirmedPreviewId = (string?)null,
+                    progress = (object?)null,
+                    validation = (object?)null,
+                    error = (object?)null,
+                    createdAt = DateTimeOffset.UtcNow,
+                    updatedAt = DateTimeOffset.UtcNow,
+                    startedAt = (string?)null,
+                    finishedAt = (string?)null
+                });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") });
+            }
+            return Task.FromResult(request.Method == HttpMethod.Get
+                ? new(HttpStatusCode.OK) { Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json") }
+                : new HttpResponseMessage(HttpStatusCode.NoContent));
+        }
+        private sealed class DataRouter(DataWire owner, HttpClient fallback) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+                request.RequestUri!.Host.Contains("api.terrascale.tech", StringComparison.Ordinal) &&
+                request.RequestUri.AbsolutePath.StartsWith("/v1/projects/", StringComparison.Ordinal)
+                    ? owner.SendAsync(request, ct) : HttpForwarding.SendAsync(fallback, request, ct);
+            protected override void Dispose(bool disposing) { if (disposing) fallback.Dispose(); base.Dispose(disposing); }
         }
     }
 }

@@ -28,7 +28,8 @@ public sealed class WebhookService(DatabaseService databases, IProjectAccessToke
 
     private async Task<TerraBaseDatabase> DatabaseAsync(AccountContext context, string databaseId, string collection, bool write, CancellationToken ct)
     {
-        if (write && !context.CanWrite) throw new AccountAccessException("Write access is required.");
+        context = await databases.CurrentAsync(context, ct);
+        if (write && !context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         DataService.ValidCollection(collection);
         var database = DatabaseService.Database(context, databaseId);
         var scope = DatabaseService.Scope(context);

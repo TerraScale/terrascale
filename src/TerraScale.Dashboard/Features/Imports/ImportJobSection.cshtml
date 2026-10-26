@@ -4,7 +4,7 @@
 @using TerraScale.DotNet.TerraBase
 @{
     var job = Model.Job; var state = Model.State; var preview = job.Preview; var culture = System.Globalization.CultureInfo.InvariantCulture;
-    var canWrite = Model.Shell.Context.CanWrite;
+    var canWrite = Model.Shell.Context.CanWriteProjectData;
     var action = "/api/v1/dashboard/imports/" + Uri.EscapeDataString(job.Database);
     var live = ImportService.Live(job);
     var differences = ImportService.Differences(job);

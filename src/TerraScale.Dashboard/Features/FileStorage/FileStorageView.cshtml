@@ -4,7 +4,7 @@
 @using TerraScale.DotNet.TerraBase
 @inject AssetUrls Assets
 @{
-    var canWrite = Model.Shell.Context.CanWrite;
+    var canWrite = Model.Shell.Context.CanWriteProjectData;
     var selectedId = Model.Listing?.BucketId;
     var selected = Model.Listing?.Buckets.Items.FirstOrDefault(bucket => bucket.Id == selectedId);
     var culture = System.Globalization.CultureInfo.InvariantCulture;
