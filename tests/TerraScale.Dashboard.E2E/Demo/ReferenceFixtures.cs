@@ -77,13 +77,13 @@ internal static class ReferenceFixtures
             foreach (var database in project.Databases.Values)
                 registerDatabase(new(database.Id, database.ProjectId, database.Name, database.CreatedAt, HomeRegion: database.Region));
 
-        await SeedDocumentsAsync(documents, CoreId, PrimaryId, "core-primary", "SFO", "orders",
+        await SeedDocumentsAsync(documents, CoreId, PrimaryId, "core-primary", "SJC", "orders",
         [
             ("01K78000000000000000001001", "{\"customerId\":\"cus_1001\",\"createdAt\":\"2026-09-17T07:02:00Z\",\"status\":\"paid\",\"total\":725.5}"),
             ("01K78000000000000000001002", "{\"customerId\":\"cus_1002\",\"createdAt\":\"2026-09-16T12:15:00Z\",\"status\":\"paid\",\"total\":980.0}"),
             ("01K78000000000000000001003", "{\"customerId\":\"cus_1003\",\"createdAt\":\"2026-09-15T15:44:00Z\",\"status\":\"open\",\"total\":140.0}")
         ]);
-        await SeedDocumentsAsync(documents, CoreId, "3S7V1R9W8CKJM87P94PBACW79D", "core-sessions", "SFO", "sessions",
+        await SeedDocumentsAsync(documents, CoreId, "3S7V1R9W8CKJM87P94PBACW79D", "core-sessions", "SJC", "sessions",
         [
             ("488YCSAW1HEH6XFB1KYKT1YQB4", "{\"userId\":\"2RXDD6A70VYXH8M0SDAKFWAQT1\",\"startedAt\":\"2026-09-17T10:24:00Z\",\"status\":\"active\"}"),
             ("7KM4NDWC9RDSEHJQ64DRBNMK69", "{\"userId\":\"5KPC8W3N5TA88HVG4S068X0MD7\",\"startedAt\":\"2026-09-12T08:10:00Z\",\"status\":\"expired\"}")
@@ -379,11 +379,11 @@ internal static class ReferenceFixtures
 
     private static OrganizationRecord Labs()
     {
-        var core = Project(CoreId, "core-platform", "SFO", true, At(2026, 1, 12, 9, 24));
+        var core = Project(CoreId, "core-platform", "SJC", true, At(2026, 1, 12, 9, 24));
         var edge = Project(EdgeId, "edge-analytics", "GRU", false, At(2026, 2, 3, 14, 2));
         var sandbox = Project(SandboxId, "staging-sandbox", "GRU", false, At(2026, 3, 21, 11, 47));
-        core.Databases[PrimaryId] = Database(PrimaryId, CoreId, "core-primary", "SFO", "ready", At(2026, 1, 12, 9, 31));
-        core.Databases["3S7V1R9W8CKJM87P94PBACW79D"] = Database("3S7V1R9W8CKJM87P94PBACW79D", CoreId, "core-sessions", "SFO", "ready", At(2026, 1, 14, 10, 2));
+        core.Databases[PrimaryId] = Database(PrimaryId, CoreId, "core-primary", "SJC", "ready", At(2026, 1, 12, 9, 31));
+        core.Databases["3S7V1R9W8CKJM87P94PBACW79D"] = Database("3S7V1R9W8CKJM87P94PBACW79D", CoreId, "core-sessions", "SJC", "ready", At(2026, 1, 14, 10, 2));
         edge.Databases["185JTBEGC768240CCVHG6TGQH4"] = Database("185JTBEGC768240CCVHG6TGQH4", EdgeId, "edge-events", "GRU", "ready", At(2026, 2, 3, 14, 11));
         sandbox.Databases["0YF85EHHPE3AVMCTS72XX4RVYA"] = Database("0YF85EHHPE3AVMCTS72XX4RVYA", SandboxId, "sandbox", "GRU", "provisioning", At(2026, 9, 17, 8, 15));
         return new()
@@ -434,7 +434,7 @@ internal static class ReferenceFixtures
     private static async Task SeedDocumentsAsync(TestDocuments documents, string project, string databaseId, string databaseName, string region, string collection, (string Id, string Json)[] rows)
     {
         var scope = new DatabaseScope(MarioSubject, "", LabsId, "TerraScale Labs", project, project == CoreId ? "core-platform" : "edge-analytics");
-        var home = new DatabaseRegion(region, region.ToLowerInvariant() + "-1", region == "SFO" ? "San Francisco" : "São Paulo", region == "SFO" ? "us" : "br", new("https://" + region.ToLowerInvariant() + ".api.terrascale.tech"), true);
+        var home = new DatabaseRegion(region, region.ToLowerInvariant() + "-1", region == "SJC" ? "San Francisco Bay Area" : "São Paulo", region == "SJC" ? "us" : "br", new("https://" + region.ToLowerInvariant() + ".api.terrascale.tech"), true);
         await documents.CreateCollectionAsync(scope, home, databaseName, collection, default);
         foreach (var (id, json) in rows)
         {
@@ -496,7 +496,7 @@ internal sealed class ReferenceMeasurements : IHomeMeasurements
         // legacy M2M and revoked/expiry records require a producer contract
         // before the C# credential table itself can render those same rows.
         result.ActiveCredentials = 4;
-        result.Regions = [new("GRU", "Not reported", "Not reported", 2), new("SFO", "Not reported", "Not reported", 2)];
+        result.Regions = [new("GRU", "Not reported", "Not reported", 2), new("SJC", "Not reported", "Not reported", 2)];
         return Task.FromResult(result);
     }
 

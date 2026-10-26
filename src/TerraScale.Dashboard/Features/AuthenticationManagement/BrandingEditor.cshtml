@@ -4,7 +4,7 @@
     var brand = Model.Settings!.Branding;
     string Field(string name, string? saved) => Model.Draft is { } draft ? draft[name].ToString() : saved ?? "";
     var theme = Field("default_theme", brand.DefaultTheme ?? "system");
-    var footer = string.Join("\n", (brand.FooterLinks ?? [new("Status", "https://status.terrascale.tech"), new("Docs", "https://docs.terrascale.tech"), new("Privacy", "https://terrascale.tech/privacy"), new("Terms", "https://terrascale.tech/terms")]).Select(link => link.Label + " | " + link.Url));
+    var footer = string.Join("\n", (brand.FooterLinks ?? [new("Status", "https://status.terrascale.tech"), new("Docs", "https://docs.terrascale.tech"), new("Privacy", "https://docs.terrascale.tech/legal/privacy"), new("Terms", "https://docs.terrascale.tech/legal/terms")]).Select(link => link.Label + " | " + link.Url));
 }
 <form id="auth-branding-form" method="post" action="/api/v1/auth-management/branding" data-project-name="@Model.Context.Project?.Name">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />

@@ -72,7 +72,7 @@ if (form) {
   document.addEventListener('input', event => { if (event.target.form === form) { document.querySelector('[data-brand-size]').value = field('title_size').value; render(); } });
   form.addEventListener('reset', event => { event.preventDefault(); saved.forEach(([name, value]) => { field(name).value = value; }); render(); });
   document.querySelector('[data-brand-defaults]')?.addEventListener('click', () => {
-    saved.forEach(([name]) => { field(name).value = name === 'title_size' ? '24' : name === 'default_theme' ? 'system' : name === 'footer_links' ? 'Status | https://status.terrascale.tech\nDocs | https://docs.terrascale.tech\nPrivacy | https://terrascale.tech/privacy\nTerms | https://terrascale.tech/terms' : ''; });
+    saved.forEach(([name]) => { field(name).value = name === 'title_size' ? '24' : name === 'default_theme' ? 'system' : name === 'footer_links' ? 'Status | https://status.terrascale.tech\nDocs | https://docs.terrascale.tech\nPrivacy | https://docs.terrascale.tech/legal/privacy\nTerms | https://docs.terrascale.tech/legal/terms' : ''; });
     render();
   });
   preferred.addEventListener('change', render);

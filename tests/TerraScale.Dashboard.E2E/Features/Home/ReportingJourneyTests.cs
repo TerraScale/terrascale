@@ -32,14 +32,14 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await flow.SubmitAsync(ownerPage, "#create-organization form", "Create organization");
             await flow.SubmitAsync(ownerPage, "#create-organization form", "Continue to checkout");
             await ownerPage.Locator("#create-organization input[name=name]").FillAsync("Measured project");
-            await ownerPage.Locator("#create-organization select[name=regions]").SelectOptionAsync(["GRU", "SFO"]);
+            await ownerPage.Locator("#create-organization select[name=regions]").SelectOptionAsync(["GRU", "SJC"]);
             await ownerPage.Locator("#create-organization select[name=region]").SelectOptionAsync("GRU");
-            await ownerPage.Locator("#create-organization select[name=backupRegion]").SelectOptionAsync("SFO");
+            await ownerPage.Locator("#create-organization select[name=backupRegion]").SelectOptionAsync("SJC");
             await flow.SubmitAsync(ownerPage, "#create-organization form", "Create project");
             var original = await flow.MeAsync(ownerContext);
             var projectId = original.GetProperty("projectId").GetString()!;
-            var orders = await DatabaseAsync("orders-" + suffix, ["GRU", "SFO"]);
-            var archive = await DatabaseAsync("archive-" + suffix, ["SFO", "GRU"]);
+            var orders = await DatabaseAsync("orders-" + suffix, ["GRU", "SJC"]);
+            var archive = await DatabaseAsync("archive-" + suffix, ["SJC", "GRU"]);
 
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders + "&region=GRU&range=24h");
             await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("10");
@@ -176,7 +176,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
                 await ownerPage.Locator("#create-database[open]").WaitForAsync();
                 await ownerPage.Locator("#database-name").FillAsync(name);
                 await ownerPage.Locator("#database-home").SelectOptionAsync(placement[0]);
-                foreach (var region in new[] { "GRU", "SFO" })
+                foreach (var region in new[] { "GRU", "SJC" })
                     await ownerPage.Locator("#database-region input[value=\"" + region + "\"]").SetCheckedAsync(placement.Contains(region));
                 await flow.SubmitAsync(ownerPage, "#create-database form", "Create database");
                 return new Uri(ownerPage.Url).AbsolutePath.Split('/')[2];
@@ -291,9 +291,9 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(ownerPage, "/organization?tab=projects&newProject=1");
             await ownerPage.Locator("#create-project[open]").WaitForAsync();
             await ownerPage.Locator("#project-name").FillAsync("Disposable " + slug);
-            await ownerPage.Locator("#project-regions").SelectOptionAsync(["GRU", "SFO"]);
+            await ownerPage.Locator("#project-regions").SelectOptionAsync(["GRU", "SJC"]);
             await ownerPage.Locator("#project-region").SelectOptionAsync("GRU");
-            await ownerPage.Locator("#project-backup").SelectOptionAsync("SFO");
+            await ownerPage.Locator("#project-backup").SelectOptionAsync("SJC");
             await flow.SubmitAsync(ownerPage, "#create-project form", "Create project");
             var row = ownerPage.Locator("#projects tbody tr").Filter(new() { HasText = "Disposable " + slug });
             var projectId = await row.Locator(".ts-org-project-name .ts-mono").InnerTextAsync();

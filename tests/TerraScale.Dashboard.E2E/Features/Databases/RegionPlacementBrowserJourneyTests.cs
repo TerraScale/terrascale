@@ -44,36 +44,36 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
 
         var allowedMap = dialog.Locator("[data-select-id='project-regions']");
         var allowedSelect = dialog.Locator("#project-regions");
-        await allowedMap.GetByRole(AriaRole.Button, new() { Name = "San Francisco (SFO)", Exact = true }).WaitForAsync();
+        await allowedMap.GetByRole(AriaRole.Button, new() { Name = "San Francisco Bay Area (SJC)", Exact = true }).WaitForAsync();
 
         // Regression: a pin pick must keep the native option's own casing and keep aria-pressed in step.
         var initialSelected = await SelectedAsync(allowedSelect);
-        var wasSelected = initialSelected.Contains("SFO");
-        await allowedSelect.EvaluateAsync("element => { [...element.options].find(option => option.value === 'SFO').value = 'sfo'; }");
-        await allowedMap.GetByRole(AriaRole.Button, new() { Name = "San Francisco (SFO)", Exact = true }).ClickAsync();
+        var wasSelected = initialSelected.Contains("SJC");
+        await allowedSelect.EvaluateAsync("element => { [...element.options].find(option => option.value === 'SJC').value = 'sjc'; }");
+        await allowedMap.GetByRole(AriaRole.Button, new() { Name = "San Francisco Bay Area (SJC)", Exact = true }).ClickAsync();
         var pickedSelected = await SelectedAsync(allowedSelect);
-        await Assert.That(pickedSelected.Contains("sfo")).IsEqualTo(!wasSelected);
-        await Assert.That(pickedSelected.Contains("SFO")).IsFalse();
-        await Assert.That(await allowedMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo(wasSelected ? "false" : "true");
+        await Assert.That(pickedSelected.Contains("sjc")).IsEqualTo(!wasSelected);
+        await Assert.That(pickedSelected.Contains("SJC")).IsFalse();
+        await Assert.That(await allowedMap.Locator("button[data-region='SJC']").GetAttributeAsync("aria-pressed")).IsEqualTo(wasSelected ? "false" : "true");
 
-        await allowedSelect.EvaluateAsync("(element, selected) => { [...element.options].forEach(option => { if (option.value === 'sfo') option.value = 'SFO'; option.selected = selected.includes(option.value); }); element.dispatchEvent(new Event('change', { bubbles: true })); }", initialSelected);
-        await Assert.That(await allowedSelect.Locator("option[value='SFO']").CountAsync()).IsEqualTo(1);
+        await allowedSelect.EvaluateAsync("(element, selected) => { [...element.options].forEach(option => { if (option.value === 'sjc') option.value = 'SJC'; option.selected = selected.includes(option.value); }); element.dispatchEvent(new Event('change', { bubbles: true })); }", initialSelected);
+        await Assert.That(await allowedSelect.Locator("option[value='SJC']").CountAsync()).IsEqualTo(1);
         await Assert.That((await SelectedAsync(allowedSelect)).SequenceEqual(initialSelected)).IsTrue();
-        await Assert.That(await allowedMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo(wasSelected ? "true" : "false");
+        await Assert.That(await allowedMap.Locator("button[data-region='SJC']").GetAttributeAsync("aria-pressed")).IsEqualTo(wasSelected ? "true" : "false");
 
         await allowedMap.GetByRole(AriaRole.Button, new() { Name = "São Paulo (GRU)", Exact = true }).ClickAsync();
-        await page.WaitForFunctionAsync("() => [...document.querySelector('#project-regions').selectedOptions].map(option => option.value).join(',') === 'SFO'");
-        await Assert.That((await SelectedAsync(allowedSelect)).SequenceEqual(new[] { "SFO" })).IsTrue();
+        await page.WaitForFunctionAsync("() => [...document.querySelector('#project-regions').selectedOptions].map(option => option.value).join(',') === 'SJC'");
+        await Assert.That((await SelectedAsync(allowedSelect)).SequenceEqual(new[] { "SJC" })).IsTrue();
         await Assert.That(await allowedMap.Locator("button[data-region='GRU']").GetAttributeAsync("aria-pressed")).IsEqualTo("false");
-        await Assert.That(await allowedMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
+        await Assert.That(await allowedMap.Locator("button[data-region='SJC']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
 
         var primarySelect = dialog.Locator("#project-region");
-        await primarySelect.SelectOptionAsync("SFO");
-        await Assert.That(await primarySelect.InputValueAsync()).IsEqualTo("SFO");
+        await primarySelect.SelectOptionAsync("SJC");
+        await Assert.That(await primarySelect.InputValueAsync()).IsEqualTo("SJC");
 
         var backupSelect = dialog.Locator("#project-backup");
-        await backupSelect.SelectOptionAsync("SFO");
-        await Assert.That(await backupSelect.InputValueAsync()).IsEqualTo("SFO");
+        await backupSelect.SelectOptionAsync("SJC");
+        await Assert.That(await backupSelect.InputValueAsync()).IsEqualTo("SJC");
 
         var submit = dialog.GetByRole(AriaRole.Button, new() { Name = "Create project", Exact = true });
         var created = await page.RunAndWaitForResponseAsync(
@@ -86,18 +86,18 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var row = page.Locator("#projects tbody tr").Filter(new() { HasText = projectName });
         await row.WaitForAsync();
         await Assert.That(await row.CountAsync()).IsEqualTo(1);
-        await Assert.That(await row.Locator("td").Nth(3).InnerTextAsync()).Contains("sfo"); // Primary column
-        await Assert.That(await row.Locator("td").Nth(4).InnerTextAsync()).Contains("sfo"); // Backup column
+        await Assert.That(await row.Locator("td").Nth(3).InnerTextAsync()).Contains("sjc"); // Primary column
+        await Assert.That(await row.Locator("td").Nth(4).InnerTextAsync()).Contains("sjc"); // Backup column
         var projectId = (await row.Locator(".ts-org-project-name .ts-mono").InnerTextAsync()).Trim();
         await row.GetByRole(AriaRole.Button, new() { Name = "Rename", Exact = true }).ClickAsync();
 
         var edit = page.Locator($"#rename-project-{projectId}[open]");
         await edit.WaitForAsync();
-        await Assert.That((await SelectedAsync(edit.Locator($"#project-regions-{projectId}"))).SequenceEqual(new[] { "SFO" })).IsTrue();
-        await Assert.That(await edit.Locator($"#project-region-{projectId}").InputValueAsync()).IsEqualTo("SFO");
-        await Assert.That(await edit.Locator($"#project-backup-{projectId}").InputValueAsync()).IsEqualTo("SFO");
+        await Assert.That((await SelectedAsync(edit.Locator($"#project-regions-{projectId}"))).SequenceEqual(new[] { "SJC" })).IsTrue();
+        await Assert.That(await edit.Locator($"#project-region-{projectId}").InputValueAsync()).IsEqualTo("SJC");
+        await Assert.That(await edit.Locator($"#project-backup-{projectId}").InputValueAsync()).IsEqualTo("SJC");
         var editAllowedMap = edit.Locator($"[data-select-id='project-regions-{projectId}']");
-        await Assert.That(await editAllowedMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
+        await Assert.That(await editAllowedMap.Locator("button[data-region='SJC']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
         await Assert.That(await editAllowedMap.Locator("button[data-region='GRU']").GetAttributeAsync("aria-pressed")).IsEqualTo("false");
 
         using var httpContextResponse = await replica.GetAsync("/api/v1/dashboard/context");
@@ -106,20 +106,20 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var httpOrganization = httpContextDocument.RootElement.GetProperty("organizations").EnumerateArray()
             .Single(item => item.GetProperty("id").GetString() == organizationId);
         var httpProject = httpOrganization.GetProperty("projects").GetProperty(projectId);
-        await Assert.That(httpProject.GetProperty("region").GetString()).IsEqualTo("SFO");
-        await Assert.That(httpProject.GetProperty("backupRegion").GetString()).IsEqualTo("SFO");
+        await Assert.That(httpProject.GetProperty("region").GetString()).IsEqualTo("SJC");
+        await Assert.That(httpProject.GetProperty("backupRegion").GetString()).IsEqualTo("SJC");
         await Assert.That(string.Join(',', httpProject.GetProperty("regions").EnumerateArray().Select(item => item.GetString())))
-            .IsEqualTo("SFO");
+            .IsEqualTo("SJC");
 
         var persisted = await ContextAsync();
         var organization = persisted.GetProperty("organizations").EnumerateArray()
             .Single(item => item.GetProperty("id").GetString() == organizationId);
         var project = organization.GetProperty("projects").EnumerateArray()
             .Single(item => item.GetProperty("id").GetString() == projectId);
-        await Assert.That(project.GetProperty("region").GetString()).IsEqualTo("SFO");
-        await Assert.That(project.GetProperty("backupRegion").GetString()).IsEqualTo("SFO");
+        await Assert.That(project.GetProperty("region").GetString()).IsEqualTo("SJC");
+        await Assert.That(project.GetProperty("backupRegion").GetString()).IsEqualTo("SJC");
         await Assert.That(string.Join(',', project.GetProperty("regions").EnumerateArray().Select(item => item.GetString())))
-            .IsEqualTo("SFO");
+            .IsEqualTo("SJC");
         await Assert.That(errors.ToArray()).IsEmpty();
 
         async Task NavigateAsync(string path)
