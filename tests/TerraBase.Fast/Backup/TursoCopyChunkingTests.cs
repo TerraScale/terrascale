@@ -62,7 +62,8 @@ public sealed class TursoCopyChunkingTests
             using var reader = new TursoConnection(TestMasterKey.ConnectionString(source));
             reader.Open();
             Execute(reader, "BEGIN;");
-            TursoCopy.Write(reader, TestMasterKey.ConnectionString(copy, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate), chunkRows: 2, chunkBytes: 64, CancellationToken.None);
+            // Rewrite derives the target string from an existing source: the copy must create its scratch file even with ReadWrite.
+            TursoCopy.Write(reader, TestMasterKey.ConnectionString(copy), chunkRows: 2, chunkBytes: 64, CancellationToken.None);
 
             using var target = new TursoConnection(TestMasterKey.ConnectionString(copy));
             target.Open();

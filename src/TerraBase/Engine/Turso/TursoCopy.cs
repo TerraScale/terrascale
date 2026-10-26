@@ -52,7 +52,10 @@ internal static class TursoCopy
         }
 
         var version = Scalar(source, "PRAGMA user_version;");
-        using var copy = new SqliteConnection(target);
+        // Rewrite derives this string from an existing source (Mode=ReadWrite); this target is a new scratch file.
+        // Pooling is a provider option: the scratch handle must close before the file is published.
+        var targetOptions = new SqliteConnectionStringBuilder(target) { Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false };
+        using var copy = new SqliteConnection(targetOptions.ToString());
         copy.Open();
         // Tables and their rows first, then indexes, which build faster over the loaded rows.
         foreach (var (_, name, _, sql) in objects.Where(item => item.Type == "table"))
