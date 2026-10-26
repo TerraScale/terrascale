@@ -94,6 +94,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             var begin = parsed.Any(statement => statement is ParsedSql { IsWrite: true }) ? "BEGIN" : "BEGIN READONLY";
             _ = await session.ExecuteAsync(new SqlCommand(begin, [], new Dictionary<string, SqlValue>()), cancellationToken);
             var results = new List<SqlStatementBody>(commands.Count);
+            var reads = new List<SqlReadCharge>(commands.Count);
             for (var i = 0; i < commands.Count; i++)
             {
                 switch (await session.ExecuteAsync(commands[i], cancellationToken))
@@ -102,6 +103,11 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
                         _ = await session.ExecuteAsync(new SqlCommand("ROLLBACK", [], new Dictionary<string, SqlValue>()), cancellationToken);
                         return Error(error, i);
                     case SqlResult result:
+                        if (result.ReadCharge is { } charge)
+                        {
+                            reads.Add(charge);
+                        }
+
                         results.Add(new SqlStatementBody(
                             [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid));
                         break;
@@ -114,6 +120,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             }
 
             await session.EndRequestAsync();
+            reads.ForEach(charge => charge.Accept());
             return TypedResults.Json(new SqlExecuteBody(results), TerraBaseJsonContext.Default.SqlExecuteBody);
         }
     }

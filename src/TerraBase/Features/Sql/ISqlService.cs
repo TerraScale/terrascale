@@ -54,7 +54,19 @@ internal sealed record SqlColumn(string Name, string? DeclType);
 /// <param name="Rows">Rows in order, each with one value per column.</param>
 /// <param name="RowsAffected">Rows a write inserted, updated or deleted; 0 for reads and DDL.</param>
 /// <param name="LastInsertRowid">The integer primary key of the last inserted row, when the table has one.</param>
-internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
+internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid)
+{
+    /// <summary>Finalized once the protocol accepts these rows; discarded results incur no read charge.</summary>
+    internal SqlReadCharge? ReadCharge { get; init; }
+}
+
+/// <summary>A read charge shared by protocol projections of a result; accepting it twice cannot double bill.</summary>
+internal sealed class SqlReadCharge(Action accept)
+{
+    private Action? _accept = accept;
+
+    public void Accept() => Interlocked.Exchange(ref _accept, null)?.Invoke();
+}
 
 /// <summary>Why a statement failed, in SQLite's vocabulary so libSQL and PostgreSQL clients can map it.</summary>
 /// <param name="Code">
@@ -108,7 +120,10 @@ internal interface ISqlSession : IAsyncDisposable
     /// <summary>Whether no transaction is open.</summary>
     bool IsAutocommit { get; }
 
-    /// <summary>Runs one statement; <c>BEGIN</c>, <c>COMMIT</c> and <c>ROLLBACK</c> change the session.</summary>
+    /// <summary>
+    /// Runs one statement; <c>BEGIN</c>, <c>COMMIT</c> and <c>ROLLBACK</c> change the session.
+    /// The adapter accepts a result's <see cref="SqlResult.ReadCharge"/> only at its protocol success boundary.
+    /// </summary>
     ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken);
 
     /// <summary>
