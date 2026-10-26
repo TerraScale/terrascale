@@ -43,6 +43,9 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private const int MaxKeyLength = 256;
     private const int MaxGrants = 4096;
 
+    // Distinct keys exchanging at once, validation included (it may wait for ts-auth's signing keys): past it, unavailable.
+    private const int MaxExchanging = 64;
+
     // Exchanged again this long before the token expires, so a statement never runs on a token about to lapse. ts-auth
     // issues 60-second project tokens: a key exchanges about every 50 seconds.
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(10);
@@ -71,6 +74,11 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         if (_grants.TryGetValue(cacheKey, out var cached) && time.GetUtcNow() < cached.ValidTo - RenewBefore)
         {
             return cached;
+        }
+
+        if (_exchanging.Count >= MaxExchanging && !_exchanging.ContainsKey(cacheKey))
+        {
+            return Unavailable();
         }
 
         return await _exchanging.GetOrAdd(cacheKey, _ => new Lazy<Task<TsAuthKeyResult>>(() => ExchangeOnceAsync(cacheKey, issuer, secret)))
