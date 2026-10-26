@@ -1,13 +1,40 @@
 using System.Collections.Concurrent;
+using System.Net;
 using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
 [ClassDataSource<DashboardRootFixture>]
-[Category("Slow")]
 public sealed class NavigationDiscoveryJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
+    [Arguments("")]
+    [Arguments("?collection=orders")]
+    public async Task AuthenticatedShellRendersSecondaryNavigationOverHttp(string query)
+    {
+        await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        var persona = scenario.Personas.Seeded;
+        using var login = await HttpJourney.LoginAsync(client, persona.Email, persona.Password);
+        await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var responses = await Task.WhenAll(new[] { "/", "/support", "/databases/" + ReferenceFixtures.PrimaryId + "/danger" + query }.Select(path => client.GetAsync(path)));
+        foreach (var response in responses)
+        {
+            using var rendered = response;
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var html = WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
+            foreach (var label in new[] { "Support", "Profile", "Notifications", "Imports", "Connect", "Billing", "Members", "Projects" })
+                await Assert.That(html).Contains("aria-label=\"" + label + "\"");
+            await Assert.That(html).Contains("No pages match");
+            if (html.Contains("ts-db-tabs", StringComparison.Ordinal))
+            {
+                await Assert.That(html).Contains("/databases/" + ReferenceFixtures.PrimaryId + "/backups");
+                await Assert.That(html).Contains("/databases/" + ReferenceFixtures.PrimaryId + "/documents" + query);
+            }
+        }
+    }
+
+    [Test, Category("Slow")]
     public async Task SecondaryPagesPreserveWorkspaceAndDatabaseSectionsRemainVisibleOnPhones()
     {
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);

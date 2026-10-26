@@ -103,7 +103,7 @@
         var parts = Model.ReturnUrl.Split('?')[0].Split('/');
         if (parts.Length < 3 || parts[1] != "databases" || !Model.Context.Project.Databases.TryGetValue(Uri.UnescapeDataString(parts[2]), out var database)) yield break;
         var queryAt = Model.ReturnUrl.IndexOf('?');
-        var collection = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : Model.ReturnUrl[queryAt..])["collection"].ToString();
+        var collection = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : Model.ReturnUrl[queryAt..]).GetValueOrDefault("collection").ToString();
         foreach (var tab in DatabaseFrameModel.Tabs)
             yield return new(tab.Label, DatabaseService.Path(database.Id, tab.Key, tab.Key is "documents" or "sql" or "schema" or "indexes" or "webhooks" ? collection : ""), "database", "Database · " + database.Name + " · " + project);
     }
