@@ -82,6 +82,8 @@ public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
         await Assert.That(requests.Any(item => item.EndsWith("anonymous", StringComparison.Ordinal))).IsFalse();
         var http = await PageAsync(path + "?function=hello", HttpStatusCode.OK);
         await Assert.That(http).DoesNotContain("Trigger deliveries");
+        await Assert.That(http).Contains("Exchange your project API key for a short-lived access token with <code>documents:read</code>, then send that access token as a Bearer token.");
+        await Assert.That(http).Contains("href=\"https://docs.terrascale.tech/guides/authentication\">Authentication guide</a>");
         await Assert.That(requests).DoesNotContain("GET /functions/hello/deliveries");
         await Assert.That(await PageAsync(path + "?function=gone", HttpStatusCode.NotFound)).Contains("This function does not exist.");
         await Assert.That(await PageAsync(path + "?function=Bad%20Name", HttpStatusCode.NotFound)).Contains("This function does not exist.");
