@@ -294,6 +294,12 @@ fi
 	default:
 		return errUsage
 	}
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			Shell  string `json:"shell"`
+			Script string `json:"script"`
+		}{shell, b.String()})
+	}
 	_, err := io.WriteString(out, b.String())
 	return err
 }
