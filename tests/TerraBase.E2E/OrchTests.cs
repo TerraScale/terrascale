@@ -39,7 +39,8 @@ public sealed class OrchTests
     [Scenario(Nodes.Harness)]
     public async Task A_pinned_run_refuses_a_scenario_still_listed_as_an_expected_failure()
     {
-        await Assert.That(Gaps.PinnedRefusal("E11")).Contains("its Gaps row must be removed first");
+        await Assert.That(Gaps.PinnedRefusal("E13")).Contains("its Gaps row must be removed first");
+        await Assert.That(Gaps.PinnedRefusal("E11")).IsNull();
         await Assert.That(Gaps.PinnedRefusal("not-a-gap")).IsNull();
     }
 
