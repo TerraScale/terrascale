@@ -83,7 +83,7 @@ internal sealed class SqlAffinityResolver
     {
         if (expression is not (Expression.Identifier or Expression.CompoundIdentifier)
             || !_scopes.TryGetValue(expression, out var scopes)
-            || Scope.Lookup(expression, scopes, _output) is not { Qualifier: { } qualifier } column)
+            || Scope.Lookup(expression, scopes, _output, strict: false) is not { Qualifier: { } qualifier } column)
         {
             return expression;
         }

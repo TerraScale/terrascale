@@ -9,7 +9,7 @@ internal sealed record SqlAffinityScope(List<(string Name, List<Column>? Columns
         List<Column>? Aliases = null, bool PreferAliases = false)
 {
     public static Column? Lookup(Expression expression, List<SqlAffinityScope> scopes,
-        Func<Query, List<SqlAffinityScope>, List<Column>?> output)
+        Func<Query, List<SqlAffinityScope>, List<Column>?> output, bool strict = true)
     {
         expression = SqlGuard.Unwrap(expression);
         while (expression is Expression.Collate collate)
@@ -51,7 +51,7 @@ internal sealed record SqlAffinityScope(List<(string Name, List<Column>? Columns
             var sources = qualifier is null ? [("", scope.Visible)] : scope.Sources.Where(source => Same(source.Name, qualifier) || source.Columns?.Any(column => Same(column.Qualifier ?? "", qualifier)) == true).ToList();
             if (sources.Any(source => source.Columns is null))
             {
-                throw new FormatException("SQL source column affinity cannot be inferred");
+                return strict ? throw new FormatException("SQL source column affinity cannot be inferred") : null;
             }
 
             var matches = sources.SelectMany(source => source.Columns!).Where(column => Same(column.Name, name)).ToList();
@@ -66,7 +66,7 @@ internal sealed record SqlAffinityScope(List<(string Name, List<Column>? Columns
             }
         }
 
-        throw new FormatException("SQL source column affinity cannot be inferred");
+        return strict ? throw new FormatException("SQL source column affinity cannot be inferred") : null;
     }
 
     private static bool Same(string left, string right) => SqlIdentifierComparer.Instance.Equals(left, right);
