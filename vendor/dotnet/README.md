@@ -1,14 +1,14 @@
 # ts-dotnet package pin
 
-The dashboard consumes TerraScale.DotNet 0.0.12 from merged ts-dotnet revision
-`75877b6003689aa34cf015d682085450c9b2e95e` (PR65). It adds bounded project user
-export pages and optional plain-text branding copy for authentication emails.
+This review branch consumes a local TerraScale.DotNet 0.0.13 package from
+`adff15f5d44ac1db5fbb6ffcb20555a8aeb1b43f` (PR73). It adds database rename
+and immutable-ID selectors to the current SDK contract.
 
-Two clean locked builds produced identical package bytes. Installed-package
-HTTP fake consumers passed on net10.0 and net11.0. This is a locally built
-package; publication is not claimed. Dashboard HTTP journeys exercise the
-installed export operation against its controlled ts-auth producer.
+The producer reports local transport fixtures and a package build only.
+This artifact is unqualified for CI, reproducibility, publication and live use.
+Hold merge and automatic dashboard deployment for the rename API, exclusive
+namespace decisions, ULID scopes and a qualified published SDK.
 
-`provenance.json` records the source revision, toolchain, package and assembly
+`provenance.json` records the source revision, package and assembly
 hashes and every packed contract hash. CI verifies these bytes and the central
-pin. Earlier artifacts are retained; only 0.0.12 is selected.
+pin. Earlier artifacts are retained; only this local 0.0.13 is selected.

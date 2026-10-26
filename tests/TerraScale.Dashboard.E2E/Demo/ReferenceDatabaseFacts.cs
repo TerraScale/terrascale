@@ -147,6 +147,7 @@ internal sealed class ReferenceDatabaseFacts : IBackupBackend
 
 internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, ReferenceDatabaseFacts facts) : IDatabaseBackend
 {
+    public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct) => inner.RenameAsync(scope, home, id, name, ct);
     public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
     { var contents = await inner.CollectionsAsync(scope, home, id, ct); facts.ValidateMeasurements(scope, home, id, contents); return contents; }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken ct) => inner.RegionsAsync(ct);

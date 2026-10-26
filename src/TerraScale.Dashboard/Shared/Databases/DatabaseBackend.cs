@@ -62,6 +62,7 @@ public interface IDatabaseBackend
     Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
     Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
+    Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
     Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
@@ -185,6 +186,12 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             catch (TerraBaseUnavailableException error) when (error.ErrorCode == "catalog_anchor_unavailable" && attempt < 3)
             { await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken); }
         }
+    }
+
+    public async Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+    {
+        var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
+        return Map(await RunAsync(() => project.RenameDatabaseAsync(databaseId, name, cancellationToken)));
     }
 
     public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)

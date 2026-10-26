@@ -695,6 +695,15 @@ sealed class TestMeasurements : IHomeMeasurements
 }
 sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
 {
+    public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+    {
+        var current = Database(scope, databaseId);
+        if (databases.Values.Any(database => database.ProjectId == scope.ProjectId && database.Name == name))
+            throw new DatabaseProviderException(HttpStatusCode.Conflict);
+        var renamed = current with { Name = name };
+        databases[databaseId] = renamed;
+        return Task.FromResult(renamed);
+    }
     private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
     private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
     private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();

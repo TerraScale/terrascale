@@ -26,7 +26,7 @@ public sealed class ProjectApiKeyContractTests
         await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
         await Assert.That(request.RootElement.TryGetProperty("allowed_cidrs", out _)).IsFalse();
         await Assert.That(created.Key.AllowedCidrs).IsEquivalentTo(Array.Empty<string>());
-        await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo("app");
+        await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo(DatabaseId);
         await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
             .IsEquivalentTo(new[] { "documents:read", "documents:write" });
         await Assert.That(created.Secret).IsEqualTo(KeyId + "_synthetic-secret");
@@ -93,15 +93,17 @@ public sealed class ProjectApiKeyContractTests
     }
 
     [Test]
-    public async Task RestrictionSurvivesMissingLocalDatabaseAndRevokeVerifiesKeyBeforeDelete()
+    [Arguments(DatabaseId)]
+    [Arguments("old-name")]
+    public async Task RestrictionSurvivesMissingLocalDatabaseAndRevokeVerifiesKeyBeforeDelete(string restriction)
     {
-        using var wire = new Wire();
+        using var wire = new Wire { Restriction = restriction };
         var context = Context();
         context.Project!.Databases.Clear();
         var service = new ApiKeyService(wire, TimeProvider.System);
         var key = (await service.ListAsync(context, CancellationToken.None)).Single();
-        await Assert.That(key.DatabaseId).IsNull();
-        await Assert.That(ApiKeyService.CredentialMetadata(key).DatabaseName).IsEqualTo("app");
+        await Assert.That(key.DatabaseId).IsEqualTo(restriction);
+        await Assert.That(ApiKeyService.CredentialMetadata(key).DatabaseName).IsEqualTo(restriction);
         await service.RevokeAsync(context, KeyId, CancellationToken.None);
         await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Get, HttpMethod.Delete }, CollectionOrdering.Matching);
     }
@@ -236,6 +238,7 @@ public sealed class ProjectApiKeyContractTests
     private sealed class Wire : HttpMessageHandler, IHttpClientFactory
     {
         public string Failure { get; init; } = "";
+        public string Restriction { get; init; } = DatabaseId;
         public string? LastUsedAt { get; init; }
         public int Requests { get; private set; }
         public string? Body { get; private set; }
@@ -288,7 +291,7 @@ public sealed class ProjectApiKeyContractTests
                 name = "Synthetic",
                 organization_id = OrganizationId,
                 project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
-                database = "app",
+                database = Restriction,
                 scopes = new[] { "documents:read", "documents:write" },
                 created_by = "user",
                 created_at = "2026-01-01T00:00:00+00:00",

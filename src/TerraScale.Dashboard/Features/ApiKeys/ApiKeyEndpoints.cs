@@ -21,7 +21,7 @@ public static class ApiKeyEndpoints
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
         }).WithGroupName("integration").WithName("listDashboardCredentials").WithTags("Credentials")
             .WithSummary("List ts-auth project keys without secrets")
-            .WithDescription("DatabaseName is the canonical restriction. A missing local DatabaseId does not mean unrestricted access. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.")
+            .WithDescription("DatabaseId is the immutable restriction. DatabaseName shows its current name, or the restriction when the database is not listed locally. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.")
             .Produces<ProjectCredentialMetadata[]>().Produces(401).ProducesProblem(403).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", async (HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {

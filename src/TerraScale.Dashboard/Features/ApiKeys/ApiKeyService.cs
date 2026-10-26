@@ -50,10 +50,10 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
         var scope = DatabaseService.Scope(context);
         var cidrs = CheckCidrs(allowedCidrs);
-        var result = await SendAsync(context, HttpMethod.Post, KeysPath(scope), JsonContent.Create(new(name, permissions, database?.Name, expiresAt, cidrs.Length == 0 ? null : cidrs),
+        var result = await SendAsync(context, HttpMethod.Post, KeysPath(scope), JsonContent.Create(new(name, permissions, database?.Id, expiresAt, cidrs.Length == 0 ? null : cidrs),
             ApiKeyAuthJson.Default.AuthCreateKeyBody), cancellationToken);
         var key = Map(context, result.TryGetProperty("api_key", out var body) ? body : default);
-        if (key.Name != name || key.DatabaseName != database?.Name || key.ExpiresAt != expiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(permissions.Order(StringComparer.Ordinal)) ||
+        if (key.Name != name || key.DatabaseId != database?.Id || key.ExpiresAt != expiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(permissions.Order(StringComparer.Ordinal)) ||
             (cidrs.Length == 0) != (key.AllowedCidrs!.Count == 0) || !result.TryGetProperty("key", out var secret) || secret.GetString() is not { Length: > 0 } value)
             throw new HttpRequestException("Credential issuance returned different restrictions.");
         return new(key, value);
@@ -122,7 +122,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
         }
         var key = Map(context, result.ApiKey);
-        if (key.Id != keyId || key.Name != current.Name || key.DatabaseName != current.DatabaseName || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
+        if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
             throw new HttpRequestException("Credential rotation returned different restrictions.");
         return new(key, result.Key);
     }
@@ -207,9 +207,9 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             string.IsNullOrWhiteSpace(key.Name) || key.Name.Any(char.IsControl) || key.Scopes.Count == 0 ||
             key.Scopes.Any(string.IsNullOrWhiteSpace) || key.Scopes.Distinct(StringComparer.Ordinal).Count() != key.Scopes.Count)
             throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
-        var database = context.Project!.Databases.Values.SingleOrDefault(item => item.Name == key.Database);
-        return new(key.Id, scope.ProjectId, key.Name, key.Scopes, database?.Id, "", key.CreatedAt)
-        { DatabaseName = key.Database, ExpiresAt = key.ExpiresAt, LastUsedAt = key.LastUsedAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow() };
+        var database = key.Database is { } restricted ? context.Project!.Databases.GetValueOrDefault(restricted) : null;
+        return new(key.Id, scope.ProjectId, key.Name, key.Scopes, key.Database, "", key.CreatedAt)
+        { DatabaseName = database?.Name ?? key.Database, ExpiresAt = key.ExpiresAt, LastUsedAt = key.LastUsedAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow() };
     }
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 }
