@@ -17,7 +17,13 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
     IMemoryBudget memory, TerraBaseOptions options, IMeterFactory meters) : IReplicaSnapshotImporter
 {
     internal static readonly TimeSpan ImportTimeout = TimeSpan.FromMinutes(10);
-    internal static readonly TimeSpan ReplayTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan BaseReplayTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan MaxReplayTimeout = TimeSpan.FromMinutes(5);
+    // A 20k-state initial import took 6.93 s with eight runtime CPUs. Allow 2 ms/state (500/s), plus frame and byte
+    // work, for slow/contended runners. This is a cooperative ceiling, not a promise of sub-second writer holds.
+    private const long ReplayTicksPerState = 2 * TimeSpan.TicksPerMillisecond;
+    private const long ReplayTicksPerFrame = 10 * TimeSpan.TicksPerMillisecond;
+    private const long ReplayBytesPerSecond = 4 * 1024 * 1024;
     private readonly Histogram<double> _timing = meters.Create(Telemetry.MeterName)
         .CreateHistogram<double>("terrabase.replication.snapshot_import", "s", "Snapshot receive, staging and atomic replay time.");
 
@@ -61,14 +67,16 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             File.Delete(staged.Name); // An unlinked private spool also disappears after a process crash.
         }
 
-        var terminal = await StageAsync(staged, database, incarnation, pages, cancellationToken).ConfigureAwait(false);
+        var (terminal, states, frames) = await StageAsync(staged, database, incarnation, pages, cancellationToken).ConfigureAwait(false);
         if (terminal is null)
         {
             return false;
         }
 
         staged.Position = 0;
-        using var replayDeadline = new CancellationTokenSource(ReplayTimeout, engine.HostTime);
+        var replayTicks = BaseReplayTimeout.Ticks + states * ReplayTicksPerState + frames * ReplayTicksPerFrame
+            + staged.Length * TimeSpan.TicksPerSecond / ReplayBytesPerSecond;
+        using var replayDeadline = new CancellationTokenSource(TimeSpan.FromTicks(Math.Min(replayTicks, MaxReplayTimeout.Ticks)), engine.HostTime);
         using var replay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, replayDeadline.Token);
         var started = Stopwatch.GetTimestamp();
         stamps.InvalidateAll();
@@ -85,7 +93,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         }
     }
 
-    private async Task<ReplicaSnapshotPage?> StageAsync(FileStream staged, TenantContext database, Ulid incarnation,
+    private async Task<(ReplicaSnapshotPage? Terminal, long States, int Frames)> StageAsync(FileStream staged, TenantContext database, Ulid incarnation,
         IAsyncEnumerable<ReplicaSnapshotPage> pages, CancellationToken cancellationToken)
     {
         int[] buckets = [.. Enumerable.Range(0, 4096)];
@@ -93,6 +101,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         Hlc? floor = null;
         ReplicaSnapshotPage? terminal = null;
         var count = 0;
+        var states = 0L;
         var header = new byte[sizeof(int)];
         var receive = TimeSpan.Zero;
         var staging = TimeSpan.Zero;
@@ -138,12 +147,13 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
                     var bytes = AntiEntropy.Encode(page.States, incarnation).ToByteArray();
                     if (bytes.Length > ReplicationProtocol.MaxMessageBytes || staged.Position + header.Length + bytes.Length > 1024L * 1024 * 1024)
                     {
-                        return null;
+                        return default;
                     }
 
                     BinaryPrimitives.WriteInt32LittleEndian(header, bytes.Length);
                     await staged.WriteAsync(header, cancellationToken).ConfigureAwait(false);
                     await staged.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                    states += page.States.Count;
                     if (page.States.Count > 0)
                     {
                         var last = page.States[^1];
@@ -162,7 +172,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             _timing.Record(staging.TotalSeconds, new KeyValuePair<string, object?>("phase", "stage"));
         }
 
-        return terminal;
+        return (terminal, states, count);
     }
 
     private static async IAsyncEnumerable<ReplicaSnapshotPage> ReadStagedAsync(FileStream staged, TenantContext database, Ulid incarnation,

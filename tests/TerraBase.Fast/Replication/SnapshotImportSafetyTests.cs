@@ -109,7 +109,7 @@ public sealed class SnapshotImportSafetyTests
                     }
                     else if (expiry == 1)
                     {
-                        clock.Advance(TursoReplicaSnapshotImporter.ReplayTimeout + TimeSpan.FromSeconds(1));
+                        clock.Advance(TursoReplicaSnapshotImporter.BaseReplayTimeout + TimeSpan.FromSeconds(1));
                     }
                 }
             });
@@ -141,6 +141,78 @@ public sealed class SnapshotImportSafetyTests
             {
                 clock.Advance(TursoReplicaSnapshotImporter.ImportTimeout + TimeSpan.FromSeconds(1));
                 cancellationToken.ThrowIfCancellationRequested();
+            }
+            await Task.CompletedTask;
+            yield return new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc> { [origin] = stamp });
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Staged_work_extends_the_replay_budget_but_never_past_its_cap(bool capped)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var reached = false;
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            services.AddSingleton<TimeProvider>(clock);
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+            {
+                if (step == "replication.snapshot.page" && !reached)
+                {
+                    reached = true;
+                    clock.Advance((capped ? TursoReplicaSnapshotImporter.MaxReplayTimeout : TursoReplicaSnapshotImporter.BaseReplayTimeout)
+                        + TimeSpan.FromSeconds(1));
+                }
+            });
+        });
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
+        var origin = ReplicaId.Of(99, 7, 0);
+        var stamp = engine.Member.Clock.Tick();
+        using var body = System.Text.Json.JsonDocument.Parse("""{"staged":true}""");
+        var state = DocumentState.Bottom.Put(new EntryVersion(stamp, origin), body.RootElement);
+        var states = Enumerable.Range(0, capped ? 65_535 : 1024).Select(_ => new RepairState("snapshot_budget", Ulid.NewUlid().ToString(), state))
+            .OrderBy(row => TursoStorageTransaction.Bucket(row.Collection, row.Id)).ThenBy(row => row.Id, StringComparer.Ordinal).ToArray();
+        var importer = api.Server.Services.GetRequiredService<IReplicaSnapshotImporter>();
+        if (capped)
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(ImportAsync);
+        }
+        else
+        {
+            await Assert.That(await ImportAsync()).IsTrue();
+        }
+        await Assert.That(reached).IsTrue();
+        await using (var write = await store.BeginDurableTransactionAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(1), token))
+        {
+            _ = await write.CommitAsync(token);
+        }
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        await Assert.That(await read.GetAsync("snapshot_budget", states[0].Id, token) is not null).IsEqualTo(!capped);
+        await Assert.That((await read.GetAppliedAsync(token)).ContainsKey(origin)).IsEqualTo(!capped);
+
+        Task<bool> ImportAsync()
+        {
+            return importer.ImportAsync(ChangeGroups.System, store.Incarnation, Pages(token), new HashSet<ulong> { origin.Value }, token);
+        }
+
+        async IAsyncEnumerable<ReplicaSnapshotPage> Pages([EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            // Exactly 65,536 frames including data and terminal: frame work alone exceeds the five-minute cap.
+            if (capped)
+            {
+                foreach (var row in states)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    yield return new ReplicaSnapshotPage([row]);
+                }
+            }
+            else
+            {
+                yield return new ReplicaSnapshotPage(states);
             }
             await Task.CompletedTask;
             yield return new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc> { [origin] = stamp });

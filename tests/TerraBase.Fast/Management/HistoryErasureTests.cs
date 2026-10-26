@@ -286,6 +286,9 @@ public sealed class HistoryErasureTests
             await RunAsync(sjc);
             await Assert.That(await UntilAsync(gru, async () =>
             {
+                // Hosted passes are disabled. A failed witness backs off, so keep driving recovery after it returns;
+                // two immediate passes need not import while that retry window is still closed.
+                await RunAsync(sjc);
                 var (_, receipts) = await Service(gru).StatusAsync((await RecordAsync(gru, erasure))!, CancellationToken.None);
                 if (receipts.FirstOrDefault(receipt => receipt.MachineId == sjc.Name && receipt.Replica == sjc.Node.Value) is not { PreviousReplicas: null } own)
                 {

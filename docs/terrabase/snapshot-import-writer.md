@@ -27,8 +27,20 @@ The snapshot RPC starts on enumeration, after the receiver captures that generat
 Rollbacks may cause conservative retries, but never authorize publication. Restart/replacement cannot reuse an in-flight
 store, so the generation needs no on-disk field.
 
-An import has a ten-minute overall deadline and a five-second replay deadline, both linked to the caller's cancellation.
+An import has a ten-minute overall deadline. Its replay allowance is five seconds plus two milliseconds per staged
+state, ten milliseconds per frame (terminal included), and encoded bytes at four MiB per second, capped at five minutes.
+Both deadlines remain linked to the caller's cancellation. A measured 20,000-state SYSTEM import took 6.93 seconds for
+initial apply and 3.56 seconds for reimport on an eight-CPU runtime; the fixed five-second replay limit rejected it.
+The work allowance is deliberately slower than that measured throughput, to admit large catalogs on contended runners.
 Expiry before commit rolls back all joins, collected absence and prefix proofs. Native statements cancel between storage
 calls; the deadline cannot preempt an individual running native statement or undo a commit already completed.
 `terrabase.replication.snapshot_import` records receive, staging and apply seconds with a bounded `phase` label.
 Apply includes writer acquisition and transaction cleanup; it is an upper bound on the writer hold for that attempt.
+
+Known limit: a replay can hold the writer for its entire allowance, up to five minutes, subject to the remaining overall
+and caller deadlines. Cancellation is cooperative: a running native statement and rollback cleanup can extend that
+hold, so five minutes is not an absolute wall-clock guarantee. This fixes admission of large atomic imports, not their
+long local apply holds. Incremental apply with atomic publication of the TS-1012 provisional forget is follow-up work.
+
+Recovery tests with hosted erasure passes disabled must keep driving the holder after a failed witness returns: a retry
+can remain backed off. The immediate epoch-stalled status and operator alert do not wait for that recovery retry.
