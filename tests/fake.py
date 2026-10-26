@@ -255,7 +255,8 @@ class Fake:
         if rest in ("/sql/check", "/sql/explain"):
             return httpx.Response(200, json={"ok": True, "plan": "SCAN"})
         if rest == "/sql/execute":
-            results = [{"columns": ["n"], "rows": [[len(s.get("args") or s.get("named") or [])]], "rows_affected": 0,
+            results = [{"columns": [{"name": "n", "decltype": None}],
+                        "rows": [[len(s.get("args") or s.get("named") or [])]], "rows_affected": 0,
                         "last_insert_rowid": None} for s in body["statements"]]
             return httpx.Response(200, json={"results": results})
         return self._err(404, "unknown_route")

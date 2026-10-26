@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import math
 import re
 import threading
 import time
@@ -86,10 +87,11 @@ class _Exchange:
             body = response.json()
             token = body["access_token"]
             lifetime = float(body["expires_in"])
-            ok = isinstance(token, str) and token and str(body.get("token_type", "")).lower() == "bearer"
+            ok = isinstance(token, str) and re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token) is not None
+            ok = ok and str(body.get("token_type", "")).lower() == "bearer"
         except (ValueError, KeyError, TypeError, OverflowError):
             ok = False
-        if not ok or lifetime <= 0:
+        if not ok or not math.isfinite(lifetime) or lifetime <= 0:
             # The body may hold credentials: never include it.
             raise TokenError(response.status_code, "invalid_token_response", "not a Bearer access_token with expires_in",
                              request_id=response_request_id(response.headers))

@@ -114,12 +114,12 @@ def _conditions(if_match: str | None, if_none_match_any: bool) -> dict[str, str]
     return {}
 
 
-def _page_params(limit: int | None, cursor: str | None) -> dict[str, str]:
+def _page_params(limit: int | None, cursor: str | None, key: str = "cursor") -> dict[str, str]:
     params: dict[str, str] = {}
     if limit:
         params["limit"] = str(limit)
     if cursor:
-        params["cursor"] = cursor
+        params[key] = cursor
     return params
 
 
@@ -138,7 +138,7 @@ def _placement(home_region: str | None, replica_regions: Sequence[str] | None, a
 
 def list_databases(project: str, limit: int | None, cursor: str | None) -> Call:
     return Call("GET", ["v1", "projects", project, "databases"], lambda r: models.DatabasePage.from_json(r.json()),
-                params=_page_params(limit, cursor), replay_safe=True)
+                params=_page_params(limit, cursor, "after"), replay_safe=True)
 
 
 def create_database(project: str, db: str, home_region: str | None, replica_regions: Sequence[str] | None,
@@ -301,7 +301,7 @@ def execute(project: str, db: str, statements: Sequence[dict[str, Any]]) -> Call
     if not statements:
         raise ValueError("execute needs at least one statement")
     return Call("POST", _db(project, db, "sql", "execute"),
-                lambda r: [models.SQLStatementResult.from_json(x) for x in r.json().get("results") or []],
+                lambda r: [models.SQLStatementResult.from_json(x) for x in _result_count(r.json(), len(statements))["results"]],
                 body={"statements": list(statements)})
 
 

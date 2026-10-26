@@ -7,7 +7,7 @@ asyncio, built on [httpx](https://www.python-httpx.org/). Python 3.10+.
 ```sh
 pip install terrascale
 # until the first PyPI release:
-pip install "git+https://github.com/TerraScale/ts-python@v0.0.1"
+pip install "git+https://github.com/TerraScale/ts-python@v0.0.2"
 ```
 
 ## Quickstart
@@ -21,10 +21,16 @@ export TERRASCALE_PROJECT_ID=YOUR_PROJECT_ULID
 ```
 
 ```python
-from terrascale import TerraScale, query as q
+from terrascale import ConflictError, TerraScale, query as q
 
 with TerraScale() as ts:                       # reads TERRASCALE_API_KEY / TERRASCALE_PROJECT_ID
-    todos = ts.database("main").collection("todos")
+    db = ts.database("main")
+    try:
+        db.create_collection("todos")
+    except ConflictError as exc:
+        if exc.code != "name_taken":
+            raise
+    todos = db.collection("todos")
 
     res = todos.create({"title": "Ship the Python SDK", "done": False})
     doc = todos.get(res.id)
@@ -39,6 +45,8 @@ short-lived project access token, cached and refreshed automatically. Keep keys
 on your server and out of git. See [examples/quickstart.py](examples/quickstart.py).
 
 ### Async
+
+This snippet reuses the `todos` collection created above.
 
 ```python
 from terrascale import AsyncTerraScale
@@ -111,15 +119,21 @@ diagnostic metadata, never proof of identity, ownership or authorization.
 Existing error strings are unchanged; report `exc.request_id` separately and
 keep credentials, URLs with query values and response bodies out of logs.
 
-A success response that cannot be decoded raises `APIError` with code
+An invalid acknowledgement raises an `APIError` subclass with code
 `invalid_response`, its HTTP status and request ID, rather than a raw parser
 exception. Its fixed message omits response contents; the SDK does not retry it.
 Malformed token success responses retain `TokenError` / `invalid_token_response`
 and now carry the request ID too. Transport failures with no response have no ID.
 
-Reads, queries and `if_match` writes are retried on 429 and transient 503s,
-honouring `Retry-After`. Other writes are never replayed: a transport failure on
-a write raises `CommitUncertainError`; re-read before retrying.
+Reads and read-only queries retry transport failures, 429 and transient 503s,
+honouring `Retry-After`. Writes, including `if_match` writes, are never replayed
+after an ambiguous failure. A transport failure, 5xx or malformed acknowledgement
+raises `CommitUncertainError`; reconcile state before retrying. Transactions
+cannot be changed or committed again after submission; context exit sends once.
+Malformed read responses raise `InvalidResponseError`.
+
+SQL `execute`/`batch` columns are `SQLColumn(name, decltype)` objects. SQL errors
+retain `statement` and `sqlite_code` alongside the standard `APIError` fields.
 
 ## Development
 
