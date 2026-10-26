@@ -150,14 +150,16 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         await ShotAsync("2-unknown-create");
         await page.GetByRole(AriaRole.Link, new() { Name = "Reload webhooks", Exact = true }).ClickAsync();
         await page.Locator("#webhooks").WaitForAsync();
-        await page.GetByText("Delete webhook", new() { Exact = true }).ClickAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Confirm delete webhook", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).First.ClickAsync();
+        await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).ClickAsync();
         await page.GetByText("No webhooks yet.", new() { Exact = true }).WaitForAsync();
         flow.CreateFault = "";
         await page.GetByLabel("HTTPS endpoint", new() { Exact = true }).FillAsync("https://receiver.example/events");
-        var created = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Create webhook", Exact = true }).ClickAsync(),
+        var created = await page.RunAndWaitForResponseAsync(() => page.Locator("form[action='/api/v1/dashboard/webhooks']")
+            .EvaluateAsync("form => { form.requestSubmit(); form.requestSubmit(); }"),
             response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == "/api/v1/dashboard/webhooks");
         await Assert.That(created.Status).IsEqualTo(201);
+        await Assert.That(flow.Creates).IsEqualTo(2).Because("The failed acknowledgement and later successful create each send one mutation despite repeated submission.");
         await page.Locator("#webhook-secret").WaitForAsync();
         await Assert.That(await page.Locator("#webhook-secret").EvaluateAsync<string>("el => getComputedStyle(el).color")).IsEqualTo("rgba(0, 0, 0, 0)");
         await Assert.That(await page.Locator(".ts-account-email").First.EvaluateAsync<string>("el => getComputedStyle(el).visibility")).IsEqualTo("hidden");
@@ -174,8 +176,13 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         await page.WaitForLoadStateAsync(LoadState.Load);
         await BrowserAudit.AssertAccessibleAsync(page, "Webhook controls and delivery records remain accessible.");
         await ShotAsync("4-delivery");
-        await page.GetByText("Delete webhook", new() { Exact = true }).ClickAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Confirm delete webhook", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).First.ClickAsync();
+        await Assert.That(await page.Locator("dialog[open]").InnerTextAsync()).Contains("https://receiver.example/events");
+        await ShotAsync("4a-named-delete-confirmation");
+        await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
+        await Assert.That(flow.Created).IsTrue();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).First.ClickAsync();
+        await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Delete webhook", Exact = true }).ClickAsync();
         await page.GetByText("No webhooks yet.", new() { Exact = true }).WaitForAsync();
         await Assert.That(flow.Created).IsFalse();
         await ShotAsync("5-deleted");
@@ -204,6 +211,7 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         public bool Created { get; private set; }
         public bool FeedGap { get; set; }
         public int Calls { get; private set; }
+        public int Creates { get; private set; }
         public string CreateFault { get; set; } = "";
         public TaskCompletionSource CreatePersisted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private string csrf = "", organization = "", project = "";
@@ -263,6 +271,7 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
             http.Response.Headers["X-TerraBase-Region"] = "gru";
             if (http.Request.Method == "POST")
             {
+                Creates++;
                 using var body = await JsonDocument.ParseAsync(http.Request.Body);
                 if (body.RootElement.GetProperty("url").GetString() != "https://receiver.example/events") throw new InvalidOperationException("Unexpected endpoint.");
                 if (CreateFault == "refused") return Results.Json(new { error = new { code = "invalid_request", message = "Invalid endpoint." } }, statusCode: 400);

@@ -57,6 +57,11 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
             sourceId = await CreateAsync(client, csrf, "paused-source");
             await SeedAsync(client, csrf, sourceId);
             var backupId = await BackupAsync(client, csrf, sourceId);
+            var backupHtml = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + sourceId + "/backups"));
+            var nameInput = System.Text.RegularExpressions.Regex.Match(backupHtml, "<input[^>]+name=\"name\"[^>]*>").Value;
+            await Assert.That(nameInput).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
+            await Assert.That(nameInput.Contains("required", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(backupHtml).Contains(DatabaseService.NameHint).And.Contains("Leave blank to automatically choose");
             await WriteAsync(client, csrf, sourceId, "replace", 2);
             using (var paused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/settings/backup-policy", new()
             {

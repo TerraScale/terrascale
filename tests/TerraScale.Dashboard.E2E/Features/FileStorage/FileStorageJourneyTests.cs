@@ -22,6 +22,7 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
         var completed = false;
         var unavailable = false;
         var requests = 0;
+        var bucketDeletes = 0;
         var rules = new TerraBaseFileRules("/userId", new(true, false, []), new(true, false, []));
         var bucket = new TerraBaseFileBucket(Bucket, "avatars", "gru", rules);
         var capability = new TerraBaseFileUrl(FileId, "https://fixture.r2.cloudflarestorage.com/files/test?signature=synthetic",
@@ -62,7 +63,12 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
                 }
                 if (path.EndsWith("/complete", StringComparison.Ordinal)) { completed = true; return Results.Json(stored); }
                 if (path.EndsWith("/download", StringComparison.Ordinal)) return Results.Json(capability);
-                if (http.Request.Method == "DELETE") { completed = false; return Results.NoContent(); }
+                if (http.Request.Method == "DELETE")
+                {
+                    if (path.EndsWith("/buckets/" + Bucket, StringComparison.Ordinal)) Interlocked.Increment(ref bucketDeletes);
+                    completed = false;
+                    return Results.NoContent();
+                }
                 return Results.NotFound();
             });
         using var client = scenario.CreateClient();
@@ -105,6 +111,17 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
         using var delete = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/storage/delete", form);
         await Assert.That(delete.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(await client.GetStringAsync("/storage")).Contains("No completed files");
+        foreach (var confirmation in new[] { "", "other-bucket", "Avatars" })
+        {
+            using var wrongBucket = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/storage/delete-bucket", new()
+            { ["_csrf"] = csrf, ["bucket"] = Bucket, ["confirmName"] = confirmation });
+            await Assert.That(wrongBucket.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(bucketDeletes).IsEqualTo(0);
+        }
+        using var deleteBucket = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/storage/delete-bucket", new()
+        { ["_csrf"] = csrf, ["bucket"] = Bucket, ["confirmName"] = "avatars" });
+        await Assert.That(deleteBucket.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(bucketDeletes).IsEqualTo(1);
         unavailable = true;
         using var error = await client.GetAsync("/storage");
         await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);

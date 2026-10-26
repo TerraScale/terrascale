@@ -26,8 +26,25 @@ public sealed class FileStorageService(AccountService accounts, IProjectAccessTo
     public async Task SetRulesAsync(AccountContext context, string bucket, TerraBaseFileRules rules, CancellationToken token) =>
         _ = await (await ProjectAsync(context, true, token)).SetFileBucketRulesAsync(bucket, rules, token);
 
-    public async Task DeleteBucketAsync(AccountContext context, string bucket, CancellationToken token) =>
-        await (await ProjectAsync(context, true, token)).DeleteFileBucketAsync(bucket, token);
+    public async Task DeleteBucketAsync(AccountContext context, string bucket, string confirmation, CancellationToken token)
+    {
+        var client = await ProjectAsync(context, true, token);
+        TerraScaleIds.Validate(bucket);
+        string? after = null;
+        do
+        {
+            var page = await client.ListFileBucketsAsync(after, token);
+            if (page.Items.FirstOrDefault(item => item.Id == bucket) is { } target)
+            {
+                if (!string.Equals(confirmation, target.Name, StringComparison.Ordinal))
+                    throw new AccountAccessException("Type the bucket name exactly to confirm deletion.", 422);
+                await client.DeleteFileBucketAsync(bucket, token);
+                return;
+            }
+            after = page.Next;
+        } while (after is not null);
+        throw new AccountAccessException("The bucket is unavailable in this project.", 404);
+    }
 
     public async Task<TerraBaseFileUrl> UploadAsync(AccountContext context, string bucket, TerraBaseFileUpload upload, CancellationToken token) =>
         await (await ProjectAsync(context, true, token)).CreateFileUploadAsync(bucket, upload, token);

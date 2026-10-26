@@ -75,7 +75,7 @@ public sealed partial class TsAuthPlatformJourneyTests
                     case "import-cancel": await imports.CancelAsync(context, destination, ct); break;
                     case "import-resume": await imports.ResumeAsync(context, destination, ct); break;
                     case "import-start": await imports.StartAsync(context, destination, wire.PreviewId, true, ct); break;
-                    case "file": await files.DeleteBucketAsync(context, AccountService.NewId(), ct); break;
+                    case "file": await files.DeleteBucketAsync(context, wire.BucketId, "avatars", ct); break;
                     case "function": await functions.DeleteAsync(context, new() { Id = id, Name = "forged-name" }, "worker", ct); break;
                     case "function-read": await functions.ListAsync(context, DatabaseService.Database(context, id), ct); break;
                     case "webhook": await hooks.DeleteAsync(context, id, "items", AccountService.NewId(), ct); break;
@@ -307,6 +307,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         public WarmDataTokens Tokens { get; init; } = null!;
         public List<string> Imports { get; } = [];
         public string PreviewId { get; } = AccountService.NewId();
+        public string BucketId { get; } = AccountService.NewId();
         public List<string> Paths { get; } = [];
         public HttpClient CreateClient(string name) => new(new DataRouter(this, Fallback.CreateClient(name)));
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -347,6 +348,9 @@ public sealed partial class TsAuthPlatformJourneyTests
                 });
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") });
             }
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath.EndsWith("/buckets", StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+                { items = new[] { new TerraBaseFileBucket(BucketId, "avatars", "gru", new(null, new(false, false, []), new(false, false, []))) }, next = (string?)null }), System.Text.Encoding.UTF8, "application/json") });
             return Task.FromResult(request.Method == HttpMethod.Get
                 ? new(HttpStatusCode.OK) { Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json") }
                 : new HttpResponseMessage(HttpStatusCode.NoContent));

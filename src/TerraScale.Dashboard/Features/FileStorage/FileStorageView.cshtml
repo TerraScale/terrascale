@@ -64,7 +64,7 @@
                             <form method="post" action="/api/v1/dashboard/storage/download"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Download " + file.Name)">Download</button></form>
                             @if (canWrite)
                             {
-                                <form method="post" action="/api/v1/dashboard/storage/delete"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Delete " + file.Name)">Delete file</button></form>
+                                @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, "This permanently deletes the file. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id })))
                             }
                         </td></tr>
                     }
@@ -96,10 +96,10 @@
                         <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save rules</button></div>
                     </form></div></details>
                 }
-                <details class="ts-card ts-card-boxed"><summary class="ts-card-header">Delete bucket</summary><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/storage/delete-bucket">
-                    <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
-                    <p class="ts-meta">Delete every file and wait for storage cleanup first. Only empty buckets can be deleted.</p><div class="ts-form-actions"><button class="ts-btn ts-btn-danger" type="submit">Delete empty bucket</button></div>
-                </form></div></details>
+                @if (selected is not null)
+                {
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-bucket-" + bucketId, "/api/v1/dashboard/storage/delete-bucket", "Delete empty bucket", selected.Name, "Delete every file and wait for storage cleanup first. Only empty buckets can be deleted. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["bucketAfter"] = listing.BucketAfter ?? "" }, selected.Name)))
+                }
             }
         }
         @if (!canWrite)
