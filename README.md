@@ -37,11 +37,13 @@ uses all current serving regions, even when `home_region` is set.
 `all_regions: Some(true)` also follows future serving regions. Creating with an
 explicit empty replica list returns HTTP 400.
 
-For deletion, call `Database::update_database` with `replica_regions: Some(vec![])`,
-then immediately call `Database::delete_database`; otherwise deletion returns
-HTTP 409 `database_replicated`. The empty list is only for immediate deletion
-teardown, not a supported single-region database. During teardown, document
-writes return HTTP 409 `placement_needs_two_regions`.
+For deletion, call `Database::delete_database` directly in the database's home
+region, without a preceding placement update. Deletion covers every replica,
+including all-regions placement. HTTP 204 confirms logical deletion and local
+cleanup; remote erasure is retried durably and may complete later.
+Updating to an empty replica list can temporarily disable document writes with
+HTTP 409 `placement_needs_two_regions`; it does not provide supported
+single-region placement.
 
 ### Relational SQL
 

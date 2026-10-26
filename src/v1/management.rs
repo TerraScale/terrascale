@@ -101,9 +101,9 @@ impl Database {
     }
 
     /// `PATCH D`; writable databases require at least two distinct serving regions.
-    /// An empty replica list is accepted only for immediate deletion teardown,
-    /// not a supported single-region database. Document writes during teardown
-    /// fail with HTTP 409 `placement_needs_two_regions`.
+    /// An empty replica list can temporarily disable document writes with HTTP 409
+    /// `placement_needs_two_regions`. It does not provide supported single-region
+    /// placement and is not required before deletion.
     pub async fn update_database(
         &self,
         placement: &DatabasePlacement,
@@ -112,8 +112,10 @@ impl Database {
             .await
     }
 
-    /// `DELETE D`; first call `update_database` with `replica_regions: Some(vec![])`,
-    /// then delete immediately. Otherwise the server returns HTTP 409 `database_replicated`.
+    /// `DELETE D` directly in the database's home region, without a placement update.
+    /// Deletion covers every replica, including all-regions placement. HTTP 204
+    /// confirms logical deletion and local cleanup; remote erasure is retried
+    /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {
         check_name("database", self.name())?;
         self.client()

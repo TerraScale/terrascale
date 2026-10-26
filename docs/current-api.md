@@ -44,11 +44,12 @@ later regions; responses default it to `false` when absent. Nullable `home_regio
 `replicas()` derives an empty slice for null replicas. `placement_version` is
 an exact i64. Serving `ProjectDatabaseInfo` responses require `region`.
 
-For deletion, first PATCH `replicaRegions: []` using `update_database`, then
-immediately call `delete_database`. Otherwise DELETE returns HTTP 409
-`database_replicated`. The empty list is only for immediate deletion teardown,
-not a supported single-region database. Document writes during teardown return
-HTTP 409 `placement_needs_two_regions`.
+For deletion, call `delete_database` directly in the database's home region,
+without a preceding placement update. Deletion covers every replica, including
+all-regions placement. HTTP 204 confirms logical deletion and local cleanup;
+remote erasure is retried durably and may complete later. Updating to an empty
+replica list can temporarily disable document writes with HTTP 409
+`placement_needs_two_regions`; it does not provide supported single-region placement.
 
 ## Errors and retries
 
