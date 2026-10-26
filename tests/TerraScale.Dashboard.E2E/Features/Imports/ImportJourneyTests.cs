@@ -53,8 +53,13 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         await Assert.That(complete.GetProperty("validation").GetProperty("passed").GetBoolean()).IsTrue();
         await Assert.That(complete.GetProperty("validation").GetProperty("tables")[0].GetProperty("documents").GetInt64()).IsEqualTo(2);
         var id = (await JsonAsync(await client.GetAsync("/api/v1/dashboard/databases"))).EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetString();
-        var documents = await JsonAsync(await client.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=people_test"));
-        await Assert.That(documents.EnumerateArray().Select(row => row.GetProperty("value").GetProperty("name").GetString()).Order().SequenceEqual(new[] { "Ada", "Grace" })).IsTrue();
+        using var response = await client.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=people_test");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var documents = await JsonAsync(response);
+        await Assert.That(documents.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(documents.GetProperty("hasMore").GetBoolean()).IsFalse();
+        await Assert.That(documents.GetProperty("limit").GetInt32()).IsEqualTo(100);
+        await Assert.That(documents.GetProperty("documents").EnumerateArray().Select(row => row.GetProperty("value").GetProperty("name").GetString()).Order().SequenceEqual(new[] { "Ada", "Grace" })).IsTrue();
     }
 
     [Test]
