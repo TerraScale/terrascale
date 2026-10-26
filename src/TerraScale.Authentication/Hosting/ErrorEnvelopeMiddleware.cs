@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraScale.Authentication.Contracts;
 using ZLogger;
 
@@ -84,6 +85,11 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             context.Response.Clear();
             context.Response.StatusCode = error.Status;
             context.Response.Headers.CacheControl = "no-store";
+            if (error.RetryAfter is { } wait)
+            {
+                context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
+            }
+
             await context.Response.WriteAsJsonAsync(error.ToBody(), context.RequestAborted);
         }
         catch (Exception writeFailure) when (writeFailure is not OutOfMemoryException)

@@ -14,6 +14,13 @@ public sealed class ApiException(int status, string code, string message, Except
     /// <summary>Stable, machine-readable error code.</summary>
     public string Code { get; } = code;
 
+    /// <summary>How long a rate-limited caller must wait; the JSON envelope sends it as <c>Retry-After</c>.</summary>
+    public TimeSpan? RetryAfter { get; init; }
+
+    /// <summary>A 429 <c>rate_limited</c> answer that waits <paramref name="retryAfter"/>, the persisted budget's remaining window.</summary>
+    public static ApiException RateLimited(string message, TimeSpan retryAfter) =>
+        new(429, "rate_limited", message) { RetryAfter = retryAfter };
+
     /// <summary>An unexpected failure whose details stay in server logs.</summary>
     public static ApiException Internal() =>
         new(500, "internal_error", "An unexpected error occurred.");
