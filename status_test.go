@@ -146,7 +146,7 @@ func TestStatusErrorsAndRetries(t *testing.T) {
 	}{
 		{"transient recovery", 503, 1, 2, true},
 		{"rate limit recovery", 429, 1, 2, true},
-		{"exhausted retries", 503, 2, 3, false},
+		{"exhausted retries", 503, 3, 4, false},
 		{"not found", 404, 2, 1, false},
 		{"redirect refused", 302, 2, 1, false},
 	} {
@@ -166,7 +166,7 @@ func TestStatusErrorsAndRetries(t *testing.T) {
 				io.WriteString(w, `{"error":{"code":"latency_unavailable","message":"try later","fix":"retry"}}`)
 			}))
 			t.Cleanup(server.Close)
-			client, err := NewClient(Config{StatusBaseURL: server.URL, MaxRetryAttempts: test.retries, RetryDelay: time.Millisecond})
+			client, err := NewClient(Config{StatusBaseURL: server.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,11 +224,15 @@ func TestStatusContextAndTimeout(t *testing.T) {
 				<-r.Context().Done()
 			}))
 			t.Cleanup(server.Close)
-			client, err := NewClient(Config{StatusBaseURL: server.URL, RequestTimeout: 100 * time.Millisecond, MaxRetryAttempts: 2})
+			client, err := NewClient(Config{StatusBaseURL: server.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out, err := client.Status.Latency(t.Context(), ""); !errors.Is(err, context.DeadlineExceeded) || out != nil {
+			deadlineCtx, deadlineCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer deadlineCancel()
+			out, err := client.Status.Latency(deadlineCtx, "")
+			var refused *RetryBudgetError
+			if out != nil || (!retry && !errors.Is(err, context.DeadlineExceeded)) || (retry && !errors.As(err, &refused)) {
 				t.Fatalf("request timeout not honored: %v", err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -253,7 +257,7 @@ func TestStatusResponseLimit(t *testing.T) {
 		w.Header().Set("Content-Length", strconv.FormatInt(MaxResponseBodyBytes+1, 10))
 	}))
 	t.Cleanup(server.Close)
-	client, err := NewClient(Config{StatusBaseURL: server.URL, MaxRetryAttempts: 2})
+	client, err := NewClient(Config{StatusBaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

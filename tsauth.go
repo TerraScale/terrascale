@@ -146,14 +146,10 @@ func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, 
 	if int64(len(payload)) > MaxRequestBodyBytes {
 		return fmt.Errorf("sdk: %s request body exceeds %d bytes", route, MaxRequestBodyBytes)
 	}
-	requestCtx := ctx
-	cancel := func() {}
-	if timeout := c.cfg.RequestTimeout; timeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, timeout)
-	}
+	requestCtx, cancel := context.WithTimeout(ctx, MaxRequestTimeout)
 	defer cancel()
 	retryable := tsAuthRetryable(method)
-	maxRetries := c.cfg.MaxRetryAttempts
+	maxRetries := maxRetryAttempts
 	attempt := 0
 	for {
 		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, base, method, path, query, payload, contentType, authorization, route)
@@ -190,8 +186,8 @@ func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, 
 			apiErr = tsAuthErrorFromResponse(route, method, path, status, headers, respBody)
 		}
 		incompleteSuccess := responseErr != nil && status >= 200 && status < 300
-		if retryable && attempt < maxRetries && (retryableStatuses[status] || incompleteSuccess) {
-			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
+		if retryable && attempt < maxRetries && (retryableStatus(status) && apiErr.Code != "quota_exceeded" || incompleteSuccess) {
+			if sleepErr := waitRootRetry(requestCtx, c.retryDelayFor(headers, attempt), apiErr); sleepErr != nil {
 				return sleepErr
 			}
 			attempt++

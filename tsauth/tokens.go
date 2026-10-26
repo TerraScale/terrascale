@@ -336,17 +336,13 @@ func tokenEndpoint(issuer string) (string, error) {
 // URL (http for loopback) without user info, query, fragment or escaped
 // path segments; a trailing slash is dropped.
 func parseIssuer(issuer string) (*url.URL, error) {
-	return parseIssuerWithInsecureHTTP(issuer, false)
-}
-
-func parseIssuerWithInsecureHTTP(issuer string, allowInsecureHTTP bool) (*url.URL, error) {
 	if issuer == "" {
 		issuer = DefaultIssuer
 	}
 	u, err := url.Parse(issuer)
 	// A RawPath means escapes such as %2F that the decoded Path loses.
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" ||
-		(u.Scheme != "https" && !(u.Scheme == "http" && (allowInsecureHTTP || loopback(u.Hostname())))) {
+		(u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname()))) {
 		return nil, fmt.Errorf("tsauth: Issuer %q must be an https URL without a query or escaped path", issuer)
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 type httpAuthSafetyTransport func(*http.Request) (*http.Response, error)
@@ -19,10 +18,8 @@ func (f httpAuthSafetyTransport) RoundTrip(request *http.Request) (*http.Respons
 func newHTTPAuthSafetyInstance(t *testing.T, transport httpAuthSafetyTransport) *TSAuthInstanceClient {
 	t.Helper()
 	client, err := NewClient(Config{
-		TSAuthBaseURL:    "https://auth.example.test",
-		HTTPClient:       &http.Client{Transport: transport},
-		MaxRetryAttempts: 3,
-		RetryDelay:       time.Millisecond,
+		TSAuthBaseURL: "https://auth.example.test",
+		HTTPClient:    &http.Client{Transport: transport},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -283,8 +280,7 @@ func TestHTTPAuthDiagnosticSafetyCompleteResponses(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			attempts := 0
 			client, err := NewClient(Config{
-				TSAuthBaseURL:    "https://auth.example.test",
-				MaxRetryAttempts: 3, RetryDelay: time.Millisecond,
+				TSAuthBaseURL: "https://auth.example.test",
 				HTTPClient: &http.Client{Transport: httpAuthSafetyTransport(func(request *http.Request) (*http.Response, error) {
 					attempts++
 					body := `{"code":"response_read_failed"}`

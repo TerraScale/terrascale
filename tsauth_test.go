@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 func newTSAuthTestInstance(t *testing.T, cfg Config) *TSAuthInstanceClient {
@@ -36,7 +35,7 @@ func TestTSAuthUsesOneGlobalHost(t *testing.T) {
 		}
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)), Request: r}, nil
 	})
-	instance := newTSAuthTestInstance(t, Config{HTTPClient: &http.Client{Transport: transport}, MaxRetryAttempts: 1, RetryDelay: time.Millisecond})
+	instance := newTSAuthTestInstance(t, Config{HTTPClient: &http.Client{Transport: transport}})
 	if _, err := instance.OIDC.GetUserInfo(t.Context(), "access-token"); err != nil {
 		t.Fatal(err)
 	}
@@ -120,9 +119,7 @@ func TestTSAuthRetryPolicy(t *testing.T) {
 	defer server.Close()
 
 	instance := newTSAuthTestInstance(t, Config{
-		TSAuthBaseURL:    server.URL,
-		MaxRetryAttempts: 1,
-		RetryDelay:       time.Millisecond,
+		TSAuthBaseURL: server.URL,
 	})
 	if _, err := instance.OIDC.GetUserInfo(t.Context(), "access-token"); err != nil {
 		t.Fatalf("retried userinfo error = %v", err)

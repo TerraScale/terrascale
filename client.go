@@ -77,14 +77,6 @@ type Config struct {
 	// HTTPClient defaults to one with a 30s timeout. The SDK copies it and
 	// disables redirects; explicit 421 placement repair remains supported.
 	HTTPClient *http.Client
-	// MaxRetryAttempts is retries for safe reads on transient failures
-	// (0-8, default 0). Mutations are never retried.
-	MaxRetryAttempts int
-	// RetryDelay is the base retry backoff (default 250ms, max 30s).
-	RetryDelay time.Duration
-	// RequestTimeout bounds the complete request, including retries (default
-	// 30s, maximum 30s). A shorter context deadline still wins.
-	RequestTimeout time.Duration
 }
 
 // Client is the TerraScale SDK entry point.
@@ -123,9 +115,8 @@ func NewClient(cfg Config) (*Client, error) {
 		if ip := net.ParseIP(host); ip != nil {
 			loopback = ip.IsLoopback()
 		}
-		testHost := host == "test" || strings.HasSuffix(host, ".test")
-		if !loopback && !(cfg.HTTPClient != nil && testHost) {
-			return nil, fmt.Errorf("sdk: API endpoints must use HTTPS, except explicit loopback/test transports")
+		if !loopback {
+			return nil, fmt.Errorf("sdk: API endpoints must use HTTPS, except loopback test transports")
 		}
 	}
 	lowerHost := strings.ToLower(u.Hostname())
@@ -142,24 +133,6 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
-	if cfg.MaxRetryAttempts < 0 || cfg.MaxRetryAttempts > 8 {
-		return nil, fmt.Errorf("sdk: max retry attempts must be between 0 and 8")
-	}
-	retryDelay := cfg.RetryDelay
-	if retryDelay == 0 {
-		retryDelay = 250 * time.Millisecond
-	}
-	if retryDelay < 0 || retryDelay > 30*time.Second {
-		return nil, fmt.Errorf("sdk: retry delay must be between 0 and 30s")
-	}
-	requestTimeout := cfg.RequestTimeout
-	if requestTimeout == 0 {
-		requestTimeout = MaxRequestTimeout
-	}
-	if requestTimeout < 0 || requestTimeout > MaxRequestTimeout {
-		return nil, fmt.Errorf("sdk: request timeout must be between 0 and 30s")
-	}
-
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -170,13 +143,10 @@ func NewClient(cfg Config) (*Client, error) {
 	httpClient = &ownedHTTPClient
 
 	c := &Client{cfg: Config{
-		APIBaseURL:       base,
-		TSAuthBaseURL:    strings.TrimSpace(cfg.TSAuthBaseURL),
-		StatusBaseURL:    statusBase,
-		HTTPClient:       httpClient,
-		MaxRetryAttempts: cfg.MaxRetryAttempts,
-		RetryDelay:       retryDelay,
-		RequestTimeout:   requestTimeout,
+		APIBaseURL:    base,
+		TSAuthBaseURL: strings.TrimSpace(cfg.TSAuthBaseURL),
+		StatusBaseURL: statusBase,
+		HTTPClient:    httpClient,
 	}, http: httpClient}
 	c.TSAuth = &TSAuthClient{c: c}
 	c.Status = &StatusClient{c: c}
@@ -206,18 +176,17 @@ func (e *APIError) Error() string {
 		e.Method, e.Path, e.Route, e.Status, e.Code, e.Message)
 }
 
-var retryableStatuses = map[int]bool{
-	http.StatusRequestTimeout:      true,
-	429:                            true,
-	http.StatusInternalServerError: true,
-	http.StatusBadGateway:          true,
-	http.StatusServiceUnavailable:  true,
-	http.StatusGatewayTimeout:      true,
-	520:                            true,
-	521:                            true,
-	522:                            true,
-	523:                            true,
-	524:                            true,
+// Retries are fixed and apply only to safe reads. Deterministic failures and
+// ambiguous server failures are not transient retry candidates.
+const maxRetryAttempts = 3
+const retryBackoff = 250 * time.Millisecond
+
+func retryableStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, 429, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 521, 522, 523, 524:
+		return true
+	}
+	return false
 }
 
 func bearerAuthorization(value string) (string, error) {
@@ -434,9 +403,9 @@ func (c *Client) retryDelayFor(headers http.Header, attempt int) time.Duration {
 			return d
 		}
 	}
-	d := c.cfg.RetryDelay << attempt
+	d := retryBackoff << attempt
 	if d <= 0 {
-		return c.cfg.RetryDelay
+		return retryBackoff
 	}
 	if d > MaxRetryAfter {
 		return MaxRetryAfter
@@ -445,8 +414,7 @@ func (c *Client) retryDelayFor(headers http.Header, attempt int) time.Duration {
 }
 
 // retryAfterFromHeader exposes the Retry-After the server sent (delta-seconds
-// or HTTP-date) on APIError, uncapped, unlike the capped retry scheduling in
-// parseRetryAfter. Nil when absent or unparseable.
+// or HTTP-date) on APIError and retry scheduling. Nil when absent or unparseable.
 func retryAfterFromHeader(headers http.Header) *time.Duration {
 	value := strings.TrimSpace(headers.Get("Retry-After"))
 	if value == "" {
@@ -472,31 +440,11 @@ func retryAfterFromHeader(headers http.Header) *time.Duration {
 }
 
 func parseRetryAfter(value string) (time.Duration, bool) {
-	v := strings.TrimSpace(value)
-	if v == "" {
+	duration := retryAfterFromHeader(http.Header{"Retry-After": {value}})
+	if duration == nil {
 		return 0, false
 	}
-	if secs, err := strconv.ParseUint(v, 10, 64); err == nil {
-		if secs >= uint64(MaxRetryAfter/time.Second) {
-			return MaxRetryAfter, true
-		}
-		return time.Duration(secs) * time.Second, true
-	} else if isDecimal(v) {
-		// ParseUint reports ErrRange for a hostile but otherwise valid
-		// delta-seconds value. It is still a valid value to cap safely.
-		return MaxRetryAfter, true
-	}
-	if t, err := http.ParseTime(v); err == nil {
-		d := time.Until(t)
-		if d < 0 {
-			d = 0
-		}
-		if d > MaxRetryAfter {
-			d = MaxRetryAfter
-		}
-		return d, true
-	}
-	return 0, false
+	return *duration, true
 }
 
 func isDecimal(value string) bool {

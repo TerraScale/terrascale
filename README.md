@@ -606,10 +606,8 @@ endpoint; pass the `SignUp` token to preserve the pending sign-up, or `""`
 for a sign-in code. Invalid pending tokens succeed without sending an email
 to prevent account enumeration. Respect `APIError.RetryAfter` before retrying.
 
-Issuers require HTTPS. Any existing insecure HTTP issuer support is confined
-to reviewed isolated tests; it is not a first-party deployment mode or setup
-step and remains inventoried for removal. HTTP exposes credentials and tokens.
-Issuer URL validation and the other SDK clients' HTTPS requirement remain.
+Issuers and service origins require HTTPS outside loopback test servers.
+Injecting an HTTP transport does not permit non-loopback HTTP origins.
 First-party confidential client secrets must be created and delivered
 automatically; this SDK docs change does not implement that delivery.
 
