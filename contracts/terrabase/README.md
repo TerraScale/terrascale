@@ -106,3 +106,7 @@ The SDK adaptation will keep operation identity explicit at call sites: a write-
 ## I5 handoff
 
 Root version stays `0.0.2` here; I5 selects the next `0.0.X` candidate after accepted I1/I2 work. Copy `contracts/terrabase/fixtures/**`, `provenance.json`/`producer/**`, `pending-r8.json`/`producer-pending/**` and `artifacts/**` into test output with their relative paths, and include the reviewed contract inputs in the package. The current tests locate fixtures in their source worktree; route-manifest copying already exists. No new package is needed for the in-box SSE/TAR/gzip APIs on net10.0/net11.0. `TerraBaseChangesEvent.Cursor` is now `string?`: I4 must preserve its existing checkpoint on null and process the change, and retain consumer deduplication across reconnects. Update root README/release notes and the J8 compatibility-matrix row to distinguish both schema APIs plus counts, the source pin, usage qualification and unresolved producer gates. Root locks/CI/toolchain provenance stay I5-owned.
+
+## Function catalog extension
+
+`functions.json` pins the four catalog operations to producer `1d823d8534fc5035859a47e263691d0c7cb7b744`, including exact source hashes, scope and replacement semantics. Both SDK route manifests include these scoped additions; their older root producer pins still describe the historical base inventory. Invoke/log/delivery operations remain unimplemented in this phase. HTTP route/DTO fixtures establish no production qualification or complete current-contract parity.
