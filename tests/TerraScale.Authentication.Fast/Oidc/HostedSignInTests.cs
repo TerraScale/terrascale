@@ -82,7 +82,8 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     {
         // The configured origin has an explicit default port, upper case and a Unicode host; a browser sends the
         // serialized ASCII form without the default port.
-        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["public-origin"] = "https://Bücher.Test.Invalid:443");
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["public-origin"] = "https://Bücher.Test.Invalid:443", clock: clock);
         await oidc.CreateUserAsync();
         var form = new Dictionary<string, string> { ["email"] = "alice@example.test", ["next"] = string.Empty };
 
@@ -102,6 +103,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
             using var accepted = await oidc.PostFormAsync(SignIn, form, origin);
             await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await oidc.Email.NextAsync()).Recipient).IsEqualTo("alice@example.test");
+            clock.Advance(HostedAuth.MailCooldown);
         }
     }
 
@@ -288,11 +290,13 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_password_reset_code_works_once_for_its_purpose_and_signs_the_user_out_everywhere()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         const string Address = "alice@example.test";
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync(Address);
         var earlier = tokens.GetProperty("refresh_token").GetString()!;
 
+        clock.Advance(HostedAuth.MailCooldown);
         using (var start = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = Address }))
         {
             await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -331,6 +335,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         }
 
         // A sign-in code cannot reset the password either.
+        clock.Advance(HostedAuth.MailCooldown);
         using (var signInStart = await oidc.PostFormAsync(SignIn, new() { ["email"] = Address, ["next"] = string.Empty }))
         {
             await Assert.That(signInStart.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -381,7 +386,51 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Mail_cooldown_is_shared_across_routes_replicas_and_unknown_addresses_for_sixty_elapsed_seconds()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task A_refused_resend_keeps_code_entry_and_the_original_code_can_still_sign_in(bool known)
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: new ManualClock(DateTimeOffset.UtcNow));
+        const string Email = "alice@example.test";
+        const string Next = "/ui/terrascale/device?user_code=ABCD&view=signin";
+        if (known)
+        {
+            await oidc.CreateUserAsync(Email);
+        }
+
+        using var first = await oidc.PostFormAsync(SignIn, new() { ["email"] = Email, ["next"] = Next });
+        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var code = known ? await oidc.Email.NextCodeAsync(Email) : "000000";
+        using var resend = await oidc.PostFormAsync(SignIn, new() { ["email"] = Email, ["next"] = Next });
+        await Assert.That(resend.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(resend.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.MailCooldown);
+        await Assert.That(resend.Headers.CacheControl!.NoStore).IsTrue();
+        await Assert.That(OidcHarness.SessionCookie(resend)).IsNull();
+        var page = await resend.Content.ReadAsStringAsync();
+        await Assert.That(page).Contains($"<form method=\"post\" action=\"{SignIn}/verify\">");
+        await Assert.That(page).Contains("id=\"sign-in-code\"");
+        await Assert.That(page).Contains($"name=\"email\" value=\"{Email}\"");
+        await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
+        await Assert.That(page).Contains("This request sent no new code.");
+        await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
+        await oidc.Server.App.Services.GetRequiredService<SignInMail>().StopAsync(CancellationToken.None);
+        await Assert.That(oidc.Email.HasPending).IsFalse();
+
+        // No clock advance or third mail start: the original code is usable from the returned form.
+        using var verified = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = Email, ["next"] = Next, ["code"] = code });
+        await Assert.That(verified.StatusCode).IsEqualTo(known ? HttpStatusCode.OK : HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(verified) is not null).IsEqualTo(known);
+        if (known)
+        {
+            await Assert.That(await verified.Content.ReadAsStringAsync()).Contains($"href=\"{WebUtility.HtmlEncode(Next)}\"");
+        }
+    }
+
+    [Test]
+    [Arguments("sign-in")]
+    [Arguments("sign-up")]
+    [Arguments("reset")]
+    public async Task Mail_cooldown_is_shared_across_routes_replicas_and_unknown_addresses_for_sixty_elapsed_seconds(string firstPath)
     {
         // Start one millisecond before a fixed minute boundary: crossing it must not reset the cooldown.
         var clock = new ManualClock(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 60000 * 60000 + 59999));
@@ -389,28 +438,54 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
         await oidc.CreateUserAsync("known@example.test");
 
-        // Five mail starts per address keep both addresses within one IP's mail budget.
         foreach (var email in new[] { "known@example.test", "unknown@example.test" })
         {
-            await SignUpAsync(oidc, email, "correct horse battery");
-            foreach (var path in new[] { "sign-up", "reset" })
+            using (var first = await MailStartAsync(oidc, firstPath, email))
+            {
+                await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            }
+
+            if (email == "known@example.test" || firstPath == "sign-up")
+            {
+                await oidc.Email.NextCodeAsync(email);
+            }
+
+            var before = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items;
+            foreach (var path in new[] { "sign-in", "sign-up", "reset" })
             {
                 using var repeated = await MailStartAsync(oidc, path, $" {email.ToUpperInvariant()} ", replica.Client);
                 await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
                 await Assert.That(repeated.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.MailCooldown);
+                await Assert.That(repeated.Headers.CacheControl!.NoStore).IsTrue();
+                await Assert.That(OidcHarness.SessionCookie(repeated)).IsNull();
+                await Assert.That(await repeated.Content.ReadAsStringAsync()).Contains("Too many attempts");
             }
 
             clock.Advance(HostedAuth.MailCooldown - TimeSpan.FromMilliseconds(1));
-            using (var tooSoon = await MailStartAsync(oidc, "reset", email))
+            using (var tooSoon = await MailStartAsync(oidc, "sign-in", email))
             {
                 await Assert.That(tooSoon.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
                 await Assert.That(tooSoon.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
             }
 
+            var after = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items;
+            await Assert.That(after.Select(item => item.Version).Order(StringComparer.Ordinal)
+                .SequenceEqual(before.Select(item => item.Version).Order(StringComparer.Ordinal))).IsTrue();
             clock.Advance(TimeSpan.FromMilliseconds(1));
-            using var allowed = await MailStartAsync(oidc, "reset", email);
+            using var allowed = await MailStartAsync(oidc, "sign-in", email);
             await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            if (email == "known@example.test")
+            {
+                await oidc.Email.NextCodeAsync(email);
+            }
+
+            // Give the next address its own IP mail window; rejected starts still charge the IP budget.
+            clock.Advance(HostedAuth.MailWindow);
         }
+
+        await oidc.Server.App.Services.GetRequiredService<SignInMail>().StopAsync(CancellationToken.None);
+        await replica.App.Services.GetRequiredService<SignInMail>().StopAsync(CancellationToken.None);
+        await Assert.That(oidc.Email.HasPending).IsFalse();
     }
 
     [Test]
@@ -420,7 +495,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await using var replica = await oidc.StartReplicaAsync();
         var statuses = await Task.WhenAll(Enumerable.Range(0, 6).Select(async index =>
         {
-            using var response = await MailStartAsync(oidc, index % 3 == 0 ? "reset" : "sign-up", "concurrent@example.test", index % 2 == 0 ? oidc.Client : replica.Client);
+            using var response = await MailStartAsync(oidc, index % 3 == 0 ? "reset" : index % 3 == 1 ? "sign-up" : "sign-in", "concurrent@example.test", index % 2 == 0 ? oidc.Client : replica.Client);
             return response.StatusCode;
         }));
         await Assert.That(statuses.Count(status => status == HttpStatusCode.OK)).IsEqualTo(1);
@@ -439,7 +514,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     private static Task<HttpResponseMessage> SignUpVerifyAsync(OidcHarness oidc, string address, string code, string pending, HttpClient? client = null) =>
         oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new() { ["email"] = address, ["code"] = code, ["pending_token"] = pending, ["next"] = string.Empty }, client: client);
 
-    // A sign-up or reset start, the two hosted routes behind the shared mail cooldown.
+    // Every hosted email-code start shares the same mail cooldown.
     private static Task<HttpResponseMessage> MailStartAsync(OidcHarness oidc, string path, string address, HttpClient? client = null) =>
         oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/{path}", new() { ["email"] = address, ["password"] = "correct horse battery", ["next"] = string.Empty }, client: client);
 
