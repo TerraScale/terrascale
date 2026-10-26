@@ -134,7 +134,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         await Assert.That(tokens.Scopes.Last()).IsEqualTo("databases:read");
         var importPath = $"/v1/projects/{project}/databases/canonical-db/import";
         await Assert.That(wire.Imports).IsEquivalentTo(allowed
-            ? new[] { $"PUT {importPath}/source databases:write documents:write", $"PATCH {importPath} databases:write documents:write",
+            ? new[] { $"PUT {importPath}/source databases:write documents:write", $"GET {importPath} databases:read", $"PATCH {importPath} databases:write documents:write",
                 $"POST {importPath}/cancel databases:write", $"POST {importPath}/resume databases:write documents:write",
                 $"GET {importPath} databases:read", $"POST {importPath}/start databases:write documents:write", $"GET {importPath} databases:read" }
             : new[] { $"GET {importPath} databases:read" });
