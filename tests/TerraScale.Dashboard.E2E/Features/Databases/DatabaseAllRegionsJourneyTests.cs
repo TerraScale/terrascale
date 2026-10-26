@@ -32,11 +32,11 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
         // Both choices together are refused before anything is provisioned.
         await Assert.That((await RpcAsync("create_database", new() { ["name"] = "conflict", ["regions"] = new[] { "SFO", "GRU" }, ["allRegions"] = true })).GetRawText())
             .Contains("not both");
+        await Assert.That((await RpcAsync("create_database", new() { ["name"] = "single", ["regions"] = new[] { "SFO" } })).GetRawText())
+            .Contains("Choose at least two regions");
         var viaMcp = await CallAsync("create_database", new() { ["name"] = "mcp-everywhere", ["region"] = "SFO", ["allRegions"] = true });
         await Assert.That(viaMcp.GetProperty("allRegions").GetBoolean()).IsTrue();
-        // TerraBase deletes only an unreplicated database, so all regions is turned off first.
         var mcpId = viaMcp.GetProperty("id").GetString()!;
-        await Assert.That((await CallAsync("set_database_regions", new() { ["databaseId"] = mcpId, ["regions"] = new[] { "SFO" } })).GetProperty("allRegions").GetBoolean()).IsFalse();
         await CallAsync("delete_database", new() { ["databaseId"] = mcpId, ["confirmName"] = "mcp-everywhere" });
 
         var databaseId = "";
@@ -58,7 +58,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await AllRegionsAsync()).IsTrue();
 
         // Choosing regions turns all regions off; checking it again turns it back on.
-        using (var regions = await ChangeAsync(["SFO"], allRegions: false))
+        using (var regions = await ChangeAsync(["SFO", "GRU"], allRegions: false))
             await Assert.That(regions.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(await AllRegionsAsync()).IsFalse();
         await Assert.That((await PageAsync("")).Contains(">All regions</span>", StringComparison.Ordinal)).IsFalse();
@@ -76,7 +76,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(listed.GetProperty("databases").EnumerateArray().Single(db => db.GetProperty("id").GetString() == databaseId)
             .GetProperty("allRegions").GetBoolean()).IsTrue();
         await Assert.That((await CallAsync("get_database", new() { ["databaseId"] = databaseId })).GetProperty("allRegions").GetBoolean()).IsTrue();
-        var narrowed = await CallAsync("set_database_regions", new() { ["databaseId"] = databaseId, ["regions"] = new[] { "SFO" } });
+        var narrowed = await CallAsync("set_database_regions", new() { ["databaseId"] = databaseId, ["regions"] = new[] { "SFO", "GRU" } });
         await Assert.That(narrowed.GetProperty("allRegions").GetBoolean()).IsFalse();
         var widened = await CallAsync("set_database_regions", new() { ["databaseId"] = databaseId, ["allRegions"] = true });
         await Assert.That(widened.GetProperty("allRegions").GetBoolean()).IsTrue();

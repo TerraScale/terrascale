@@ -15,11 +15,14 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
     public int Failed => All.Count(database => database.Status == "failed");
     public IReadOnlyList<string> Regions => All.SelectMany(DatabaseService.Regions).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Shared.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
-    public IReadOnlyList<string> Selected => Selection ?? (Context.Project is null || Context.Project.Region.Length == 0 ? [] : [Context.Project.Region]);
+    public IReadOnlyList<string> Selected => Selection ?? Choices.Select(region => region.Code).ToArray();
+    public string? HomeSelection { get; init; }
+    public bool AllRegions { get; init; }
+    public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? Choices.FirstOrDefault()?.Code ?? "";
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
     public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
     public static string Tone(string status) => status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
-    public const string CreatePlacementHint = "Choose one home region to create copies in every currently serving region. Choose two or more regions for explicit placement in only those regions; the first selected region is home. Without All regions, new regions are not added automatically.";
+    public const string CreatePlacementHint = "All currently serving regions are selected by default. Keep at least two regions, including the chosen home. Selecting every current region does not include future regions. Select All regions to follow future regions automatically.";
     public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.Shared.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
     public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
     public DatabaseListMetrics? Metrics { get; init; }

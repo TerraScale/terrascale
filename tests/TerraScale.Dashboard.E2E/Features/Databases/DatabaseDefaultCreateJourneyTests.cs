@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.Databases;
 
@@ -27,8 +28,7 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
         }
     }
 
-    // The create form's defaults: only the home region checked, All regions unticked. TerraBase places such a database in every
-    // other serving region, and deletes it only once those replicas are removed.
+    // The form explicitly selects all serving regions today; future-region tracking remains a separate choice.
     [Test]
     public async Task DefaultCreateSucceedsAndTheDatabaseCanBeDeleted()
     {
@@ -36,16 +36,19 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-        using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "api-region", value = "sfo" }))
+        using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sfo" } }))
             await Assert.That(region.IsSuccessStatusCode).IsTrue();
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/databases"));
         await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
         await Assert.That(html).Contains(DatabaseService.NameHint);
-        await Assert.That(html).Contains("Choose one home region to create copies in every currently serving region.");
-        await Assert.That(html).Contains("Choose two or more regions for explicit placement in only those regions");
-        await Assert.That(html).Contains("Without All regions, new regions are not added automatically.");
-        await Assert.That(html).Contains("All regions also follows future regions.");
+        await Assert.That(html).Contains("All currently serving regions are selected by default.");
+        await Assert.That(html).Contains("Selecting every current region does not include future regions.");
+        var selected = Regex.Matches(html, "<input[^>]+type=\"checkbox\"[^>]+name=\"region\"[^>]+value=\"([^\"]+)\"[^>]*checked[^>]*>")
+            .Select(match => match.Groups[1].Value).ToArray();
+        await Assert.That(selected).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
+        await Assert.That(Regex.Match(html, "<option value=\"GRU\"[^>]*>").Value).Contains("selected");
+        await Assert.That(Regex.Match(html, "<input[^>]+name=\"allRegions\"[^>]*>").Value.Contains("checked", StringComparison.Ordinal)).IsFalse();
         await Assert.That(html.Contains("One region keeps the data only there", StringComparison.Ordinal)).IsFalse();
         foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
         {
@@ -58,18 +61,20 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
             await Assert.That(beforeCreate.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
 
         string databaseId;
-        using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = "orders", ["region"] = "SFO" }))
+        using (var created = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
+            new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "orders"), new("homeRegion", "GRU") }
+                .Concat(selected.Select(region => new KeyValuePair<string, string>("region", region))))))
         {
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
             databaseId = body.RootElement.GetProperty("id").GetString()!;
             await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsFalse();
-            await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SFO", "GRU" });
+            await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
         }
 
         var replication = WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + databaseId + "/replication"));
         await Assert.That(replication).Contains("is the home region and stays selected.");
-        await Assert.That(replication).Contains("With All regions cleared, save the selected regions as explicit placement.");
+        await Assert.That(replication).Contains("With All regions cleared, keep at least two regions.");
         await Assert.That(replication.Contains("adding replica regions is unavailable here", StringComparison.Ordinal)).IsFalse();
 
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "orders" }))
@@ -78,5 +83,47 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
             await Assert.That(listed.RootElement.GetArrayLength()).IsEqualTo(0);
         using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
         await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("GRU,SJC", false)]
+    [Arguments("GRU,FRA,SJC", false)]
+    [Arguments("GRU,FRA", false)]
+    [Arguments("SJC", false)]
+    [Arguments("", true)]
+    public async Task ChosenHomeIsUsedWithoutAddingUnselectedRegions(string placement, bool allRegions)
+    {
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var producer = scenario.CreateProviderClient();
+        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        using var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sjc" } });
+        using var answering = await producer.PostAsJsonAsync("/__test/control", new { command = "api-region", value = "sjc" });
+        var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+        var selected = placement.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        using var response = await client.PostAsync("/api/v1/dashboard/databases", new FormUrlEncodedContent(
+            new[] { new KeyValuePair<string, string>("_csrf", csrf), new("name", "chosen-home"), new("homeRegion", "SJC"), new("allRegions", allRegions ? "true" : "false") }
+                .Concat(selected.Select(region => new KeyValuePair<string, string>("region", region)))));
+        if (!allRegions && selected.Length < 2)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(await response.Content.ReadAsStringAsync()).Contains(DatabaseService.MinimumRegionsMessage);
+            using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
+            await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
+            return;
+        }
+        if (!allRegions && !selected.Contains("SJC"))
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(await response.Content.ReadAsStringAsync()).Contains(DatabaseService.HomePlacementMessage);
+            using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
+            await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
+            return;
+        }
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("SJC");
+        await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
+        if (!allRegions) await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(selected);
     }
 }

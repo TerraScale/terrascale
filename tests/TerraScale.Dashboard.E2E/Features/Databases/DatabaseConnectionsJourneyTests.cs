@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Json;
+using static Microsoft.Playwright.Assertions;
 using System.Text.Json;
 using Microsoft.Playwright;
 
@@ -86,4 +88,49 @@ public sealed class DatabaseConnectionsJourneyTests(DashboardRootFixture fixture
         { ["_csrf"] = csrf, ["databaseId"] = id, ["confirmName"] = name });
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
     }
+
+    [Test]
+    public async Task CreateAndSettingsBlockOneRegionAndAllowValidSubmissions()
+    {
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var producer = scenario.CreateProviderClient();
+        var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        using var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sfo" } });
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        var page = await browser.NewPageAsync();
+        var errors = new ConcurrentQueue<string>();
+        page.PageError += (_, error) => errors.Enqueue(error);
+        var posts = 0;
+        page.Request += (_, request) => { if (request.Method == "POST" && request.Url.Contains("/api/v1/dashboard/databases", StringComparison.Ordinal)) posts++; };
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
+        await page.GotoAsync(new Uri(scenario.Origin, "/databases?create=1").ToString());
+        await page.Locator("#database-name").FillAsync("browser-placement");
+        var create = page.Locator("#create-database");
+        await Assert.That(await page.Locator("#database-home").InputValueAsync()).IsEqualTo("GRU");
+        await Assert.That(await create.Locator("input[name=region]:checked").CountAsync()).IsEqualTo(2);
+        await create.Locator("input[value=SFO]").UncheckAsync();
+        await create.GetByRole(AriaRole.Button, new() { Name = "Create database", Exact = true }).ClickAsync();
+        await Expect(page.Locator("#database-region-error")).ToBeVisibleAsync();
+        await Assert.That(posts).IsEqualTo(0);
+        await Assert.That(await page.Locator("#database-home").EvaluateAsync<bool>("el => el.validity.customError")).IsTrue();
+        await create.Locator("input[name=allRegions]").CheckAsync();
+        await Expect(page.Locator("#database-region-error")).ToBeHiddenAsync();
+        await create.GetByRole(AriaRole.Button, new() { Name = "Create database", Exact = true }).ClickAsync();
+        await page.WaitForURLAsync(url => url.Contains("created=1", StringComparison.Ordinal));
+        await page.GotoAsync(page.Url.Split('?')[0] + "/replication");
+        var settings = page.GetByRole(AriaRole.Form, new() { Name = "Change regions" });
+        await settings.Locator("input[name=allRegions]").UncheckAsync();
+        await settings.Locator("input[value=SFO]").UncheckAsync();
+        await settings.GetByRole(AriaRole.Button, new() { Name = "Save regions" }).ClickAsync();
+        await Expect(page.Locator("#database-placement-error")).ToBeVisibleAsync();
+        await Assert.That(posts).IsEqualTo(1);
+        await settings.Locator("input[value=SFO]").CheckAsync();
+        await settings.GetByRole(AriaRole.Button, new() { Name = "Save regions" }).ClickAsync();
+        await page.WaitForURLAsync(url => url.EndsWith("#placement", StringComparison.Ordinal));
+        await Assert.That(posts).IsEqualTo(2);
+        await Assert.That(errors).IsEmpty();
+    }
+
 }

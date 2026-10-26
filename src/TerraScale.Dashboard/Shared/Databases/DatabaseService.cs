@@ -6,6 +6,14 @@ namespace TerraScale.Dashboard.Shared.Databases;
 
 public sealed partial class DatabaseService(AccountService accounts, IDatabaseBackend backend)
 {
+    public const string MinimumRegionsMessage = "Choose at least two regions, or select All regions to include current and future regions.";
+    public const string HomePlacementMessage = "Select the home region in placement, or choose a home region from the selected regions.";
+    public static void RequireReplicas(IEnumerable<string> regions)
+    {
+        if (regions.Where(code => !string.IsNullOrWhiteSpace(code)).Select(code => code.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() < 2)
+            throw new AccountAccessException(MinimumRegionsMessage, 422);
+    }
+
     public static DatabaseScope Scope(AccountContext context) => new(context.UserId, context.Session.AccessToken,
         context.Organization?.Id ?? throw new AccountAccessException("Select an organization.", 404), context.Organization.Name,
         context.Project?.Id ?? throw new AccountAccessException("Select a project.", 404), context.Project.Name)
@@ -158,7 +166,9 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         var scope = Scope(context);
         var home = await HomeAsync(context, database, cancellationToken);
-        var placement = (await PlacementAsync(AllRegionsPlacement(regions, allRegions, home.Code), cancellationToken, Regions(database))).ToList();
+        var selected = regions.ToArray();
+        if (!allRegions) RequireReplicas(selected);
+        var placement = (await PlacementAsync(AllRegionsPlacement(selected, allRegions, home.Code), cancellationToken, Regions(database))).ToList();
         if (!placement.Remove(home)) throw new AccountAccessException("The home region must stay selected.", 422);
         placement.Insert(0, home);
         var remote = await backend.SetRegionsAsync(scope, home, id, placement, allRegions, cancellationToken);
