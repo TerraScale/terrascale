@@ -29,9 +29,9 @@ type AppliedIndexRecommendation struct {
 	Index  Index  `json:"index"`
 }
 
-// CreateIndex builds a secondary index before returning it.
+// CreateIndex creates a secondary index; vector builds may return state building.
 func (d *Database) CreateIndex(ctx context.Context, in IndexRequest) (*Index, error) {
-	if err := checkName("collection", in.Collection); err != nil {
+	if err := in.validate(); err != nil {
 		return nil, err
 	}
 	return databaseCall[Index](ctx, d, http.MethodPost, nil, in, "indexes")
@@ -107,4 +107,21 @@ func (d *Database) IndexRecommendations(ctx context.Context) ([]IndexRecommendat
 // existing index if it has already been applied.
 func (d *Database) ApplyIndexRecommendation(ctx context.Context, id string) (*AppliedIndexRecommendation, error) {
 	return databaseCall[AppliedIndexRecommendation](ctx, d, http.MethodPost, nil, nil, "index-recommendations", id, "apply")
+}
+
+func (in IndexRequest) validate() error {
+	if err := checkName("collection", in.Collection); err != nil {
+		return err
+	}
+	if in.Kind != "" && in.Kind != IndexBTree && in.Kind != IndexText && in.Kind != IndexVector {
+		return errors.New("terrabase: index kind must be btree, text or vector")
+	}
+	if in.Kind == IndexVector {
+		if len(in.Fields) != 1 || in.Dimensions == nil || *in.Dimensions < 1 || *in.Dimensions > 4096 {
+			return errors.New("terrabase: a vector index has one field and dimensions 1-4096")
+		}
+	} else if in.Dimensions != nil {
+		return errors.New("terrabase: only vector indexes take dimensions")
+	}
+	return nil
 }

@@ -194,12 +194,26 @@ for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.C
 ```
 
 `tb.Near(path, vector, tb.Cosine|tb.L2)` sorts by vector distance, nearest
-first. It must be the only sort key, with `Limit` at most 100 and no cursor;
+first. It must be the only sort key, with `Limit` at most 1000 and no cursor;
 each returned `Document.Distance` holds the distance:
 
 ```go
 res, err := docs.Query(ctx, tb.Query{Sort: []tb.SortKey{tb.Near("/embedding", vec, tb.Cosine)}, Limit: 10})
 ```
+
+Vector indexes take one dotted field path and dimensions from 1 to 4096:
+
+```go
+dimensions := 768
+index, err := db.CreateIndex(ctx, tb.IndexRequest{
+	Collection: "items", Fields: []string{"embedding"},
+	Kind: tb.IndexVector, Dimensions: &dimensions,
+})
+```
+
+Creation may return `index.State == "building"` while existing documents are indexed.
+`db.Indexes(ctx)` reports when it becomes `active`; near queries scan until then.
+A matching active vector index makes near results approximate.
 
 Geo points are `{"lat": …, "lon": …}` objects (WGS 84 degrees).
 `tb.WithinRadius(path, lat, lon, meters)` and

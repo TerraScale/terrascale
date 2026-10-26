@@ -203,8 +203,9 @@ func (r *SQLRow) UnmarshalJSON(data []byte) error {
 type IndexKind string
 
 const (
-	IndexBTree IndexKind = "btree"
-	IndexText  IndexKind = "text"
+	IndexBTree  IndexKind = "btree"
+	IndexText   IndexKind = "text"
+	IndexVector IndexKind = "vector"
 )
 
 // Index is a secondary index of a database's collection.
@@ -213,9 +214,11 @@ type Index struct {
 	Collection string `json:"collection"`
 	// Fields are the key fields in order, as dotted member paths.
 	Fields []string `json:"fields"`
-	// State is active: TerraBase builds an index before creating it.
+	// State is active, or building while a vector index adds existing documents.
 	State string    `json:"state"`
 	Kind  IndexKind `json:"kind,omitempty"`
+	// Dimensions is the vector length; absent for other index kinds.
+	Dimensions *int `json:"dimensions,omitempty"`
 }
 
 // IndexRequest describes an index to create: Fields are 1-4 distinct dotted
@@ -226,6 +229,8 @@ type IndexRequest struct {
 	Name       string   `json:"name,omitempty"`
 	// Kind defaults to IndexBTree when omitted.
 	Kind IndexKind `json:"kind,omitempty"`
+	// Dimensions is required for IndexVector (1-4096, exactly one field); absent for other kinds.
+	Dimensions *int `json:"dimensions,omitempty"`
 }
 
 // ProjectAPIKey is a project's data API key (tb_…) without its secret.
@@ -614,10 +619,13 @@ func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, datab
 	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "branches"), nameBody{name})
 }
 
-// CreateIndex builds a secondary index before it returns; a viewer cannot. An
+// CreateIndex creates a secondary index; vector builds may return state building. A viewer cannot. An
 // index with the name, or on the same fields of the collection, fails with
 // ErrIndexExists.
 func (u *ManagementUser) CreateIndex(ctx context.Context, org, project, databaseID string, req IndexRequest) (*Index, error) {
+	if err := req.validate(); err != nil {
+		return nil, err
+	}
 	return send[Index](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "indexes"), req)
 }
 

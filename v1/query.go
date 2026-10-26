@@ -227,7 +227,7 @@ const (
 
 // Near sorts by distance between vector and the array at path, nearest first.
 // metric is Cosine, L2 or empty (cosine). A near key must be the only sort
-// key; the query then has Limit 0-100, no Cursor, and each item a Distance.
+// key; the query then has Limit 0-1000 (0 uses the default), no Cursor, and each item a Distance.
 func Near[P Path](path P, vector []float32, metric Metric) SortKey {
 	k := SortKey{path: pathValue(path), near: &near{Path: pathValue(path), Vector: vector, Metric: metric}}
 	zero := true
@@ -250,7 +250,7 @@ func Near[P Path](path P, vector []float32, metric Metric) SortKey {
 
 // NearPoint sorts by meters between lat, lon and the {"lat","lon"} point at
 // path, nearest first; documents without a point are skipped. Like Near, it
-// must be the only sort key, with Limit 0-100, no Cursor, and each item a
+// must be the only sort key, with Limit 0-1000 (0 uses the default), no Cursor, and each item a
 // Distance in meters.
 func NearPoint[P Path](path P, lat, lon float64) SortKey {
 	return SortKey{path: pathValue(path), near: &near{Path: pathValue(path), Lat: &lat, Lon: &lon}, err: pointErr("near", lat, lon)}
@@ -360,8 +360,8 @@ func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error)
 		if k.near != nil && q.Filter.searches != 0 {
 			return nil, errors.New("terrabase: search cannot combine with near")
 		}
-		if k.near != nil && (len(q.Sort) > 1 || q.Limit > 100 || q.Cursor != "") {
-			return nil, errors.New("terrabase: near must be the only sort key, with Limit <= 100 and no Cursor")
+		if k.near != nil && (len(q.Sort) > 1 || (q.Limit < 0 || q.Limit > 1000) || q.Cursor != "") {
+			return nil, errors.New("terrabase: near must be the only sort key, with Limit 0-1000 and no Cursor")
 		}
 	}
 	if a := q.Aggregate; a != nil {
