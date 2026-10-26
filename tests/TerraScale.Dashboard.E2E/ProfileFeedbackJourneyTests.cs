@@ -43,9 +43,34 @@ public sealed class ProfileFeedbackJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
         var html = await rejected.Content.ReadAsStringAsync();
         await Assert.That(html).Contains("Choose an available language.");
+        await Assert.That(html).Contains("aria-invalid=\"true\" aria-describedby=\"profile-language-help interfaceLanguage-error\"");
+        await Assert.That(html).Contains("id=\"interfaceLanguage-error\">Choose an available language.");
+        await Assert.That(html).Contains("href=\"#interfaceLanguage\"");
         await Assert.That(html.Contains("ts-alert-success", StringComparison.Ordinal)).IsFalse();
         using var after = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
         await Assert.That(after.RootElement.GetProperty("locale").GetString()).IsEqualTo(before.RootElement.GetProperty("locale").GetString());
+    }
+
+    [Test]
+    [Arguments("en")]
+    [Arguments("pt-BR")]
+    public async Task LanguagePreferenceExplainsTheEnglishInterfaceAndKeepsTheSupportedSelection(string locale)
+    {
+        using var client = fixture.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client);
+        using var saved = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/language", new()
+        {
+            ["_csrf"] = await HttpJourney.CsrfAsync(client),
+            ["locale"] = locale
+        });
+        await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var html = await client.GetStringAsync(saved.Headers.Location);
+        await Assert.That(html).Contains("The dashboard currently displays in English; saving this preference does not translate the interface.");
+        await Assert.That(html).Contains("for=\"interfaceLanguage\">Preferred language");
+        await Assert.That(html).Contains("value=\"" + locale + "\" selected=\"selected\"");
+        await Assert.That(html).DoesNotContain("Choose the language used by onboarding and the Dashboard.");
+        using var current = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+        await Assert.That(current.RootElement.GetProperty("locale").GetString()).IsEqualTo(locale);
     }
 
     [Test]

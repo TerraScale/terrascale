@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Profile;
 [McpServerToolType]
 public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService accounts, AccessTokens tokens, ITsAuthMfa mfa)
 {
-    [McpServerTool(Name = "get_profile", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read your profile and interface language.")]
+    [McpServerTool(Name = "get_profile", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read your profile and stored language preference.")]
     public async Task<DashboardMcpProfile> Profile(string? organizationId = null, string? projectId = null)
     {
         var current = Account();
@@ -38,7 +38,7 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
         return new(true);
     }
 
-    [McpServerTool(Name = "set_language", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Set your interface language to en or pt-BR.")]
+    [McpServerTool(Name = "set_language", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Save your account language preference (en or pt-BR). The dashboard currently displays in English.")]
     public async Task<DashboardMcpSaved> Language(string locale)
     {
         if (locale is not ("en" or "pt-BR")) throw new AccountAccessException("Choose an available language.", 422);
