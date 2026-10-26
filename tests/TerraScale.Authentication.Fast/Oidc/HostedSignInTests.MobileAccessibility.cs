@@ -227,7 +227,7 @@ public sealed partial class HostedSignInTests
         await Assert.That(await page.Locator($"label[for='{id}'],label[for='{id}-digit']").InnerTextAsync()).Contains(label);
         if (await field.IsVisibleAsync())
         {
-            await Assert.That(await page.GetByLabel(label, new() { Exact = false }).EvaluateAsync<bool>("(el, id) => el.id === id", id)).IsTrue();
+            await Assert.That(await page.GetByLabel(label, new() { Exact = false }).And(field).CountAsync()).IsEqualTo(1);
         }
     }
 
