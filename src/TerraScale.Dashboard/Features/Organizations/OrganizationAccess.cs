@@ -57,7 +57,7 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
         // The plan decides the window; ts-auth keeps its events at least 90 days (its list_audit_events contract).
         return new(members, invitations, audit.Concat(local).OrderByDescending(item => item.OccurredAt).ToArray(),
             transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt),
-            context.CanManage ? Audit.OrganizationAudit.RetentionDays(context.Organization) : null);
+            context.CanManage ? Audit.OrganizationAudit.RetentionDays(context.Organization!) : null);
     }
     public async Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken)
     {
