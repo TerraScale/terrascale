@@ -43,9 +43,11 @@ public sealed class CopyPlacementTests
         await Assert.That(copied.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await copied.Content.ReadAsStringAsync());
         var copy = await copied.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(copy.GetProperty("homeRegion").GetString()).IsEqualTo(source.GetProperty("homeRegion").GetString());
-        await Assert.That(copy.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()))
-            .IsEquivalentTo(source.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()));
+        await Assert.That(Regions(copy)).IsEquivalentTo(Regions(source));
         await Assert.That(copy.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
+
+        static string?[] Regions(JsonElement database) => database.GetProperty("replicaRegions") is { ValueKind: JsonValueKind.Array } regions
+            ? [.. regions.EnumerateArray().Select(value => value.GetString())] : [];
     }
 
     [Test]
