@@ -28,6 +28,11 @@ Open **Authentication** for your project.
 1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Redirect URIs must be `https`, or `http` on `localhost` and loopback addresses.
 2. **Sign-in methods**: choose email codes, passwords, or both, and whether people can create their own accounts. At least one of email codes and passwords stays on. A method you turn off disappears from the hosted pages.
 3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color. They style the hosted pages and the verification, sign-in and password-reset emails; without a name, both show your project's name. Optionally set `email_message` in `branding` through `PUT /v1/{project}/settings`: up to 500 plain-text characters, newlines allowed, added to those emails. A sent `branding` replaces the previous one, so send every branding field each time or omitted fields are cleared. HTML and placeholders such as `{{code}}` appear as literal text.
+4. **Configuration**: `redirect_urls` adds a project allowlist of at most 100 exact absolute URLs, without fragments or userinfo (`https`, or loopback `http`). A nonempty list further restricts each client's registered redirects; an empty list never permits unregistered redirects. `session_lifetime_seconds` is an absolute lifetime from original sign-in: 300–2592000 seconds (5 minutes–30 days), default 1209600 (14 days).
+
+Hosted-page **Branding** also supports `title_size` (20–40 px), `default_theme` (`light`, `dark`, `system`), `background_color` and `text_color` (`#rrggbb`), and up to five HTTPS `footer_links` with `label` (1–24 characters) and `url`. Null appearance fields restore defaults; an empty footer list removes project links. Pages read current branding on each request.
+
+Read settings with `GET /v1/{project}/settings`; update them with `PUT` at the same path using your TerraScale sign-in token and project admin role. Each supplied `configuration` or `branding` object replaces that object; omitted objects stay unchanged. Reducing session policy applies at the next session or grant check. Once a shortened browser expiry is observed it is persisted, and an OAuth sign-in observed past policy expiry is revoked; increasing policy cannot revive it. Issued access tokens retain their short expiry.
 
 ## Social sign-in
 
@@ -75,19 +80,16 @@ These calls need the project admin role and your TerraScale sign-in token.
 
 ## Sign users in
 
-Use any OpenID Connect client library and point it at the discovery URL. The flow is the standard one:
+Use a maintained OpenID Connect library with authorization-code and PKCE support, configured with your exact project issuer and discovery URL. Use its authorization and callback validation APIs:
 
-1. Send the browser to the authorization endpoint with `response_type=code`, your `client_id`, a registered `redirect_uri`, the scopes, `state`, and a PKCE `code_challenge` with `code_challenge_method=S256`.
-2. A user without a session signs in or signs up on the hosted pages and comes back to your `redirect_uri` with `code` and `state`.
-3. Redeem the code at the token endpoint with the `code_verifier` (public clients send `client_id`; confidential clients authenticate with their secret).
+1. Create a short-lived, browser-bound, single-use authorization attempt containing cryptographically random `state`, `nonce` and PKCE verifier. Keep the verifier private and bind the attempt to the initiating browser session, expected issuer, client ID and redirect URI.
+2. Send the browser to the discovered authorization endpoint with `response_type=code`, `client_id`, an exactly registered `redirect_uri`, the scopes, `state`, `nonce`, and the verifier's `S256` `code_challenge` with `code_challenge_method=S256`. Request `offline_access` if you need refresh tokens.
+3. At the callback, require the initiating browser's attempt and an exact `state` match before accepting either success or error. Reject missing, expired, mismatched or reused attempts and duplicate response parameters. Consume the attempt atomically once; then handle an OAuth error or redeem `code` with that attempt's original `redirect_uri` and `code_verifier`. Public clients send `client_id`; confidential clients authenticate with their server-held secret. The token endpoint validates PKCE; never retry a consumed code automatically.
+4. Before creating your app session, have the library validate the ID token's signature using the trusted issuer's discovered JWKS and permitted algorithm, exact `iss`, `aud` for your client (and `azp` where required), time claims (`exp`, `iat`, `nbf` if present) and exact attempt `nonce`. Decoding a JWT is not validation. If you call the discovered userinfo endpoint with the access token, require its `sub` to equal the validated ID token's `sub` before using its claims.
 
-```bash
-curl -sS --fail-with-body https://auth.terrascale.tech/$PROJECT_ID/oauth/token \
-  -d grant_type=authorization_code -d client_id=$CLIENT_ID \
-  -d code=$CODE -d redirect_uri=$REDIRECT_URI -d code_verifier=$CODE_VERIFIER
-```
+The access token is a JWT with your project's issuer as `iss`, your client ID as `aud` and the user's ID as `sub`. Your API must verify its signature, issuer, audience and time validity; an ID token is for the client sign-in, not API authorization. `/oauth/userinfo` returns `sub`, and `email` with the `email` scope. Access tokens last 5 minutes.
 
-The access token is a JWT whose `iss` is your project's issuer, whose `aud` is your client ID and whose `sub` is the user's ID. Validate tokens in your own API against the project's JWKS from discovery, checking issuer, audience and expiry. `/oauth/userinfo` answers `sub`, and `email` with the `email` scope. Access tokens last 5 minutes; refresh tokens rotate on every use and expire 14 days after sign-in. Sign users out through `/oauth/logout`, and revoke tokens through `/oauth/revoke`.
+Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
 A project issuer serves only the authorization code and refresh token grants. Its tokens are for your own application: TerraScale's APIs do not accept them.
 
@@ -95,7 +97,7 @@ A project issuer serves only the authorization code and refresh token grants. It
 
 The dashboard lists your project's users with search. For each user you can see their sessions, end a session, **disable** them or **delete** them. Disabling a user ends every session and stops their refresh tokens at once; access tokens already issued stay valid until they expire, at most 5 minutes. Deleting a user removes the account; the address can sign up again.
 
-The same operations are available in the TerraScale SDKs for automation.
+For automation, the [.NET SDK project administration client](https://github.com/TerraScale/ts-dotnet/blob/main/src/TerraScale.DotNet/AuthService/TerraScaleAuthProjects.cs), `TerraScaleAuthClient.Projects`, exposes settings read/update, provider set/delete, user list/get/disable/enable/delete, session list/revoke and OAuth client list/create/delete. These `/v1/{project}` calls use your **TerraScale account sign-in token**, with viewer access for reads and admin for changes, not a project end-user token. This is separate from interactive OIDC login; other SDKs do not necessarily expose this management group. See [C# source installation](/hi/getting-started/csharp) for the SDK.
 
 ### Export the directory
 
@@ -122,6 +124,6 @@ In CSV, `linked_providers` is a JSON array in one quoted cell. A cell that start
 ## Current limits
 
 - Verification, sign-in and password-reset emails use your project's name, logo, theme color and `email_message`. They are still sent from TerraScale's verified sender, with TerraScale's security copy and footer. Custom sender domains and your own mail credentials are not supported.
-- End-user tokens do not authorize requests to the TerraScale database API. Have your server call TerraScale with an API key ([Authentication](/hi/guides/authentication)) after checking the end user's token.
+- Project OIDC tokens do not authorize TerraBase requests. After validating app sign-in, your backend can use [server API-key access](/hi/guides/authentication), or follow the separate [scoped end-user data-token guide](/hi/getting-started/browser-backend-tokens) for browser access governed by collection rules. That guide has its own rollout and live-verification prerequisites; an OIDC access token cannot substitute for its data token. Keep the project key on your backend and derive user IDs and roles from trusted session/account data.
 
 </div>
