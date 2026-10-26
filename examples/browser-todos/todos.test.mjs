@@ -323,3 +323,17 @@ test('change bursts coalesce; pagination has a hard request bound', async t => {
   assert.equal(list(f).children.length, 0)
   assert.match(status(f), /supports 500 todos/)
 })
+
+test('an unchanged snapshot preserves an unsaved title and its input control', async t => {
+  const f = fixture(t)
+  await f.app.ready
+  const row = list(f).children[0]
+  const title = row.children[0]
+  title.value = 'Unsaved draft'
+  await f.app.refresh()
+  assert.equal(list(f).children[0], row)
+  assert.equal(list(f).children[0].children[0], title)
+  assert.equal(title.value, 'Unsaved draft')
+  await row.children[2].fire('click')
+  assert.equal(JSON.parse(writes(f)[0].options.body).title, 'Unsaved draft')
+})

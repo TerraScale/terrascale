@@ -10,8 +10,8 @@ description: Integrate per-user TerraBase todos without sending project credenti
 
 # Browser todos with end-user access
 
-::: warning Integration pending
-This example uses the published **`@terrascale/sdk@0.0.5`**. App sign-in integration, collection-rule rollout, and live authorization proof are pending. This page describes the coordinated contract, not a production readiness claim. Do not substitute a project access token to make the browser demo run. Hosted login is outside this example's scope.
+::: tip Bring your application session
+This example uses published **`@terrascale/sdk@0.0.5`**, project-scoped end-user tokens and collection rules. Complete the [backend token integration](/fr/getting-started/browser-backend-tokens) with your application's validated session. Hosted login is outside this example's scope. Never substitute a project access token in the browser.
 :::
 
 Integrate an already authenticated end-user session with the [browser example source](https://github.com/TerraScale/ts-docs/tree/main/examples/browser-todos). The browser creates, lists, edits, completes and deletes that user's todos through the SDK. It never creates collections, sets rules, exchanges project credentials, or owns identity records. Identity, organizations, projects and keys belong to ts-auth; todo data belongs to TerraBase.
@@ -20,7 +20,7 @@ Integrate an already authenticated end-user session with the [browser example so
 
 An authorized project owner must create the database and the `todos` collection **outside the browser** using the existing administrative SDK or authorized server-side HTTP. The [JavaScript quickstart](/fr/getting-started/javascript) documents collection creation with an existing server client. Keep the owner's credential in the server secret store and supply it through that authorized server client. No credential values belong in this article or the browser bundle.
 
-The planned rule endpoint is:
+Set the collection rules with:
 
 ```http
 PUT /v1/projects/{project}/databases/{database}/collections/todos/rules
@@ -33,7 +33,7 @@ Content-Type: application/json
 }
 ```
 
-Run this operation only through an already authorized server-side HTTP client that supplies the project owner's authorization header. This is a producer contract under implementation, not a published SDK rules method. Read back the same URL with `GET` and verify the complete rule object before connecting any browser. If the route is unavailable or denied, stop setup; do not broaden credentials or enable public reads/writes.
+Run this operation only through an already authorized server-side HTTP client that supplies the project owner's authorization header. Use the HTTP endpoint; the SDK does not expose a rules method. Read back the same URL with `GET` and verify the complete rule object before connecting any browser. If the route is unavailable or denied, stop setup; do not broaden credentials or enable public reads/writes.
 
 The producer must bind `/userId` to the authenticated end-user, keep ownership immutable on updates and replacements, and deny anonymous access. **A collection with no rules denies end-user access.** The browser's `/userId` query filter is a convenience; server rules enforce ownership on reads, queries, writes and changes. A browser that changes the filter or supplies another user's ID must still be denied or receive no foreign records. Collection and rule management remain unavailable to end-user tokens.
 
@@ -63,7 +63,7 @@ view.dispose()
 
 The project ID and database name are public routing identifiers. The token is sensitive: keep it in memory behind your session provider. Never paste credentials into browser controls, source, URLs, logs, local storage or session storage. Never ship a project API key, client secret, project-owner token, or a client-credentials exchange to the browser.
 
-There is no working tenant sign-in route provided by this ticket: the existing route currently returns `404`. The host application must supply its existing authenticated integration once the coordinated end-user flow is available. Do not invent a TerraScale `/login` or `/session` endpoint to fill that gap.
+Connect your validated application session through the [backend token handler](/fr/getting-started/browser-backend-tokens). This example supplies data access and token integration; your application supplies sign-in and session validation.
 
 Mounting another session on the same root aborts the old requests and stream and clears the old view immediately. Call `dispose()` before logout even when no new account is mounted. A `401`, `403` or `rules_changed` error from reads, writes or the changes stream also aborts the session view and clears its records.
 
@@ -89,7 +89,7 @@ const db = createTerraBaseClient({
 const todos = db.collection('todos')
 ```
 
-The planned bearer-data routes always return `Access-Control-Allow-Origin: *` and support preflight for `Authorization`, JSON writes and `If-Match`. They do not use cookies or credentialed requests: do not set `credentials: 'include'`. No origin allowlist configuration is required. CORS permits browser transport; end-user bearer validation and collection rules enforce authorization. Do not introduce a credential-bearing browser proxy to bypass authorization failures.
+The bearer-data routes return `Access-Control-Allow-Origin: *` and support preflight for `Authorization`, JSON writes and `If-Match`. They do not use cookies or credentialed requests: do not set `credentials: 'include'`. No origin allowlist configuration is required. CORS permits browser transport; end-user bearer validation and collection rules enforce authorization. Do not introduce a credential-bearing browser proxy to bypass authorization failures.
 
 ## 4. Understand the data path
 
@@ -114,6 +114,6 @@ npm run build
 
 These checks exercise the browser integration and SDK request contract without starting or downloading TerraBase. The repository's `npm test` also installs this example and runs its tests. They are not evidence of deployed authorization.
 
-Before treating this as a live working data path, the owning integration must demonstrate two real end-user sessions: user A creates a todo; user B cannot read, modify, delete, query or receive it through changes. Confirm immutable ownership, anonymous denial, no-rules denial, expired-token behavior, account-switch clearing, rule-revocation clearing and rejected collection/rule provisioning. Confirm the browser network trace contains end-user access tokens only and that bearer requests complete CORS preflight with the wildcard origin and no cookies. Record the SDK release and deployed producer version with that evidence. Until those checks and sign-in integration are complete, live proof remains **pending**.
+Before serving users, verify your application integration with two real end-user sessions: user A creates a todo; user B cannot read, modify, delete, query or receive it through changes. Confirm immutable ownership, anonymous denial, no-rules denial, expired-token behavior, account-switch clearing, rule-revocation clearing and rejected collection/rule provisioning. Confirm the browser network trace contains end-user access tokens only and that bearer requests complete CORS preflight with the wildcard origin and no cookies. Record the SDK release and deployed producer version with that evidence. Repeat these checks for your application before releasing it to users.
 
 </div>

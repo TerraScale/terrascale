@@ -9,7 +9,7 @@
     "start": "node app.ts"
   },
   "engines": {
-    "node": "22.x || 24.x"
+    "node": "24.x"
   },
   "dependencies": {
     "@prisma/adapter-libsql": "7.10.1",

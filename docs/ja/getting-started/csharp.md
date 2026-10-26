@@ -12,7 +12,7 @@ title: C# quickstart
 Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. It creates, reads, updates, queries and deletes one synthetic document, verifies stale-version rejection and uses only the SDK for database requests.
 
 ::: info Package from source
-`TerraScale.DotNet` is not on nuget.org yet. Step 1 builds version `0.0.4` from source into a local feed.
+`TerraScale.DotNet` is not on nuget.org yet. Step 1 builds version `0.0.6` from source into a local feed.
 :::
 
 ## 1. Obtain the example and package
@@ -20,7 +20,7 @@ Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsC
 Install .NET SDK 10 or newer with the .NET 10 runtime. Download <a href="/examples/terrabase-dotnet/Program.cs" download>Program.cs</a> and <a href="/examples/terrabase-dotnet/TerraBaseStarter.csproj" download>TerraBaseStarter.csproj</a> into one directory. From that directory, build the SDK package into a `feed` directory beside it:
 
 ```bash
-git clone --depth 1 --branch v0.0.4 https://github.com/TerraScale/ts-dotnet.git ../ts-dotnet
+git clone --depth 1 --branch v0.0.6 https://github.com/TerraScale/ts-dotnet.git ../ts-dotnet
 dotnet pack ../ts-dotnet/src/TerraScale.DotNet -c Release -o ../feed
 ```
 
@@ -49,7 +49,7 @@ The example passes the access token as `ApiKey`; the SDK sends it as `Authorizat
 From the example directory:
 
 ```bash
-dotnet build -c Release -p:TerraBaseSdkPackageVersion=0.0.4 \
+dotnet build -c Release -p:TerraBaseSdkPackageVersion=0.0.6 \
   --source ../feed --source https://api.nuget.org/v3/index.json
 dotnet bin/Release/net10.0/TerraBaseStarter.dll
 ```

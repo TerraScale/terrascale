@@ -11,7 +11,8 @@ secret manager or private shell.
 
 ```sh
 npm run generate                                # prisma generate
-npm run diff > migrations/0001_init.sql         # after a schema change: a new numbered file
+mkdir -p migrations
+npm run --silent diff > migrations/0001_init.sql # after a schema change: a new numbered file
 npm run migrate                                 # applies migrations/*.sql that are not applied yet
 npm start                                       # CRUD, relations and transactions
 ```
