@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -60,9 +59,9 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 
 // tailChanges prints each committed change as a JSON line, starting now.
 func tailChanges(ctx context.Context, db *v1.Database, collections []string, out io.Writer) error {
-	enc := json.NewEncoder(out)
+	beginJSONStream(out)
 	for e, err := range db.Changes(ctx, v1.ChangesOptions{Cursor: "now", Collections: collections}) {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) && !jsonMode(out) {
 			return nil
 		}
 		if err != nil {
@@ -71,11 +70,14 @@ func tailChanges(ctx context.Context, db *v1.Database, collections []string, out
 		if e.Type != "change" {
 			continue
 		}
-		if err := enc.Encode(e); err != nil {
+		if err := emitJSONRecord(out, e); err != nil {
 			return err
 		}
 	}
-	return nil
+	if jsonMode(out) && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return finishJSONStream(out)
 }
 
 // importPoll is how often import waits for the job's next state.

@@ -58,6 +58,8 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   backup restore <db> <backup id> <new db> restore a backup into a new database
   backup restore-at <db> <time> <new db>  restore the database as of an RFC 3339
                                           time into a new database
+  export <db>                             stream all live documents (NDJSON);
+                                          excludes relational tables and metadata
   db changes <db> [<collection>...]       print committed changes as JSON lines
                                           until interrupted
   collection list <db>                    list a database's collections
@@ -145,6 +147,7 @@ var commands = map[string][]int{
 	"usage":             {0, 1},
 	"completion":        {1},
 	"db changes":        {1, 2, 3, 4, 5},
+	"export":            {1},
 	"backup restore-at": {3},
 	"schema get":        {2},
 	"schema set":        {3},
@@ -204,6 +207,9 @@ func runWithInput(ctx context.Context, args []string, out io.Writer, in io.Reade
 	if err == nil {
 		err = runCommand(ctx, args, w, in, prompt, tty)
 	}
+	if err == nil {
+		err = finishJSONStream(w)
+	}
 	if err != nil {
 		if !w.failed {
 			err = errors.Join(err, emitJSONError(w, err))
@@ -253,6 +259,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			name, operands = strings.Join(args[:n], " "), args[n:]
 		}
 	}
+	if slices.Contains([]string{"db changes", "doc list", "export"}, name) {
+		beginJSONStream(out)
+	}
 	var fn functionFlags
 	if strings.HasPrefix(name, "functions ") {
 		var err error
@@ -263,7 +272,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke"}, name) {
+	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke", "db changes", "export"}, name) {
 		return errors.New("structured output is not implemented for this command yet")
 	}
 	var collectionSet, yesSet, scopeSet bool
@@ -803,6 +812,8 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		fmt.Fprintf(out, "Restored %s as of %s into %s (%s)\n", args[0], at.Format(time.RFC3339), m.Name, m.ID)
 		return nil
+	case "export":
+		return exportDatabase(ctx, db, out)
 	case "db changes":
 		return tailChanges(ctx, db, args[1:], out)
 	case "exec":
