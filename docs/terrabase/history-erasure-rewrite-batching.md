@@ -3,7 +3,7 @@
 Implements [decision 0017, complement (c)](decisions/0017-healthy-rewrite-off-the-writer.md).
 All erasure phases share a ten-minute minimum between rewrite starts for each file: the ts-auth database and SYSTEM.
 The first attempt can start immediately. Refusals consume the interval too; their existing exponential backoff can require
-a longer wait. This reduces rewrite frequency; bounding each writer hold remains decision 0017's separate work.
+a longer wait. This complements [the off-writer rewrite](rewrite-off-writer.md): the bulk copy runs beside customer writes.
 
 Each phase still checks coverage or absence of residue under the writer and batches the ready records of its bounded page.
 Only a successful rewrite of that exact source incarnation at or after the checked offset earns a receipt. Waiting writes

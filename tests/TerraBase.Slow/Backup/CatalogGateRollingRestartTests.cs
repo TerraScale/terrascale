@@ -69,13 +69,14 @@ public sealed class CatalogGateRollingRestartTests
                             _ = await gru.Api.Server.Services.GetRequiredService<IHealthyRewrite>().RewriteAsync(null, 0, token);
                             break;
                         }
-                        catch (RewriteRefusedException error) when (error.Reason == RewriteRefusal.Budget)
+                        catch (RewriteRefusedException error) when (error.Reason is RewriteRefusal.Budget or RewriteRefusal.Pressure)
                         {
-                            Console.WriteLine($"Rewrite attempt {attempt}/5 refused: {error.Message}");
+                            Console.WriteLine($"Rewrite attempt {attempt}/5 refused: {error.Reason} ({error.Message})");
                             if (attempt == 5)
                             {
                                 throw;
                             }
+                            await Task.Delay(TimeSpan.FromMilliseconds(100), TimeProvider.System, token);
                         }
                     }
                 }

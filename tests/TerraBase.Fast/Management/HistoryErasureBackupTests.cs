@@ -22,7 +22,7 @@ namespace TerraBase.Fast.Management;
 /// keeps an erasure (and a database purge) pending, and the operator age gauges cross 20 days; backup closure waits for
 /// every pre-erasure generation, then completes. The test plays ts-auth.
 /// </summary>
-public sealed class HistoryErasureBackupTests
+public sealed partial class HistoryErasureBackupTests
 {
     private const string Users = "users";
     private const string Jobs = "deletion_jobs";
@@ -101,12 +101,29 @@ public sealed class HistoryErasureBackupTests
         host.Clock.Advance(TimeSpan.FromDays(8));
         await Host.CollectAndTrimAsync(api);
         await Host.PassWithBackupAsync(api, backup);
+        // A real storage-pressure/budget refusal waits for the next file window; drive the real erasure retry,
+        // preserving the per-attempt spacing assertions below instead of retrying inside IHealthyRewrite.
+        for (var retry = 0; retry < 4; retry++)
+        {
+            var complete = true;
+            foreach (var (_, erasure, requested) in erasures)
+            {
+                complete &= (await RequestAsync(erasure, requested)).Status == HistoryErasure.Complete;
+            }
+            if (complete)
+            {
+                break;
+            }
+            host.Clock.Advance(TimeSpan.FromMinutes(10));
+            await Host.PassWithBackupAsync(api, backup);
+        }
         foreach (var (_, erasure, requested) in erasures)
         {
             await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(HistoryErasure.Complete);
         }
 
-        await Assert.That(recording.Starts.Count).IsEqualTo(6).Because("four auth rewrites and two SYSTEM rewrites complete three erasures");
+        await Assert.That(recording.Starts.Count - recording.BudgetOrPressureRefusals).IsEqualTo(6)
+            .Because("four successful auth rewrites and two SYSTEM rewrites complete three erasures; other refusal reasons still fail");
         foreach (var file in recording.Starts.GroupBy(call => call.Database is null))
         {
             foreach (var (earlier, later) in file.Zip(file.Skip(1)))
@@ -119,11 +136,21 @@ public sealed class HistoryErasureBackupTests
     private sealed class RecordingRewrite(IHealthyRewrite engine, TimeProvider clock) : IHealthyRewrite
     {
         public List<(TenantContext? Database, DateTimeOffset Started)> Starts { get; } = [];
+        public int BudgetOrPressureRefusals { get; private set; }
 
-        public ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
+        public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
         {
             Starts.Add((database, clock.GetUtcNow()));
-            return engine.RewriteAsync(database, minimumOffset, cancellationToken);
+            try
+            {
+                return await engine.RewriteAsync(database, minimumOffset, cancellationToken);
+            }
+            catch (RewriteRefusedException error) when (error.Reason is RewriteRefusal.Budget or RewriteRefusal.Pressure)
+            {
+                BudgetOrPressureRefusals++;
+                Console.WriteLine($"Batched erasure rewrite refused: {error.Reason} ({error.Message})");
+                throw;
+            }
         }
     }
 
