@@ -1,9 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Globalization;
 using Bogus;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.E2E.Features.Databases;
+using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.E2E.Features.Analytics;
@@ -25,7 +30,8 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
         var omitOldStorage = false;
         var (bucket, duration) = range switch { "1h" => (60, 3600), "24h" => (3600, 86400), "7d" => (21600, 604800), _ => (86400, 2592000) };
         var to = DateTimeOffset.FromUnixTimeSeconds((DateTimeOffset.UtcNow.ToUnixTimeSeconds() / bucket + 1) * bucket);
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
+            configureScenario: app => app.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements, TerraBaseHomeMeasurements>()), producerExtension: http =>
         {
             var path = http.Request.Path.Value!;
             if (databases.Count != 2 || !(path.EndsWith("/analytics", StringComparison.Ordinal) || path.EndsWith("/replication", StringComparison.Ordinal)))
@@ -50,8 +56,21 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
                     object Meter(string kind, long sent, long received) => new { sourceRegion = "gru", destinationRegion = "sjc", kind, bytesSent = sent * db.Scale, bytesReceived = received * db.Scale };
                     return path.EndsWith("/analytics", StringComparison.Ordinal)
                         ? (object)new { databaseId = db.Id, region, series = omitOldStorage && region == "fra" ? new[] { Sample(1) } : new[] { Sample(2), Sample(1) } }
-                        : new { databaseId = db.Id, databaseName = db.Name, region, status = "healthy", replicatedOps = scale, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null,
-                            bandwidth = region == "gru" ? new[] { Meter("delta", senderReports ? 100 : 0, 0), Meter("anti_entropy", 20, 0) } : region == "sjc" ? new[] { Meter("delta", 0, 100) } : [], series = Array.Empty<object>() };
+                        : new
+                        {
+                            databaseId = db.Id,
+                            databaseName = db.Name,
+                            region,
+                            status = "healthy",
+                            replicatedOps = scale,
+                            lagMs = (double?)null,
+                            divergence = (bool?)null,
+                            convergenceMs = (double?)null,
+                            lastApplied = (DateTimeOffset?)null,
+                            bandwidth = region == "gru" ? new[] { Meter("delta", senderReports ? 100 : 0, 0), Meter("anti_entropy", senderReports ? 20 : 0, 0) }
+                                : region == "sjc" ? new[] { Meter("delta", 0, 100), Meter("anti_entropy", 0, senderReports ? 0 : 20) } : [],
+                            series = Array.Empty<object>()
+                        };
                 }).Where(item => !path.EndsWith("/analytics", StringComparison.Ordinal) || !http.Request.Query.ContainsKey("region") ||
                     JsonSerializer.SerializeToElement(item).GetProperty("region").GetString() == http.Request.Query["region"])).ToArray();
             return Task.FromResult<IResult?>(Results.Json(new { projectId, range, from = to.AddSeconds(-duration), to, bucketSeconds = bucket, items }));
@@ -60,8 +79,12 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         using var producer = scenario.CreateProviderClient();
         using var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
-        using (var plan = await producer.PostAsJsonAsync("/__test/control", new { command = "plan",
-            organizationId = identity.RootElement.GetProperty("organizationId").GetString(), value = OrganizationRecord.StarterPlanId }))
+        using (var plan = await producer.PostAsJsonAsync("/__test/control", new
+        {
+            command = "plan",
+            organizationId = identity.RootElement.GetProperty("organizationId").GetString(),
+            value = OrganizationRecord.StarterPlanId
+        }))
             await Assert.That(plan.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         foreach (var scale in new long[] { 1, 10 })
         {
@@ -86,29 +109,43 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
                 await Stat(html, "Client bandwidth", MetricFormat.Bytes(30 * scale));
                 await Stat(html, "Replication sent", MetricFormat.Bytes(8 * scale));
                 await Stat(html, "Replication received", MetricFormat.Bytes(9 * scale));
+                await Assert.That(html).Contains(" UTC: Sent " + (13 * scale).ToString("N0", CultureInfo.InvariantCulture) + ", Received " + (17 * scale).ToString("N0", CultureInfo.InvariantCulture));
+                foreach (var db in databases.Where(db => database == "" || db.Id == database))
+                    foreach (var code in new[] { "gru", "sjc", "fra" }.Where(code => region == "" || code == region))
+                        foreach (var percentile in new[] { ("p50", 125), ("p95", 1125), ("p99", 2125) })
+                        {
+                            var sampleScale = db.Scale * (code == "gru" ? 1 : code == "sjc" ? 2 : 3);
+                            await Assert.That(html).Contains(percentile.Item1 + " " + db.Name + " / " + code.ToUpperInvariant() + " " + (percentile.Item2 * sampleScale).ToString("N0", CultureInfo.InvariantCulture));
+                        }
                 await Assert.That(reads - before).IsEqualTo(1).Because("one regional endpoint already contains every observing region");
                 await Assert.That(html).Contains(to.AddSeconds(-bucket).UtcDateTime.ToString("MMM d HH:mm 'UTC'"));
                 if (region == "") await Assert.That(html).Contains("value=\"FRA\"").Because("observed history outside placement remains filterable");
             }
 
-        var home = await Page("/?range=" + range);
+        var fullHome = await Page("/?range=" + range);
+        var home = Section(fullHome, "analytics-summary");
         await Stat(home, "Requests", "198");
         await Stat(home, "Storage", "66.0 KiB");
         await Stat(home, "Worst p95 latency", "33.8 ms");
         await Stat(home, "Replication bandwidth", "1.3 KiB");
+        await Stat(Section(fullHome, "home-replication"), "Replication bandwidth", "1.3 KiB");
         foreach (var path in new[] { "/usage?range=" + range, "/databases/" + databases[0].Id + "/replication?range=" + range })
         {
             var html = await Page(path);
-            await Stat(html, "Replication bandwidth", path.StartsWith("/usage", StringComparison.Ordinal) ? "1.3 KiB" : "120 B");
+            var scale = path.StartsWith("/usage", StringComparison.Ordinal) ? 11 : 1;
+            await Stat(html, "Replicated ops", (6 * scale).ToString());
+            await Stat(html, "Replication bandwidth", scale == 11 ? "1.3 KiB" : "120 B");
+            await Stat(html, "Replication sent", MetricFormat.Bytes(senderReports ? 120 * scale : 0));
+            await Stat(html, "Replication received", MetricFormat.Bytes((senderReports ? 100 : 120) * scale));
             await Assert.That(html).Contains("Not reported").Because("null lag and convergence are not zeros");
             await Assert.That(html).Contains("Wire bytes");
         }
         var detail = await Page("/databases/" + databases[0].Id + "?range=" + range);
-        await Assert.That(detail).Contains(" UTC: fra 12\"");
-        await Assert.That(detail).Contains(" UTC: fra 54\"");
-        await Assert.That(detail).Contains(" UTC: fra 3,072\"");
-        await Assert.That(detail).Contains(" UTC: fra 3,375\"");
-        await Assert.That(detail).Contains(" UTC: fra Not reported\"");
+        await Assert.That(detail).Contains("fra 12,");
+        await Assert.That(detail).Contains("fra 54,");
+        await Assert.That(detail).Contains("fra 3,072,");
+        await Assert.That(detail).Contains("fra 3,375,");
+        await Assert.That(detail).Contains("fra Not reported,");
 
         omitOldStorage = true;
         await Stat(await Page("/analytics?range=" + range), "Storage", "Not measured");
@@ -119,7 +156,17 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(path);
             return WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
         }
-        static async Task Stat(string html, string label, string value) => await Assert.That(html)
-            .Contains("<dt class=\"ts-stat-label\">" + label + "</dt><dd class=\"ts-stat-value\">" + value + "</dd>");
+        static string Section(string html, string id)
+        {
+            var start = html.IndexOf("id=\"" + id + "\"", StringComparison.Ordinal);
+            return html[start..html.IndexOf("</section>", start, StringComparison.Ordinal)];
+        }
+        static async Task Stat(string html, string label, string value)
+        {
+            var match = Regex.Match(html, "<dt class=\"ts-stat-label\">" + Regex.Escape(label) + "</dt><dd class=\"ts-stat-value\"([^>]*)>([^<]*)</dd>");
+            var exact = Regex.Match(match.Groups[1].Value, "title=\"([^\"]+)\"");
+            var actual = long.TryParse(value, out _) && exact.Success ? exact.Groups[1].Value.Replace(",", "") : match.Groups[2].Value;
+            await Assert.That(actual).IsEqualTo(value).Because(label);
+        }
     }
 }

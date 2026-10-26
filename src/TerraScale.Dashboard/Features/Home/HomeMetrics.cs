@@ -34,7 +34,7 @@ public sealed partial class TerraBaseHomeMeasurements
                 return;
             }
 
-            var totals = AnalyticsService.Build(selection, batch.Points).Totals;
+            var totals = AnalyticsService.Summarize(selection, batch.Points);
             result.Analytics = new(totals.Requests, totals.Errors, totals.LatestP95Ms, totals.StorageBytes, totals.Operations, totals.ClientBytes);
             result.RequestPoints = batch.Points.GroupBy(point => point.Start).OrderBy(group => group.Key).Select(group =>
             {

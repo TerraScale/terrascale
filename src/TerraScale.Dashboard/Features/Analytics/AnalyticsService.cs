@@ -48,6 +48,14 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
 
     public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
     {
+        var result = Aggregate(selection, points);
+        return (result.Totals, result.Charts());
+    }
+
+    public static AnalyticsTotals Summarize(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points) => Aggregate(selection, points).Totals;
+
+    private static (AnalyticsTotals Totals, Func<IReadOnlyList<AnalyticsChart>> Charts) Aggregate(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
+    {
         var reported = points.Select(point => point.Start.ToUniversalTime()).Distinct().Order().ToArray();
         if (reported.Length == 0) throw new JsonException("No analytics buckets.");
         var bucket = selection.Range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => throw new JsonException("Unknown analytics range.") };
@@ -106,20 +114,25 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             .OrderBy(row => Regions.Rank(row.Code)).ThenBy(row => row.Code, StringComparer.Ordinal).ToArray();
         // A partial set of database-region gauges is not a project storage total.
         for (var index = 0; index < starts.Length; index++) storageMissing[index] = storageSamples[index] != identities;
-        var charts = new List<AnalyticsChart>();
-        Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
-        Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
-        Add("Errors", new AnalyticsSeries("Errors", errors));
-        Add("Approximate request latency percentiles (µs)", latencies.Values.ToArray());
-        Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
-        Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
-        Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
         var latestStorage = Array.FindLastIndex(storageMissing, missing => !missing);
         var latestLatency = Array.FindLastIndex(p95ByBucket, value => value is not null);
         return (new(requestTotal, errorTotal, operationTotal, latestStorage < 0 ? null : storage[latestStorage], clientTotal, replicationSentTotal, replicationReceivedTotal,
-            latestLatency < 0 ? null : p95ByBucket[latestLatency], regionRows), charts);
+            latestLatency < 0 ? null : p95ByBucket[latestLatency], regionRows), Charts);
 
-        void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
+        // Home uses the same totals without generating unused chart geometry.
+        IReadOnlyList<AnalyticsChart> Charts()
+        {
+            var charts = new List<AnalyticsChart>();
+            Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
+            Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
+            Add("Errors", new AnalyticsSeries("Errors", errors));
+            Add("Approximate request latency percentiles (µs)", latencies.Values.ToArray());
+            Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
+            Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
+            Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
+            return charts;
+            void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
+        }
         void AddCounters(SortedDictionary<string, long[]> target, IReadOnlyDictionary<string, long> values, int index, ref long total)
         {
             foreach (var counter in values)
