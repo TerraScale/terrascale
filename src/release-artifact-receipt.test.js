@@ -35,6 +35,11 @@ const npmArchiveIntegrity =
 const npmTreeDigestDomain = "terrascale/npm-cli-tree/v1";
 const nodeVersions = /** @type {const} */ ({ 22: "v22.23.2", 24: "v24.21.0" });
 
+test("the planned Better Auth packed journey fails closed without a public stub", async () => {
+  await assert.rejects(run(process.execPath, [path.join(repositoryRoot, "scripts", "packed-release-e2e-journey.js")]),
+    /Full Better Auth account journey is planned and unqualified/u);
+});
+
 test("release qualification mode requires its exact clean two-runtime contract", async () => {
   const qualifier = path.join(
     repositoryRoot,
@@ -269,6 +274,20 @@ test.skipIf(process.version !== nodeVersions[24])(
           },
         },
         {
+          name: "Better Auth export claim contradicts packed manifest",
+          mutate: () => fixture.mutateQualification((receipt) => {
+            const boundaries = /** @type {{betterAuthExport: string}} */ (receipt.boundaries);
+            boundaries.betterAuthExport = boundaries.betterAuthExport === "absent" ? "node-and-workerd-server-only" : "absent";
+          }),
+        },
+        {
+          name: "Better Auth graph contradicts packed manifest",
+          mutate: () => fixture.mutateQualification((receipt) => {
+            const graphs = /** @type {{browserEntrypointGraphs: {betterAuthWorkerd: string[]}}} */ (receipt.boundaries).browserEntrypointGraphs;
+            graphs.betterAuthWorkerd = graphs.betterAuthWorkerd.length === 0 ? ["src/better-auth.js"] : [];
+          }),
+        },
+        {
           name: "substituted qualification receipt",
           mutate: async () => {
             const receipt = structuredClone(fixture.qualification);
@@ -468,6 +487,7 @@ async function createCandidateFixture(checkout, workspace) {
     run("git", ["ls-tree", "-r", "-z", "HEAD"], { cwd: checkout }),
   ]);
   const now = Date.now();
+  const hasBetterAuthExport = Object.hasOwn(/** @type {object} */ (sourceManifest.exports), "./better-auth");
   /** @type {QualificationReceipt} */
   const qualification = {
     schemaVersion: 1,
@@ -509,9 +529,9 @@ async function createCandidateFixture(checkout, workspace) {
       browserEntrypointGraphs: {
         root: ["src/index.js"],
         admin: ["src/admin.js"],
-        betterAuthWorkerd: ["src/better-auth.js"],
+        betterAuthWorkerd: hasBetterAuthExport ? ["src/better-auth.js"] : [],
       },
-      betterAuthExport: "node-and-workerd-server-only",
+      betterAuthExport: hasBetterAuthExport ? "node-and-workerd-server-only" : "absent",
       packedSecretScan: "passed",
     },
     contract: {

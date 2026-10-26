@@ -480,10 +480,11 @@ pins and omitted producer operations. Durable schema plans, public billing REST
 and administration mutations still need their owning public contracts.
 
 `@terrascale/sdk/ts-auth` retains its separate hosted identity management and OIDC
-client, with its own origin, instance and credentials. The server-only
-`@terrascale/sdk/better-auth` entrypoint remains unavailable pending the
-[public auth primitives and durable receipts](docs/evidence/better-auth-producer-audit.md).
-Its pinned Better Auth version is 1.7.2; no production adapter is claimed.
+client, with its own origin, instance and credentials. A server-only Better Auth
+database adapter is planned; the package exports no `./better-auth` entrypoint.
+The [public auth primitives and durable receipts](docs/evidence/better-auth-producer-audit.md)
+require replication design before adapter work resumes. Existing adapter tooling
+pins Better Auth 1.7.2; this does not establish a supported production adapter.
 The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; document-only keys are insufficient.
 Webhook dead-letter replay uses the documented `endpointId:eventId` delivery
