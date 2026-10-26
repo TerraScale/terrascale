@@ -15,7 +15,7 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
         Post(ProjectApiRoute.Database + "/branches");
         Name("branchDatabase");
         Summary("Branches (clones) a database");
-        Description("The branch is a new database in the same project holding a consistent copy of the source taken now; later writes to either are independent. name follows the database name rules. Sent to the source database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home." + " " + ProjectApiRoute.IdentityDescription);
+        Description("The branch is a new database in the same project holding a consistent copy of the source taken now; later writes to either are independent. The copy preserves the source primary, replica regions and allRegions choice. name follows the database name rules. Sent to the source database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

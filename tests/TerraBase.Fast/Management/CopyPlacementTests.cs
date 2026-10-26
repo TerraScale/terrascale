@@ -4,6 +4,8 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Backups;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -14,9 +16,31 @@ public sealed class CopyPlacementTests
     private static readonly string[] Replicas = ["fra"];
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_snapshot_in_a_replica_region_keeps_the_primary_and_enforces_the_database_allowance(bool atCapacity)
+    public async Task A_snapshot_without_a_known_region_refuses_restore()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var source = await api.CreateManagedDatabaseAsync();
+        using var backup = await api.Client.PostAsync(ManagementApi.Uri(source.Path + "/backups"), null);
+        backup.EnsureSuccessStatusCode();
+        var id = (await backup.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            var record = (await SystemCatalog.GetAsync(transaction, BackupCatalog.Records(source.Organization), id, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None))!;
+            await SystemCatalog.PutAsync(transaction, BackupCatalog.Records(source.Organization), id, record with { Region = null }, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        using var response = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{source.Path}/backups/{id}/restore"), new { name = "copy" });
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("backup_region_unknown");
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task A_snapshot_in_a_replica_region_keeps_the_primary_and_enforces_the_database_allowance(bool atCapacity, bool removed)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-replica-restore-").FullName;
         try
@@ -53,12 +77,23 @@ public sealed class CopyPlacementTests
             using var backup = await owner.PostAsync(ManagementApi.Uri(route + "/backups"), null);
             backup.EnsureSuccessStatusCode();
             var id = (await backup.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-            using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri($"{route}/backups/{id}/restore"), new { name = "copy" });
-            await Assert.That(restored.StatusCode).IsEqualTo(atCapacity ? HttpStatusCode.Conflict : HttpStatusCode.Created).Because(await restored.Content.ReadAsStringAsync());
-            var body = await restored.Content.ReadFromJsonAsync<JsonElement>();
-            if (atCapacity)
+            if (removed)
             {
-                await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("database_limit");
+                // The primary's placement change has replicated after this region took the snapshot.
+                var source = (await owner.GetFromJsonAsync(ManagementApi.Uri(route), TerraBaseJsonContext.Default.ManagedDatabase))!;
+                var store = await fra.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+                await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+                await SystemCatalog.PutAsync(transaction, $"projects/{project}/databases", source.Id, source with { ReplicaRegions = ["sjc"], PlacementVersion = 2 },
+                    TerraBaseJsonContext.Default.ManagedDatabase, CancellationToken.None);
+                await transaction.CommitAsync(CancellationToken.None);
+            }
+
+            using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri($"{route}/backups/{id}/restore"), new { name = "copy" });
+            await Assert.That(restored.StatusCode).IsEqualTo(atCapacity || removed ? HttpStatusCode.Conflict : HttpStatusCode.Created).Because(await restored.Content.ReadAsStringAsync());
+            var body = await restored.Content.ReadFromJsonAsync<JsonElement>();
+            if (atCapacity || removed)
+            {
+                await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo(removed ? "backup_region_not_placed" : "database_limit");
             }
             else
             {
@@ -70,6 +105,35 @@ public sealed class CopyPlacementTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Test]
+    [Arguments("registered")]
+    [Arguments("pending")]
+    [Arguments("snapshotting")]
+    [Arguments("expiring")]
+    public async Task A_region_does_not_sweep_another_regions_snapshot(string state)
+    {
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru");
+        var source = await api.CreateManagedDatabaseAsync();
+        using var backup = await api.Client.PostAsync(ManagementApi.Uri(source.Path + "/backups"), null);
+        backup.EnsureSuccessStatusCode();
+        var id = (await backup.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            var record = (await SystemCatalog.GetAsync(transaction, BackupCatalog.Records(source.Organization), id, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None))!;
+            await SystemCatalog.PutAsync(transaction, BackupCatalog.Records(source.Organization), id, record with { State = state, Region = "fra" },
+                TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None);
+            await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.Backup, source.Organization, id), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        await api.Server.Services.GetRequiredService<IManagedBackupService>().RunScheduleAsync(CancellationToken.None);
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var retained = await SystemCatalog.GetAsync(read, BackupCatalog.Records(source.Organization), id, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None);
+        await Assert.That(retained?.State).IsEqualTo(state);
+        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, source.Organization, source.Project, id + ".db"))).IsTrue();
     }
 
     [Test]
@@ -147,6 +211,10 @@ public sealed class CopyPlacementTests
             using var response = await owner.PostAsJsonAsync(ManagementApi.Uri(restore), new { name = "copy" }, cancellationToken);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest).Because(await response.Content.ReadAsStringAsync(cancellationToken));
             await Assert.That(response.Headers.GetValues("ts-replay")).IsEquivalentTo(["region=gru"]);
+            using var pointInTime = await owner.PostAsJsonAsync(ManagementApi.Uri(restore[..restore.IndexOf("/backups/", StringComparison.Ordinal)] + "/point-in-time/restore"),
+                new { pointInTime = DateTimeOffset.UtcNow, name = "pitr-copy" }, cancellationToken);
+            await Assert.That(pointInTime.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+            await Assert.That(pointInTime.Headers.GetValues("ts-replay")).IsEquivalentTo(["region=gru"]);
             using var replay = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(restore)) { Content = JsonContent.Create(new { name = "copy" }) };
             replay.Headers.Add("ts-replay-src", "region=gru");
             using var repeated = await owner.SendAsync(replay, cancellationToken);

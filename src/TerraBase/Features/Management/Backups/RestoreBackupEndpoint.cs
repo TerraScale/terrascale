@@ -15,7 +15,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
         Post(ProjectApiRoute.Database + "/backups/{backup}/restore");
         Name("restoreBackup");
         Summary("Restores a backup into a new database");
-        Description("Restore never overwrites: it creates a new database in the same project holding the backup's data, with branchedFrom set to the backed-up database. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used. Platform organization sources return 409 recovery_erasure_fenced; use the separately reviewed operator recovery procedure for platform recovery." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Restore never overwrites: it creates a new database in the same project holding the backup's data, with branchedFrom set to the backed-up database and the same primary, replica regions and allRegions choice. A request sent elsewhere answers 421 with ts-replay naming the snapshot region. An unknown snapshot region answers 503 backup_region_unknown; a snapshot outside current placement answers 409 backup_region_not_placed. name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used. Platform organization sources return 409 recovery_erasure_fenced; use the separately reviewed operator recovery procedure for platform recovery." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Backups");
         Produces<ManagedDatabase>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
