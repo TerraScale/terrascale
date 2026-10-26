@@ -19,6 +19,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -36,7 +39,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             echo 'check=false' >> "$GITHUB_OUTPUT"
             echo "cache=$([[ "$GITHUB_REF" == refs/heads/main ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_EVENT_NAME" != merge_group ]] && git diff --quiet HEAD^ HEAD -- '*.go' '*.json' go.mod go.sum .github/workflows/ci.yml; then
+          elif [[ "$GITHUB_EVENT_NAME" != merge_group ]] && git diff --quiet HEAD^ HEAD -- '*.go' '*.json' go.mod go.sum .go-version .goreleaser.yaml 'scripts/**' '.github/workflows/**'; then
             echo 'check=false' >> "$GITHUB_OUTPUT"
             echo 'cache=false' >> "$GITHUB_OUTPUT"
           else
@@ -45,12 +48,10 @@ jobs:
           fi
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         id: go
-        if: steps.changes.outputs.check == 'true' || steps.changes.outputs.cache == 'true'
         with:
-          go-version: stable
+          go-version-file: .go-version
           cache: false
       - name: Locate Go caches
-        if: steps.changes.outputs.check == 'true' || steps.changes.outputs.cache == 'true'
         id: cache-paths
         run: |
           {
@@ -59,7 +60,6 @@ jobs:
             echo "platform=setup-go-${RUNNER_OS}-${RUNNER_ARCH,,}-${ImageOS}"
           } >> "$GITHUB_OUTPUT"
       - name: Restore module and build cache
-        if: steps.changes.outputs.check == 'true' || steps.changes.outputs.cache == 'true'
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         id: cache
         with:
@@ -69,6 +69,20 @@ jobs:
           key: ${{ steps.cache-paths.outputs.platform }}-go-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             ${{ steps.cache-paths.outputs.platform }}-go-${{ steps.go.outputs.go-version }}-
+      - name: Restore advisory scanner
+        id: advisory-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/terrascale/govulncheck-v1.9.0-go1.27.3
+          key: ${{ runner.os }}-${{ runner.arch }}-govulncheck-v1.9.0-${{ hashFiles('.go-version', 'scripts/install-govulncheck.sh') }}
+      - name: Check every module's current advisories and source reachability
+        run: bash scripts/audit-dependencies.sh
+      - name: Save verified scanner on main
+        if: steps.changes.outputs.cache == 'true' && steps.advisory-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/terrascale/govulncheck-v1.9.0-go1.27.3
+          key: ${{ steps.advisory-cache.outputs.cache-primary-key }}
       - if: steps.changes.outputs.check == 'true'
         run: test -z "$(gofmt -l .)"
       - if: steps.changes.outputs.check == 'true'
@@ -89,3 +103,12 @@ jobs:
             ${{ steps.cache-paths.outputs.modules }}
             ${{ steps.cache-paths.outputs.build }}
           key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: Select supported consumer floor
+        if: steps.changes.outputs.check == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.0'
+          cache: false
+      - name: Compile SDK consumer at supported floor
+        if: steps.changes.outputs.check == 'true'
+        run: bash scripts/check-consumer.sh

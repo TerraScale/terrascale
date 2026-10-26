@@ -7,6 +7,8 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
+    hooks:
+      post: bash scripts/check-release-binary.sh "{{ .Path }}"
     ldflags: ["-s -w -X main.version={{ .Version }}"]
 archives:
   - name_template: 'ts_{{ .Os }}_{{ .Arch }}'
