@@ -9,12 +9,12 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
 {
     public async Task RenameAsync(AccountContext context, string name, CancellationToken cancellationToken)
     {
-        context = await FreshOwnerAsync(context, cancellationToken);
+        context = await FreshManagerAsync(context, cancellationToken);
         name = AccountService.ValidName(name);
         await platform.RenameOrganizationAsync(context.Session, context.Organization!.Id, name, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
-            Owner(org, context.UserId);
+            Manage(org, context.UserId);
             org.AuditEvents.Add(Event(context, "organization.renamed", name, "organization"));
         }, cancellationToken);
     }
@@ -22,7 +22,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
     public async Task<ProjectRecord> CreateProjectAsync(AccountContext context, string name, string region,
         string backupRegion, IReadOnlyList<string>? regions, CancellationToken cancellationToken)
     {
-        context = await FreshOwnerAsync(context, cancellationToken);
+        context = await FreshManagerAsync(context, cancellationToken);
         name = AccountService.ValidName(name);
         CanCreate(context.Organization!, context.UserId, name);
         var locations = await LocationsAsync(region, backupRegion, regions, cancellationToken);
@@ -42,9 +42,9 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             // ts-auth already lists the new project; its dashboard settings start here.
-            Owner(org, context.UserId);
+            Manage(org, context.UserId);
             if (!org.CanProvision(context.UserId)) throw new AccountAccessException("Active billing is required to create projects.", 409);
-            DemandProjectRoom(org);
+            DemandProjectRoom(org, project.Id);
             Duplicate(org, name, project.Id);
             org.Projects[project.Id] = project;
             org.AuditEvents.Add(Event(context, "project.created", name, "project"));
@@ -61,7 +61,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
     public async Task UpdateProjectAsync(AccountContext context, string name, string region, string backupRegion,
         IReadOnlyList<string>? regions, CancellationToken cancellationToken)
     {
-        context = await FreshOwnerAsync(context, cancellationToken, requireProject: true);
+        context = await FreshManagerAsync(context, cancellationToken, requireProject: true);
         name = AccountService.ValidName(name);
         var project = context.Project!;
         Duplicate(context.Organization!, name, project.Id);
@@ -71,7 +71,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
-            Owner(org, context.UserId);
+            Manage(org, context.UserId);
             Duplicate(org, name, project.Id);
             var current = org.Projects.GetValueOrDefault(project.Id) ?? throw new AccountAccessException("Project is unavailable.", 404);
             if (current.OrganizationId != org.Id) throw new AccountAccessException("Project is unavailable.", 404);
@@ -92,7 +92,8 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
     {
         context = operation is "confirm" or "cancel"
             ? await AccountScope.RefreshAsync(accounts, context, cancellationToken)
-            : await FreshOwnerAsync(context, cancellationToken);
+            : operation == "start" ? await FreshOwnerAsync(context, cancellationToken)
+            : await FreshManagerAsync(context, cancellationToken);
         if (operation is "role" or "remove" or "start")
         {
             var snapshot = await access.ReadAsync(context, cancellationToken);
@@ -141,6 +142,18 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         return context;
     }
 
+    private async Task<AccountContext> FreshManagerAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)
+    {
+        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject);
+        Manage(context.Organization!, context.UserId);
+        return context;
+    }
+
+    internal static void Manage(OrganizationRecord org, string userId)
+    {
+        if (!org.CanManage(userId)) throw new AccountAccessException("Organization management is required.");
+    }
+
     internal static void Owner(OrganizationRecord org, string userId)
     {
         if (org.OwnerUserId != userId || org.RoleFor(userId) != "owner") throw new AccountAccessException("Organization ownership is required.");
@@ -159,10 +172,11 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         : PlanCatalog.Plans.Any(plan => plan.Id == org.PlanId) ? PlanCatalog.ResourceLimits(org.PlanId).Projects
         : throw new AccountAccessException("The organization plan is unavailable.", 503);
 
-    internal static void DemandProjectRoom(OrganizationRecord org)
+    internal static void DemandProjectRoom(OrganizationRecord org, string? createdProjectId = null)
     {
         var limit = ProjectLimit(org);
-        if (org.Projects.Count >= limit)
+        // The canonical provider snapshot already includes this request's new project.
+        if (org.Projects.Keys.Count(id => id != createdProjectId) >= limit)
             throw new AccountAccessException($"Your organization has reached its plan's project limit ({limit} {(limit == 1 ? "project" : "projects")}). Upgrade the plan on the organization's Billing tab or delete a project.", 409);
     }
 

@@ -52,7 +52,7 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
         }
         var transfer = await transferRead;
         // ts-auth also records some changes the dashboard records (API keys, member changes); the dashboard's copy names the client IP.
-        var local = context.Organization!.AuditEvents;
+        IReadOnlyList<AuditRecord> local = context.CanManage ? context.Organization!.AuditEvents : [];
         audit.RemoveAll(item => local.Any(own => own.Action == item.Action && own.Target == item.Target && (own.OccurredAt - item.OccurredAt).Duration() < TimeSpan.FromMinutes(5)));
         // The plan decides the window; ts-auth keeps its events at least 90 days (its list_audit_events contract).
         return new(members, invitations, audit.Concat(local).OrderByDescending(item => item.OccurredAt).ToArray(),

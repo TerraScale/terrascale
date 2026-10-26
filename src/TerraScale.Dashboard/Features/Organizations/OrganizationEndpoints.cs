@@ -45,6 +45,8 @@ public static class OrganizationEndpoints
             }
             context = await OrganizationWizard.PrepareAsync(http, context, accounts);
             var page = await PageModelAsync(http, context, placement);
+            if (page.Tab == "audit" && !context.CanManage)
+                return Results.Text("Organization management is required to view audit events.", statusCode: StatusCodes.Status403Forbidden);
             if (page.Tab == "billing" && context.Organization is not null)
             {
                 try { page = page with { Billing = await BillingEndpoints.LoadAsync(page.Shell, billing, spending, http.Request.Query, time.GetUtcNow(), http.RequestAborted, internalBilling) }; }

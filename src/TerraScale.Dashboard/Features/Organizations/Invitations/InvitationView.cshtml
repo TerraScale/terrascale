@@ -16,7 +16,7 @@
 }
 else if (Model.Pending is not { } pending)
 {
-                <div class="ts-auth-heading"><p class="ts-eyebrow">Organization invitation</p><h1 class="ts-auth-title" id="invitation-title">This invitation is no longer valid</h1><p class="ts-auth-subtitle">The link has expired, was canceled, or has already been used. Ask an organization owner to send you a new invitation.</p></div>
+                <div class="ts-auth-heading"><p class="ts-eyebrow">Organization invitation</p><h1 class="ts-auth-title" id="invitation-title">This invitation is no longer valid</h1><p class="ts-auth-subtitle">The link has expired, was canceled, or has already been used. Ask an organization owner or admin to send you a new invitation.</p></div>
                 <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@(Model.Session is null ? "/login" : "/")">@(Model.Session is null ? "Sign in" : "Go to dashboard")</a>
 }
 else
