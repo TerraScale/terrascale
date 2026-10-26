@@ -15,7 +15,7 @@ public sealed class TerraBasePublicInventoryTests
         using var inventory = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("current-public-routes.json"));
         await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("e7fa366ddb289f5612c93d316b316fb92c568151");
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
-        await Assert.That(expected.Count).IsEqualTo(91);
+        await Assert.That(expected.Count).IsEqualTo(93);
         (string Method, string Path)? sent = null;
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
@@ -70,6 +70,8 @@ public sealed class TerraBasePublicInventoryTests
             ("getAutoIndexPolicy", () => db.GetAutoIndexPolicyAsync("items")),
             ("getBackupDestination", () => project.GetBackupDestinationAsync()),
             ("getBackupPolicy", () => db.GetBackupPolicyAsync()),
+            ("getExportSchedule", () => db.GetExportScheduleAsync()),
+            ("setExportSchedule", () => db.SetExportScheduleAsync(null)),
             ("getCollection", () => db.GetCollectionAsync("items")),
             ("getCollectionSchema", () => db.GetInferredSchemaAsync("items")),
             ("getCollectionTtl", () => db.GetCollectionTtlAsync("items")),
