@@ -30,6 +30,7 @@ mod changes;
 mod client;
 mod documents;
 mod errors;
+mod export;
 mod export_schedule;
 mod file_transfer;
 mod files;
@@ -70,6 +71,7 @@ pub use documents::{
     WriteResult,
 };
 pub use errors::{Error, Result, SqlError};
+pub use export::ExportDocument;
 pub use export_schedule::{ExportRun, ExportSchedule};
 pub use files::{FileObject, FileObjectPage, FileSignedUrl, FileUploadRequest};
 pub use functions::{
