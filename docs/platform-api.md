@@ -1,72 +1,57 @@
-# Platform API
+# Dashboard integration API
 
-**Status (2026-10-12): not implemented by the C# application.** The Go
-implementation was removed. This page describes that removed implementation;
-see [remaining parity](csharp-migration.md#remaining-parity-and-qualification).
+The dashboard serves a session-authenticated integration API at
+`https://dash.terrascale.tech`. Its [interactive reference](https://dash.terrascale.tech/reference/)
+and [OpenAPI document](https://dash.terrascale.tech/openapi/integration.json)
+cover the explicitly annotated integration routes. The committed snapshot is
+`contracts/dashboard/integration.openapi.json`; it is checked against the running
+application in `IntegrationContractJourneyTests`.
 
-`https://platform.terrascale.tech` serves the platform REST API: what
-ts-dashboard owns under the service ownership in the umbrella `AGENTS.md`,
-namely plans, subscriptions, Stripe billing and spending caps.
-Organizations, projects, members and API keys are ts-auth's API, and
-databases, documents and usage metering are TerraBase's.
+## Authentication and requests
 
-The OpenAPI 3.1 document is `GET /openapi.json`, generated at startup from
-the routes below.
+Sign in through `/login`, which redirects to ts-auth. These browser integrations
+use the HttpOnly `ts-dashboard-session` cookie. A personal access token authenticates
+[MCP](mcp.md), not these routes. Never copy a browser cookie into source control,
+chat or a shared request log.
 
-## Authentication
+Read operations return JSON. Mutations use the media type documented for the
+operation, generally `application/x-www-form-urlencoded`, and require the current
+page's `_csrf` token and same-origin browser context. Membership and role checks
+run for each action. Follow documented `303` redirects after forms; do not interpret
+the redirect itself as a JSON response. Missing sessions return `401`; rejected
+CSRF and access checks return the operation's documented `400` or `403` response.
+Do not assume every browser error has the same JSON envelope: consult each
+operation's response/media-type contract.
 
-The API is a resource server under ts-auth's `docs/platform-contract.md`
-(v1.1, §6.4). Every operation is an organization route and needs
-`Authorization: Bearer <token>` with an organization token of ts-auth's
-`terrascale` tenant:
+## Covered operations
 
-- an ES256 `at+jwt` from the issuer's JWKS, `iss` the issuer, `aud` including
-  `https://platform.terrascale.tech`, unexpired;
-- `org_id` equal to the path's organization and no `project_id`; anything
-  else answers `404`, so a project token reaches no route here (a route under
-  `…/projects/{projectId}` would need that project's token);
-- the operation's scope in `scope` (`403 insufficient_scope` otherwise):
-  `billing:read`, `billing:write` (owners) or `usage:read`.
+The current reference includes session identity, organization/project selection,
+project API-key creation/rotation/revocation/CIDRs, conditional document writes,
+and document-change streams. It is a partial integration contract, not an inventory
+of every dashboard page or form endpoint. API-key creation and rotation return
+secrets once: store them securely and never include their response bodies in logs.
 
-Users and the CLI got one by exchanging their sign-in token (historical: ts-go
-`tsauth.NewExchangeSource`). The dashboard's services still act as a user and
-check roles too, so API key tokens (no user) are refused until the identity
-store moves to ts-auth, and until then `org_id` must be a dashboard
-organization id.
+Use each list operation's own continuation fields and limits; no universal page
+parameter exists. Document-change streams use their documented SSE reconnect
+contract. Responses carry `X-Request-Id` for troubleshooting; preserve it with the
+HTTP status and a sanitized error. Do not infer an idempotency guarantee from an
+internal Stripe request or MCP tool annotation. A caller-supplied `Idempotency-Key`
+is not a published guarantee for these browser routes. After an uncertain mutation,
+inspect current state before retrying, especially for credentials and billing.
+No public rate-limit budget or rate-limit-header contract is established here;
+respect `Retry-After` when supplied and never automatically replay an uncertain write.
 
-## Operations
+## Public service APIs and removed routes
 
-In the Go application each operation was an MCP tool with a `Route`, so both
-surfaces shared validation, permissions and schemas. The JSON body, query
-parameters and path wildcards filled the tool's input; unknown fields were
-refused, and only the path named the organization and project. The C# MCP
-tools ([mcp.md](mcp.md)) have no REST routes.
+The former Go platform billing API at `platform.terrascale.tech`, including
+`/openapi.json` and `/v1/organizations/{organizationId}` billing/plan/usage routes,
+is not implemented by the current application. Do not use its historical bearer
+JWT examples for the session integrations. Restoring a public, role-protected
+platform contract and matching SDKs is tracked separately (TS-1104).
 
-Routes are under `/v1/organizations/{organizationId}`:
-
-| Operation | Route | Scope |
-| --- | --- | --- |
-| `list_plans` | `GET …/plans` | `billing:read` |
-| `get_billing` | `GET …/billing` | `billing:read` |
-| `list_invoices` | `GET …/invoices` | `billing:read` |
-| `preview_plan_change` | `GET …/plan/preview` | `billing:read` |
-| `create_checkout` | `POST …/checkout` | `billing:write` |
-| `cancel_checkout` | `DELETE …/checkout` | `billing:write` |
-| `change_plan` | `PUT …/plan` | `billing:write` |
-| `undo_plan_change` | `DELETE …/plan/scheduled-change` | `billing:write` |
-| `get_billing_portal_url` | `POST …/billing-portal` | `billing:write` |
-| `set_spending_controls` | `PUT …/spending-controls` | `billing:write` |
-| `get_usage` | `GET …/usage` | `usage:read` |
-
-Errors use ts-auth's envelope, `{"error":{"code","message"}}`: `400
-invalid_request`, `401 unauthorized`, `403 insufficient_scope` or
-`forbidden_role`, `404 not_found` (also for an organization or project that is
-not the token's), `409 conflict` and `503 temporarily_unavailable`.
-
-## Hosts
-
-The removed Go application routed `platform.terrascale.tech` to this API and
-`mcp.terrascale.tech` to MCP. The C# application routes only the MCP host.
-The current ts-orch dashboard service spec registers `dash.terrascale.tech`;
-it does not register either additional host. Do not infer serving availability
-from the historical API contract. See [OCI deployment](oci-deployment.md).
+Organizations, projects, members and project credentials belong to ts-auth;
+databases, documents and usage producers belong to TerraBase. Use their published
+service contracts and official SDKs for programmatic access. Dashboard-owned
+billing operations are available through the dashboard and its authenticated
+[MCP tools](mcp.md). Public APIs retain version `v1`; their authentication and
+schemas must be documented by the owning service.

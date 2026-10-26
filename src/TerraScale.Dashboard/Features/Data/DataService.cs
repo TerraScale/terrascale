@@ -57,14 +57,19 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         => await ListAsync(context, databaseId, collection, "", 100, "", cancellationToken);
 
     public async Task<IReadOnlyList<TerraBaseDocument>> ListAsync(AccountContext context, string databaseId, string collection, string search, int limit, string after, CancellationToken cancellationToken)
+        => (await ListPageAsync(context, databaseId, collection, search, limit, after, cancellationToken)).Items;
+
+    public async Task<TerraBaseDocumentPage> ListPageAsync(AccountContext context, string databaseId, string collection, string search, int limit, string after, CancellationToken cancellationToken)
     {
         if (limit == 0) limit = 100;
         if (limit is < 1 or > 100) throw new AccountAccessException("Document limits use 1–100 rows.", 422);
         var database = DatabaseService.Database(context, databaseId);
         var result = await documents.ListAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Name,
             ValidCollection(collection), limit, after.Length == 0 ? null : after, cancellationToken);
+        if (after.Length > 0 && result.NextCursor == after) throw new HttpRequestException("Document pagination did not advance.");
         search = search.Trim();
-        return result.Items.Where(row => search.Length == 0 || (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase)).Take(limit).ToArray();
+        // Search filters this native page only. Its cursor must survive even when no rows match.
+        return new(result.Items.Where(row => search.Length == 0 || (row.Id + " " + row.Document.GetRawText()).Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray(), result.NextCursor);
     }
 
     public async Task CreateCollectionAsync(AccountContext context, string databaseId, string collection, CancellationToken cancellationToken)

@@ -33,6 +33,11 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
         {
             var initialized = await HttpJourney.McpAsync(replica, secret, "initialize", new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = new { name = "TUnit database E2E", version = "1" } });
             await Assert.That(initialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
+            var rootInitialized = await HttpJourney.McpAsync(replica, secret, "initialize",
+                new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = new { name = "Dedicated host", version = "1" } }, "/", "mcp.terrascale.tech");
+            await Assert.That(rootInitialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
+            var rootTools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { }, "/", "mcp.terrascale.tech");
+            await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
             var current = await HttpJourney.McpAsync(replica, secret, "server/discover", new { });
             await Assert.That(current.GetProperty("result").GetProperty("supportedVersions").EnumerateArray()
                 .Any(version => version.GetString() == "2026-07-28")).IsTrue();
@@ -91,6 +96,20 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(page.GetProperty("documents")[0].GetProperty("id").GetString()).IsEqualTo("01K78CVSTMER00000000000003");
             var search = await CallAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["after"] = "3", ["search"] = "CUSTOMER 4" });
             await Assert.That(search.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
+            var empty = await CallAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["search"] = "CUSTOMER 4" });
+            await Assert.That(empty.GetProperty("documents").GetArrayLength()).IsEqualTo(0);
+            await Assert.That(empty.GetProperty("hasMore").GetBoolean()).IsTrue();
+            var continued = await CallAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["search"] = "CUSTOMER 4", ["after"] = empty.GetProperty("nextCursor").GetString() });
+            await Assert.That(continued.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
+            await Assert.That(documents.GetProperty("hasMore").GetBoolean()).IsFalse();
+            var browser = await CallAsync(replica, "list_documents", new(docFields) { ["page"] = 2 });
+            await Assert.That(browser.GetProperty("page").GetInt32()).IsEqualTo(2);
+            await Assert.That(browser.GetProperty("pageCount").GetInt32()).IsEqualTo(2);
+            await Assert.That(browser.GetProperty("total").GetInt32()).IsEqualTo(31);
+            await Assert.That(browser.GetProperty("totalIsLowerBound").GetBoolean()).IsFalse();
+            await Assert.That(browser.GetProperty("hasMore").GetBoolean()).IsFalse();
+            await ErrorAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["page"] = 2 });
+            await ErrorAsync(replica, "list_documents", new(docFields) { ["after"] = "3", ["sort"] = "name" });
             await ErrorAsync(replica, "list_documents", new(docFields) { ["limit"] = 101 });
             using (var apiDocuments = await replica.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=users"))
                 await Assert.That((await ReadJsonAsync(apiDocuments)).GetArrayLength()).IsEqualTo(31);

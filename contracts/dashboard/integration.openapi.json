@@ -5,6 +5,11 @@
     "description": "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. New public APIs use /v1. Mutations require the current session and the _csrf form token bound to the same origin; authentication and membership checks run before actions. This document covers explicitly annotated integration routes, not every UI page.",
     "version": "v1"
   },
+  "servers": [
+    {
+      "url": "https://dash.terrascale.tech"
+    }
+  ],
   "paths": {
     "/api/v1/auth/me": {
       "get": {

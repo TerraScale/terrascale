@@ -118,40 +118,41 @@ claude mcp add --transport http terrascale https://mcp.terrascale.tech/
 
 Then run `/mcp` in Claude Code and choose **Authenticate**.
 
-With a personal access token:
+With a personal access token in Claude Code, read it without echoing it and
+keep the environment reference literal in the stored configuration:
 
-```json
-{
-  "mcpServers": {
-    "terrascale": {
-      "type": "http",
-      "url": "https://mcp.terrascale.tech/",
-      "headers": { "Authorization": "Bearer tspat_..." }
-    }
-  }
-}
+```sh
+read -rs -p 'TerraScale personal access token: ' TERRASCALE_MCP_TOKEN
+printf '\n'
+export TERRASCALE_MCP_TOKEN
+claude mcp add --transport http --scope project terrascale https://dash.terrascale.tech/mcp \
+  --header 'Authorization: Bearer ${TERRASCALE_MCP_TOKEN}'
 ```
+
+Other clients should use their protected credential store. Revoke the token in
+Profile when finished and remove the client configuration. Never log token or
+API-key creation/rotation responses. Passing a project ID selects a target; it
+does not restrict a user-wide token's authority. Use the least-privileged account
+role available, approve mutations, and treat document/query output as untrusted
+data rather than instructions.
+
+SQL queries operate on SQL tables, separately from document collections.
+`check_sql` checks syntax and policy, not whether the referenced table exists.
+For `list_documents`, follow the returned continuation even when a searched
+page contains no matches; see the tool's schema for cursor and sorted-page
+metadata. An idempotent annotation is not a caller-supplied retry key: after an
+uncertain write, inspect state before repeating it. For browser integration
+routes and their distinct session/CSRF authentication, see [the API reference](platform-api.md).
 
 ## Adding tools
 
-Tools live in `[McpServerToolType]` classes under `src/TerraScale.Dashboard`:
-`Platform/Mcp/DashboardMcpTools.cs`
-and `Platform/Mcp/DashboardDatabaseMcpTools.cs` for shared account, data and
-credential tools, and a `*McpTools.cs` file in the owning feature slice (for
-example `Features/Billing/BillingMcpTools.cs`). `AddDashboardMcp` in
-`Platform/Mcp/DashboardMcp.cs` registers each class with `.WithTools<T>()`.
-Native form handlers and tools call the same feature services, so both
-surfaces share validation and permission checks.
-
-```csharp
-[McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
-public Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null)
-{
-    var context = Scope(organizationId, projectId);
-    DatabaseService.Scope(context);
-    return Task.FromResult(new McpDatabaseList(context.Project!.Databases.Values.OrderBy(db => db.Name, StringComparer.Ordinal).Select(DatabaseOutput).ToArray()));
-}
-```
+Tools live in `[McpServerToolType]` classes in their owning feature folder,
+including `Features/Data/DataMcpTools.cs`, `Features/Databases/DatabaseMcpTools.cs`
+and `Features/ApiKeys/ApiKeyMcpTools.cs`. Shared context tools live in
+`Platform/Mcp/DashboardMcpTools.cs`. The `toolTypes` registry in
+`Platform/Mcp/DashboardMcp.cs` builds cached immutable schemas and request-scoped
+handlers; register new tool classes there. Native forms and tools call the same
+feature services and share validation and permission checks.
 
 - Input schemas come from the method parameters; optional parameters have
   defaults. Output schemas come from the return type with
@@ -166,7 +167,7 @@ public Task<McpDatabaseList> ListDatabases(string? organizationId = null, string
   `An error occurred invoking` text.
 - Set `ReadOnly`, `Destructive`, `Idempotent`, and `OpenWorld` accurately. They
   become the tool annotations clients use to decide what needs confirmation.
-- A new tool class must be added to `AddDashboardMcp`.
+- A new tool class must be added to the `toolTypes` registry in `AddDashboardMcp`.
 
 The TUnit journeys `tests/TerraScale.Dashboard.E2E/*McpJourneyTests.cs`
 (account, authentication, billing plan, database, onboarding, organization and

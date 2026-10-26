@@ -15,6 +15,8 @@ public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var bytes = await response.Content.ReadAsByteArrayAsync();
         using var document = JsonDocument.Parse(bytes);
+        await Assert.That(document.RootElement.GetProperty("servers")[0].GetProperty("url").GetString())
+            .IsEqualTo("https://dash.terrascale.tech");
         var paths = document.RootElement.GetProperty("paths");
         var identity = paths.GetProperty("/api/v1/auth/me").GetProperty("get");
         await Assert.That(identity.GetProperty("operationId").GetString()).IsEqualTo("getDashboardIdentity");
