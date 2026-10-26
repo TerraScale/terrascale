@@ -98,8 +98,10 @@ type shapeKeyEntry struct {
 	key            ShapeKey
 	err            error
 	ownerCancelled bool
-	timer          *time.Timer
 }
+
+// A fixed bound includes pending loads; saturation never starts extra work.
+const maxShapeKeys = 256
 
 type shapeKeyCache struct {
 	mu      sync.Mutex
@@ -152,6 +154,22 @@ func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fe
 			return &key, false, nil
 		}
 	}
+	if len(cache.entries) >= maxShapeKeys {
+		for oldID, old := range cache.entries {
+			select {
+			case <-old.ready:
+				cache.remove(oldID, old)
+			default:
+			}
+			if len(cache.entries) < maxShapeKeys {
+				break
+			}
+		}
+	}
+	if len(cache.entries) >= maxShapeKeys {
+		cache.mu.Unlock()
+		return nil, false, ErrShapeBusy
+	}
 	if cache.entries == nil {
 		cache.entries = make(map[shapeKeyIdentity]*shapeKeyEntry)
 	}
@@ -176,16 +194,8 @@ func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fe
 				cache.remove(oldID, old)
 			}
 		}
-		if id.epoch == uint64(now.Unix()/600) {
-			delay := time.Duration(600-now.Unix()%600)*time.Second - time.Duration(now.Nanosecond())
-			entry.timer = time.AfterFunc(delay, func() {
-				cache.mu.Lock()
-				defer cache.mu.Unlock()
-				if cache.entries[id] == entry {
-					delete(cache.entries, id)
-				}
-			})
-		} else {
+		// Expiry is checked on access; no background timer owns client state.
+		if id.epoch != uint64(now.Unix()/600) {
 			delete(cache.entries, id)
 		}
 	} else if cache.entries[id] == entry {
@@ -201,9 +211,6 @@ func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fe
 
 // remove is called with mu held. Returned caller-owned keys remain their responsibility.
 func (cache *shapeKeyCache) remove(id shapeKeyIdentity, entry *shapeKeyEntry) {
-	if entry.timer != nil {
-		entry.timer.Stop()
-	}
 	delete(cache.entries, id)
 }
 
