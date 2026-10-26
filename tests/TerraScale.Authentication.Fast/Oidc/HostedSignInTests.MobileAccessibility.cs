@@ -1,8 +1,9 @@
 using System.Security.Cryptography;
 using Bogus;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Playwright;
 using Microsoft.Net.Http.Headers;
+using Microsoft.Playwright;
 using OtpNet;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
@@ -103,7 +104,8 @@ public sealed partial class HostedSignInTests
         await page.Locator("#sign-in-password").FillAsync("replacement synthetic acceptance password");
         var signedIn = await page.RunAndWaitForResponseAsync(
             () => page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync(),
-            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == SignIn + "/password");
+            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == SignIn + "/password"
+                && !string.IsNullOrEmpty(QueryHelpers.ParseQuery(response.Request.PostData ?? string.Empty)["password"]));
         await page.GetByRole(AriaRole.Heading, new() { Name = "Signed in", Exact = true }).WaitForAsync();
         await page.WaitForLoadStateAsync();
         var responseCookies = SetCookieHeaderValue.ParseList([.. await signedIn.HeaderValuesAsync("set-cookie")]);
