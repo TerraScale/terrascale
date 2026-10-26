@@ -9,6 +9,8 @@ Prisma 7 talks to TerraBase through its libSQL driver adapter, `@prisma/adapter-
 
 A complete app is in [`examples/orm-prisma`](https://github.com/TerraScale/ts-docs/tree/main/examples/orm-prisma): schema, migration, CRUD, a relation and transactions.
 
+This example reserves `prisma_authors` and `prisma_posts`, separate from the Documents quickstart's `posts` collection and the other ORM examples. Use these tables only for the sample data. Treat the complete app and inline walkthrough as alternatives: both insert the same sample rows, so start with empty reserved tables.
+
 ## Install
 
 Use **Node.js 24**. The complete example is an ES module project (`"type": "module"`); Node 24 executes its TypeScript entrypoint directly with `node app.ts`. To run the complete example with its committed lockfile:
@@ -52,7 +54,7 @@ model Author {
   email String @unique
   posts Post[]
 
-  @@map("authors")
+  @@map("prisma_authors")
 }
 
 model Post {
@@ -63,7 +65,7 @@ model Post {
   author    Author  @relation(fields: [authorId], references: [id])
 
   @@index([authorId])
-  @@map("posts")
+  @@map("prisma_posts")
 }
 ```
 
@@ -158,7 +160,6 @@ const titles = await prisma.post.findMany({ where: { author: { name: 'Ada' } }, 
 
 const draft = await prisma.post.findFirstOrThrow({ where: { title: 'Draft' } })
 await prisma.post.update({ where: { id: draft.id }, data: { published: true } })
-await prisma.post.deleteMany({ where: { authorId: ada.id } })
 ```
 
 ## Transactions
@@ -171,10 +172,19 @@ await prisma.$transaction(async (tx) => {
 })
 
 // Batch: the unique violation rolls back both creates.
-await prisma.$transaction([
-  prisma.author.create({ data: { name: 'Linus', email: 'linus@example.com' } }),
-  prisma.author.create({ data: { name: 'Dup', email: 'ada@example.com' } }),
-])
+try {
+  await prisma.$transaction([
+    prisma.author.create({ data: { name: 'Linus', email: 'linus@example.com' } }),
+    prisma.author.create({ data: { name: 'Dup', email: 'ada@example.com' } }),
+  ])
+} catch (error) {
+  const { code, message } = error as { code?: string; message: string }
+  if (code !== 'P2039' || !message.includes('SQLITE_CONSTRAINT_UNIQUE')) throw error
+  console.log('rolled back:', code, 'SQLITE_CONSTRAINT_UNIQUE')
+}
+
+// Delete after the interactive transaction has used draft.id.
+await prisma.post.deleteMany({ where: { authorId: ada.id } })
 ```
 
 Transactions are optimistic: a commit that conflicts with another writer fails, and nothing is written. Retry the whole transaction.

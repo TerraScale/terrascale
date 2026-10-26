@@ -17,5 +17,5 @@ npm run migrate                                 # applies migrations/*.sql that 
 npm start                                       # CRUD, relations and transactions
 ```
 
-`npm start` inserts the same rows each run: drop the `authors`, `posts` and
+`npm start` inserts the same rows each run: drop the `prisma_authors`, `prisma_posts` and
 `prisma_migrations` tables to run it again on a clean database.

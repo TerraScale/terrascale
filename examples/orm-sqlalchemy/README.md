@@ -12,4 +12,4 @@ export TERRASCALE_PROJECT_ID=... TERRASCALE_DATABASE=...
 ```
 
 Keep the key in your secret manager or private shell. `app.py` inserts the
-same rows each run: drop the `authors` and `posts` tables to run it again.
+same rows each run: drop the `sqlalchemy_authors` and `sqlalchemy_posts` tables to run it again.

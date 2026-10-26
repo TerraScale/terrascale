@@ -14,6 +14,8 @@ SQLAlchemy 2 talks to TerraBase through the `sqlalchemy-libsql` dialect (`sqlite
 
 A complete app is in [`examples/orm-sqlalchemy`](https://github.com/TerraScale/ts-docs/tree/main/examples/orm-sqlalchemy): models, table creation, CRUD, a relationship and transactions.
 
+This example reserves `sqlalchemy_authors` and `sqlalchemy_posts`, separate from the Documents quickstart's `posts` collection and the other ORM examples. Use these tables only for the sample data. Treat the complete app and inline walkthrough as alternatives: both insert the same sample rows, so start with empty reserved tables.
+
 ## Install
 
 ```sh
@@ -77,7 +79,7 @@ class Base(DeclarativeBase):
 
 
 class Author(Base):
-    __tablename__ = "authors"
+    __tablename__ = "sqlalchemy_authors"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
@@ -86,10 +88,10 @@ class Author(Base):
 
 
 class Post(Base):
-    __tablename__ = "posts"
+    __tablename__ = "sqlalchemy_posts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("authors.id"), index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("sqlalchemy_authors.id"), index=True)
     title: Mapped[str] = mapped_column(String(200))
     published: Mapped[bool] = mapped_column(default=False)
     author: Mapped[Author] = relationship(back_populates="posts")
