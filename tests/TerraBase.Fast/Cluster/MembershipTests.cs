@@ -19,8 +19,18 @@ public sealed class MembershipTests
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var store = new FakeMemberStore();
+        // Fixed ULID keys cover both handoff directions and retained primaries. A random sample can miss member-c.
+        // These contexts only query ownership; they create no shared tenant data.
         var databases = Enumerable.Range(0, Databases)
-            .Select(_ => new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
+            .Select(index => new TenantContext("01K6ZEG0000000000000000000", PlanTier.Hobby,
+                "01K6ZEG0000000000000000001", $"01K6ZEG000000000000000{index:D4}")).ToArray();
+        (int Index, string Before, string After)[] witnesses =
+        [
+            (0, "member-a", "member-c"),
+            (1, "member-b", "member-b"),
+            (3, "member-a", "member-a"),
+            (5, "member-b", "member-c"),
+        ];
         var members = new Dictionary<string, TerraBaseTestServer>(StringComparer.Ordinal);
         try
         {
@@ -30,17 +40,30 @@ public sealed class MembershipTests
             // Two members: once their first terms began, every database has exactly one shipper.
             var settled = await StepsAsync(4);
             await Assert.That(settled.All(shippers => shippers.Count == 1)).IsTrue();
+            foreach (var (index, before, _) in witnesses)
+            {
+                await Assert.That(settled[index].SetEquals([before])).IsTrue().Because($"database witness {index} starts on {before}");
+            }
 
             // A third member joins: some databases move to it, and none is ever shipped by two members meanwhile.
             members["member-c"] = await MemberAsync("member-c");
             var joined = await StepsAsync(8);
             await Assert.That(joined.All(shippers => shippers.Count == 1)).IsTrue();
             await Assert.That(joined.Count(shippers => shippers.Contains("member-c"))).IsGreaterThan(0);
+            foreach (var (index, _, after) in witnesses)
+            {
+                await Assert.That(joined[index].SetEquals([after])).IsTrue().Because($"database witness {index} belongs to {after} after the join");
+            }
 
             // member-b cannot read the DNS: it stops shipping once its fence passes, while the others still list it.
             store.Partition("member-b");
             var cutOff = await StepsAsync(10);
             await Assert.That(cutOff.All(shippers => shippers.Count <= 1 && !shippers.Contains("member-b"))).IsTrue();
+            for (var index = 0; index < databases.Length; index++)
+            {
+                await Assert.That(cutOff[index].SetEquals(joined[index].Where(name => name != "member-b"))).IsTrue()
+                    .Because($"only member-b's databases lose their shipper after the cut off (database {index})");
+            }
 
             // member-b and member-c stop: member-a observes their departure and waits its fence before taking over.
             foreach (var name in (string[])["member-b", "member-c"])
