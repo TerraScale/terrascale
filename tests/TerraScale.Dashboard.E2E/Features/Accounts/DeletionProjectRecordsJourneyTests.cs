@@ -33,6 +33,8 @@ public sealed class DeletionProjectRecordsJourneyTests(DashboardRootFixture fixt
     }
 
     [Test]
+    [Arguments("dashboard_sql_workspaces", false)]
+    [Arguments("dashboard_sql_workspaces", true)]
     [Arguments("dashboard_saved_queries", false)]
     [Arguments("dashboard_alert_rules", false)]
     [Arguments("dashboard_log_drains", false)]
@@ -54,6 +56,23 @@ public sealed class DeletionProjectRecordsJourneyTests(DashboardRootFixture fixt
         await Assert.That((await scenario.GetAsync(collection, project))!.Version).IsEqualTo(unchanged.Version);
         foreach (var records in Scenario.Records)
             await Assert.That(await scenario.GetAsync(records, scenario.Retained)).IsNotNull();
+    }
+
+    [Test]
+    public async Task AccountErasureRemovesPrivateWorkspacesAcrossProjectsAndReplays()
+    {
+        await using var scenario = await Scenario.StartAsync(fixture.Root);
+        await scenario.SeedAsync();
+        for (var replay = 0; replay < 2; replay++)
+        {
+            using var response = await scenario.Client.PostAsync("/__test/sql-user/" + scenario.User, null);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            foreach (var project in new[] { scenario.Project, scenario.Retained })
+            {
+                await Assert.That(await scenario.GetAsync("dashboard_sql_workspaces", project)).IsNull();
+                await Assert.That(await scenario.GetAsync("dashboard_saved_queries", project)).IsNotNull();
+            }
+        }
     }
 
     [Test]
