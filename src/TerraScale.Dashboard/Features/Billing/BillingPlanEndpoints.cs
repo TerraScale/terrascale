@@ -1,6 +1,8 @@
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Onboarding;
+using TerraScale.Dashboard.Shared.UI;
 using TerraScale.Dashboard.Shared.Validation;
 using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 
@@ -50,6 +52,12 @@ public static class BillingPlanEndpoints
         if (error is AccountAccessException access) return Results.Text(access.Message, statusCode: access.StatusCode);
         if (error is OnboardingValidationException validation) return Results.Text(validation.Message, statusCode: 400);
         http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingPlanEndpoints)).LogWarning("Billing {Path} failed ({ErrorType}: {Error})", http.Request.Path.Value, error.GetType().Name, Describe(error));
+        if (DatabaseEndpoints.WantsHtml(http))
+        {
+            var page = BillingChangeUnavailable.Create(new DocumentModel("Billing change uncertain", DocumentModel.NonceFor(http)));
+            page.StatusCode = StatusCodes.Status502BadGateway;
+            return page;
+        }
         return Results.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502);
     }
     // Stripe's error type, code and parameter name the cause; its message carries no credentials.
