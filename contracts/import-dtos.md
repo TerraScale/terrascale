@@ -1,8 +1,9 @@
 # Import DTO source contract
 
 `ImportOptions` represents the producer's `ImportOptionsBody`: only optional
-`exclude` (array of strings) and `collection` (string). Create may omit options;
-update requires an options object. Nil/empty exclusions and an empty collection
+`exclude` (array of strings) and `collection` (string). Create may omit options.
+Go UpdateImport sends an options object; the producer also normalizes null or
+omitted options to defaults. Nil/empty exclusions and an empty collection
 are omitted by Go; omitted producer options select defaults. A null response
 collection decodes to the Go string's empty value. There is no caller-selectable
 missing-primary-key policy.
