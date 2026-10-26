@@ -28,6 +28,11 @@ public sealed class StorageQuotaTests
         var failed = await SqlApi.ExecuteAsync(api, "DROP TABLE t", "SELECT * FROM missing");
         await Assert.That(SqlApi.Error(failed).Sqlite).IsEqualTo("SQLITE_ERROR");
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        var full = await SqlApi.ExecuteAsync(api, "DROP TABLE t", "CREATE TABLE u (id INTEGER PRIMARY KEY, body TEXT)",
+            "INSERT INTO u VALUES (1, '1234567890123456789012345678901234567890')");
+        await Assert.That(SqlApi.Error(full).Sqlite).IsEqualTo("SQLITE_FULL");
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM sqlite_master WHERE name = 'u'"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(0);
         await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
 
         // Replacing a full table in one transaction has no net growth; include a just-inserted row in the drop.

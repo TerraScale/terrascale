@@ -355,6 +355,10 @@ public sealed class DocumentApiTests
         var anyNotModified = await api.GetAsync(id, DocumentApi.IfNoneMatch("*"));
         var anyExisting = await api.PutAsync(id, new { n = 4 }, DocumentApi.IfMatch("*"));
         var deleted = await api.SendAsync(HttpMethod.Delete, api.Document(id), configure: DocumentApi.IfMatch(anyExisting.Version));
+        var beforeTombstone = await api.ReadUsageAsync();
+        var tombstone = await api.GetAsync(id);
+        await Assert.That((tombstone.Status, tombstone.ETag)).IsEqualTo((HttpStatusCode.NotFound, deleted.Version));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeTombstone);
         // The tombstone's version recreates the document.
         var recreated = await api.PutAsync(id, new { n = 5 }, DocumentApi.IfMatch(deleted.Version));
         var other = DocumentApi.NewId();
