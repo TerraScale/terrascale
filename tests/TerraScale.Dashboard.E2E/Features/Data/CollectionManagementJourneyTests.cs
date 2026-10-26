@@ -83,7 +83,12 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
         });
         // Let a known-length 413 arrive before uploading; keep the chunked body-limit case below.
         using var client = new HttpClient(new SocketsHttpHandler
-        { AllowAutoRedirect = false, CookieContainer = new(), Expect100ContinueTimeout = TimeSpan.FromSeconds(30) })
+        {
+            SslOptions = new() { RemoteCertificateValidationCallback = (_, certificate, _, errors) => TestHttps.Valid(certificate, errors) },
+            AllowAutoRedirect = false,
+            CookieContainer = new(),
+            Expect100ContinueTimeout = TimeSpan.FromSeconds(30)
+        })
         { BaseAddress = host.Origin, Timeout = TimeSpan.FromSeconds(30) };
         var (id, csrf) = await SetupAsync(client);
         var path = $"/databases/{id}/schema?collection=items";
