@@ -33,7 +33,7 @@ A writable database requires at least two regions: its home region and at least 
 - `{"name": "main", "replicaRegions": ["fra"]}` names the other regions, up to 8. An empty list answers `400 placement_needs_two_regions`.
 - `{"name": "main", "allRegions": true}` follows every serving region; see below.
 
-Change it with `PATCH /v1/projects/{project}/databases/{database}` and `{"replicaRegions": [...]}` or `{"allRegions": true}`. Keep at least one region besides home in `replicaRegions`. An empty explicit list is only a teardown step immediately before deletion: document writes then fail with `409 placement_needs_two_regions` until you add a region back. It is not a supported single-region configuration.
+Change it with `PATCH /v1/projects/{project}/databases/{database}` and `{"replicaRegions": [...]}` or `{"allRegions": true}`. Keep at least one region besides home in `replicaRegions` for a writable database. Updating to an empty explicit list makes document writes fail with `409 placement_needs_two_regions` until you add a region back. It is not a supported single-region configuration and is not required before deletion.
 
 Only owners and admins, with the `databases:write` permission, can change placement.
 
@@ -63,10 +63,9 @@ There is no pricing change. Per-region replica billing, if any, applies as it do
 
 ## Delete a database
 
-A database holds copies in other regions, so deleting it takes two calls:
+Send `DELETE /v1/projects/{project}/databases/{database}` to the home region. No preceding placement update is required, including for all-regions databases. A request to another region returns `421 wrong_region`.
 
-1. Send `PATCH /v1/projects/{project}/databases/{database}` with `{"replicaRegions": []}`. Without this step, the delete returns `409 database_replicated`. From here on document writes fail with `409 placement_needs_two_regions`; delete immediately rather than using this as a single-region configuration.
-2. Delete the database with `DELETE /v1/projects/{project}/databases/{database}`.
+A `204` response records logical deletion and local cleanup; remote erasure is retried durably and may finish later. Independent branches remain separate databases and are not deleted with their source.
 
 ## Plan an application
 
