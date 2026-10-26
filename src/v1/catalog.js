@@ -85,7 +85,16 @@ export class V1Databases {
   /** @param {V1Transport} transport */
   constructor(transport) { this.#transport = transport; Object.freeze(this); }
 
-  /** @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
+  /**
+   * Creates a database managed in homeRegion, or the called region when omitted.
+   * A writable database requires at least two regions. Omitting replicaRegions
+   * uses every other current serving region; an explicit list must include at
+   * least one region other than the home. An empty list on create returns
+   * 400 placement_needs_two_regions.
+   * allRegions: true also follows regions that join later and cannot be combined
+   * with replicaRegions. The home selects management routing, not single-region placement.
+   * @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
+   */
   async create(request, options = {}) {
     members(request, ["name", "homeRegion", "replicaRegions", "allRegions"]);
     mutationOptions(options);
@@ -129,7 +138,15 @@ export class V1Databases {
     return database(response.value);
   }
 
-  /** @param {string} name @param {V1DatabaseUpdateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
+  /**
+   * Replaces the replica list from the database's home region, which cannot change.
+   * An explicit list turns allRegions off. A writable database needs at least
+   * one replica besides the home. An empty list is allowed only as transient
+   * teardown immediately before delete; document writes then return
+   * 409 placement_needs_two_regions, not a supported single-region database.
+   * allRegions: true instead includes every serving region and regions that join later.
+   * @param {string} name @param {V1DatabaseUpdateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
+   */
   async update(name, request, options = {}) {
     members(request, ["homeRegion", "replicaRegions", "allRegions"]);
     mutationOptions(options);
@@ -149,7 +166,12 @@ export class V1Databases {
     return database(response.value);
   }
 
-  /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>} */
+  /**
+   * Deletes the database. While replicas exist, the server returns 409 database_replicated.
+   * First update with replicaRegions: [], then delete immediately. The empty update
+   * is transient teardown; document writes then return 409 placement_needs_two_regions.
+   * @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>}
+   */
   async delete(name, options = {}) {
     mutationOptions(options);
     await this.#transport.call("deleteDatabase", { database: requireName("database", name) }, { signal: options.signal });

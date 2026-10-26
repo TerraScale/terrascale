@@ -115,6 +115,24 @@ OpenAPI and immutable release qualification remain open gates.
 | Changes | `db.changes` (SSE async iterator) |
 | Export | `db.export` (NDJSON async iterator) |
 
+A writable database requires at least two regions. `client.databases.create({ name })`
+uses the called region as its management home and every other current serving region
+as replicas. Setting `homeRegion` selects where the database is managed; it does
+not request single-region placement. An explicit `replicaRegions` list must include
+at least one region other than the home; an empty list on create returns
+400 `placement_needs_two_regions`.
+`allRegions: true` instead follows every serving region, including regions that
+join later, and cannot be combined with `replicaRegions`. `client.databases.update`
+with an explicit replica list turns all-regions placement off and cannot change
+the home region. An empty `replicaRegions` in a response with `allRegions: true`
+represents all-regions placement.
+
+Deletion returns 409 `database_replicated` while replicas exist. First call
+`client.databases.update(name, { replicaRegions: [] })`, then
+`client.databases.delete(name)` immediately. This empty-list update is allowed
+only as transient teardown: document writes return 409 `placement_needs_two_regions`
+until deletion. It is not a supported single-region database.
+
 Project, collection catalog, and database catalog IDs are canonical uppercase
 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()` retain that
 entity-ID contract. Document point operations and transaction writes require canonical
