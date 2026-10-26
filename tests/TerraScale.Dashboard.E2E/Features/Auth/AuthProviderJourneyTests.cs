@@ -112,6 +112,59 @@ public sealed class AuthProviderJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task AccessExpiryDuringIssuerValidationRefreshesTheSameBrowserSession()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        using var first = scenario.CreateClient();
+        using var replica = scenario.CreateClient(replica: true);
+        await Control(controls, new { command = "short-grants" });
+        using var login = await HttpJourney.LoginAsync(first, returnTo: "/api/v1/auth/me");
+        Check(login.StatusCode == HttpStatusCode.SeeOther, "A short-lived access grant starts a persistent browser session");
+        var cookie = SessionCookie(login);
+        await Control(controls, new { command = "pause-next-userinfo" });
+        var pending = first.GetAsync("/api/v1/auth/me");
+        await scenario.WaitForUserInfoAsync();
+        await Control(controls, new { command = "advance", seconds = 2 });
+        await Control(controls, new { command = "release-userinfo" });
+        using var recovered = await pending;
+        Check(recovered.StatusCode == HttpStatusCode.OK,
+            "Access expiry during issuer validation refreshes rather than deletes the still-valid browser session; actual " + (int)recovered.StatusCode);
+        using var next = await Request(replica, "/api/v1/auth/me", cookie);
+        Check(next.StatusCode == HttpStatusCode.OK, "The original cookie still resolves on another replica after boundary refresh");
+        Check((await Observations(controls)).GetProperty("refreshes").GetInt32() == 1, "The boundary recovery consumes exactly one rotating secret");
+        CheckProtocol(await Observations(controls));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task IssuerRevocationDuringValidationStillEndsTheBrowserSession(bool alsoExpire)
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        using var first = scenario.CreateClient();
+        using var replica = scenario.CreateClient(replica: true);
+        await Control(controls, new { command = "short-grants" });
+        using var login = await HttpJourney.LoginAsync(first, returnTo: "/api/v1/auth/me");
+        Check(login.StatusCode == HttpStatusCode.SeeOther, "The revoked session begins with a valid provider grant");
+        var cookie = SessionCookie(login);
+        await Control(controls, new { command = "pause-next-userinfo" });
+        var pending = first.GetAsync("/api/v1/auth/me");
+        await scenario.WaitForUserInfoAsync();
+        if (alsoExpire) await Control(controls, new { command = "advance", seconds = 2 });
+        await Control(controls, new { command = "revoke" });
+        await Control(controls, new { command = "release-userinfo" });
+        using var rejected = await pending;
+        Check(rejected.StatusCode == HttpStatusCode.Unauthorized, "Issuer revocation cannot recover an authenticated request, including at access expiry");
+        using var next = await Request(replica, "/api/v1/auth/me", cookie);
+        Check(next.StatusCode == HttpStatusCode.Unauthorized, "A captured revoked cookie stays rejected on another replica");
+        Check((await Observations(controls)).GetProperty("refreshes").GetInt32() == (alsoExpire ? 1 : 0),
+            "Only access expiry attempts refresh, and the issuer rejects a revoked rotating grant");
+        CheckProtocol(await Observations(controls));
+    }
+
+    [Test]
     public async Task SessionSurvivesARefreshTsAuthCouldNotStart()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);

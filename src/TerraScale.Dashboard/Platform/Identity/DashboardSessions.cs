@@ -268,6 +268,10 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                     if (rejected.State != "value") throw new IOException("Dashboard session has a causal conflict.");
                     var latestRecord = Open(rejected.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
                     if (latestRecord.AccessToken != record.AccessToken) continue;
+                    // Access can expire while the issuer checks it. Reenter the
+                    // existing refresh lease; only a valid new grant can recover
+                    // the request, and issuer revocation still refuses refresh.
+                    if (record.ExpiresAt <= time.GetUtcNow()) continue;
                     await RemoveAsync(collection, rejected, cancellationToken);
                 }
                 return null;
