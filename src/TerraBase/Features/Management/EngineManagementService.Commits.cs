@@ -144,6 +144,8 @@ internal sealed partial class EngineManagementService
                 return await AbandonAsync(created, exceeded).ConfigureAwait(false);
             }
 
+            await AcquireCommitUnitsAsync(created.Values, cancellationToken).ConfigureAwait(false);
+
             result = await WriteCatalogAsync(
                 transaction => ApplyCommitAsync(transaction, userId, email, commitId, requestHash, operations, created, deleted, cancellationToken), cancellationToken,
                 keep: applied => applied is CommitOutcome { Replayed: false })
@@ -663,7 +665,8 @@ internal sealed partial class EngineManagementService
                     }
 
                     var registered = await RegisterDatabaseAsync(
-                        transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database, databaseAllowance.Limit, cancellationToken).ConfigureAwait(false);
+                        transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database,
+                        new AllowanceCheck(databaseAllowance.Limit, options.Region, _serving, time.GetUtcNow()), cancellationToken).ConfigureAwait(false);
                     return registered switch
                     {
                         TenantContext => Body(ManagedDatabaseBody.From(added.Database, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody),

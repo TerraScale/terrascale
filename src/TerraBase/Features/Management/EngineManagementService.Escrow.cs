@@ -1,6 +1,8 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -40,10 +42,19 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
 {
     private const string QuotaRegions = "quota_regions";
 
+    // Registration attempts that ask peers for a unit: a concurrent create here can spend a unit just received.
+    private const int MaxUnitAcquisitions = 3;
+
     private static readonly JsonTypeInfo<DatabaseEscrowShare> EscrowShare = TerraBaseJsonContext.Default.DatabaseEscrowShare;
 
     private readonly Counter<long> _escrowGranted = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.quota.escrow_granted", "{unit}",
         "Database allowance units this region granted to other regions.");
+
+    private readonly Counter<long> _escrowAcquisitions = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.quota.escrow_acquisitions", "{acquisition}",
+        "Requests for database allowance units from other regions, by result (granted, exhausted, unreachable).");
+
+    // The serving regions as last read, for checks inside a commit's transaction, which must not wait on membership.
+    private IReadOnlyList<string> _serving = [options.Region];
 
     // The plan allowance a registration spends, as this region reads it. Registering: the time to register this region at
     // when it has no registration yet; null in a read transaction.
@@ -65,7 +76,7 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
         new(Ulid.NewUlid(seen.Select(region => Ulid.TryParse(region.Registration, out var id) ? id.Time.AddMilliseconds(1) : now).Append(now).Max()).ToString());
 
     private async ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) =>
-        [options.Region, .. await escrowPeers.Value.RegionsAsync(cancellationToken).ConfigureAwait(false)];
+        _serving = [options.Region, .. await escrowPeers.Value.RegionsAsync(cancellationToken).ConfigureAwait(false)];
 
     // rights = genesis units + units counted from others - units granted to others - live databases on this region's units.
     private static async ValueTask<EscrowView> EscrowAsync(
@@ -164,6 +175,86 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
 
             return granted + Math.Max(give, 0);
         }, static _ => null, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Asks the other serving regions, the genesis region first, until this region holds need units of the tenant's
+    // organization. Null then, else the refusal: unreachable regions may hold units, otherwise the organization is at its allowance.
+    private async ValueTask<Conflict?> AcquireUnitsAsync(TenantContext tenant, long allowed, long need, CancellationToken cancellationToken)
+    {
+        var allowance = new AllowanceCheck(databaseAllowance.Limit, options.Region, await ServingAsync(cancellationToken).ConfigureAwait(false));
+        if (await ReadAsync<EscrowView?>(async transaction => await EscrowAsync(transaction, tenant.OrganizationId, allowed, allowance, cancellationToken).ConfigureAwait(false),
+            static _ => null, cancellationToken).ConfigureAwait(false) is not { } view)
+        {
+            return ManagementErrors.DatabaseAllowanceElsewhere;
+        }
+
+        // A grant whose reply was lost may have replicated here meanwhile.
+        var lacking = need - view.Rights;
+        var unreachable = false;
+        foreach (var region in allowance.Serving.Skip(1).OrderBy(region => region == view.Genesis ? 0 : 1).ThenBy(region => region, StringComparer.Ordinal))
+        {
+            var known = view.Known.GetValueOrDefault(region);
+            if (lacking <= 0)
+            {
+                break;
+            }
+
+            var total = await escrowPeers.Value.TransferAsync(region, tenant.OrganizationId, known, (int)Math.Clamp(lacking, 1, 1000), cancellationToken).ConfigureAwait(false);
+            unreachable |= total is null;
+            if (total > known && await RecordReceivedAsync(tenant.OrganizationId, region, total.Value, cancellationToken).ConfigureAwait(false))
+            {
+                lacking -= total.Value - known;
+            }
+        }
+
+        if (lacking <= 0)
+        {
+            _escrowAcquisitions.Add(1, new KeyValuePair<string, object?>("result", "granted"));
+            return null;
+        }
+
+        _escrowAcquisitions.Add(1, new KeyValuePair<string, object?>("result", unreachable ? "unreachable" : "exhausted"));
+        return unreachable ? ManagementErrors.DatabaseAllowanceElsewhere : ManagementErrors.DatabaseLimit(PlanName(tenant.Plan), allowed);
+    }
+
+    // Confirms a peer's cumulative grant in this region's escrow, in its own durable catalog commit.
+    private ValueTask<bool> RecordReceivedAsync(string organizationId, string region, long total, CancellationToken cancellationToken) =>
+        WriteAsync<bool>(async transaction =>
+        {
+            var own = await GetAsync(transaction, DatabaseEscrow(organizationId), options.Region, EscrowShare, cancellationToken).ConfigureAwait(false) ?? new([], []);
+            if (own.Received.GetValueOrDefault(region) < total)
+            {
+                own.Received[region] = total;
+                await PutAsync(transaction, DatabaseEscrow(organizationId), options.Region, own, EscrowShare, cancellationToken).ConfigureAwait(false);
+            }
+
+            return true;
+        }, static _ => false, cancellationToken);
+
+    // A registration's unit, when the check found this region holding none: null once a peer granted one, else the refusal.
+    private async ValueTask<Conflict?> AcquireUnitAsync(Func<IStorageTransaction, ValueTask<ProjectTenant>> project, AllowanceCheck allowance, CancellationToken cancellationToken) =>
+        await ReadAsync<TenantContext?>(async transaction => await project(transaction).ConfigureAwait(false) is TenantContext tenant ? tenant : null, static _ => null, cancellationToken)
+            .ConfigureAwait(false) is { } tenant
+            ? await AcquireUnitsAsync(tenant, allowance.Limit(tenant.Plan), 1, cancellationToken).ConfigureAwait(false)
+            : ManagementErrors.DatabaseAllowanceElsewhere;
+
+    // Before a commit's transaction: units for the databases it creates, organization by organization. A shortfall left
+    // is refused by the registration inside the commit.
+    private async ValueTask AcquireCommitUnitsAsync(IEnumerable<AddedDatabase> created, CancellationToken cancellationToken)
+    {
+        // Refreshed even for unbounded organizations: a set_plan in the commit can bound one before its registration.
+        _ = await ServingAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var group in created.Where(database => !database.Existing).GroupBy(database => database.Tenant.OrganizationId, StringComparer.Ordinal))
+        {
+            var tenant = group.First().Tenant;
+            var allowed = databaseAllowance.Limit(tenant.Plan);
+            if (allowed == long.MaxValue || PlatformDatabases.IsPlatform(tenant.OrganizationId))
+            {
+                continue;
+            }
+
+            _ = await AcquireUnitsAsync(tenant, allowed, group.Count(), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     // Whether this region is registered as an allowance holder; convergence registers it once its catalog gate opened.
