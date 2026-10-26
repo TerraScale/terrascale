@@ -157,7 +157,8 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             Format = request["format"]!.GetValue<string>(),
             Bytes = request["sourceBytes"]!.GetValue<long>(),
             Sha256 = sha,
-            Exclude = exclude.Select(item => item!.GetValue<string>()).ToList(), Collection = options["collection"]?.GetValue<string>()
+            Exclude = exclude.Select(item => item!.GetValue<string>()).ToList(),
+            Collection = options["collection"]?.GetValue<string>()
         };
         jobs[project + "/" + database] = job;
         await documents.CreateCollectionAsync(scope, home, database, "terrascale-import", ct);
