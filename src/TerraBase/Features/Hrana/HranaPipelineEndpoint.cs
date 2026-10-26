@@ -17,7 +17,7 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStre
         Post(HranaRoute.Base + "/pipeline");
         Name("libsqlPipeline");
         Summary("Runs a Hrana pipeline (libSQL clients)");
-        Description("Hrana over HTTP, versions v2 and v3 (JSON). Point a libSQL client at …/databases/{database}/libsql/ with a project data API key as authToken. "
+        Description("Hrana over HTTP, versions v2 and v3 (JSON). Point a libSQL client at …/databases/{database}/libsql/ with a current project access JWT as authToken (mint it from a scoped API key using client_credentials; raw API keys are refused). "
             + "Requests: execute, batch, sequence, describe, store_sql, close_sql, close, get_autocommit; SQL errors are error results inside a 200. "
             + "A response baton continues the stream (and its transaction) for 30 idle seconds. A lost baton whose stream held a transaction or stored SQL answers 400 STREAM_EXPIRED; one that held neither opens a fresh stream. "
             + "Writes need documents:write. Body at most 1 MiB, 256 statements (400 PROTOCOL_ERROR past it); at most 64 open streams per database and 256 per organization on a node (503 DATABASE_STREAMS_EXHAUSTED, ORGANIZATION_STREAMS_EXHAUSTED).");
