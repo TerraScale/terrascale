@@ -119,6 +119,8 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
             // Scenarios run plan reconciliation on demand, so its timer never races their billing assertions.
             builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(PlanReconciler)));
+            // Registration journeys run cleanup on demand, without racing the background timer.
+            builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Platform.Mcp.McpRegistrationReclaimer)));
             // Deletion journeys run the production consumer on demand against their isolated producer.
             builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(TerraScale.Dashboard.Features.Profile.DeletionReconciler)));
             builder.Logging.ClearProviders();

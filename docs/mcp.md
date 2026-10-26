@@ -48,7 +48,13 @@ hosted pages to sign in. The code is in `Platform/Mcp/McpOAuth.cs`.
    (`invalid_client_metadata`); malformed JSON or invalid metadata returns
    `400`. Successful registration returns a canonical uppercase ULID
    `client_id`; authorization accepts that exact identity, without an
-   `mcp_` compatibility alias. A registration expires 24 hours after creation
+   `mcp_` compatibility alias. An always-running worker scans one page of at most
+   32 retained registrations per minute, keeping its cursor between passes. It
+   conditionally deletes only canonical registrations at least 24 hours old whose
+   hosted sign-in never completed; a competing completed sign-in survives the
+   version check. Completed and legacy registrations, authorization codes,
+   credentials and erasure references remain outside this cleanup policy.
+   A registration expires 24 hours after creation
    unless a fresh hosted sign-in completes. Afterward it expires after 30 days
    without a successful fresh sign-in, token issuance, or fully validated bound
    bearer request. Consent, discovery, and rejected requests do not renew it.

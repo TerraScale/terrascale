@@ -17,6 +17,7 @@ using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
@@ -40,6 +41,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
     public Uri Origin { get; private set; } = null!;
     public Uri ReplicaOrigin { get; private set; } = null!;
     public string? StartupError { get; private set; }
+    public TimeProvider? RegistrationTime { get; set; }
     // Requests to any destination other than the state listener that carried the peer credential.
     public int ForeignCredentials => foreignCredentials;
     private int foreignCredentials;
@@ -187,6 +189,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
             return decorate is null ? factory : decorate(factory);
         }));
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
+        if (RegistrationTime is not null) builder.Services.AddSingleton(RegistrationTime);
     }
 
     // Gives the only stored organization an active paid plan, as a reconciled checkout does, and returns its id.
@@ -204,6 +207,11 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
     }
 
     // One pass of the production reconciler (test hosts run it on demand, never on its timer).
+    public Task PauseRegistrationCompletion() => protocol.PauseRegistrationCompletion();
+    public void ReleaseRegistrationCompletion() => protocol.ReleaseRegistrationCompletion();
+    public IDashboardState RegistrationState => first!.Services.GetRequiredService<IDashboardState>();
+    public McpRegistrationReclaimer RegistrationReclaimer() => ActivatorUtilities.CreateInstance<McpRegistrationReclaimer>(first!.Services);
+
     public Task ReconcilePlansAsync() => ActivatorUtilities.CreateInstance<PlanReconciler>(first!.Services).RunOnceAsync(default);
 
     // Sends through the running host's credentialed state client to a destination other than the state listener.
@@ -308,6 +316,11 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private TaskCompletionSource? collectionGate;
         private TaskCompletionSource? documentGate;
         private TaskCompletionSource? transactionGate;
+        private TaskCompletionSource? registrationGate;
+        private TaskCompletionSource registrationPaused = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task PauseRegistrationCompletion()
+        { registrationGate = new(TaskCreationOptions.RunContinuationsAsynchronously); return registrationPaused.Task; }
+        public void ReleaseRegistrationCompletion() { registrationGate?.TrySetResult(); registrationGate = null; }
         private int pausedTransactions;
         private int pausedCreates;
         private int pausedWrites;
@@ -323,7 +336,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private readonly string? databaseId = "00000000000000000000000004";
         private string mode = "";
         public string Mode { get { lock (gate) return mode; } }
-        public void Release() { collectionGate?.TrySetResult(); documentGate?.TrySetResult(); transactionGate?.TrySetResult(); }
+        public void Release() { ReleaseRegistrationCompletion(); collectionGate?.TrySetResult(); documentGate?.TrySetResult(); transactionGate?.TrySetResult(); }
 
         public async Task<IResult> DispatchAsync(HttpContext http)
         {
@@ -400,6 +413,9 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                     Require(json.RootElement.ValueKind == JsonValueKind.Object, "A document write contains the actual JSON object.");
                     body = json.RootElement.Clone();
                 }
+                if (http.Request.Method == "PUT" && parts[6] == McpOAuth.ClientCollection && body is { } candidate &&
+                    candidate.TryGetProperty("FirstSignInCompletedAt", out var completed) && completed.ValueKind != JsonValueKind.Null && registrationGate is { } pending)
+                { registrationPaused.TrySetResult(); await pending.Task.WaitAsync(http.RequestAborted); }
                 lock (gate)
                 {
                     if (!collections.TryGetValue(parts[6], out var collection)) return Error(404, "unknown_collection");
@@ -412,6 +428,13 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                     }
                     Require(http.Request.Method is "PUT" or "DELETE", "Only production state point read/write/delete operations are admitted.");
                     if (http.Request.Method == "DELETE" && parts[6] == "dashboard_sql_workspaces" && Mode == "sql-delete-unavailable") return Error(503, "unavailable");
+                    // Test-only competing committed lifecycle transition between fresh read and delete.
+                    if (http.Request.Method == "DELETE" && parts[6] == McpOAuth.ClientCollection && Mode == "complete-mcp-before-delete" && existing is { Deleted: false })
+                    {
+                        var row = existing.Value.Deserialize<McpRegistration>()!;
+                        collection.Documents[id] = existing = new("tbv2-completed-race", JsonSerializer.SerializeToElement(row with
+                        { FirstSignInCompletedAt = row.CreatedAt.AddHours(23), LastActivityAt = row.CreatedAt.AddHours(23) }), false);
+                    }
                     var absent = http.Request.Headers.IfNoneMatch == "*";
                     var match = http.Request.Headers.IfMatch.ToString();
                     Require(absent != (match.Length > 0), "Every state mutation requires exactly one producer precondition.");

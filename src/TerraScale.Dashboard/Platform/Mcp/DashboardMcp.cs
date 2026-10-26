@@ -74,6 +74,7 @@ public static class DashboardMcp
     public static void AddDashboardMcp(this IServiceCollection services)
     {
         services.AddHttpContextAccessor();
+        services.AddHostedService<McpRegistrationReclaimer>();
         services.AddMcpServer(options =>
         {
             options.ServerInfo = new() { Name = "terrascale-dashboard", Title = "TerraScale Dashboard", Version = "1.0.0" };
