@@ -2,6 +2,22 @@ import { expect, test } from "vitest";
 import { createTerraBaseSystemClient } from "../src/index.js";
 import { entity, fixture, json, token } from "./helpers/v1-http.js";
 const probe = { status: "unavailable", version: "0.0.1", region: "gru", storageFormat: "1", revision: null, machine: "local" };
+test.each([200, 503])("public probes decode redacted status at HTTP %i", async httpStatus => {
+  const body = { status: httpStatus === 200 ? "ready" : "unavailable", version: "0.0.1", region: "gru" };
+  const { client, requests } = await fixture((_r, response) => json(response, body, httpStatus));
+  for (const method of /** @type {const} */ (["readiness", "backup"])) {
+    const result = await client.health[method]();
+    expect(result).toMatchObject({ ...body, httpStatus });
+    expect(result.storageFormat).toBeUndefined();
+    expect(result.revision).toBeUndefined();
+    expect(result.machine).toBeUndefined();
+  }
+  expect(requests.every(r => r.headers.authorization === undefined)).toBe(true);
+});
+test("public liveness still rejects malformed required fields", async () => {
+  const { client } = await fixture((_r, response) => json(response, { status: "ok", version: "0.0.1", region: 42 }));
+  await expect(client.health.liveness()).rejects.toThrow(TypeError);
+});
 test("public probes omit authorization and retain readiness and backup 503 bodies", async () => {
   const { client, requests } = await fixture((r, response) => json(response, r.url.pathname === "/health/replication"
     ? { region: "gru", status: "degraded", maxLagSeconds: null, peers: [{ region: "fra", status: "degraded", lagSeconds: null }] }

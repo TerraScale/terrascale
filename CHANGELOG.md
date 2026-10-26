@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.10 — production contract fixes
+
+The named hosted-auth token operation accepts explicit project API-key grants
+without a resource parameter. Public health probes accept omitted private build
+metadata. Hosted-auth operations return authentication denials without replaying
+requests with a changed credential. README qualification commands follow the
+binary-free HTTP test policy and document the existing TypeScript model tooling.
+
 ## 0.0.9 — declared JSON Schema models
 
 Node tooling at `@terrascale/sdk/codegen` generates document, create and

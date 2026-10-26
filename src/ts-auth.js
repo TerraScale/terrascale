@@ -2086,6 +2086,13 @@ export class TsAuthInstanceClient {
  *       readonly grant_type: "client_credentials";
  *       readonly scope: string;
  *       readonly resource: string;
+ *       readonly project?: never;
+ *     }
+ *   | {
+ *       readonly grant_type: "client_credentials";
+ *       readonly project: import("./ids.js").EntityId;
+ *       readonly scope?: string | undefined;
+ *       readonly resource?: never;
  *     }
  *   | {
  *       readonly grant_type: "urn:ietf:params:oauth:grant-type:device_code";
@@ -2245,6 +2252,8 @@ export class TsAuthOidcClient {
 
   /**
    * client_secret_post only. Omitted resource retains the stored code/device/refresh binding.
+   * Platform API keys use explicit project and optional subset scope, without resource
+   * (producer PlatformGrants.ApiKeyAsync and platform-api.openapi.yaml ClientCredentialsGrant).
    * @param {string} clientId
    * @param {string} clientSecret
    * @param {TsAuthOidcTokenRequest} request
@@ -2259,7 +2268,7 @@ export class TsAuthOidcClient {
         : request.grant_type === "refresh_token"
           ? ["grant_type", "refresh_token", "scope", "resource"]
           : request.grant_type === "client_credentials"
-            ? ["grant_type", "scope", "resource"]
+            ? ["grant_type", "scope", "project" in request ? "project" : "resource"]
             : request.grant_type ===
                 "urn:ietf:params:oauth:grant-type:device_code"
               ? ["grant_type", "device_code", "resource"]
@@ -2289,13 +2298,24 @@ export class TsAuthOidcClient {
       if (request.scope !== undefined)
         form.set("scope", requireOauthScope(request.scope));
     } else if (request.grant_type === "client_credentials") {
-      form.set("resource", requireResourceAudience(request.resource));
-      form.set("scope", requireOauthScope(request.scope));
+      if ("project" in request) {
+        form.set("project", requireId(request.project, "project"));
+        if (request.scope !== undefined) form.set("scope", requireOauthScope(request.scope));
+      } else {
+        form.set("resource", requireResourceAudience(request.resource));
+        form.set("scope", requireOauthScope(request.scope));
+      }
     } else {
       form.set("device_code", requireText(request.device_code, "device_code"));
     }
+    const projectScope = request.grant_type === "client_credentials" && "project" in request ? request.scope : undefined;
+    const pending = this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form);
     return oauthResponse(
-      this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form),
+      // TokenBody follows RFC 6749 §5.1: omitted scope equals the explicit requested scope.
+      // Snapshot it before dispatch; never infer a default or normalize other grant contracts.
+      projectScope === undefined ? pending : pending.then(result =>
+        result.ok && oauthRecord(result.value) && !Object.hasOwn(result.value, "scope")
+          ? { ...result, value: { ...result.value, scope: projectScope } } : result),
       /** @returns {value is TsAuthOidcTokenResponse} */
       (value) => isTokenResponse(value, grantType),
     );

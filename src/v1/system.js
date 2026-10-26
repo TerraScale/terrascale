@@ -1,12 +1,14 @@
 import { decodeDocument } from "./decode.js";
 import { requireId } from "../ids.js";
 import { requireDocumentId, requireName } from "./ids.js";
-import { flag, list, nullable, numeric, record, text } from "./management-decode.js";
+import { flag, list, nullable, numeric, optional, record, text } from "./management-decode.js";
 import { members } from "./management-validation.js";
 import { decodeCollection, decodeQueryPage } from "./terrabase-v1.js";
 import { V1Transport } from "./transport.js";
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
-const status = record({ status: text, version: text, region: text, storageFormat: text, revision: nullable(text), machine: text });
+// Public probes omit build metadata; only the internal listener emits it.
+const status = record({ status: text, version: text, region: text,
+  storageFormat: optional(nullable(text)), revision: optional(nullable(text)), machine: optional(nullable(text)) });
 const replication = record({ region: text, status: text, maxLagSeconds: nullable(numeric),
   peers: list(record({ region: text, status: text, lagSeconds: nullable(numeric) })) });
 const databases = record({ items: list(record({ name: text, id: requireId, homeRegion: text, replicaRegions: list(text), allRegions: flag })) });

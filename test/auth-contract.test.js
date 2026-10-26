@@ -4,6 +4,7 @@ import { createTsAuthClient } from "../src/ts-auth.js";
 import { v1Routes, shapeV1Routes } from "../src/v1/routes.js";
 import { managementV1Routes } from "../src/v1/management-routes.js";
 import { fileStorageRoutes } from "../src/v1/file-storage-routes.js";
+import ts from "typescript";
 
 // ts-auth -> TerraBase platform token contract (terrascale TerraBaseOptions.PlatformAuthIssuer/Audience,
 // ApiKeys.TerraBaseScopes, IApiKeyStore ApiKeyScopes). Fixtures only; no live service.
@@ -35,6 +36,66 @@ function platform(respond, overrides = {}) {
 const token = { access_token: "header.payload.signature", token_type: "Bearer", expires_in: 900, scope: "databases:read documents:read" };
 
 describe("platform token contract", () => {
+  // Public producer platform-api.openapi.yaml ClientCredentialsGrant / PlatformGrants.ApiKeyAsync.
+  test("project API keys send the explicit project and optional subset scope without resource", async () => {
+    for (const scope of [undefined, "documents:read"]) {
+      const response = { ...token, expires_in: 60, scope: scope ?? token.scope };
+      const { client, requests } = platform(() => Response.json(scope === undefined ? response : { access_token: token.access_token, token_type: "Bearer", expires_in: 60 }));
+      const result = await client.oidc.token(clientId, "secret&+", { grant_type: "client_credentials", project, ...(scope === undefined ? {} : { scope }) });
+      expect(result).toMatchObject({ ok: true, status: 200, value: response });
+      expect(requests).toHaveLength(1);
+      const request = /** @type {Request} */ (requests[0]);
+      expect([request.method, request.url]).toEqual(["POST", `${issuer}/oauth/token`]);
+      expect(request.headers.get("authorization")).toBeNull();
+      expect(request.headers.get("content-type")).toBe("application/x-www-form-urlencoded");
+      expect(Object.fromEntries(new URLSearchParams(await request.text()))).toEqual({ client_id: clientId, client_secret: "secret&+", grant_type: "client_credentials", project, ...(scope === undefined ? {} : { scope }) });
+    }
+  });
+
+  test("project response scope normalization keeps explicit scopes and rejects malformed success", async () => {
+    for (const response of [{ ...token, scope: "documents:read" }, { ...token, scope: null }, { token_type: "Bearer", expires_in: 60 }]) {
+      const { client } = platform(() => Response.json(response));
+      const result = await client.oidc.token(clientId, "secret", { grant_type: "client_credentials", project, scope: "documents:read documents:write" });
+      expect(result.ok).toBe("scope" in response && response.scope === "documents:read");
+      if (result.ok) expect(result.value.scope).toBe("documents:read");
+    }
+  });
+
+  test("omitted response scope uses the project request snapshot", async () => {
+    const { client } = platform(() => Response.json({ access_token: token.access_token, token_type: "Bearer", expires_in: 60 }));
+    const request = { grant_type: /** @type {const} */ ("client_credentials"), project, scope: "documents:read" };
+    const pending = client.oidc.token(clientId, "secret", request);
+    request.scope = "documents:read documents:write";
+    expect(await pending).toMatchObject({ ok: true, value: { scope: "documents:read" } });
+    expect((await client.oidc.token(clientId, "secret", { grant_type: "client_credentials", resource: audience, scope: "documents:read" })).ok).toBe(false);
+  });
+
+  test("invalid project, mixed resource/project and malformed scope never dispatch", () => {
+    const { client, requests } = platform(() => Response.json(token));
+    for (const request of [
+      { project: "not-a-ulid" }, { project: project.toLowerCase() }, { project: undefined },
+      { project, resource: audience, scope: "documents:read" }, { project, resource: undefined },
+      { project, scope: "" }, { project, scope: "documents:read documents:read" },
+      { scope: "documents:read" },
+    ]) expect(() => client.oidc.token(clientId, "secret", /** @type {never} */ ({ grant_type: "client_credentials", ...request }))).toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("project token errors remain typed results and POST is never replayed", async () => {
+    for (const [status, code] of [[400, "invalid_scope"], [401, "invalid_client"], [503, "temporarily_unavailable"]]) {
+      const { client, requests } = platform(() => Response.json({ error: code, error_description: "denied" }, { status: /** @type {number} */ (status) }), { maxRetryAttempts: 2 });
+      expect(await client.oidc.token(clientId, "secret", { grant_type: "client_credentials", project })).toMatchObject({ ok: false, status, error: { code } });
+      expect(requests).toHaveLength(1);
+    }
+  });
+
+  test("token request types distinguish project keys from resource grants", () => {
+    const program = ts.createProgram(["test/fixtures/ts-auth-token.ts"], { strict: true, exactOptionalPropertyTypes: true, allowJs: true,
+      baseUrl: process.cwd(), paths: { "@terrascale/sdk/ts-auth": ["./src/ts-auth.js"] },
+      target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, skipLibCheck: true, noEmit: true });
+    expect(ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, "\n"))).toEqual([]);
+  });
+
   test("every runtime TerraBase route requires one of the four contract scopes", () => {
     // readShape is the historical shapes:read release route; the runtime shape reader uses readFreeShape.
     const runtime = [...v1Routes.filter(route => route.operation !== "readShape"), ...shapeV1Routes, ...fileStorageRoutes,
@@ -48,7 +109,7 @@ describe("platform token contract", () => {
   test("discovery and token requests go to the one global issuer, never a regional or proxy host", async () => {
     const { client, requests } = platform(() => Response.json(token));
     await client.oidc.discovery();
-    const result = await client.oidc.token(clientId, "secret", { grant_type: "client_credentials", resource: audience, scope: "databases:read documents:read" });
+    const result = await client.oidc.token(clientId, "secret", { grant_type: "client_credentials", project, scope: "databases:read documents:read" });
     expect(result.ok).toBe(true);
     expect(requests.map(request => request.url)).toEqual([
       `${issuer}/.well-known/openid-configuration`,
@@ -57,7 +118,8 @@ describe("platform token contract", () => {
     expect(requests[0]?.headers.get("authorization")).toBeNull();
     const form = new URLSearchParams(await requests[1]?.text());
     expect(form.get("grant_type")).toBe("client_credentials");
-    expect(form.get("resource")).toBe(audience);
+    expect(form.get("project")).toBe(project);
+    expect(form.has("resource")).toBe(false);
     expect(form.getAll("scope")).toEqual(["databases:read documents:read"]);
     expect(form.get("client_id")).toBe(clientId);
   });
@@ -97,8 +159,8 @@ describe("platform token contract", () => {
       expect(await introspect({ ...claims, aud }), aud).toBe(false);
   });
 
-  test("ts-auth 401 refreshes the token once; 403 is an authorization failure, never re-auth", async () => {
-    for (const [status, kind, calls] of /** @type {const} */ ([[401, "authentication", 2], [403, "authorization", 1]])) {
+  test("ts-auth denials never resolve new authority or replay; explicit reads resolve their provider", async () => {
+    for (const [status, kind] of /** @type {const} */ ([[401, "authentication"], [403, "authorization"]])) {
       let resolved = 0;
       const { client, requests } = platform(() => Response.json({ error: { code: "x" } }, { status }), {
         accessToken: () => `sk_test_${++resolved}`,
@@ -106,7 +168,14 @@ describe("platform token contract", () => {
       const result = await client.users.list();
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe(kind);
-      expect(requests).toHaveLength(calls);
+      expect(requests).toHaveLength(1);
+      expect(resolved).toBe(1);
+      expect(requests[0]?.headers.get("authorization")).toBe("Bearer sk_test_1");
+      // A subsequent caller-initiated request still gets the provider's current credential.
+      await client.users.list();
+      expect(requests).toHaveLength(2);
+      expect(resolved).toBe(2);
+      expect(requests[1]?.headers.get("authorization")).toBe("Bearer sk_test_2");
     }
   });
 
