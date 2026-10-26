@@ -665,9 +665,10 @@ nice -n 19 go build ./...
 nice -n 19 go test -race ./...
 ```
 
-The module requires Go 1.25 and has no CGO dependency. CI selects the patched
-Go 1.27.2 toolchain and runs the pinned vulnerability scanner alongside
-formatting, vet, build and race tests.
+The module requires Go 1.25 and has no CGO dependency. CI and CLI releases use
+the patched compiler pinned in `.go-version`, separately from the supported
+consumer floor. See [release toolchain checks](contracts/release-toolchain.md)
+for advisory scanning, artifact qualification and consumer compilation.
 
 PostgreSQL passwords and API key token sources use
 `<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`:

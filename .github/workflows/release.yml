@@ -1,11 +1,13 @@
 name: CLI release
 on:
   pull_request:
-    paths: ['cmd/ts/**', 'scripts/install.sh', 'scripts/test-release.py', '.goreleaser.yaml', '.github/workflows/release.yml', 'go.mod', 'go.sum', 'v1/**', 'tsauth/**']
+    paths: ['cmd/ts/**', 'scripts/install.sh', 'scripts/test-release.py', 'scripts/check-release-binary.sh', 'scripts/install-govulncheck.sh', 'scripts/audit-dependencies.sh', '.go-version', '.goreleaser.yaml', '.github/workflows/release.yml', 'go.mod', 'go.sum', 'v1/**', 'tsauth/**']
   push:
     tags: ['v0.0.*']
 permissions:
   contents: read
+env:
+  GOTOOLCHAIN: local
 jobs:
   package:
     runs-on: ubuntu-latest
@@ -17,8 +19,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
           cache: false
+      - name: Restore advisory scanner
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/terrascale/govulncheck-v1.9.0-go1.27.3
+          key: ${{ runner.os }}-${{ runner.arch }}-govulncheck-v1.9.0-${{ hashFiles('.go-version', 'scripts/install-govulncheck.sh') }}
+      - name: Check module advisories and source reachability
+        run: bash scripts/audit-dependencies.sh
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           version: v2.19.0
@@ -51,8 +60,15 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
           cache: false
+      - name: Restore advisory scanner
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/terrascale/govulncheck-v1.9.0-go1.27.3
+          key: ${{ runner.os }}-${{ runner.arch }}-govulncheck-v1.9.0-${{ hashFiles('.go-version', 'scripts/install-govulncheck.sh') }}
+      - name: Check module advisories and source reachability
+        run: bash scripts/audit-dependencies.sh
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           version: v2.19.0
