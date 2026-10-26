@@ -37,7 +37,8 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = new { name = "Dedicated host", version = "1" } }, "/", "mcp.terrascale.tech");
             await Assert.That(rootInitialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
             var rootTools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { }, "/", "mcp.terrascale.tech");
-            await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
+            var rootToolNames = rootTools.GetProperty("result").GetProperty("tools").EnumerateArray()
+                .Select(tool => tool.GetProperty("name").GetString()!).Order(StringComparer.Ordinal).ToArray();
             foreach (var path in new[] { "/", "/mcp" })
                 foreach (var method in new[] { HttpMethod.Get, HttpMethod.Delete })
                 {
@@ -53,6 +54,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 .Any(version => version.GetString() == "2026-07-28")).IsTrue();
             var discovery = await HttpJourney.McpAsync(client, secret, "tools/list", new { });
             var tools = discovery.GetProperty("result").GetProperty("tools").EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
+            await Assert.That(rootToolNames).IsEquivalentTo(tools.Keys);
             // These operations end sessions, delete fields, or invalidate an existing invitation link.
             foreach (var destructive in new[] { "auth_set_user_disabled", "patch_document", "resend_invitation", "set_backup_policy" })
                 await Assert.That(tools[destructive].GetProperty("annotations").GetProperty("destructiveHint").GetBoolean()).IsTrue();

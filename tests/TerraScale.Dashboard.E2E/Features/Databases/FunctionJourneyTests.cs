@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases;
 public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
-    public async Task Functions_page_is_empty_without_the_api_and_shows_source_logs_deliveries_and_deletes()
+    public async Task Functions_ui_and_mcp_share_source_logs_deliveries_deletion_and_project_authority()
     {
         var databaseId = "";
         var mode = "missing";
@@ -47,7 +47,8 @@ public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
             return Task.FromResult<IResult?>(result);
         });
         using var client = scenario.CreateClient();
-        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var secret = await HttpJourney.CreatePatAsync(client, "Functions MCP", account.Password);
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         using (var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
         { ["_csrf"] = csrf, ["name"] = "fn-app", ["region"] = "GRU" }))
@@ -64,6 +65,9 @@ public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
         await Assert.That(empty).Contains("No functions yet.");
         await Assert.That(empty).DoesNotContain("ts-alert-danger");
         await Assert.That(requests.Single()).IsEqualTo("GET /functions");
+        var emptyTools = await CallAsync("list_functions", new { databaseId });
+        await Assert.That(emptyTools.GetProperty("functions").GetArrayLength()).IsEqualTo(0);
+        await Assert.That(emptyTools.GetProperty("hasMore").GetBoolean()).IsFalse();
 
         mode = "live";
         var list = await PageAsync(path, HttpStatusCode.OK);
@@ -93,6 +97,46 @@ public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await PageAsync(path + "?function=gone", HttpStatusCode.NotFound)).Contains("This function does not exist.");
         await Assert.That(await PageAsync(path + "?function=Bad%20Name", HttpStatusCode.NotFound)).Contains("This function does not exist.");
 
+        var inventory = (await HttpJourney.McpAsync(client, secret, "tools/list", new { })).GetProperty("result").GetProperty("tools")
+            .EnumerateArray().ToDictionary(item => item.GetProperty("name").GetString()!);
+        var tools = new[] { "list_functions", "get_function", "list_function_logs", "list_function_deliveries", "delete_function" };
+        foreach (var tool in tools)
+        {
+            await Assert.That(inventory.ContainsKey(tool)).IsTrue();
+            await Assert.That(inventory[tool].TryGetProperty("outputSchema", out _)).IsTrue();
+            await Assert.That(inventory[tool].GetProperty("annotations").GetProperty("destructiveHint").GetBoolean()).IsEqualTo(tool == "delete_function");
+        }
+        await Assert.That(inventory["delete_function"].GetProperty("inputSchema").GetProperty("required")
+            .EnumerateArray().Select(item => item.GetString())).Contains("confirmName");
+        var first = await CallAsync("list_functions", new { databaseId, limit = 1 });
+        await Assert.That(first.GetProperty("functions")[0].GetProperty("name").GetString()).IsEqualTo("hello");
+        await Assert.That(first.GetProperty("hasMore").GetBoolean()).IsTrue();
+        var next = await CallAsync("list_functions", new { databaseId, limit = 2, after = first.GetProperty("nextCursor").GetString() });
+        await Assert.That(next.GetProperty("functions").GetArrayLength()).IsEqualTo(2);
+        await Assert.That(next.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+        var function = await CallAsync("get_function", new { databaseId, name = "on-order" });
+        await Assert.That(function.GetProperty("function").GetProperty("source").GetString()).Contains("function handler(event)");
+        await Assert.That(function.GetProperty("function").GetProperty("trigger").GetProperty("collection").GetString()).IsEqualTo("orders");
+        await Assert.That(function.GetProperty("invokeUrl").GetString()).EndsWith("/databases/fn-app/functions/on-order/invoke");
+        var logs = await CallAsync("list_function_logs", new { databaseId, name = "on-order" });
+        await Assert.That(logs.GetProperty("logs").GetArrayLength()).IsEqualTo(2);
+        await Assert.That(logs.GetProperty("logs")[0].GetProperty("error").GetString()).IsEqualTo("TypeError: boom");
+        var deliveries = await CallAsync("list_function_deliveries", new { databaseId, name = "on-order" });
+        await Assert.That(deliveries.GetProperty("deliveries")[0].GetProperty("errorCode").GetString()).IsEqualTo("target_rejected");
+        foreach (var tool in tools)
+        {
+            var arguments = Arguments(tool);
+            arguments["projectId"] = "01JA0000000000000000000001";
+            await ErrorAsync(tool, arguments);
+        }
+        await ErrorAsync("get_function", new { databaseId, name = "gone" });
+        await ErrorAsync("list_functions", new { databaseId, limit = 101 });
+        var beforeInvalid = requests.Count;
+        foreach (var tool in tools.Where(tool => tool != "list_functions"))
+            await ErrorAsync(tool, Arguments(tool, "Bad Name"));
+        await ErrorAsync("delete_function", new { databaseId, name = "hello", confirmName = "wrong" });
+        await Assert.That(requests.Count).IsEqualTo(beforeInvalid);
+
         mode = "unavailable";
         var unavailable = await PageAsync(path, HttpStatusCode.ServiceUnavailable);
         await Assert.That(unavailable).Contains("Functions are unavailable.");
@@ -109,10 +153,40 @@ public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
             await Assert.That(deleted.Headers.Location!.ToString()).IsEqualTo(path);
         }
         await Assert.That(requests).Contains("DELETE /functions/hello");
+        var deletedFunction = await CallAsync("delete_function", new { databaseId, name = "hello", confirmName = "hello" });
+        await Assert.That(deletedFunction.GetProperty("deleted").GetBoolean()).IsTrue();
+        await Assert.That(requests.Count(item => item == "DELETE /functions/hello")).IsEqualTo(2);
         using (var controls = scenario.CreateProviderClient())
         using (var role = await controls.PostAsJsonAsync("/__test/control", new { command = "role", value = "viewer" })) role.EnsureSuccessStatusCode();
         using (var refused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/functions/delete", form))
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        var beforeDenied = requests.Count;
+        foreach (var tool in tools)
+            await ErrorAsync(tool, Arguments(tool));
+        await Assert.That(requests.Count).IsEqualTo(beforeDenied).Because("viewer requests never reach the functions API");
+
+        Dictionary<string, object> Arguments(string tool, string name = "hello")
+        {
+            var arguments = new Dictionary<string, object> { ["databaseId"] = databaseId };
+            if (tool != "list_functions") arguments["name"] = name;
+            if (tool == "delete_function") arguments["confirmName"] = name;
+            return arguments;
+        }
+
+        async Task<JsonElement> CallAsync(string name, object arguments)
+        {
+            var response = await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });
+            var result = response.GetProperty("result");
+            await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsFalse().Because(name);
+            return result.GetProperty("structuredContent");
+        }
+
+        async Task ErrorAsync(string name, object arguments)
+        {
+            var response = await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });
+            await Assert.That(response.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue().Because(name);
+            await Assert.That(response.GetRawText()).DoesNotContain("An error occurred invoking");
+        }
 
         async Task<string> PageAsync(string url, HttpStatusCode expected)
         {
