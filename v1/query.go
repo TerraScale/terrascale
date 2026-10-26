@@ -366,6 +366,48 @@ type QueryExplain struct {
 	SuggestedIndex []string `json:"suggested_index,omitempty"`
 }
 
+// UnmarshalJSON enforces the producer's required members without losing zero values.
+func (x *QueryExplain) UnmarshalJSON(data []byte) error {
+	invalid := errors.New("terrabase: invalid query explain response")
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return invalid
+	}
+	for _, name := range []string{"plan", "indexes", "full_scan", "rows_scanned", "work_units", "elapsed_ms"} {
+		raw := fields[name]
+		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return invalid
+		}
+	}
+	for _, name := range []string{"plan", "indexes", "suggested_index"} {
+		raw := fields[name]
+		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			continue
+		}
+		var items []*string
+		if json.Unmarshal(raw, &items) != nil {
+			return invalid
+		}
+		for _, item := range items {
+			if item == nil {
+				return invalid
+			}
+		}
+	}
+	var value QueryExplain
+	for name, target := range map[string]any{
+		"plan": &value.Plan, "indexes": &value.Indexes, "full_scan": &value.FullScan,
+		"rows_scanned": &value.RowsScanned, "work_units": &value.WorkUnits,
+		"elapsed_ms": &value.ElapsedMs, "suggested_index": &value.SuggestedIndex,
+	} {
+		if raw := fields[name]; len(raw) != 0 && json.Unmarshal(raw, target) != nil {
+			return invalid
+		}
+	}
+	*x = value
+	return nil
+}
+
 // Query runs one page of q against the collection.
 func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error) {
 	for _, k := range q.Sort {

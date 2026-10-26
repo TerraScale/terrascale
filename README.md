@@ -423,7 +423,8 @@ context; it resends the exact body without repeating existence checks or
 creating a new commit ID. Retain the handle until the outcome is resolved.
 
 Public `v1` methods cover backups, branches/placement, indexes, JSON schema, saved
-queries and query shapes. `Query.Explain` returns the public document-query plan;
+queries and query shapes. `Query.Explain` returns the public [document-query plan](contracts/document-query-explain.md)
+with exact integer counters and validated required fields;
 SQL Explain is a separate operation. Method presence does not establish deployed
 JWT compatibility or complete live coverage. Collection subscriptions follow the
 [shape protocol](contracts/shapes.md), independently qualified from the .NET shape
