@@ -1045,7 +1045,7 @@ public sealed partial class TsAuthPlatformJourneyTests
 
     // Producer-shaped ts-auth platform API: snake_case bodies, {items,next} pages,
     // {"error":{"code","message"}} refusals and Bearer sign-in tokens.
-    private sealed class PlatformProducer(Func<string, (string UserId, string Email)?> resolve)
+    private sealed partial class PlatformProducer(Func<string, (string UserId, string Email)?> resolve)
     {
         private const int PageSize = 2;
         private readonly object gate = new();
@@ -1225,6 +1225,7 @@ public sealed partial class TsAuthPlatformJourneyTests
                 return Error(HttpStatusCode.NotFound, "not_found", "Organization not found.");
             if (organization.RequireMfa && !enrolled.ContainsKey(caller.UserId))
                 return Error(HttpStatusCode.Forbidden, "mfa_required", "This organization requires two-factor authentication.");
+            if (ProjectGrantRoute(organization, caller, method, parts, query, body) is { } projectGrants) return projectGrants;
             // PlatformDirectory.RenameProjectAsync checks current effective project authority, not organization admin.
             if (method == "PATCH" && parts[2..] is ["projects", var renamedProject])
             {

@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Auth;
 // ts-auth owns organizations, projects, memberships, invitations, ownership
 // transfer and audit events. Every call carries the signed-in user's own
 // access token, so ts-auth checks the current membership and role each time.
-public interface ITsAuthPlatform
+public partial interface ITsAuthPlatform
 {
     Task<IReadOnlyList<TerraScaleAuthPlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken);

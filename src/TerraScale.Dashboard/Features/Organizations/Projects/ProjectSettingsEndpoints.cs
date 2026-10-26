@@ -39,6 +39,7 @@ public static class ProjectSettingsEndpoints
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             { return Page(http, context, name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.", 503); }
         });
+        Projects.ProjectGrantEndpoints.MapProjectGrants(endpoints);
         return endpoints;
     }
 
