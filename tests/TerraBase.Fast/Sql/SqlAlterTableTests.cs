@@ -30,13 +30,13 @@ public sealed class SqlAlterTableTests
     public async Task Create_alter_and_insert_share_a_transaction_and_failed_batches_roll_back_ddl()
     {
         await using var api = await DocumentApi.StartAsync();
-        await SqlApi.OkAsync(api, "BEGIN", "CREATE TABLE t (id INTEGER PRIMARY KEY)", "ALTER TABLE t ADD extra TEXT NULL",
-            "INSERT INTO t VALUES (1, 'kept')", "COMMIT");
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY)", "ALTER TABLE t ADD extra TEXT NULL",
+            "INSERT INTO t VALUES (1, 'kept')");
         var kept = await SqlApi.OkAsync(api, "SELECT extra FROM t");
         await Assert.That(kept[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("kept");
 
-        var failed = await SqlApi.ExecuteAsync(api, "BEGIN", "ALTER TABLE t ADD discarded TEXT", "INSERT INTO missing VALUES (1)", "COMMIT");
-        await Assert.That(SqlApi.Error(failed)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error", "SQLITE_ERROR", 2));
+        var failed = await SqlApi.ExecuteAsync(api, "ALTER TABLE t ADD discarded TEXT", "INSERT INTO missing VALUES (1)");
+        await Assert.That(SqlApi.Error(failed)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error", "SQLITE_ERROR", 1));
         var columns = await SqlApi.OkAsync(api, "PRAGMA table_info(t)");
         await Assert.That(columns[0].GetProperty("rows").GetArrayLength()).IsEqualTo(2);
         using var reader = await api.ClientWithScopesAsync("documents:read");
