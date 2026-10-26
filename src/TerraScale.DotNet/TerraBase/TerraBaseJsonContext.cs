@@ -113,8 +113,8 @@ internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 
     /// <summary>
     /// The context every client uses. Request bodies are JSON API payloads, never embedded in HTML, so they keep
-    /// <c>&lt;</c>, <c>&amp;</c> and non-ASCII text as written: the default encoder escapes them up to 6× larger and
-    /// can push a document inside TerraBase's 1 MiB limit past it.
+    /// <c>&lt;</c> and <c>&amp;</c>. The HTTP request writer also compacts optional Unicode escapes left by the
+    /// encoder's global blocklist, preserving payload semantics and producer byte limits.
     /// </summary>
     public static TerraBaseJsonContext Wire { get; } = new(new JsonSerializerOptions(JsonSerializerDefaults.Web)
     {

@@ -112,7 +112,7 @@ internal sealed class TerraBaseConnection
 
     public static HttpContent Json<T>(T body, JsonTypeInfo<T> typeInfo, string mediaType = "application/json")
     {
-        var content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, typeInfo));
+        var content = new ByteArrayContent(TerraBaseRequestJson.Serialize(body, typeInfo));
         content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
         return content;
     }
