@@ -40,6 +40,11 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             var tools = discovery.GetProperty("result").GetProperty("tools").EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
             var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_document_history", "get_collection_schema", "set_collection_schema", "list_indexes", "create_index", "list_index_recommendations", "apply_index_recommendation", "get_index_migration", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
             await Assert.That(names.All(tools.ContainsKey)).IsTrue();
+            await Assert.That(tools["revoke_api_key"].GetProperty("description").GetString()).IsEqualTo("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.");
+            var rotationDescription = tools["rotate_api_key"].GetProperty("description").GetString();
+            await Assert.That(rotationDescription).Contains("the old secret and its tokens stop everywhere within 2 seconds");
+            await Assert.That(rotationDescription).Contains("open connections (including Postgres) close within 3 seconds");
+            await Assert.That(rotationDescription).Contains("the old secret works until it ends; these bounds start then");
             foreach (var name in names)
             {
                 var annotations = tools[name].GetProperty("annotations");

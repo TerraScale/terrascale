@@ -47,6 +47,10 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         await Assert.That(page).Contains("192.0.2.0/24");
         await Assert.That(page).Contains("2001:db8::/48");
         await Assert.That(page).Contains("Expires soon");
+        await Assert.That(page).Contains("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.");
+        await Assert.That(page).Contains("Rotating issues a new secret, shown once. With no grace, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With a grace period, the old secret works until it ends; these bounds start then.");
+        await Assert.That(page).Contains(">No grace period</option>");
+        await Assert.That(page.Contains("tokens it already obtained keep working", StringComparison.Ordinal)).IsFalse();
 
         await client.GetStringAsync("/notifications");
         var inbox = await client.GetStringAsync("/notifications");

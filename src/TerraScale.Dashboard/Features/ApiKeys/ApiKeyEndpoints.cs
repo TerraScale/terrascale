@@ -59,7 +59,7 @@ public static class ApiKeyEndpoints
             return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
         }).WithGroupName("integration").WithName("revokeDashboardCredentialById").WithTags("Credentials")
             .WithSummary("Revoke a project key")
-            .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Already-issued tokens are validated offline and stay valid until they expire (at most 60 seconds). A failed revoke call is re-checked, so 204/303 means the key is gone.")
+            .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone.")
             .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces(204).Produces(303).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
@@ -93,7 +93,7 @@ public static class ApiKeyEndpoints
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }).WithGroupName("integration").WithName("rotateDashboardCredential").WithTags("Credentials")
             .WithSummary("Rotate a project key and reveal its new secret once")
-            .WithDescription("Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period; 0 stops it immediately. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.")
+            .WithDescription("Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period. With 0, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With grace, these bounds apply from its end. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.")
             .Accepts<RotateProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces<ProjectApiKeySecret>().Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(409).ProducesProblem(422).ProducesProblem(503);
         // Allowlists: a key's own list and its project's list. Browser forms; ts-auth's 400 reason for a bad entry is shown as is.
