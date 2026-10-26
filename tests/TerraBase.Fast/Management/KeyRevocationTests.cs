@@ -114,6 +114,43 @@ public sealed class KeyRevocationTests
         await Assert.That(startup.MessageText).StartsWith("key_revoked:");
     }
 
+    [Test]
+    public async Task An_older_ts_auth_without_key_status_keeps_keys_working_on_http_and_postgres()
+    {
+        // Deploy order must not matter: a ts-auth that predates key status answers 404 and issues tokens without key_id.
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        api.Issuer.StatusServed = false;
+        var (_, token) = Grant(api, database);
+        using var client = api.WithToken(token);
+        using (var response = await client.GetAsync(ManagementApi.Uri(database.Data + "/collections")))
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        foreach (var claims in new[] { true, false })
+        {
+            var id = EntityIds.New().ToString();
+            var key = id + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
+            api.Issuer.GrantClient(key, () => api.Issuer.Mint(id, descriptor =>
+            {
+                descriptor.Claims["project_id"] = database.Project;
+                descriptor.Claims["scope"] = "documents:read databases:read";
+                if (claims)
+                {
+                    descriptor.Claims["key_id"] = id;
+                    descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
+                }
+            }));
+            var settings = new NpgsqlConnectionStringBuilder { Host = "127.0.0.1", Port = api.Server.PostgresPort, Username = "wire", Password = key, Database = database.Name, SslMode = SslMode.Disable, Pooling = false };
+            await using var connection = new NpgsqlConnection(settings.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand("SELECT 1", connection);
+            await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(1L);
+        }
+    }
+
     private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false)
     {
         var id = EntityIds.New().ToString();

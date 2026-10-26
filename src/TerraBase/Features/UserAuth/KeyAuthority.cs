@@ -274,6 +274,12 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
                 return status?.KeyId == key.KeyId ? new KeyActive(until) : new Unavailable("ts-auth answered about another key");
             }
 
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                // A ts-auth that predates key status (deploy order must not matter): the token's own checks stand, as before.
+                return new KeyActive(until);
+            }
+
             if (response.StatusCode != HttpStatusCode.Unauthorized)
             {
                 return new Unavailable("ts-auth key status is unavailable");
