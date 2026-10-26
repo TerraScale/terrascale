@@ -103,8 +103,9 @@ func importFile(ctx context.Context, db *v1.Database, format, path, collection s
 	if err != nil {
 		return err
 	}
+	// Completed jobs release their source; active jobs already confirmed it.
 	part := make([]byte, 4<<20)
-	for job.Source.ReceivedBytes < size {
+	for slices.Contains([]string{"awaiting_source", "failed", "cancelled"}, job.State) && job.Source.ReceivedBytes < size {
 		n, err := f.ReadAt(part, job.Source.ReceivedBytes)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
@@ -113,34 +114,47 @@ func importFile(ctx context.Context, db *v1.Database, format, path, collection s
 			return err
 		}
 	}
-	if job, err = waitImport(ctx, db, "awaiting_source", "analyzing"); err != nil {
-		return err
-	}
-	if job.State != "ready" || job.Preview == nil {
-		return importFailed(job)
-	}
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SOURCE\tCOLLECTION\tROWS\tISSUES")
-	for _, t := range job.Preview.Tables {
-		if !t.Excluded {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", t.Source, t.Collection, t.Rows, len(t.Issues))
+	if job.State == "failed" || job.State == "cancelled" {
+		if job, err = db.ResumeImport(ctx); err != nil {
+			return err
 		}
 	}
-	w.Flush()
-	if job.Preview.Blocking > 0 {
-		return fmt.Errorf("import has %d blocking issues: ts import status %s prints them", job.Preview.Blocking, job.Database)
+	if job.State == "awaiting_source" || job.State == "analyzing" {
+		if job, err = waitImport(ctx, db, "awaiting_source", "analyzing"); err != nil {
+			return err
+		}
 	}
-	if _, err := db.StartImport(ctx, job.Preview.ID); err != nil {
-		return err
+	if job.State == "ready" {
+		if job.Preview == nil {
+			return importFailed(job)
+		}
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "SOURCE\tCOLLECTION\tROWS\tISSUES")
+		for _, t := range job.Preview.Tables {
+			if !t.Excluded {
+				fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", t.Source, t.Collection, t.Rows, len(t.Issues))
+			}
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		if job.Preview.Blocking > 0 {
+			return fmt.Errorf("import has %d blocking issues: ts import status %s prints them", job.Preview.Blocking, job.Database)
+		}
+		if _, err := db.StartImport(ctx, job.Preview.ID); err != nil {
+			return err
+		}
 	}
-	if job, err = waitImport(ctx, db, "ready", "queued", "running", "validating"); err != nil {
-		return err
+	if slices.Contains([]string{"ready", "queued", "running", "validating"}, job.State) {
+		if job, err = waitImport(ctx, db, "ready", "queued", "running", "validating"); err != nil {
+			return err
+		}
 	}
 	if job.State != "completed" || job.Progress == nil {
 		return importFailed(job)
 	}
-	fmt.Fprintf(out, "Imported %d rows into %s\n", job.Progress.RowsWritten, job.Database)
-	return nil
+	_, err = fmt.Fprintf(out, "Imported %d rows into %s\n", job.Progress.RowsWritten, job.Database)
+	return err
 }
 
 // waitImport reads the import job until its state leaves pending.
