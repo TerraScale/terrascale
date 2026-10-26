@@ -16,6 +16,7 @@
 - [Python SDK installation and sync/async document, query, SQL and vector quickstart](https://docs.terrascale.tech/getting-started/python)
 - [Browser todos with an existing end-user session and collection owner rules](https://docs.terrascale.tech/getting-started/browser-todos)
 - [Connect an existing app backend session to project-scoped end-user tokens](https://docs.terrascale.tech/getting-started/browser-backend-tokens)
+- [CLI organization/project lifecycle, backup settings, placement and resumable changes](https://docs.terrascale.tech/cli/management)
 - [CLI multiline SQL submission, session-only history and document-only export limits](https://docs.terrascale.tech/cli/sql-and-export)
 - [CLI sign-in, least-privilege keys, saved context, consent and dashboard billing](https://docs.terrascale.tech/cli/access)
 - [Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records](https://docs.terrascale.tech/cli/automation)

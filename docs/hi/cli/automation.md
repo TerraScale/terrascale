@@ -36,4 +36,6 @@ See [access and execution context](./access) for scopes, consent and dashboard b
 
 See [SQL shell and document exports](./sql-and-export) for interactive and streaming workflows.
 
+See the [management command reference](./management) for lifecycle, backup policy, placement and resumable changes.
+
 </div>
