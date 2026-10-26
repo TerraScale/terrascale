@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
@@ -89,6 +90,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     private bool _completed;
     private readonly int _maxAdmitted;
     private readonly Counter<long> _rejected;
+    private readonly Histogram<double> _queueWait;
     private readonly Task[] _threads;
 
     // Completed once the pool is closed and the last admission is released.
@@ -115,6 +117,9 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         // A saturated disk shows here first: reads queue for a thread while writers wait on what queued them (batch 8).
         meter.CreateObservableGauge("terrabase.storage.queued", () => Queued, description: "Turso calls waiting for an I/O thread.");
         _rejected = meter.CreateCounter<long>("terrabase.storage.rejected", description: "Storage work rejected as busy (HTTP 503).");
+        _queueWait = meter.CreateHistogram<double>("terrabase.storage.queue_wait", "s",
+            "Time a Turso call waited for an I/O thread, by lane: hobby, bulk or other (every other plan, system work).",
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1] });
         // Allocate bookkeeping before any launch: even a later allocation failure can join every started worker.
         _threads = new Task[threads];
         var workers = new Thread[threads];
@@ -249,6 +254,8 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         var tenant = QosContext.Current;
         var context = CaptureContext();
         var weight = tenant is null ? 16 : QosPolicy.For(tenant.Plan).Weight;
+        var lane = new KeyValuePair<string, object?>("lane", tenant?.Plan == PlanTier.Hobby ? "hobby" : StorageWork.IsBulk ? "bulk" : "other");
+        var queuedAt = Stopwatch.GetTimestamp();
         var node = new LinkedListNode<WorkItem>(new WorkItem(tenant?.OrganizationId, 0, tenant?.Plan == PlanTier.Hobby, StorageWork.IsBulk, Run));
         using var cancellation = cancellationToken.Register(() =>
         {
@@ -298,6 +305,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             }
 
             Interlocked.Increment(ref _running);
+            _queueWait.Record(Stopwatch.GetElapsedTime(queuedAt).TotalSeconds, lane);
             diagnostic?.Begin();
             try
             {

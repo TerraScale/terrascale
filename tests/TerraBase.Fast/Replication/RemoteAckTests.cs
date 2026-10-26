@@ -2294,7 +2294,9 @@ public sealed class RemoteAckTests
                 pair.ReplayTrace?.Invoke("first live read after refill ACK");
             }
 
-            return await inner.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
+            // A forced refill: the read reports the log cut past its start.
+            var page = await inner.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
+            return page is not null && refill.Refills(database, after) ? page with { Retained = false } : page;
         }
 
         public ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
@@ -2337,8 +2339,8 @@ public sealed class RemoteAckTests
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
             inner.RecordStableAsync(database, incarnation, peer, stable, cancellationToken);
 
-        public async ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) =>
-            refill.Refills(database, after) ? false : await inner.RetainsAsync(database, incarnation, after, cancellationToken);
+        public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) =>
+            inner.RetainsAsync(database, incarnation, after, cancellationToken);
 
         public async ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken)
         {

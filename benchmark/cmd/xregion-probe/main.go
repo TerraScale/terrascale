@@ -51,6 +51,7 @@ func main() {
 	poll := flag.Duration("poll", 2*time.Millisecond, "local poll interval")
 	rttSamples := flag.Int("rtt-samples", 21, "TCP connects to the origin for the RTT")
 	load := flag.Int("load", 0, "writers that PUT new documents to the origin back to back while the probes run")
+	loadEvery := flag.Duration("load-every", 0, "with -load, each writer starts a write at most once per this interval (0: back to back), so runs compare at one rate")
 	flag.Parse()
 
 	key, err := os.ReadFile(*keyFile)
@@ -80,6 +81,13 @@ func main() {
 
 	rtt := tcpRTT(*origin, *rttSamples)
 	floor := rtt / 2
+	// Open both clients' connections before the first probe: its write would otherwise also pay a TCP connect to the
+	// origin, one more round trip that is the client's and not replication's (in every earlier run, probe 0 was the slowest).
+	for _, warm := range []*replbench.Region{from, to} {
+		if _, err := warm.Do(ctx, http.MethodGet, replbench.DocPath(*collection, ulid.Make().String()), nil, ""); err != nil {
+			log.Fatal(err)
+		}
+	}
 	lat, over, ack := replbench.NewLatency(), replbench.NewLatency(), replbench.NewLatency()
 	missing := 0
 	// Sustained load beside the probes, on clients of its own so probes never queue behind it.
@@ -92,7 +100,20 @@ func main() {
 			log.Fatal(err)
 		}
 		writers.Go(func() {
+			var tick <-chan time.Time
+			if *loadEvery > 0 {
+				ticker := time.NewTicker(*loadEvery)
+				defer ticker.Stop()
+				tick = ticker.C
+			}
 			for loadCtx.Err() == nil {
+				if tick != nil {
+					select {
+					case <-tick:
+					case <-loadCtx.Done():
+						return
+					}
+				}
 				r, err := loader.Do(loadCtx, http.MethodPut, replbench.DocPath(*collection, ulid.Make().String()), []byte(`{"load":true}`), "application/json")
 				if err == nil && r.Status/100 == 2 {
 					loaded.Add(1)

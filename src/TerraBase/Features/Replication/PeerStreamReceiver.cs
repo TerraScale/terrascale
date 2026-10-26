@@ -85,7 +85,8 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
         _merged = meter.CreateCounter<long>("terrabase.replication.merged_groups", "{group}", "Change groups joined from peers, by the origin's region.");
         _delay = meter.CreateHistogram<double>("terrabase.replication.apply_delay", "s",
             "Apply time minus the origin stamp's physical time: convergence lag, by the origin's region.",
-            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300] });
+            // The step buckets, so a p99 between 100 and 500 ms is not read off one bucket's edge; then catch-up's range.
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [.. ReplicationTimings.Buckets, 30, 60, 300] });
         _undecodable = meter.CreateCounter<long>("terrabase.replication.undecodable_batches", "{batch}",
             "Peer batches refused because they could not be decoded, by the origin's region.");
     }
@@ -220,6 +221,15 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
         }
 
         Task<bool>? reading = null;
+        // When the frame arrived, not when this loop got to it (receive.loop): batch steps count from arrival.
+        long arrived = 0;
+        async Task<bool> NextAsync()
+        {
+            var more = await requestStream.MoveNext(stream.Token).ConfigureAwait(false);
+            arrived = _timings.Now;
+            return more;
+        }
+
         try
         {
             if (precedingStop is not null)
@@ -236,7 +246,7 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
             // An already-ended predecessor can satisfy WaitAsync after this stream was cancelled.
             stream.Token.ThrowIfCancellationRequested();
             await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value, Protocol = ReplicationProtocol.Version, Chunks = _chunks.Reads } }, stream.Token).ConfigureAwait(false);
-            reading = requestStream.MoveNext(stream.Token);
+            reading = NextAsync();
             while (true)
             {
                 // A refill may take minutes: it runs beside the frames, so other databases' batches are still acked in time.
@@ -332,9 +342,10 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
                 }
 
                 var frame = requestStream.Current;
-                var received = _timings.Now;
+                var received = arrived;
+                _ = _timings.Record(ReplicationTimings.ReceiveLoop, received);
                 silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
-                reading = requestStream.MoveNext(stream.Token);
+                reading = NextAsync();
                 if (frame.KindCase == PushFrame.KindOneofCase.None)
                 {
                     // A kind of a newer protocol than this build's: its sender knows this machine does not read it.

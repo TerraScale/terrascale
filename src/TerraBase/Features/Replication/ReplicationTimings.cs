@@ -5,14 +5,16 @@ namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// How long each step between a local commit and its remote durable ack takes, by step: the sender's ship pass, change log
-/// read and ack handling, and the receiver's wait, catalog open, writer wait, join, commit (sync), stable read and the whole
-/// batch from arrival to its ack written. The step names are this class's constants, so the label set stays bounded.
+/// read and ack handling, and the receiver's loop (a frame's arrival until the stream's loop takes it), wait, catalog open,
+/// writer wait, join, commit (sync), stable read and the whole batch from arrival to its ack written. The step names are
+/// this class's constants, so the label set stays bounded.
 /// </summary>
 internal sealed class ReplicationTimings(IMeterFactory meters, TimeProvider time)
 {
     public const string SendPass = "send.pass";
     public const string SendRead = "send.read";
     public const string SendAck = "send.ack";
+    public const string ReceiveLoop = "receive.loop";
     public const string ReceiveWait = "receive.wait";
     public const string ReceiveOpen = "receive.open";
     public const string ReceiveBegin = "receive.begin";

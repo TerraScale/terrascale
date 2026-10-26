@@ -455,11 +455,11 @@ public sealed class PeerStreamFaultIsolationTests
     }
 
     [Test]
-    [Arguments("retains", false)]
+    [Arguments("read", false)]
     [Arguments("head", false)]
     [Arguments("retainedAfter", false)]
     [Arguments("horizon", false)]
-    [Arguments("retains", true)]
+    [Arguments("read", true)]
     [Arguments("head", true)]
     [Arguments("retainedAfter", true)]
     [Arguments("horizon", true)]
@@ -524,7 +524,7 @@ public sealed class PeerStreamFaultIsolationTests
         Action<string, TenantContext>? checkpoint = null;
         await using var sender = await Node.StartAsync(receiver, services =>
         {
-            // The ACK tail gauge stays cached while the retention read owns the reset injection; reconnect timers still run.
+            // The ACK tail gauge stays cached while the shipping read owns the reset injection; reconnect timers still run.
             services.AddSingleton<TimeProvider>(new FixedUtcTime());
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database));
             services.AddSingleton(provider => new HeldSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
@@ -537,8 +537,8 @@ public sealed class PeerStreamFaultIsolationTests
         await WarmAsync(sender, receiver, deadline.Token);
         var before = sender.Status(sender.Database)!.Acknowledged;
         var connected = source.Connections;
-        var native = new SqliteException("a native I/O error during the retention reader reset", 10);
-        var gate = new ShippingGate(sender.Database, "retains");
+        var native = new SqliteException("a native I/O error during the shipping reader reset", 10);
+        var gate = new ShippingGate(sender.Database, "reading");
         source.Hold(gate);
         var armed = 1;
         Task? recording = null;
@@ -551,15 +551,15 @@ public sealed class PeerStreamFaultIsolationTests
             {
                 if (step == "reader.reset" && database == sender.Database && Interlocked.Exchange(ref armed, 0) == 1)
                 {
-                    recording = sender.FaultAsync(sender.Database, nodeFault: true, CancellationToken.None, "a node fault during the retention reader reset");
+                    recording = sender.FaultAsync(sender.Database, nodeFault: true, CancellationToken.None, "a node fault during the shipping reader reset");
                     throw native;
                 }
             };
             _ = gate.Release.TrySetResult();
             var (boundary, actualError) = await source.NativeReadError.Task.WaitAsync(deadline.Token);
-            await Assert.That(boundary).IsEqualTo("retains");
+            await Assert.That(boundary).IsEqualTo("reading");
             await Assert.That(ReferenceEquals(actualError, native)).IsTrue()
-                .Because("shipping must see the original error from real retention transaction disposal");
+                .Because("shipping must see the original error from real read transaction disposal");
             await Assert.That(actualError.SqliteErrorCode).IsEqualTo(10);
             await Assert.That(recording).IsNotNull();
             await recording!.WaitAsync(deadline.Token);
@@ -971,24 +971,29 @@ public sealed class PeerStreamFaultIsolationTests
                 _ = Interlocked.Increment(ref _readsAfterNativeError);
             }
 
-            var groups = await inner.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
-            await AfterShippingReadAsync(database, "retains", cancellationToken);
-            return groups;
-        }
-
-        public async ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken)
-        {
-            var retained = await ShippingReadAsync(database, "retains", () => inner.RetainsAsync(database, incarnation, after, cancellationToken));
+            await AfterShippingReadAsync(database, "reading", cancellationToken);
+            var groups = await ShippingReadAsync(database, "reading", () => inner.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken));
             var gate = Volatile.Read(ref _shipping);
-            if (retained is not null && gate is not null && gate.Database == database && gate.Boundary is "head" or "retainedAfter" or "horizon")
+            if (groups is not null && gate is not null && gate.Database == database && gate.Boundary is "head" or "retainedAfter" or "horizon")
             {
                 // Force only this test's refill branch; every storage call still passes through the production guard.
-                retained = false;
+                groups = groups with { Retained = false };
+            }
+
+            // After the read, only the sender's own fault check stands before the batch: it refuses without a source call.
+            if (gate is not null && gate.Database == database && gate.Boundary == "read" && gate.Entered.TrySetResult())
+            {
+                await gate.Release.Task.WaitAsync(cancellationToken);
+                _ = Interlocked.CompareExchange(ref _shipping, null, gate);
+                _ = gate.Refused.TrySetResult();
             }
 
             await AfterShippingReadAsync(database, "head", cancellationToken);
-            return retained;
+            return groups;
         }
+
+        public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) =>
+            inner.RetainsAsync(database, incarnation, after, cancellationToken);
 
         public async ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
         {

@@ -119,16 +119,17 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
 
         await using (transaction.ConfigureAwait(false))
         {
-            var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            var (groups, quiet, oldest) = await transaction.ReadShippableAsync(start, maxGroups, maxBytes, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
             // Only a read over every row past its start proves its range quiet: past a cut, the deleted rows may have held
-            // local groups (the range would then let RetainsAsync skip a refill the peer needs).
-            if (quiet > after && await transaction.RetainsAsync(start, cancellationToken).ConfigureAwait(false))
+            // local groups (the range would then let a retention check skip a refill the peer needs).
+            if (quiet > after && TursoStorageTransaction.Retains(oldest, start))
             {
                 Remember(incarnation, after, quiet);
             }
 
-            // The incarnation this transaction read from: BeginAsync checked it against the persisted one.
-            return new SourceGroups(incarnation, groups);
+            // The incarnation this transaction read from: BeginAsync checked it against the persisted one. Retention is
+            // judged as RetainsAsync does, from the end of the quiet ranges holding `after`, in this read's snapshot.
+            return new SourceGroups(incarnation, groups, TursoStorageTransaction.Retains(oldest, QuietEnd(incarnation, after)));
         }
     }
 

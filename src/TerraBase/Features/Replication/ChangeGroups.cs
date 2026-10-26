@@ -39,7 +39,11 @@ public readonly record struct SourceCursor(Ulid Incarnation, long Acked)
 /// <summary>Groups read from one incarnation of this machine's copy of a database.</summary>
 /// <param name="Incarnation">The incarnation the read's own storage transaction found in place.</param>
 /// <param name="Groups">The groups, in change id order; empty when there are none.</param>
-public sealed record SourceGroups(Ulid Incarnation, IReadOnlyList<OriginGroup> Groups);
+/// <param name="Retained">
+/// Whether every group after the read's start was still held in the same read (<see cref="IChangeGroupSource.RetainsAsync"/>):
+/// false once retention cut some, so the peer refills.
+/// </param>
+public sealed record SourceGroups(Ulid Incarnation, IReadOnlyList<OriginGroup> Groups, bool Retained);
 
 /// <summary>
 /// Where the peer streams read this machine's own change groups: the CDC tailer (slice R3). Only groups of local
@@ -57,7 +61,8 @@ public interface IChangeGroupSource
     /// <summary>
     /// The database's groups with a change id above <paramref name="after"/> in <paramref name="incarnation"/>, in change id
     /// order: at most <paramref name="maxGroups"/>, and no more than <paramref name="maxBytes"/> of encoded groups, keys and framing unless the
-    /// first group alone is larger, with the incarnation the read's transaction found. Null when refused.
+    /// first group alone is larger, with the incarnation the read's transaction found and whether it still held every group
+    /// after <paramref name="after"/>. Null when refused.
     /// </summary>
     ValueTask<SourceGroups?> ReadAsync(
         TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken);

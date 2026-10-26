@@ -4,6 +4,7 @@
 # cache lookups). Nodes come from tests/TerraBase.E2E/BenchmarkClusterHost.cs. Run from the repository root after
 # `make terrabase-build CONFIGURATION=Release` and `make -C benchmark` builds of cmd/xregion-probe:
 #   benchmark/scripts/xregion/local-lag.sh <out-dir> [runs] [probes per direction per run] [load writers on the origin]
+#     [interval between one writer's writes, e.g. 50ms; 0 = back to back]
 # then benchmark/scripts/xregion/local-lag-table.py <out-dir>. TERRABASE_BENCH_LINK_DELAYS overrides the delays (ms).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -11,6 +12,7 @@ out=${1:?usage: local-lag.sh <out-dir> [runs] [probes]}
 runs=${2:-3}
 probes=${3:-60}
 load=${4:-0}
+load_every=${5:-0}
 delays=${TERRABASE_BENCH_LINK_DELAYS:-gru-sjc=84.6,gru-fra=94.1,sjc-fra=68.9} # RT1's TCP RTT/2 floors
 mkdir -p "$out"
 work=$(mktemp -d) # 0700: the targets file and key files hold the nodes' tokens
@@ -66,7 +68,7 @@ for run in $(seq 1 "$runs"); do
       [[ "$a" == "$b" ]] && continue
       "$root/benchmark/bin/xregion-probe" -origin "$(url "$a")" -local "$(url "$b")" -key-file "$work/$a.key" \
         -local-key-file "$work/$b.key" -label "$a->$b" -project "$project" -database "$database" -collection probe \
-        -n "$probes" -rtt-samples 3 -load "$load" >"$out/probe-$run-$a-$b.jsonl"
+        -n "$probes" -rtt-samples 3 -load "$load" -load-every "$load_every" >"$out/probe-$run-$a-$b.jsonl"
     done
   done
 done
