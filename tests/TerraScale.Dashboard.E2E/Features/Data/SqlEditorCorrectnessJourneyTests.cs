@@ -39,7 +39,10 @@ public sealed class SqlEditorCorrectnessJourneyTests(DashboardRootFixture fixtur
         {
             using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/" + action, new()
             {
-                ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = sql, ["name"] = "Encoded query",
+                ["_csrf"] = csrf,
+                ["databaseId"] = id,
+                ["sql"] = sql,
+                ["name"] = "Encoded query",
                 ["history"] = "[\"" + new string('+', 4000) + "\"]"
             });
             await Assert.That(response.StatusCode).IsEqualTo(action == "sql/check" ? HttpStatusCode.OK : invalid ? HttpStatusCode.UnprocessableEntity : action == "saved-queries" ? HttpStatusCode.Created : HttpStatusCode.OK);
