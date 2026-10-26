@@ -32,6 +32,7 @@ public sealed class DeclaredSchemaMcpJourneyTests(DashboardRootFixture fixture)
                 await Assert.That(http.Request.ContentType).Contains("application/json");
                 using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
                 var schema = body.RootElement;
+                await Assert.That(System.Text.Encoding.UTF8.GetByteCount(schema.GetRawText()) <= 64 * 1024).IsTrue();
                 if (schema.ValueKind == JsonValueKind.Object && schema.TryGetProperty("$comment", out var comment) && comment.GetString() == "cancel")
                 {
                     waiting.TrySetResult();
@@ -75,7 +76,9 @@ public sealed class DeclaredSchemaMcpJourneyTests(DashboardRootFixture fixture)
         var detached = await Call("get_collection_validation", new { databaseId, collection = "users" });
         await Assert.That(detached.GetProperty("schema").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(detached.GetProperty("dialect").ValueKind).IsEqualTo(JsonValueKind.Null);
-        foreach (var json in new[] { "{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\"}}}", "true", "false" })
+        foreach (var json in new[] { "{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\"}}}", "true", "false",
+            "{\"description\":\"" + new string('\u0080', 32000) + "\"}",
+            "{\"description\":\"" + string.Concat(Enumerable.Repeat("\\u0080", 32000)) + "\"}" })
         {
             using var schema = JsonDocument.Parse(json);
             var applied = await Call("set_collection_schema", new { databaseId, collection = "users", schema = schema.RootElement });
@@ -88,7 +91,7 @@ public sealed class DeclaredSchemaMcpJourneyTests(DashboardRootFixture fixture)
         var inferred = await Call("get_collection_schema", new { databaseId, collection = "users" });
         await Assert.That(inferred.GetProperty("schema").TryGetProperty("fields", out _)).IsTrue();
         await Error(new { databaseId, collection = "users", schema = new { type = "invalid" } });
-        await Assert.That(stored!.Value.ValueKind).IsEqualTo(JsonValueKind.False);
+        await Assert.That(stored!.Value.GetProperty("description").GetString()).IsEqualTo(new string('\u0080', 32000));
         // Exact producer schema budget plus the MCP envelope must reach the SDK.
         var large = "{\"$comment\":\"" + new string('x', 64 * 1024 - 15) + "\"}";
         await Assert.That(System.Text.Encoding.UTF8.GetByteCount(large)).IsEqualTo(64 * 1024);
@@ -101,6 +104,7 @@ public sealed class DeclaredSchemaMcpJourneyTests(DashboardRootFixture fixture)
             await Error(new { databaseId, collection = "users", schema = schema.RootElement });
         }
         await Error(new { databaseId, collection = "users", schema = new { description = new string('x', 64 * 1024) } });
+        await Error(new { databaseId, collection = "users", schema = new { description = new string('\u0080', 32 * 1024) } });
         await Error(new { databaseId, collection = "invalid/name", schema = true });
         await Error(new { databaseId = AccountService.NewId(), collection = "users", schema = true });
         await Error(new { databaseId, collection = "users", schema = true, organizationId = AccountService.NewId() });

@@ -28,9 +28,12 @@ public sealed class DeclaredSchemaMcpTools(IHttpContextAccessor http, DatabaseSe
         McpScope.DemandManagement(context);
         if (schema.ValueKind is not (JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False))
             throw new AccountAccessException("Schema must be a JSON object or boolean.", 422);
-        if (System.Text.Encoding.UTF8.GetByteCount(schema.GetRawText()) > 64 * 1024)
-            throw new AccountAccessException("Schema must be 64 KiB or less.", 422);
-        await DeclaredSchemaAsync(context, databaseId, collection, schema);
+        // MCP binding can escape Unicode; budget the same compact UTF-8 as dashboard writes.
+        var compact = JsonDraft.Compact(schema, htmlSafe: false);
+        if (System.Text.Encoding.UTF8.GetByteCount(compact) > 64 * 1024)
+            throw new AccountAccessException("Schema must be 64 KiB or less after compact UTF-8 encoding.", 422);
+        using var normalized = JsonDocument.Parse(compact);
+        await DeclaredSchemaAsync(context, databaseId, collection, normalized.RootElement);
         return new(collection, "applied");
     }
 
