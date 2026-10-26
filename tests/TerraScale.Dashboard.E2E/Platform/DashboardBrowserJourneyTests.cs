@@ -85,7 +85,10 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await page.Locator("#edit-document").GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
                 await ShotAsync("documents");
                 await GotoAsync($"/databases/{databaseId}/schema?collection=users");
-                await Assert.That(await page.Locator("#schema-json").InputValueAsync()).Contains("score").Because("Schema includes live fields");
+                await Assert.That(await page.Locator("#declared-schema").InputValueAsync()).IsEqualTo("{}").Because("Collections start without declared validation");
+                await Assert.That(await page.Locator("main").InnerTextAsync()).Contains("No declared validation schema.");
+                await Assert.That(await page.Locator("section[aria-labelledby=inferred-schema-title] pre").InnerTextAsync()).Contains("score").Because("Inferred fields reflect live documents separately from declared validation");
+                await ShotAsync("schema");
                 await GotoAsync($"/databases/{databaseId}/sql?collection=users");
                 await EditorAsync("#sql", "SELECT * FROM users LIMIT 100");
                 await SubmitAsync("form:is([action=\"/api/v1/dashboard/data/sql\"],[action^=\"/api/v1/dashboard/data/sql?\"])", "Run query");

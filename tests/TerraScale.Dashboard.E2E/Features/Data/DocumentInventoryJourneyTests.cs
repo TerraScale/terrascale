@@ -71,8 +71,10 @@ public sealed class DocumentInventoryJourneyTests(DashboardRootFixture fixture)
         if (outcome is "listing-failure" or "empty")
         {
             await Assert.That(browseReads).IsEqualTo(0);
-            await Assert.That(html).Contains("No collections yet.");
-            if (outcome == "listing-failure") await Assert.That(html).Contains("The data plane could not complete the request. Try again shortly.");
+            if (outcome == "listing-failure")
+                await Assert.That(html).Contains("Document results unavailable.").And.Contains("Retry documents</a>")
+                    .And.Contains("The data plane could not complete the request. Try again shortly.").And.DoesNotContain("No collections yet.");
+            else await Assert.That(html).Contains("No collections yet.").And.DoesNotContain("Retry documents</a>");
         }
         else
         {

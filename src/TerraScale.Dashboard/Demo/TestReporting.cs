@@ -107,7 +107,9 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         var isDocumentChanges = segments is ["v1", "projects", _, "databases", _, "changes"];
         if (isDocumentChanges && sessionActor is not null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         if (isDocumentChanges && scopedActor?.Scopes.Contains("documents:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "documents:read is required" } }, HttpStatusCode.Forbidden);
-        var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage || isDocumentChanges;
+        var isDeclaredSchema = request.Method == HttpMethod.Get && segments is ["v1", "projects", _, "databases", _, "collections", _, "schema"];
+        if (isDeclaredSchema && scopedActor?.Scopes.Contains("documents:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "documents:read is required" } }, HttpStatusCode.Forbidden);
+        var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage || isDocumentChanges || isDeclaredSchema;
         var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
         if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
             !isScopedReporting && sessionActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -128,6 +130,15 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
             return Json(new { days = policies.GetValueOrDefault(org.Id, 90) });
         }
         if (project is null || request.Method != HttpMethod.Get) throw new HttpRequestException("Unknown reporting fixture request.");
+        if (isDeclaredSchema)
+        {
+            var scope = new DatabaseScope(actorUserId, "", org.Id, org.Name, project.Id, project.Name);
+            if (!project.Databases.Values.Any(database => database.Name == segments[4]) ||
+                !documents.Statistics(scope, segments[4]).Any(collection => collection.Name == segments[6]))
+                return Json(new { error = new { code = "not_found", message = "collection not found" } }, HttpStatusCode.NotFound);
+            // This fixture has no declared validation schemas; stateful mutations use DatabaseSdkScenario.
+            return Json(new { schema = (object?)null, dialect = (string?)null });
+        }
         if (isDocumentChanges)
             return project.Databases.Values.Any(database => database.Name == segments[4])
                 ? documents.Changes(project.Id, segments[4], uri.Host == "api.terrascale.tech" ? null : uri.Host.Split('.')[0], request)
