@@ -95,6 +95,13 @@ public sealed partial class HostedSignInTests
         await page.GetByRole(AriaRole.Heading, new() { Name = "Password updated", Exact = true }).WaitForAsync();
         await MobileAuditAsync(page);
 
+        // Reset revokes the browser session; device entry requires a new authenticated session.
+        await page.GotoAsync($"{OidcHarness.PublicOrigin}{SignIn}");
+        await page.Locator("#sign-in-email").FillAsync(email);
+        await MobilePasswordStepAsync(page);
+        await page.Locator("#sign-in-password").FillAsync("replacement synthetic acceptance password");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Heading, new() { Name = "Signed in", Exact = true }).WaitForAsync();
         await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/device");
         await MobileFieldAsync(page, "device-code", "user_code", "one-time-code", "Device code");
         await MobileAuditAsync(page);
@@ -269,7 +276,8 @@ public sealed partial class HostedSignInTests
         var control = page.Locator("input:not([type=hidden])").First;
         if (await control.CountAsync() > 0)
         {
-            await control.ScrollIntoViewIfNeededAsync();
+            // Center explicitly: Chromium's minimal scroll can leave a fractional pixel outside the viewport.
+            await control.EvaluateAsync("el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })");
             var bounds = await control.EvaluateAsync<double[]>("el => { const r = el.getBoundingClientRect(); return [r.top, r.bottom, innerHeight]; }");
             await Assert.That(bounds[0] >= 0 && bounds[1] <= bounds[2]).IsTrue()
                 .Because($"the first control must fit the reduced viewport: top={bounds[0]}, bottom={bounds[1]}, height={bounds[2]}");
