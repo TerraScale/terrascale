@@ -18,7 +18,7 @@
 - [Connect an existing app backend session to project-scoped end-user tokens](https://docs.terrascale.tech/getting-started/browser-backend-tokens)
 - [CLI organization/project lifecycle, backup settings, placement and resumable changes](https://docs.terrascale.tech/cli/management)
 - [CLI multiline SQL submission, session-only history and document-only export limits](https://docs.terrascale.tech/cli/sql-and-export)
-- [CLI sign-in, key scopes, saved context, consent, identity-conditioned deletion and dashboard billing](https://docs.terrascale.tech/cli/access)
+- [CLI sign-in, key scopes, context, consent, identity-conditioned branching/deletion and dashboard billing](https://docs.terrascale.tech/cli/access)
 - [Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records](https://docs.terrascale.tech/cli/automation)
 - [Supported runtimes, installation and SDK contracts](https://docs.terrascale.tech/guides/sdks)
 - [Current authentication methods, protocol scope and availability](https://docs.terrascale.tech/guides/authentication-capabilities)

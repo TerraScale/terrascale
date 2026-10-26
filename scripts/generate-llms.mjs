@@ -16,7 +16,7 @@ const routes = [
   ['/getting-started/browser-backend-tokens', 'Connect an existing app backend session to project-scoped end-user tokens'],
   ['/cli/management', 'CLI organization/project lifecycle, backup settings, placement and resumable changes'],
   ['/cli/sql-and-export', 'CLI multiline SQL submission, session-only history and document-only export limits'],
-  ['/cli/access', 'CLI sign-in, key scopes, saved context, consent, identity-conditioned deletion and dashboard billing'],
+  ['/cli/access', 'CLI sign-in, key scopes, context, consent, identity-conditioned branching/deletion and dashboard billing'],
   ['/cli/automation', 'Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records'],
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
   ['/guides/authentication-capabilities', 'Current authentication methods, protocol scope and availability'],
