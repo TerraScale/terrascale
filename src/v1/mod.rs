@@ -30,6 +30,7 @@ mod changes;
 mod client;
 mod documents;
 mod errors;
+mod file_transfer;
 mod files;
 mod functions;
 mod ids;
