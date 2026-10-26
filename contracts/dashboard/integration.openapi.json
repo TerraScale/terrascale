@@ -238,7 +238,7 @@
           "Credentials"
         ],
         "summary": "List ts-auth project keys without secrets",
-        "description": "DatabaseName is the canonical restriction. A missing local DatabaseId does not mean unrestricted access. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.",
+        "description": "DatabaseId is the immutable restriction. DatabaseName shows its current name, or the restriction when the database is not listed locally. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.",
         "operationId": "listDashboardCredentials",
         "responses": {
           "200": {

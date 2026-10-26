@@ -81,7 +81,10 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
             active = parsed.RootElement.Clone();
             return Results.Json(new { schema = active });
         });
-        using var client = host.CreateClient();
+        // Let a known-length 413 arrive before uploading; keep the chunked body-limit case below.
+        using var client = new HttpClient(new SocketsHttpHandler
+        { AllowAutoRedirect = false, CookieContainer = new(), Expect100ContinueTimeout = TimeSpan.FromSeconds(30) })
+        { BaseAddress = host.Origin, Timeout = TimeSpan.FromSeconds(30) };
         var (id, csrf) = await SetupAsync(client);
         var path = $"/databases/{id}/schema?collection=items";
         await Assert.That(await client.GetStringAsync(path)).Contains("enctype=\"multipart/form-data\"");
@@ -92,6 +95,7 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
             foreach (var field in new Dictionary<string, string> { ["_csrf"] = csrf, ["collection"] = "items", ["operation"] = "apply", ["schema"] = draft }) content.Add(new StringContent(field.Value), field.Key);
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
             if (chunked) request.Headers.TransferEncodingChunked = true;
+            request.Headers.ExpectContinue = !chunked;
             request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
             return await client.SendAsync(request);

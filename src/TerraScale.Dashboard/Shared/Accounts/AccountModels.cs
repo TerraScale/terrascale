@@ -203,6 +203,7 @@ public static class DashboardAuditSeverity
         ["api_key.created"] = "warning",
         ["api_key.revoked"] = "warning",
         ["database.restored"] = "warning",
+        ["database.renamed"] = "warning",
         ["billing.plan_changed"] = "warning",
         ["backup.destination_removed"] = "warning",
         ["database.deleted"] = "critical",
