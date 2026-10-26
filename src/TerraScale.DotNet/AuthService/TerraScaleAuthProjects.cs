@@ -5,9 +5,10 @@ using System.Text.Json.Serialization.Metadata;
 namespace TerraScale.DotNet;
 
 /// <summary>Project tenant management under <c>/v1/{project}</c> with the caller's own terrascale sign-in token.
-/// ts-auth checks the caller's project role on every request: viewer reads, admin changes; an unknown or invisible
+/// Trusted-backend end-user token issuance instead uses an explicit project API key.
+/// For tenant management, ts-auth checks the caller's role: viewer reads, admin changes; an unknown or invisible
 /// project answers 404 and a role too low answers 403 <c>forbidden</c>. Every request is sent once.</summary>
-public sealed class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
+public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
 {
     private const int MaxRequestBytes = 16 * 1024;
     private const int MaxExportCursorLength = 8192;
