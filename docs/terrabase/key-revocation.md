@@ -2,7 +2,8 @@
 
 A dashboard API key (a ts-auth client credential) that is revoked, rotated without grace, expired, or whose organization
 or project was deleted stops working on every TerraBase transport in every region within **2 seconds** of ts-auth
-acknowledging the change. Work already running on the key is cut off within **3 seconds**. If ts-auth cannot answer,
+acknowledging the change. Work already running on the key is cut off within **2.5 seconds** (the 2-second answer plus one
+250 ms poll). If ts-auth cannot answer,
 TerraBase refuses the key (fail closed).
 
 This replaces the earlier bound, where a key's 60-second access tokens kept working until they expired.
@@ -42,13 +43,16 @@ SHA-256 of the key string they came from). ts-auth caps their expiry at the key'
 
 | Transport | New requests / statements | Already running |
 |---|---|---|
-| HTTP (documents, SQL, libSQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is aborted within 1 s + 2 s. This includes slow request bodies |
-| Change streams (SSE) | refused as above | the connection is aborted within 1 s + 2 s |
-| Postgres | FATAL `28000 key_revoked: ...` / `key_expired: ...`, then the connection closes | the session is watched for its whole life, idle or busy. Its TCP connection is aborted within 1 s + 2 s and unflushed rows are dropped. An open transaction rolls back |
+| HTTP (documents, SQL, libSQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is aborted within 2.5 s. This includes slow request bodies |
+| Change streams (SSE) | refused as above | the connection is aborted within 2.5 s |
+| Postgres | FATAL `28000 key_revoked: ...` / `key_expired: ...`, then the connection closes | the session is watched for its whole life, idle or busy. Its TCP connection is aborted within 2.5 s and unflushed rows are dropped. An open transaction rolls back |
 | Wire protocol | dashboard keys are not accepted. `tb_` keys keep CatalogGate revocation | unchanged |
 
-A request is watched by asking `IKeyAuthority` once a second while it runs. These checks hit the same per-node answers,
-so a busy key still costs about one ts-auth call per node per second. Clients should treat `key_revoked` and
+A request or session is watched by asking `IKeyAuthority` every 250 ms while it runs. These checks hit the same
+per-node answers, so a busy key still costs about one ts-auth call per node per second. Running work never outlives the
+last yes. If no new yes arrives before that one runs out (2 s after it was asked), the work is aborted, and waiting for
+ts-auth does not extend it. A Postgres session exchanges its key again as each 60-second token lapses, as statements
+do, so an idle session that is still valid stays open. Clients should treat `key_revoked` and
 `key_expired` as permanent: stop retrying and ask for a new key. Treat `auth_unavailable` as retryable.
 
 ## Rollout barrier
@@ -65,7 +69,10 @@ project, so signing out, resetting a password, or removing the creator's session
 
 ## Cost and limits
 
-ts-auth admits at most 512 status checks in flight per instance, and answers 503 beyond that, which TerraBase refuses.
+ts-auth answers the status check only on the GRU authority, where revocations are written. Any other region answers
+503, so a lagging regional copy can never say yes. It admits at most 512 checks in flight per instance, and at most 20
+storage-backed checks per second for one key, key string and project. Beyond those limits it answers 503 or 429, and
+TerraBase refuses on both. A caller hammering its own key throttles only that key.
 
 A node asks about each active key about once a second. From `sjc` and `fra`, that is one round trip to ts-auth in `gru`.
 Requests never wait on it while the key stays busy. An idle key's first request waits for one round trip.

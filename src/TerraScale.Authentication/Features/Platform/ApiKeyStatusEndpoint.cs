@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json.Serialization;
@@ -20,13 +21,19 @@ public sealed record ApiKeyStatusBody([property: JsonPropertyName("key_id")] str
 /// asks before it serves the key's tokens and statements, in every region, and refuses them when this answers 401
 /// (docs/terrabase/key-revocation.md). The token is its own credential: no other secret is needed to ask.
 /// </summary>
-public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions options, IConfiguration configuration, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
     private const int MaxTokenLength = 8 * 1024;
 
     // Checks in flight on this instance, signature checks included: past this, 503 (TerraBase then refuses the key).
     // TerraBase asks once per key per node per second at most, so normal polling stays far below it.
     private const int MaxInFlight = 512;
+
+    // Storage reads per key token kind per second on this instance; past it, 429 for that key alone (TerraBase refuses it).
+    // Every TerraBase node asks about one at most about once a second, so only a caller hammering its own key reaches it.
+    private const int KeyChecksPerSecond = 20;
+    private const int MaxTrackedKeys = 16 * 1024;
+    private static readonly ConcurrentDictionary<string, (long Second, int Count)> KeyChecks = new(StringComparer.Ordinal);
     private static int inFlight;
 
     /// <inheritdoc />
@@ -47,13 +54,17 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
+        // Revocations are written on the GRU authority's storage; another region's copy may lag behind an acknowledged one.
+        if ((configuration["TS_REGION"] ?? (options.Development ? "gru" : null)) != "gru")
+        {
+            return Unavailable("API key status is answered by the GRU authority only.");
+        }
+
         try
         {
             if (Interlocked.Increment(ref inFlight) > MaxInFlight)
             {
-                this.HttpContext.Response.Headers.RetryAfter = "1";
-                return Results.Json(new ErrorBody(new ErrorDetail("unavailable", "Too many API key checks in flight; retry.")), PlatformApiJson.Default.ErrorBody,
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
+                return Unavailable("Too many API key checks in flight; retry.");
             }
 
             return await this.CheckAsync(cancellationToken).ConfigureAwait(false);
@@ -93,6 +104,14 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             return this.Refuse("invalid_token", "Present an access token issued for an API key.");
         }
 
+        // Per key, key string and project: the unit TerraBase asks about, so a key used in many projects is not throttled.
+        if (!this.Admit(keyId + " " + generation + " " + Claim(claims, PlatformGrants.ProjectClaim)))
+        {
+            this.HttpContext.Response.Headers.RetryAfter = "1";
+            return Results.Json(new ErrorBody(new ErrorDetail("rate_limited", "Too many checks for this API key; retry.")), PlatformApiJson.Default.ErrorBody,
+                statusCode: StatusCodes.Status429TooManyRequests);
+        }
+
         string? refusal;
         try
         {
@@ -109,6 +128,23 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
             not null => this.Refuse(refusal, "The API key was revoked, rotated, or its organization or project was deleted."),
             _ => Results.Json(new ApiKeyStatusBody(keyId), PlatformApiJson.Default.ApiKeyStatusBody),
         };
+    }
+
+    private bool Admit(string checkedKey)
+    {
+        if (KeyChecks.Count >= MaxTrackedKeys)
+        {
+            KeyChecks.Clear();
+        }
+
+        var second = clock.GetUtcNow().ToUnixTimeSeconds();
+        return KeyChecks.AddOrUpdate(checkedKey, (second, 1), (_, seen) => seen.Second == second ? (second, seen.Count + 1) : (second, 1)).Count <= KeyChecksPerSecond;
+    }
+
+    private IResult Unavailable(string message)
+    {
+        this.HttpContext.Response.Headers.RetryAfter = "1";
+        return Results.Json(new ErrorBody(new ErrorDetail("unavailable", message)), PlatformApiJson.Default.ErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     private static string? Claim(IDictionary<string, object> claims, string name) =>

@@ -97,7 +97,8 @@ public static class UserAuthExtensions
             }
 
             var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
-            switch ((await authority.CheckAsync(key, context.RequestAborted).ConfigureAwait(false)).Value)
+            var answer = (await authority.CheckAsync(key, context.RequestAborted).ConfigureAwait(false)).Value;
+            switch (answer)
             {
                 case KeyRefused refused:
                     context.Response.Headers.WWWAuthenticate = $"Bearer error=\"invalid_token\", error_description=\"{refused.Code}\"";
@@ -111,7 +112,7 @@ public static class UserAuthExtensions
 
             using var refusal = new CancellationTokenSource();
             using var abort = refusal.Token.Register(context.Abort);
-            using var watch = KeyWatch.Start(authority, key, refusal, context.RequestServices.GetRequiredService<TimeProvider>());
+            using var watch = KeyWatch.Start(authority, watched: true, (answer as KeyActive)?.Until, _ => ValueTask.FromResult<KeyToken?>(key), refusal, context.RequestServices.GetRequiredService<TimeProvider>());
             await next(context).ConfigureAwait(false);
         });
         app.Use(async (context, next) =>

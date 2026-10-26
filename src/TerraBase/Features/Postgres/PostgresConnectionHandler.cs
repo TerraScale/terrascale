@@ -73,7 +73,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 // is dropped with it (docs/terrabase/key-revocation.md).
                 using var refused = new CancellationTokenSource();
                 using var abort = refused.Token.Register(() => connection.Abort(new ConnectionAbortedException("the API key was refused")));
-                using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key, refused, services.GetRequiredService<TimeProvider>());
+                // The watch exchanges the key again as its 60-second tokens lapse, like a statement does: an idle session lives on.
+                using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, until: null,
+                    async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
+                    refused, services.GetRequiredService<TimeProvider>());
                 await ServeAsync(session, input, output, connection.ConnectionClosed).ConfigureAwait(false);
             }
         }

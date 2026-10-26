@@ -20,12 +20,8 @@ public sealed record KeyToken(string KeyId, string Generation, string? ProjectId
     public static bool IsGeneration(string? value) => value is { Length: 16 } && value.All(char.IsAsciiHexDigitLower);
 }
 
-/// <summary>The key's tokens still act.</summary>
-public sealed record KeyActive
-{
-    /// <summary>The one value.</summary>
-    public static KeyActive Value { get; } = new();
-}
+/// <summary>The key's tokens still act, until <paramref name="Until"/> unless asked again: the question's send time plus the answer's lifetime.</summary>
+public sealed record KeyActive(DateTimeOffset Until);
 
 /// <summary>ts-auth refuses the key's tokens: <c>key_revoked</c>, <c>key_expired</c>, or <c>invalid_token</c> for this token only.</summary>
 public sealed record KeyRefused(string Code);
@@ -44,38 +40,47 @@ public interface IKeyAuthority
 }
 
 /// <summary>
-/// Keeps asking about a key while something runs on its authority (a request, a Postgres session) and cancels it
-/// once the key is refused or cannot be verified: within a second plus <see cref="TsAuthKeyAuthority.Fresh"/>.
+/// Keeps asking about a key while something runs on its authority (a request, a Postgres session) and cancels it once
+/// the key is refused or cannot be verified, or once the last yes runs out before a new one arrives: running work never
+/// outlives <see cref="KeyActive.Until"/>, so it is cut off at most <see cref="TsAuthKeyAuthority.Fresh"/> plus one poll
+/// after ts-auth acknowledged a revocation.
 /// </summary>
 public sealed class KeyWatch : IDisposable
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(250);
     private readonly CancellationTokenSource _stop = new();
 
     // Whichever of Dispose and the watch loop ends second disposes _stop.
     private int _ended;
+    private volatile bool _disposed;
 
     private KeyWatch()
     {
     }
 
-    /// <summary>Watches <paramref name="key"/> until disposed; null (nothing to watch) for a token of no key.</summary>
-    public static KeyWatch? Start(IKeyAuthority authority, KeyToken? key, CancellationTokenSource target, TimeProvider time)
+    /// <summary>
+    /// Watches the key <paramref name="current"/> names (it may renew the token; null refuses) until disposed, starting
+    /// from the yes that admitted the work (<paramref name="until"/>, when known). Null (nothing to watch) when
+    /// <paramref name="watched"/> is false.
+    /// </summary>
+    public static KeyWatch? Start(
+        IKeyAuthority authority, bool watched, DateTimeOffset? until, Func<CancellationToken, ValueTask<KeyToken?>> current, CancellationTokenSource target, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(authority);
-        if (key is null)
+        if (!watched)
         {
             return null;
         }
 
         var watch = new KeyWatch();
-        _ = watch.RunAsync(authority, key, target, time);
+        _ = watch.RunAsync(authority, until, current, target, time);
         return watch;
     }
 
     /// <summary>Stops watching; the target is left as it is.</summary>
     public void Dispose()
     {
+        _disposed = true;
         if (Interlocked.Exchange(ref _ended, 1) == 0)
         {
             _stop.Cancel();
@@ -86,31 +91,35 @@ public sealed class KeyWatch : IDisposable
         }
     }
 
-    private async Task RunAsync(IKeyAuthority authority, KeyToken key, CancellationTokenSource target, TimeProvider time)
+    private async Task RunAsync(
+        IKeyAuthority authority, DateTimeOffset? until, Func<CancellationToken, ValueTask<KeyToken?>> current, CancellationTokenSource target, TimeProvider time)
     {
         try
         {
             while (true)
             {
-                await Task.Delay(Interval, time, _stop.Token).ConfigureAwait(false);
-                var result = await authority.CheckAsync(key, _stop.Token).ConfigureAwait(false);
-                if (result.Value is not KeyActive)
+                await Task.Delay(Poll, time, _stop.Token).ConfigureAwait(false);
+                // The question must be answered before the last yes runs out; waiting does not extend it.
+                using var deadline = until is { } end ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time) : new CancellationTokenSource();
+                using var asking = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, deadline.Token);
+                var answer = await current(asking.Token).ConfigureAwait(false) is { } key
+                    ? (await authority.CheckAsync(key, asking.Token).ConfigureAwait(false)).Value
+                    : null;
+                if (answer is not KeyActive active)
                 {
-                    if (!_stop.IsCancellationRequested)
-                    {
-                        await target.CancelAsync().ConfigureAwait(false);
-                    }
-
-                    return;
+                    break;
                 }
+
+                until = active.Until;
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
+            return;
         }
-        catch (ObjectDisposedException)
+        catch (OperationCanceledException)
         {
-            // The target ended first.
+            // The last yes ran out first.
         }
         finally
         {
@@ -118,6 +127,18 @@ public sealed class KeyWatch : IDisposable
             {
                 _stop.Dispose();
             }
+        }
+
+        try
+        {
+            if (!_disposed)
+            {
+                await target.CancelAsync().ConfigureAwait(false);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // The target ended first.
         }
     }
 }
@@ -195,7 +216,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         var answer = new Answer(new Unavailable("ts-auth key status is unavailable"), time.GetUtcNow());
         try
         {
-            answer = answer with { Result = await RequestAsync(key).ConfigureAwait(false) };
+            answer = answer with { Result = await RequestAsync(key, answer.AskedAt + Fresh).ConfigureAwait(false) };
             // invalid_token concerns this token alone (another of the same key may still act); Unavailable never replaces a yes.
             if (answer.Result.Value is KeyActive or KeyRefused { Code: not "invalid_token" })
             {
@@ -216,7 +237,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         }
     }
 
-    private async Task<KeyAuthorityResult> RequestAsync(KeyToken key)
+    private async Task<KeyAuthorityResult> RequestAsync(KeyToken key, DateTimeOffset until)
     {
         if (options.AuthIssuer is not { } configured || key.Token.Length is 0 or > 8192)
         {
@@ -243,7 +264,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             {
                 // Only an answer about this very key counts as a yes.
                 var status = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthKeyStatus, deadline.Token).ConfigureAwait(false);
-                return status?.KeyId == key.KeyId ? KeyActive.Value : new Unavailable("ts-auth answered about another key");
+                return status?.KeyId == key.KeyId ? new KeyActive(until) : new Unavailable("ts-auth answered about another key");
             }
 
             if (response.StatusCode != HttpStatusCode.Unauthorized)
