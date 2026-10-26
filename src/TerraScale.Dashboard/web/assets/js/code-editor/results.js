@@ -79,3 +79,21 @@ for (const host of document.querySelectorAll('[data-sql-result]')) {
     feedback.textContent = 'Full results could not be opened. The first 200 rows remain available.';
   }
 }
+
+// Catalog refresh is a native form submission, including when activated by keyboard.
+// Keep its feedback independent of Monaco and reactive click handlers.
+const catalog = document.querySelector('#sql-tables');
+if (catalog) {
+  const status = catalog.querySelector('[data-sql-catalog-status]');
+  const reset = () => {
+    catalog.setAttribute('aria-busy', 'false');
+    status.textContent = '';
+  };
+  document.querySelector('#sql-query-form')?.addEventListener('submit', event => {
+    if (event.defaultPrevented || !event.submitter?.hasAttribute('data-sql-catalog-refresh')) return;
+    catalog.setAttribute('aria-busy', 'true');
+    status.textContent = 'Loading SQL tables…';
+  });
+  window.addEventListener('pageshow', reset);
+  window.addEventListener('keydown', event => { if (event.key === 'Escape') reset(); });
+}

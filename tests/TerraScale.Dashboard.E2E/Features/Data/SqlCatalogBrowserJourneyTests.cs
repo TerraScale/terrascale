@@ -38,27 +38,39 @@ public sealed class SqlCatalogBrowserJourneyTests(DashboardE2EFixture fixture)
         await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/databases/" + id + "/sql").ToString());
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
-        var editor = page.Locator("#sql-editor .monaco-editor textarea");
-        await editor.FocusAsync();
+        await page.Locator("#sql-editor .monaco-editor").ClickAsync();
         await page.Keyboard.TypeAsync("SELECT * FROM emp");
-        await editor.PressAsync("Control+Space");
+        await page.Keyboard.PressAsync("Control+Space");
         await page.GetByRole(AriaRole.Option).Filter(new() { HasText = "empty_table" }).WaitForAsync();
-        await editor.PressAsync("Enter");
+        await page.Keyboard.PressAsync("Enter");
         await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("SELECT * FROM \"empty_table\"");
-        await editor.PressAsync("Control+Home");
-        for (var index = 0; index < 7; index++) await editor.PressAsync("ArrowRight");
-        await editor.PressAsync("Delete");
+        await page.Keyboard.PressAsync("Control+Home");
+        for (var index = 0; index < 7; index++) await page.Keyboard.PressAsync("ArrowRight");
+        await page.Keyboard.PressAsync("Delete");
         await page.Keyboard.TypeAsync("dec");
-        await editor.PressAsync("Control+Space");
+        await page.Keyboard.PressAsync("Control+Space");
         await page.GetByRole(AriaRole.Option).Filter(new() { HasText = "declared_only" }).WaitForAsync();
-        await editor.PressAsync("Enter");
+        await page.Keyboard.PressAsync("Enter");
         var sql = await page.Locator("#sql").InputValueAsync();
         await Assert.That(sql).Contains("\"declared_only\"");
+        var pending = new TaskCompletionSource<(string Busy, string Message)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await page.ExposeBindingAsync("recordCatalogPending", (BindingSource _, string busy, string message) =>
+            pending.TrySetResult((busy, message)));
+        await page.Locator("#sql-query-form").EvaluateAsync("""
+            form => window.addEventListener('submit', event => {
+                if (event.target !== form) return;
+                const catalog = document.querySelector('#sql-tables');
+                void recordCatalogPending(catalog.getAttribute('aria-busy'), catalog.querySelector('[role="status"]').textContent);
+            })
+            """);
         var refresh = page.GetByRole(AriaRole.Button, new() { Name = "Refresh SQL tables", Exact = true }).ClickAsync();
         try
         {
             await loading.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.That(await page.Locator("#sql-tables").GetAttributeAsync("aria-busy")).IsEqualTo("true");
+            // Native navigation pauses browser evaluation; capture the real DOM during submission.
+            var state = await pending.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(state.Busy).IsEqualTo("true");
+            await Assert.That(state.Message).Contains("Loading SQL tables");
         }
         finally { release.TrySetResult(); }
         await refresh;
