@@ -46,8 +46,11 @@ public sealed class CopyPlacementTests
         await Assert.That(Regions(copy)).IsEquivalentTo(Regions(source));
         await Assert.That(copy.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
 
-        static string?[] Regions(JsonElement database) => database.GetProperty("replicaRegions") is { ValueKind: JsonValueKind.Array } regions
-            ? [.. regions.EnumerateArray().Select(value => value.GetString())] : [];
+        static string?[] Regions(JsonElement database)
+        {
+            return database.GetProperty("replicaRegions") is { ValueKind: JsonValueKind.Array } regions
+                ? [.. regions.EnumerateArray().Select(value => value.GetString())] : [];
+        }
     }
 
     [Test]
@@ -90,11 +93,14 @@ public sealed class CopyPlacementTests
             using var wrongDatabase = await owner.PostAsJsonAsync(ManagementApi.Uri(restore.Replace(sourceId, TerraBase.Primitives.EntityIds.New().ToString(), StringComparison.Ordinal)), new { name = "copy" }, cancellationToken);
             await Assert.That(wrongDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
-            Task<ManagementApi> StartAsync(string region) => ManagementApi.StartAsync(settings =>
+            Task<ManagementApi> StartAsync(string region)
             {
-                settings["region"] = region;
-                settings["data-directory"] = directory;
-            }, new OtherRegions("gru", "fra", "sjc").Register);
+                return ManagementApi.StartAsync(settings =>
+                {
+                    settings["region"] = region;
+                    settings["data-directory"] = directory;
+                }, new OtherRegions("gru", "fra", "sjc").Register);
+            }
         }
         finally
         {
