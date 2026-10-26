@@ -31,7 +31,7 @@ import (
 
 var version = "dev" // Set by release builds with -ldflags.
 
-const usage = `usage: ts [-project <name or id>] [-org <name or id>] [-yes] <command>
+const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-yes] <command>
 
   version                                 print the CLI version
   help                                    print this help
@@ -121,11 +121,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "ts:", err)
-		if errors.Is(err, errUsage) {
-			os.Exit(2)
+		var reported *jsonFailure
+		if !errors.As(err, &reported) {
+			fmt.Fprintln(os.Stderr, "ts:", err)
 		}
-		os.Exit(1)
+		os.Exit(exitStatus(err))
 	}
 }
 
@@ -192,13 +192,41 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 }
 
 func runWithInput(ctx context.Context, args []string, out io.Writer, in io.Reader, prompt io.Writer, tty bool) error {
+	args, structured, err := jsonArguments(args)
+	if !structured {
+		return runCommand(ctx, args, out, in, prompt, tty)
+	}
+	w := &jsonOutput{Writer: out}
+	if err == nil {
+		err = runCommand(ctx, args, w, in, prompt, tty)
+	}
+	if err != nil {
+		if !w.failed {
+			err = errors.Join(err, emitJSONError(w, err))
+		}
+		return &jsonFailure{err}
+	}
+	return nil
+}
+
+func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader, prompt io.Writer, tty bool) error {
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Version string `json:"version"`
+			}{version})
+		}
 		_, err := fmt.Fprintln(out, "ts", version)
 		return err
 	}
 	if len(args) == 1 && args[0] == "help" || slices.ContainsFunc(args, func(a string) bool {
 		return a == "-h" || a == "-help" || a == "--help"
 	}) {
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Commands map[string][]int `json:"commands"`
+			}{commands})
+		}
 		_, err := io.WriteString(out, usage)
 		return err
 	}
@@ -210,8 +238,8 @@ func runWithInput(ctx context.Context, args []string, out io.Writer, in io.Reade
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	collection := fs.String("collection", "", "ndjson import: destination collection")
-	if fs.Parse(args) != nil {
-		return errUsage
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%s: %w", err, errUsage)
 	}
 	args = fs.Args()
 	name, operands := "", args
@@ -229,6 +257,9 @@ func runWithInput(ctx context.Context, args []string, out io.Writer, in io.Reade
 	}
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
+	}
+	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions"}, name) {
+		return errors.New("structured output is not implemented for this command yet")
 	}
 	var collectionSet, yesSet bool
 	fs.Visit(func(f *flag.Flag) {
@@ -601,8 +632,11 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		return nil
 	case "db list":
+		items := []v1.ManagedDatabase{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tID\tHOME REGION\tREPLICAS")
+		if !jsonMode(out) {
+			fmt.Fprintln(w, "NAME\tID\tHOME REGION\tREPLICAS")
+		}
 		for db, err := range pages(func(after string) (*v1.Page[v1.ManagedDatabase], error) {
 			return s.tb.Databases(ctx, s.project, v1.PageOptions{Limit: 100, After: after})
 		}) {
@@ -612,6 +646,10 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			}
 			if err != nil {
 				return err
+			}
+			if jsonMode(out) {
+				items = append(items, db)
+				continue
 			}
 			home := ""
 			if db.HomeRegion != nil {
@@ -623,11 +661,17 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", db.Name, db.ID, home, replicas)
 		}
+		if jsonMode(out) {
+			return emitJSON(out, items)
+		}
 		return w.Flush()
 	case "db create":
 		m, err := db.Create(ctx)
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
 		}
 		fmt.Fprintf(out, "Created %s (%s)\n", args[0], m.ID)
 		return nil
@@ -639,12 +683,21 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err := db.Delete(ctx); err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Name    string `json:"name"`
+				Deleted bool   `json:"deleted"`
+			}{args[0], true})
+		}
 		fmt.Fprintf(out, "Deleted %s\n", args[0])
 		return nil
 	case "db branch":
 		m, err := db.Branch(ctx, args[1])
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
 		}
 		fmt.Fprintf(out, "Branched %s into %s (%s)\n", args[0], m.Name, m.ID)
 		return nil
@@ -653,7 +706,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(out).Encode(m)
+		return emitJSON(out, m)
 	case "db regions":
 		regions := args[1:]
 		if slices.Equal(regions, []string{"none"}) {
@@ -662,6 +715,9 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		m, err := db.SetRegions(ctx, regions)
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
 		}
 		fmt.Fprintf(out, "%s replicates to [%s]\n", args[0], strings.Join(m.ReplicaRegions, " "))
 		return nil
