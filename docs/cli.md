@@ -176,7 +176,7 @@ source database name first and the new branch name second.
 :::
 
 Branching and restoring create an additional database and require spare database
-capacity. The current Free/Hobby quota is one database; when it is full,
+capacity. The Free plan's quota is one database; when it is full,
 `db branch`, `backup restore` and `backup restore-at` fail with HTTP
 `409 database_limit`. Increase your plan's database allowance before making a copy.
 
