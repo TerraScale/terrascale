@@ -42,7 +42,7 @@ var commandSyntax = map[string]string{
 	"exec": "exec <database> <statement|->", "migrate new": "migrate new <name>",
 	"migrate up": "migrate up <database>", "migrate status": "migrate status <database>",
 	"migrate diff": "migrate diff <database> [<base-database>]", "keys list": "keys list",
-	"keys create": "keys create <name> [<database>]", "keys revoke": "keys revoke <id>",
+	"keys create": "keys create <name> [<database>]", "keys revoke": "keys revoke <id>", "keys rotate": "keys rotate <id> <grace>",
 	"context show": "context show", "context clear": "context clear", "context set": "context set <org> <project> [<database>]",
 }
 
@@ -180,6 +180,8 @@ func helpOptions(name string) map[string]string {
 		options["-home-region <region>"] = "requested home; server validates serving placement"
 		options["-replica-regions <region>,...|none"] = "explicit replicas; none may be rejected by minimum-copy policy"
 		options["-placement all"] = "every serving region; cannot combine with -replica-regions"
+	case name == "keys rotate":
+		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"
 	case strings.HasPrefix(name, "keys create"):
 		options["-scope read|read-write"] = "requested grants; default read-write, server permissions still apply"
 		options["-expires 30d|90d|365d|never"] = "key expiry; default never"

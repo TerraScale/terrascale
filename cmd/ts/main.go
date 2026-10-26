@@ -137,6 +137,7 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           -expires 30d|90d|365d|never (default
                                           never) and -allow-cidr <cidr>,... (both
                                           go before the command)
+  keys rotate <id> <grace>                rotate once; required whole-second grace 0s..24h
   keys revoke <id>                        revoke an API key
 
 Sign-in is stored in the user config directory (terrascale/cli.json, mode 0600).
@@ -232,6 +233,7 @@ var commands = map[string][]int{
 	"keys list":          {0},
 	"keys create":        {1, 2},
 	"keys revoke":        {1},
+	"keys rotate":        {2},
 }
 
 func run(ctx context.Context, args []string, out io.Writer) error {
@@ -311,6 +313,15 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return fmt.Errorf("unknown command; run ts help: %w", errUsage)
 		}
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
+	}
+	var rotationID string
+	var rotationGrace time.Duration
+	if name == "keys rotate" {
+		var err error
+		rotationID, rotationGrace, err = parseKeyRotation(operands)
+		if err != nil {
+			return err
+		}
 	}
 	var collectionSet, yesSet, scopeSet, keyOptionsSet bool
 	var placementSet, replicasSet, cursorSet, expectedIDSet bool
@@ -544,6 +555,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "keys create" {
 		return createKey(ctx, s, keyReq, out)
 	}
+	if name == "keys rotate" {
+		return rotateKey(ctx, s, rotationID, rotationGrace, out, prompt)
+	}
 	if name == "db delete" {
 		if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
 			return err
@@ -620,10 +634,10 @@ func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyR
 func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io.Writer) error {
 	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
 	if err != nil {
-		return err
+		return keyOperationError(err)
 	}
 	if jsonMode(out) {
-		return emitJSON(out, k) // This explicit create command reveals the secret once.
+		return keyOutputError(emitJSON(out, k)) // This explicit create command reveals the secret once.
 	}
 	expires := "never"
 	if k.APIKey.ExpiresAt != nil {
@@ -633,9 +647,11 @@ func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io
 	if len(k.APIKey.AllowedCIDRs) > 0 {
 		networks = strings.Join(k.APIKey.AllowedCIDRs, ",")
 	}
-	fmt.Fprintf(os.Stderr, "Created key %s (%s). Expires: %s. Allowed networks: %s.\nStore it now, it is not shown again:\n", k.APIKey.Name, k.APIKey.ID, expires, networks)
-	fmt.Fprintln(out, k.Key)
-	return nil
+	if _, err := fmt.Fprintf(os.Stderr, "Created key %s (%s). Expires: %s. Allowed networks: %s.\nStore it now, it is not shown again:\n", k.APIKey.Name, k.APIKey.ID, expires, networks); err != nil {
+		return keyOutputError(err)
+	}
+	_, err = fmt.Fprintln(out, k.Key)
+	return keyOutputError(err)
 }
 
 func login(ctx context.Context, d *tsauth.Device, out, prompt io.Writer) error {
@@ -1291,7 +1307,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return w.Flush()
 	case "keys revoke":
 		if err := s.user.RevokeAPIKey(ctx, s.org, s.project, args[0]); err != nil {
-			return err
+			return keyOperationError(err)
 		}
 		if jsonMode(out) {
 			return emitJSON(out, struct {
