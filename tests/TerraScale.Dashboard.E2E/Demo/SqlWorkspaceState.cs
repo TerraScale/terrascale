@@ -107,6 +107,10 @@ internal sealed class SqlWorkspaceState
     {
         public Task InitializeAsync(CancellationToken ct) => inner.InitializeAsync(ct);
         public Task CheckReadyAsync(CancellationToken ct) => inner.CheckReadyAsync(ct);
+        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct) =>
+            inner.ReadPageAsync(collection, filter, limit, cursor, ct);
+        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct) =>
+            inner.TransactAsync(operations, ct);
         public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct)
         {
             if (collection == AccountService.OrganizationsCollection && id == control.importOrganization && !control.pauseImportCommit &&
