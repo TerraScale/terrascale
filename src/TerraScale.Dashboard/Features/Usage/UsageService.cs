@@ -29,7 +29,8 @@ public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, strin
     public long? ScopeLogicalBytes => Scope?.LogicalBytes ?? StoredScope?.LogicalBytes;
     public bool ScopeStorageMeasured => ScopeLogicalBytes is not null;
     public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
-    public int RegionCount => Selection.Context.Project?.Databases.Values.SelectMany(database => database.Regions.Prepend(database.Region)).Where(region => region.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Count() ?? 0;
+    public int? RegionCount => UsagePlacement.For(Selection.Context.Project).RegionCount;
+    public string RegionCountLabel => UsagePlacement.For(Selection.Context.Project).Label;
     public string HistoryDescription => "The selected " + (Selection.DatabaseId.Length > 0 ? "database" : "project") + ", " + char.ToLowerInvariant(Selection.RangeLabel[0]) + Selection.RangeLabel[1..];
     public string ProjectHref(string projectId, string tab = "overview") => "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId) +
         "&range=" + Uri.EscapeDataString(Selection.Range) +

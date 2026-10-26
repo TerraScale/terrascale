@@ -26,8 +26,10 @@ public sealed record UsageToolTotals(bool Available, string Source, string Error
 public sealed record UsageToolReport(string OrganizationId, string ProjectId, string DatabaseId,
     string PlanName, IReadOnlyList<UsageToolAllowance> Allowances, string AllowanceError, string PlanUsageNote,
     IReadOnlyList<UsageToolProject> Projects, IReadOnlyList<UsageToolDatabase> Databases, UsageToolTotals Totals,
-    int ActiveDatabases, int RegionCount, bool CanManage)
+    int ActiveDatabases,
+    [property: Description("Distinct regions in explicit project database placement; null when serving placement is unknown, including all-regions mode."), JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? RegionCount, bool CanManage)
 {
+    public string RegionCountDescription { get; init; } = "";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public InternalBill? InternalBill { get; init; }
 }
@@ -128,9 +130,10 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             projects, databases,
             new(scope is not null, source, error, range, scope?.Period.Reads, scope?.Period.Writes, scopeBytes, scopeBytes is not null, scope?.Series ?? []),
             context.Project?.Databases.Count ?? 0,
-            context.Project?.Databases.Values.Select(database => database.Region).Where(region => region.Length > 0).Distinct(StringComparer.Ordinal).Count() ?? 0,
+            UsagePlacement.For(context.Project).RegionCount,
             context.CanManage)
         {
+            RegionCountDescription = UsagePlacement.For(context.Project).Label,
             InternalBill = context.Organization.InternalBilling is not null
                 ? InternalBillingService.Estimate(context.Organization, measured, time.GetUtcNow()) : null
         };

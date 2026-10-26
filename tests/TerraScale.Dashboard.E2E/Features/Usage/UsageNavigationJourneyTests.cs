@@ -32,7 +32,8 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
         { ["_csrf"] = csrf, ["name"] = "usage-navigation", ["region"] = "GRU" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
-        var databaseId = selectDatabase ? database.RootElement.GetProperty("id").GetString()! : "";
+        var createdDatabaseId = database.RootElement.GetProperty("id").GetString()!;
+        var databaseId = selectDatabase ? createdDatabaseId : "";
         // Test admission permits a second project; it does not simulate a paid checkout.
         using var producer = scenario.CreateProviderClient();
         using (var admission = await producer.PostAsJsonAsync("/__test/control", new
@@ -72,6 +73,22 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(DatabaseFilter(switched).Contains("selected=", StringComparison.Ordinal)).IsFalse();
         await AssertSelectionAsync(Link(switched, "Spending"), otherProjectId, "");
 
+        // Explicit missing/foreign filters must not render a broader successful report.
+        foreach (var path in new[] {
+            "/usage?project=01JA0000000000000000000999",
+            "/usage?project=" + projectId + "&database=01JA0000000000000000000999",
+            "/usage?project=" + otherProjectId + "&database=" + createdDatabaseId,
+            "/usage?tab=settings&project=01JA0000000000000000000999" })
+        {
+            using var rejected = await client.GetAsync(path);
+            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(await rejected.Content.ReadAsStringAsync()).Contains("is unavailable.");
+        }
+        var defaults = await PageAsync("/usage");
+        await Assert.That(defaults).Contains("value=\"7d\" selected=\"selected\"");
+        await Assert.That(DatabaseFilter(defaults).Contains("selected=", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(initial).Contains("data-on:change=\"el.form.elements.namedItem('database').value = ''; el.form.requestSubmit()\"");
+
         async Task<string> PageAsync(string path)
         {
             using var response = await client.GetAsync(path);
@@ -86,6 +103,23 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
             await Assert.That(values.GetValueOrDefault("database").ToString()).IsEqualTo(expectedDatabase);
             if (expectedDatabase.Length == 0) await Assert.That(values.ContainsKey("database")).IsFalse();
         }
+    }
+
+    [Test]
+    public async Task SelectionRejectsWrongOrganizationProjectsAndPreservesAnAbsentProject()
+    {
+        var organization = new OrganizationRecord { Id = "01JA0000000000000000000001" };
+        organization.Members.Add("user", new() { UserId = "user", Status = "active", Role = "owner" });
+        var foreign = new ProjectRecord { Id = "01JA0000000000000000000002", OrganizationId = "01JA0000000000000000000003" };
+        organization.Projects.Add(foreign.Id, foreign);
+        var context = new AccountContext(new("user", "Test", "synthetic@example.test", "test-only", null, DateTimeOffset.UtcNow.AddMinutes(5)),
+            new() { UserId = "user" }, [organization], organization, null);
+        var selection = UsageSelection.For(context, "", "", "");
+        await Assert.That(selection.Context.Project).IsNull();
+        await Assert.That(selection.DatabaseId).IsEqualTo("");
+        await Assert.That(selection.Range).IsEqualTo("7d");
+        await Assert.That(() => UsageSelection.For(context, foreign.Id, "", "")).Throws<AccountAccessException>();
+        await Assert.That(() => UsageSelection.For(context, "", "01JA0000000000000000000004", "")).Throws<AccountAccessException>();
     }
 
     private static string DatabaseFilter(string html) =>

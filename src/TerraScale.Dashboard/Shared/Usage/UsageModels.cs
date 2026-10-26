@@ -6,10 +6,11 @@ public sealed record UsageSelection(AccountContext Context, string Range, string
     {
         var org = context.Organization ?? throw new AccountAccessException("Selected organization is unavailable.");
         if (context.Session.UserId != context.UserId || !org.ContainsMember(context.UserId)) throw new AccountAccessException("Organization membership is required.");
-        var project = org.Projects.GetValueOrDefault(projectId);
-        if (project is null || project.OrganizationId != org.Id) project = context.Project;
+        var project = projectId.Length == 0 ? context.Project : org.Projects.GetValueOrDefault(projectId)
+            ?? throw new AccountAccessException("Project is unavailable.", 404);
         if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id))) throw new AccountAccessException("Project is unavailable.", 404);
-        if (databaseId.Length > 0 && (project is null || !project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != project.Id)) databaseId = "";
+        if (databaseId.Length > 0 && (project is null || !project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != project.Id))
+            throw new AccountAccessException("Database is unavailable.", 404);
         return new(context with { Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId);
     }
     public string RangeLabel => Range switch { "1h" => "Current UTC hour", "24h" => "Last 24 hours", "30d" => "Last 30 days", _ => "Last 7 days" };
