@@ -10,10 +10,7 @@ title: CLI SQL shell and document exports
 
 ```sh
 ts exec example - < query.sql
-printf 'SELECT 1 AS n;
-.run
-.quit
-' | ts --json shell example
+printf 'SELECT 1 AS n;\n.run\n.quit\n' | ts --json shell example
 ```
 
 `exec` executes one relational statement; `sql` queries the limited read-only document SQL subset. Both accept `-` for stdin. JSON document SQL includes `matched` and `truncated`; relational JSON preserves positional rows and columns, including duplicate column names. See [SQL concepts](../concepts/sql).
