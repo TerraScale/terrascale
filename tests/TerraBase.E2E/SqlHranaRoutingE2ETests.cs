@@ -61,6 +61,8 @@ public sealed class SqlHranaRoutingE2ETests
                 var error = (await refusal.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
                 await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("wrong_region");
                 await Assert.That(refusal.Headers.GetValues("X-TerraBase-Database-Regions").Single()).IsEqualTo("gru,fra");
+                await Assert.That(refusal.Headers.GetValues("X-TerraBase-Database-Home").Single()).IsEqualTo(Cluster.Gru);
+                await Assert.That(refusal.Headers.GetValues("ts-replay").Single()).IsEqualTo("region=gru,fra");
             }
 
             // Direct mismatches refuse before execution. The neutral edge may replay only to the included pin.
@@ -69,6 +71,10 @@ public sealed class SqlHranaRoutingE2ETests
                 using var refusal = await SendAsync(fra, path, endpoint, refusedWrite, pin: pin);
                 await IdentityAsync(refusal, Cluster.Fra);
                 await Assert.That(refusal.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+                if (pin == Cluster.Gru)
+                {
+                    await Assert.That(refusal.Headers.GetValues("ts-replay").Single()).IsEqualTo("region=gru");
+                }
             }
 
             using var edge = cluster.Sql(Cluster.Sjc);
@@ -78,9 +84,25 @@ public sealed class SqlHranaRoutingE2ETests
                 await IdentityAsync(replayed, Cluster.Fra);
             }
 
+            using var placedEdge = cluster.Sql(Cluster.Fra);
+            using (var pinnedOut = await SendAsync(placedEdge, path, endpoint, refusedWrite, pin: Cluster.Sjc))
+            {
+                await Assert.That(pinnedOut.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+                await Assert.That(pinnedOut.Headers.Contains("ts-replay")).IsFalse();
+                var answered = pinnedOut.Headers.GetValues("X-TerraBase-Region").Single();
+                // TS-1132 can refuse at the entering node, before the older routing path's hop to the excluded pin.
+                await Assert.That(answered is Cluster.Fra or Cluster.Sjc).IsTrue();
+                await IdentityAsync(pinnedOut, answered);
+                await Assert.That((await pinnedOut.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wrong_region");
+            }
+
             foreach (var client in new[] { gru, fra })
             {
                 await RowsEqualAsync(client, path, read, merged);
+                using var integer = await SendAsync(client, path, "hrana", "SELECT big FROM controls");
+                var result = await integer.Content.ReadFromJsonAsync<JsonElement>();
+                await Assert.That(result.GetProperty("results")[0].GetProperty("response").GetProperty("result").GetProperty("rows").GetRawText())
+                    .IsEqualTo("""[[{"type":"integer","value":"9007199254740993"}]]""");
             }
         }, local: true);
     }
@@ -100,6 +122,15 @@ public sealed class SqlHranaRoutingE2ETests
             using (var direct = Direct(cluster, Cluster.Fra))
             {
                 await RowsEqualAsync(direct, path, "SELECT id FROM markers", "[]");
+            }
+
+            using (var direct = Direct(cluster, Cluster.Sjc))
+            {
+                _ = await Converge.UntilAsync(async () =>
+                {
+                    using var response = await SendAsync(direct, path, "sql", "SELECT 1");
+                    return response.StatusCode;
+                }, status => status == HttpStatusCode.MisdirectedRequest, "Hrana excluded placement catalog");
             }
 
             var acknowledged = new List<string>();
@@ -130,13 +161,27 @@ public sealed class SqlHranaRoutingE2ETests
                 await ExpiredAsync(moved, Cluster.Gru);
             }
 
+            await Assert.That(cluster.Replays.Any(replay => replay.Edge == Cluster.Sjc && replay.Target == Cluster.Gru
+                && replay.PathAndQuery == path + "/libsql/v2/pipeline" && !replay.FellBack)).IsTrue();
+            // Resolving stored SQL proves that the original stateful stream survived the refused request elsewhere.
+            using (var stayed = await PipelineAsync(issuer, path, stateful,
+                [new { type = "execute", stmt = new { sql_id = 1, want_rows = true } }]))
+            {
+                var original = await AcceptedAsync(stayed, Cluster.Fra);
+                await Assert.That(stayed.Headers.GetValues("X-TerraBase-Machine").Single()).IsEqualTo(issuerMachine);
+                await Assert.That(original.GetProperty("results")[0].GetProperty("response").GetProperty("result").GetProperty("rows").GetRawText())
+                    .IsEqualTo("""[[{"type":"integer","value":"1"}]]""");
+                stateful = original.GetProperty("baton").GetString()!;
+                await Assert.That(stateful).EndsWith(".t");
+            }
+
             await cluster.StopAsync(Cluster.Fra);
             using (var lost = await PipelineAsync(home, path, stateful, [new { type = "get_autocommit" }]))
             {
                 await ExpiredAsync(lost, Cluster.Gru);
             }
 
-            // The next global request now lands on the surviving home. A stateless baton can open a fresh stream.
+            // Routing the next global request to the surviving home reopens a stream; neither baton is owned there.
             using (var resumed = await PipelineAsync(home, path, stateless, [new { type = "get_autocommit" }]))
             {
                 var fresh = await AcceptedAsync(resumed, Cluster.Gru);
