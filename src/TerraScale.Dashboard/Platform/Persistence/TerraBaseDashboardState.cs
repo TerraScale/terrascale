@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Encodings.Web;
 using NUlid;
 using TerraScale.DotNet.TerraBase;
 
@@ -85,6 +87,31 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
 
     public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken) =>
         Database().QueryAsync(collection, query, cancellationToken);
+    async Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken cancellationToken)
+    {
+        // SDK contract: 1..1000 rows, additionally bounded by the producer's 8 MiB page ceiling.
+        if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
+        return filter is null ? await Database().ListDocumentsAsync(collection, limit, cursor, cancellationToken)
+            : await QueryPageAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Cursor = cursor }, cancellationToken);
+    }
+
+    Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken cancellationToken)
+    {
+        // Pinned SDK documents 1..1024 operations and forbids duplicate document targets, including assertions.
+        if (operations.Count is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(operations));
+        var targets = new HashSet<(string, string)>();
+        foreach (var operation in operations)
+            if (operation.Value.Id is { } id && !targets.Add((operation.Value.Collection, id)))
+                throw new ArgumentException("A transaction cannot target a document twice.", nameof(operations));
+        var mapped = operations.Select(operation => operation.Value).ToArray();
+        // TransactionEndpoint documents at most 16 count assertions; DocumentRoute.MaxRequestBytes is 4 MiB.
+        if (mapped.Count(operation => operation.Op == "assert_count") > 16) throw new ArgumentException("At most 16 count assertions are allowed.", nameof(operations));
+        using var size = new TransactionRequestSize();
+        JsonSerializer.Serialize(size, new DashboardStateTransaction(mapped), DashboardStateTransactionJson.Wire.DashboardStateTransaction);
+        // Producer alone can bound captured changes (2 MiB), including deleted bodies; it must reject atomically.
+        // Never split or retry an ambiguous transaction, and never change the private origin to obtain support.
+        return Database().TransactAsync(mapped, cancellationToken);
+    }
 
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken) =>
         await Database().PutDocumentAsync(collection, DocumentId(collection, id), document, precondition, cancellationToken);
@@ -127,5 +154,36 @@ public sealed class TerraBasePeerCredential(IDashboardIdentity identity, IHostEn
         request.Headers.Add(Header, credentials.TerraBasePeerSecret);
         RequestIdentity.Forward(request, credentials.TerraBasePeerSecret);
         return await base.SendAsync(request, cancellationToken);
+    }
+}
+
+internal sealed record DashboardStateTransaction(IReadOnlyList<TerraBaseTransactionOperation> Ops);
+
+// Match the pinned SDK's wire JSON when measuring; null operation members are omitted.
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(DashboardStateTransaction))]
+internal sealed partial class DashboardStateTransactionJson : JsonSerializerContext
+{
+    internal static DashboardStateTransactionJson Wire { get; } = new(new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+}
+
+// Count serialized UTF-8 without retaining another transaction body in memory.
+internal sealed class TransactionRequestSize : Stream
+{
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => Position;
+    public override long Position { get; set; }
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+    public override void Write(ReadOnlySpan<byte> buffer)
+    {
+        if (Position + buffer.Length > 4 * 1024 * 1024) throw new ArgumentException("Transaction request exceeds the producer's 4 MiB limit.");
+        Position += buffer.Length;
     }
 }

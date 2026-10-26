@@ -50,6 +50,8 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
         }
         return document;
     }
+    Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct) => ((IDashboardState)state).ReadPageAsync(collection, filter, limit, cursor, ct);
+    Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct) => ((IDashboardState)state).TransactAsync(operations, ct);
     public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) => state.ListAsync(collection, cancellationToken);
     public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken) => state.QueryPageAsync(collection, query, cancellationToken);
     public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken) => state.DeleteAsync(collection, id, version, cancellationToken);

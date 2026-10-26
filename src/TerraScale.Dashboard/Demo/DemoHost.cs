@@ -320,6 +320,10 @@ sealed class TestState : IDashboardState
     public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task CheckReadyAsync(CancellationToken cancellationToken) => ReadyError is null ? Task.CompletedTask : Task.FromException(ReadyError);
     public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => Task.FromResult(Items.GetValueOrDefault(collection + "/" + id));
+    Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct) =>
+        throw new NotSupportedException("Use StateSdkScenario for paged persistence journeys.");
+    Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct) =>
+        throw new NotSupportedException("Use StateSdkScenario for atomic persistence journeys.");
     public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<TerraBaseDocument>>(Items.Where(item => item.Key.StartsWith(collection + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray());
     public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken) =>
