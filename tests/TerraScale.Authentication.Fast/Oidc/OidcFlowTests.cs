@@ -70,6 +70,8 @@ public sealed class OidcFlowTests(TerraBaseFixture fixture)
         using var userInfo = await oidc.Client.SendAsync(userInfoRequest);
         var claims = JsonSerializer.Deserialize<JsonElement>(await userInfo.Content.ReadAsStringAsync());
         await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
+        await Assert.That(userInfo.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
         await Assert.That(claims.GetProperty("sub").GetString()).IsEqualTo(user.Id);
         await Assert.That(claims.GetProperty("email_verified").GetBoolean()).IsTrue();
 
@@ -78,6 +80,12 @@ public sealed class OidcFlowTests(TerraBaseFixture fixture)
         withIdToken.Headers.Authorization = new("Bearer", body.GetProperty("id_token").GetString());
         using var rejected = await oidc.Client.SendAsync(withIdToken);
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(rejected.Headers.CacheControl?.NoStore).IsTrue();
+        await Assert.That(rejected.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
+
+        using var missingToken = await oidc.Client.GetAsync(new Uri($"/{OidcIssuer.Slug}/oauth/userinfo", UriKind.Relative));
+        await Assert.That(missingToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(missingToken.Headers.CacheControl?.NoStore).IsTrue();
     }
 
     private static TokenValidationParameters Parameters(JsonWebKeySet keys, string? audience) => new()

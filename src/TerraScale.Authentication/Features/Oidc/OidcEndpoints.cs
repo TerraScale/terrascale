@@ -305,14 +305,14 @@ public sealed class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReque
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        this.HttpContext.Response.Headers.CacheControl = "no-store";
+        this.HttpContext.Response.Headers.Pragma = "no-cache";
         try
         {
             return await this.ClaimsAsync(cancellationToken);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            this.HttpContext.Response.Headers.CacheControl = "no-store";
-            this.HttpContext.Response.Headers.Pragma = "no-cache";
             return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }

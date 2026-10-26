@@ -145,6 +145,7 @@ try
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
     app.UseTerraScaleRequestIdentity(() => TerraBase.Primitives.EntityIds.New().ToString(),
         app.Services.GetRequiredService<PeerCredential>().CorrelationKey);
+    app.UseTerraBasePrivateResponses();
     // Error bodies first, so they also cover the listener check's 404.
     app.UseTerraBasePressure();
     app.UseTerraBaseUsage();
