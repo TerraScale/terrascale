@@ -14,6 +14,7 @@ public static partial class AuthenticationConsole
 
     public static IEndpointRouteBuilder MapAuthenticationManagement(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapPost("/api/v1/auth-management/users/export", ExportUsersAsync);
         foreach (var prefix in new[] { "/auth", "/authentication" })
         {
             endpoints.MapGet(prefix, async (HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects) =>
@@ -214,7 +215,7 @@ public sealed record AuthenticationSection(string Key, string Title, string Desc
         new("social", "Social sign-in", "Continue with Google, GitHub, Apple or another OpenID Connect provider on the hosted pages.", "Fingerprint", "Sign-in"),
         new("configuration", "Configuration", "Exact redirect policy and lifetime of end-user sessions.", "Settings", "Sign-in"),
         new("clients", "OAuth applications", "Applications that sign users in through the authorization code flow with PKCE.", "Boxes", "Developers"),
-        new("branding", "Branding", "How sign-in, sign-up and password reset look to your users.", "Wand2", "Customize"),
+        new("branding", "Branding", "Brand your hosted pages and verification, sign-in and password reset emails.", "Wand2", "Customize"),
         new("danger", "Danger zone", "Revoke sessions and permanently remove end users or OAuth applications.", "TriangleAlert", "Danger")
     ];
 }

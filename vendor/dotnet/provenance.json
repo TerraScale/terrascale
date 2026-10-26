@@ -1,30 +1,32 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "03881aa74a52683112180a5035d7b5ced8d65032",
-  "sourceTree": "1e2185a26d2c29a905fd2362ce35012779696e6c",
-  "sourceArchiveSha256": "1e1998d764a10538756aea2377bf9711dbc64d523f378a129693e9c1ce000c8d",
-  "file": "TerraScale.DotNet.0.0.11.nupkg",
-  "sourceDateEpoch": 1792866750,
-  "sha256": "7af0755f448575aef8d29724e17c50f021d72527253d11c396c53945571966e6",
+  "sourceRevision": "75877b6003689aa34cf015d682085450c9b2e95e",
+  "sourceTree": "3da4b17ceb436a3b59d51a4df538d606dca2b92a",
+  "sourceArchiveSha256": "533d6e602696b60afae925b5ee3139c9a6320de03ce9822c819320dfed708873",
+  "file": "TerraScale.DotNet.0.0.12.nupkg",
+  "sourceDateEpoch": 1792983031,
+  "sha256": "b846ccf7365d04be28b60d1c012a12775c0a89c8948d66917ee3317c79aba49a",
   "assemblySha256ByFramework": {
-    "net10.0": "fe96282939443280982a32d6a630d47da7b45636876b88670e41cf018bbee558",
-    "net11.0": "0bde32e4808ddafe43c2c9a1d3479ce9d5422b08f4f3c7f35c477b9d7da7403f"
+    "net10.0": "febbec6a4a9240c30438c7cc61a668620f968b5dd6f5adf60bac925234d14f3f",
+    "net11.0": "7e0a24d7bf294abd2e18d65c4f7088375cea2850371d7a2688e9eafc0e0c84c5"
   },
   "contractSha256ByPath": {
-    "contracts/auth/README.md": "80e740190ca57e07e3f68d3d61b637c60c6e0084843b2a3076b6485b354dc022",
+    "contracts/auth/README.md": "439cb28d41e6430918145d1c7ca24ff6a696041c142bbb74a46df52e8cecf751",
     "contracts/auth/dtos.json": "2a6471e9b599da3e5f1f7dc299bc8c604f61983855b2ae0d684ba03aa2c3cc20",
     "contracts/auth/error-codes.json": "ae24dad1307e33141ab0c11f06d4e4d87ad485129bba0f9189cceba0e699b639",
     "contracts/auth/fixtures/oauth.json": "5f45685decb0c2cf6873a9ac8bcbbad28b5ca98dd7cdaed9aa940005dd1f0757",
     "contracts/auth/fixtures/platform-headless.json": "bbe3f58d22f1a605c7b3c5c0a1d0385ceff920ffaf1d808502bfc64ac5a4f18d",
     "contracts/auth/fixtures/project-invitation.json": "bc83c3fe34812f639426f383ac5d2cb9a58e7645ee5fec7f59d637910af80919",
-    "contracts/auth/fixtures/project-tenant.json": "235b120027cdc330dcbcbfbacee1c95f9f14c3bcee539c58dc4eb0727109cb1a",
+    "contracts/auth/fixtures/project-tenant.json": "051414f56e2a99752657d6350f4a7cd3fc1023f39e31ba014118cce6d8361164",
     "contracts/auth/hosted-settings-provenance.json": "cf09d1cdf5319217719fcae63cc258afd9e71cccbaca40173a2a1a1cca0fe5e5",
     "contracts/auth/hosted-settings.md": "a4c7b8182aa2d8347cd70dbc93900338d376de58151a9f1a3e5264ac4ffebbc1",
     "contracts/auth/provenance.json": "a8a0fd62159d94dd007aaa210db11bbdd60cbd6ee9d6ea872f52b6e13ab68a3c",
     "contracts/auth/routes.json": "41d45eb9a144f822bd9a539c3e0e781350292ac70dae0ddfb57de5f058ffd148",
     "contracts/auth/security.json": "51f44122a54934e5b9b890ff43c43f26224b7dde5f0272bf927772c620f7313f",
+    "contracts/auth/user-export-provenance.json": "2d4401db7963c9c79117e6d2df9ff46671dd7db3d1211f22fb934b5e650cd087",
+    "contracts/auth/user-export.md": "b702ae533c3e1e55cc5b377bde55e5ffb44e8b7f991041ed1d24c59cf79e5e41",
     "contracts/terrabase/README.md": "bbc6563738ff8b8acee4b0a5bdce4d09e886e0a4f4d46b30efc8ab495413b753",
     "contracts/terrabase/artifacts/terrabase-8db4c792-source.tar.gz": "7f49e1f71f45d8a81191905fccf0a628c16a27f44d87ae87fc3daff2029087bd",
     "contracts/terrabase/artifacts/terrabase-r8-2b95f5ef-source.tar.gz": "13edca03ed374fca0841bcb1734ea6512c5246f1bf9a280da8b068a47d759506",
@@ -108,5 +110,5 @@
     "contracts/terrabase/sql-execute.md": "5021f06f547328e42f4ee72f0b91ec308cf7b029acb6b86d2e071281fe347761"
   },
   "sdk": "11.0.100-rc.1.26425.128",
-  "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified. Additional installed-package deletion outbox list/ACK consumer passed on net10.0 and net11.0."
+  "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified."
 }

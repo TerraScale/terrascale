@@ -135,12 +135,13 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         var name = "Brand " + new Faker().Random.AlphaNumeric(10);
         using var saved = await Post(browser, "branding", csrf, ("name", name), ("logo_url", "https://assets.example.com/logo.svg"),
             ("theme_color", "#2158e8"), ("title_size", "32"), ("default_theme", "dark"), ("background_color", "#151515"),
-            ("text_color", "#f2f2f2"), ("footer_links", "Privacy | https://example.com/privacy\nTerms | https://example.com/terms"));
+            ("text_color", "#f2f2f2"), ("footer_links", "Privacy | https://example.com/privacy\nTerms | https://example.com/terms"), ("email_message", "Welcome <script>alert(1)</script>\r\nYour team"));
         Check(saved.StatusCode == HttpStatusCode.SeeOther, "The complete branding object is accepted");
         var branding = await Page(browser, "/auth/branding");
         Check(branding.Contains(name) && branding.Contains("value=\"32\"") && branding.Contains("https://example.com/privacy") &&
             branding.Contains("data-brand-mode=\"dark\"") && branding.Contains("referrerpolicy=\"no-referrer\""), "The editor reads persisted fields and provides a private visual preview");
-        foreach (var fields in new[] { new[] { ("title_size", "41") }, [("default_theme", "auto")], [("footer_links", "Help | javascript:alert(1)")], [("background_color", "red")] })
+        Check(branding.Contains("Welcome &lt;script&gt;alert(1)&lt;/script&gt;") && !branding.Contains("Welcome <script>"), "The saved email message is escaped in the editor");
+        foreach (var fields in new[] { new[] { ("title_size", "41") }, [("default_theme", "auto")], [("footer_links", "Help | javascript:alert(1)")], [("background_color", "red")], [("email_message", new string('a', 501))], [("email_message", "hidden\tcontrol")] })
         {
             using var invalid = await Post(browser, "branding", csrf, fields);
             Check(invalid.StatusCode == HttpStatusCode.UnprocessableEntity, "Invalid branding is refused before it is saved");

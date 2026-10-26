@@ -49,9 +49,10 @@ public sealed class AuthProviderScenario : IAsyncDisposable
 
     // liveProjects sends project tenant management through the real TsAuthGateway to this producer, which does
     // not serve that API, as ts-auth before it ships; otherwise the demo host's in-memory tenant answers.
-    public static async Task<AuthProviderScenario> StartAsync(string root, bool liveProjects = false)
+    public static async Task<AuthProviderScenario> StartAsync(string root, bool liveProjects = false, Func<HttpContext, Task<IResult?>>? projectExtension = null)
     {
         var scenario = new AuthProviderScenario { liveProjects = liveProjects };
+        scenario.provider.ProjectExtension = projectExtension;
         try { await scenario.InitializeAsync(root); return scenario; }
         catch { await scenario.DisposeAsync(); throw; }
     }
@@ -249,6 +250,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
         public OwnershipSdkProtocol? Ownership { get; private set; }
         public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
+        public Func<HttpContext, Task<IResult?>>? ProjectExtension { get; set; }
         public void ComposeOwnership() => Ownership = new(workspace, ResolveActiveBearer);
         private readonly ConcurrentDictionary<string, Grant> access = new();
         private readonly ConcurrentDictionary<string, Grant> refresh = new();
@@ -395,6 +397,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (path.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", var tenant, ..] && TerraScaleIds.IsValid(tenant))
             {
                 Interlocked.Increment(ref projectManagementRequests);
+                if (ProjectExtension is not null)
+                    return Bearer(http, out _) ? await ProjectExtension(http) ?? Results.NotFound() : OAuthError("invalid_token", 401);
                 return OAuthError("not_found", 404);
             }
             if (path.StartsWith("/v1/terrascale/users/", StringComparison.Ordinal))

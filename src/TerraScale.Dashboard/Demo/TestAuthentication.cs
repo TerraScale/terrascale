@@ -109,6 +109,9 @@ sealed class TestAuthentication : ITsAuthProjects
         }));
     }
 
+    public Task<TerraScaleAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken) =>
+        throw new AccountAccessException("Directory exports require the project's ts-auth service.", 503);
+
     public Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken)
     {
         var tenant = For(projectId);
