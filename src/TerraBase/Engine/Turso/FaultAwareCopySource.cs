@@ -45,6 +45,18 @@ internal sealed class FaultAwareCopySource(string connectionString, Action<Excep
         return false;
     }
 
+    internal static void Abort(DbDataReader reader)
+    {
+        if (reader is SourceReader wrapped)
+        {
+            wrapped.Abort();
+        }
+        else
+        {
+            ((TursoDataReader)reader).Abort();
+        }
+    }
+
     private sealed class SourceCommand : TursoCommand
     {
         private readonly FaultAwareCopySource _source;
@@ -133,6 +145,8 @@ internal sealed class FaultAwareCopySource(string connectionString, Action<Excep
         public override DataTable? GetSchemaTable() => source.Observe(reader.GetSchemaTable);
 
         public override IEnumerator GetEnumerator() => new DbEnumerator(this, closeReader: false);
+
+        public void Abort() => source.Observe(((TursoDataReader)reader).Abort);
 
         public override void Close() => source.Observe(reader.Close);
 

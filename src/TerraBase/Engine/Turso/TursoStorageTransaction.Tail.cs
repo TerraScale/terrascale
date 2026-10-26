@@ -492,7 +492,7 @@ internal sealed partial class TursoStorageTransaction
     internal async ValueTask<(long Left, long? Floor)?> RecordAckedAsync(
         ReplicaId peer, Ulid incarnation, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, peerProgressOnly: true).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             // Refused, with nothing written, unless the file is still the incarnation the ack names: checked again here, under

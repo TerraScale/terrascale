@@ -13,6 +13,36 @@ namespace TerraBase.Engine.Turso;
 internal sealed partial class TursoDatabaseStore
 {
     private int _lineage;
+    internal long RewriteAnchor
+    {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    } = -1;
+
+    private int _rewriting;
+    internal bool Rewriting => Volatile.Read(ref _rewriting) != 0;
+    internal bool TryBeginRewrite()
+    {
+        RefuseUnhealthy();
+        if (!Captures)
+        {
+            throw new RewriteRefusedException("a database without change capture cannot be rewritten");
+        }
+        if (Interlocked.CompareExchange(ref _rewriting, 1, 0) != 0)
+        {
+            return false;
+        }
+        RewriteAnchor = 0;
+        return true;
+    }
+    internal void EndRewrite()
+    {
+        RewriteAnchor = -1;
+        Volatile.Write(ref _rewriting, 0);
+    }
+    private long _uncapturedCommits;
+    internal long UncapturedCommits => Volatile.Read(ref _uncapturedCommits);
+    internal void UncapturedCommit() => Interlocked.Increment(ref _uncapturedCommits);
 
     /// <summary>Moves as a healthy rewrite starts: a backup tap opened before ends instead of holding the old file open.</summary>
     internal int Lineage => Volatile.Read(ref _lineage);

@@ -385,7 +385,7 @@ internal sealed class TursoChangeTap : IWalTap
         command.Parameters.Add(new TursoParameter("$end", end));
         command.Parameters.Add(new TursoParameter("$limit", (long)PageRows));
         // Aborted, not disposed, when the page stops early: finalize would step the SELECT through its unread rows.
-        using var rows = (TursoDataReader)command.ExecuteReader();
+        using var rows = command.ExecuteReader();
         var last = after;
         if (after == _anchor)
         {
@@ -416,7 +416,7 @@ internal sealed class TursoChangeTap : IWalTap
                 _open = null;
                 if (buffer.WrittenCount >= allowance)
                 {
-                    rows.Abort();
+                    FaultAwareCopySource.Abort(rows);
                     return (last, true, true);
                 }
 
@@ -432,7 +432,7 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 if (!Place(type, rowid, image, schema, buffer))
                 {
-                    rows.Abort();
+                    FaultAwareCopySource.Abort(rows);
                     return (last, false, false);
                 }
             }
@@ -451,7 +451,7 @@ internal sealed class TursoChangeTap : IWalTap
 
         if (buffer.WrittenCount >= PageBytes)
         {
-            rows.Abort();
+            FaultAwareCopySource.Abort(rows);
         }
 
         return (last, true, false);
@@ -486,17 +486,22 @@ internal sealed class TursoChangeTap : IWalTap
     }
 
     // On the writer, with the writer held: the anchor becomes the newest change and the schema map the file's.
-    private bool Reset(TursoSession writer)
+    private bool Reset(TursoSession writer) => Reset(writer.Connection);
+
+    private bool Reset(System.Data.Common.DbConnection connection, bool publish = true)
     {
-        using (var newest = writer.Connection.CreateCommand())
+        using (var newest = connection.CreateCommand())
         {
             newest.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
             _anchor = (long)newest.ExecuteScalar()!;
-            _store.BackupAnchor = _anchor;
+            if (publish)
+            {
+                _store.BackupAnchor = _anchor;
+            }
         }
 
         var schema = new Dictionary<long, (string Type, string Name)>();
-        using var command = writer.Connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "SELECT rowid, type, name FROM sqlite_schema;";
         using var rows = command.ExecuteReader();
         while (rows.Read())
@@ -508,6 +513,76 @@ internal sealed class TursoChangeTap : IWalTap
         return true;
     }
 
+    // Uses the backup encoder and restore replay, retaining the snapshot's schema map across rounds. This private cursor
+    // is never disposed as a backup tap: its caller owns the reader and it neither registers nor publishes BackupAnchor.
+    internal static TursoChangeTap RewriteFrom(TursoDatabaseStore store, TursoIoPool io, TursoConnection source)
+    {
+        var tap = new TursoChangeTap(store, io, TimeProvider.System, source, store.Lineage);
+        tap.Reset(source, publish: false);
+        store.RewriteAnchor = tap._anchor;
+        return tap;
+    }
+
+    internal long ReplayRewrite(TursoConnection source, TursoConnection target, bool final, CancellationToken token)
+    {
+        _reader = source;
+        if (_anchor > 0 && Scalar("SELECT 1 FROM turso_cdc WHERE change_id = $anchor;", _anchor) is null)
+        {
+            throw new RewriteRefusedException("the rewrite's change-log anchor was trimmed");
+        }
+
+        var end = Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_type = 2 AND change_id > $anchor;", _anchor) as long? ?? _anchor;
+        // Preflight the final delta without reading its images or opening a target transaction.
+        if (final)
+        {
+            using var check = source.CreateCommand();
+            check.CommandText = "SELECT length(after), table_name FROM turso_cdc WHERE change_id > $after AND change_id <= $end ORDER BY change_id LIMIT 1025;";
+            check.Parameters.Add(new TursoParameter("$after", _anchor));
+            check.Parameters.Add(new TursoParameter("$end", end));
+            using var rows = check.ExecuteReader();
+            long count = 0, bytes = 0;
+            while (rows.Read())
+            {
+                bytes += rows.IsDBNull(0) ? 0 : rows.GetInt64(0);
+                if (++count > 1024 || bytes > PageBytes || !rows.IsDBNull(1) && rows.GetString(1) == "sqlite_schema")
+                {
+                    FaultAwareCopySource.Abort(rows);
+                    throw new RewriteRefusedException("the final rewrite delta exceeds its budget");
+                }
+            }
+        }
+
+        if (_anchor == 0 && Scalar("SELECT min(change_id) FROM turso_cdc WHERE change_id > $anchor;", 0) as long? is > 1)
+        {
+            throw new RewriteRefusedException("the rewrite's initial change-log prefix was trimmed");
+        }
+
+        var first = _anchor;
+        var replay = new ChangeLog.Replay(target);
+        var buffer = new ArrayBufferWriter<byte>();
+        while (_anchor < end)
+        {
+            token.ThrowIfCancellationRequested();
+            var (next, placed, _) = ReadPage(_anchor, end, long.MaxValue, _schema, buffer);
+            using var segment = new MemoryStream(buffer.WrittenMemory.ToArray(), writable: false);
+            if (!placed || next <= _anchor || !replay.Apply(segment, token))
+            {
+                throw new RewriteRefusedException("the rewrite delta cannot be replayed");
+            }
+
+            _anchor = next;
+            buffer.ResetWrittenCount();
+        }
+
+        if (replay.Open)
+        {
+            throw new RewriteRefusedException("the rewrite delta ends inside a transaction");
+        }
+
+        _store.RewriteAnchor = _anchor;
+        return _anchor - first;
+    }
+
     // Deletes the rows before the anchor that the peer streams also let go of: the rows they have not acknowledged stay
     // (TursoStorageTransaction.Retention). Turso does not capture changes to turso_cdc itself.
     private bool Truncate(TursoSession writer)
@@ -517,7 +592,9 @@ internal sealed class TursoChangeTap : IWalTap
         // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25); the catalog has no shapes.
         var hold = _store.RequiresRemoteProof && !_store.IsSystem ? TursoStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
         command.CommandText = TursoStorageTransaction.Retention;
-        command.Parameters.AddWithValue("$below", Math.Min(_anchor, hold ?? long.MaxValue));
+        var rewrite = _store.RewriteAnchor;
+        var below = rewrite < 0 ? _anchor : Math.Min(_anchor, rewrite);
+        command.Parameters.AddWithValue("$below", Math.Min(below, hold ?? long.MaxValue));
         command.Parameters.AddWithValue("$now", now);
         command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
         command.ExecuteNonQuery();
@@ -789,7 +866,7 @@ internal static class ChangeLog
         }
     }
 
-    private sealed class Replay(TursoConnection connection)
+    internal sealed class Replay(TursoConnection connection)
     {
         // Per table: its columns in order and the ordinal of its rowid alias (INTEGER PRIMARY KEY), or -1.
         private readonly Dictionary<string, (string[] Columns, int Alias)> _tables = [with(StringComparer.Ordinal)];
