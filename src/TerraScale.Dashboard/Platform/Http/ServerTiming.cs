@@ -11,6 +11,8 @@ public sealed class ServerTiming
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly Lock gate = new();
     private readonly Dictionary<string, (int Calls, double Ms)> upstreams = new(StringComparer.Ordinal);
+    private readonly List<(string Upstream, double Start, double End)> spans = [];
+    private ILogger? logger;
     private readonly Dictionary<object, (int Writes, object Task)> readTasks = [];
     private int writes;
     private bool reads;
@@ -74,11 +76,37 @@ public sealed class ServerTiming
         }
     }
 
+    private void Record(string upstream, double start, double end)
+    {
+        Record(upstream, end - start);
+        lock (gate) spans.Add((upstream, start, end));
+    }
+
+    // Union of intervals measures elapsed dependency time without counting concurrent calls twice.
+    private double Wall(string? upstream = null)
+    {
+        double total = 0, end = 0;
+        foreach (var span in spans.Where(span => upstream is null || span.Upstream == upstream).OrderBy(span => span.Start))
+        {
+            total += Math.Max(0, span.End - Math.Max(end, span.Start));
+            end = Math.Max(end, span.End);
+        }
+        return total;
+    }
+
     // Calls that overlap add up, so an upstream's total can exceed the page's own time when they ran in parallel.
     public string Header()
     {
         var parts = new List<string> { Metric("app", clock.Elapsed.TotalMilliseconds, "") };
-        lock (gate) parts.AddRange(upstreams.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => Metric(entry.Key, entry.Value.Ms, entry.Value.Calls + " calls")));
+        lock (gate)
+        {
+            parts.Add(Metric("local", Math.Max(0, clock.Elapsed.TotalMilliseconds - Wall()), "render and application work outside upstream waits"));
+            foreach (var entry in upstreams.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+            {
+                parts.Add(Metric(entry.Key, entry.Value.Ms, entry.Value.Calls + " calls"));
+                parts.Add(Metric(entry.Key + "_wall", Wall(entry.Key), "overlapping calls counted once"));
+            }
+        }
         return string.Join(", ", parts);
     }
 
@@ -87,7 +115,7 @@ public sealed class ServerTiming
 
     public static async Task MiddlewareAsync(HttpContext context, Func<Task> next, ILogger logger)
     {
-        var timing = new ServerTiming { reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method) };
+        var timing = new ServerTiming { reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method), logger = logger };
         Current.Value = timing;
         context.Response.OnStarting(() =>
         {
@@ -113,9 +141,29 @@ public sealed class ServerTiming
             var timing = Current.Value;
             if (timing is null) return await base.SendAsync(request, cancellationToken);
             if (Mutates(request)) Interlocked.Increment(ref timing.writes);
-            var started = Stopwatch.GetTimestamp();
-            try { return await base.SendAsync(request, cancellationToken); }
-            finally { timing.Record(Upstream(request.RequestUri), Stopwatch.GetElapsedTime(started).TotalMilliseconds); }
+            var started = timing.clock.Elapsed.TotalMilliseconds;
+            HttpResponseMessage? response = null;
+            try { return response = await base.SendAsync(request, cancellationToken); }
+            finally
+            {
+                var ended = timing.clock.Elapsed.TotalMilliseconds;
+                var upstream = Upstream(request.RequestUri);
+                timing.Record(upstream, started, ended);
+                // Only fixed operation names escape: no URL, query, token, document ID or customer name.
+                var operation = string.Join('/', (request.RequestUri?.AbsolutePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(part => Operations.Contains(part) ? part : ":value"));
+                timing.logger?.LogInformation("Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms",
+                    upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
+                    response is null ? 0 : (int)response.StatusCode, started, ended - started);
+            }
         }
+
+        private static readonly HashSet<string> Operations = new(StringComparer.Ordinal)
+        {
+            "terrascale", "v1", "v2", ".well-known", "openid-configuration", "jwks", "oauth", "token", "userinfo",
+            "platform", "organizations", "projects", "members", "ownership-transfer", "invitations", "audit-events",
+            "databases", "collections", "documents", "query", "sql", "analytics", "usage", "replication", "regions",
+            "admin", "plan", "sessions", "accounts", "identities", "allowance_notifications", "get", "list", "transactions"
+        };
     }
 }

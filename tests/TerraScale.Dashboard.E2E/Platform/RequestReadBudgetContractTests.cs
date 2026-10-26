@@ -3,11 +3,43 @@ using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
 public sealed class RequestReadBudgetContractTests
 {
+    [Test]
+    public async Task AuthDirectoryReadsCoalesceWithinOneGetAndRefreshAfterWritesOrAnotherPage()
+    {
+        using var wire = new Wire();
+        wire.Release.TrySetResult();
+        var gateway = new TsAuthGateway(new Identity(), wire, TimeProvider.System);
+        var session = Scope().Session!;
+        async Task Read() => await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => gateway.ListOrganizationsAsync(session, CancellationToken.None)));
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, async () =>
+        {
+            await Read();
+            await Assert.That(wire.Listings).IsEqualTo(1);
+            await gateway.ListOrganizationsAsync(session with { AccessToken = "different" }, CancellationToken.None);
+            await Assert.That(wire.Listings).IsEqualTo(2);
+            using var client = wire.CreateClient("mutation");
+            using var response = await client.PostAsync("https://auth.terrascale.tech/v1/membership", null);
+            await Read();
+            await Assert.That(wire.Listings).IsEqualTo(3);
+        }, NullLogger.Instance);
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, Read, NullLogger.Instance);
+        await Assert.That(wire.Listings).IsEqualTo(4);
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "POST" } }, Read, NullLogger.Instance);
+        await Assert.That(wire.Listings).IsEqualTo(7);
+    }
+
+    private sealed class Identity : IDashboardIdentity
+    {
+        public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new DashboardCredentials("synthetic", "", new("", ""), ""));
+    }
+
     [Test]
     public async Task ParallelPanelsShareCatalogAndNameResolutionOnlyInsideOneGet()
     {

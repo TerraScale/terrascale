@@ -12,6 +12,34 @@ namespace TerraScale.Dashboard.E2E.Platform;
 public sealed class ApiReferenceJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
+    public async Task StaticAssetsNegotiateCompressionAndKeepImmutableVersions()
+    {
+        await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var plain = await client.GetAsync("/css/terrascale.css");
+        var bytes = await plain.Content.ReadAsByteArrayAsync();
+        var version = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes).AsSpan(0, 6));
+        foreach (var encoding in new[] { "br", "gzip" })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/css/terrascale.css?v=" + version);
+            request.Headers.AcceptEncoding.ParseAdd(encoding);
+            using var response = await client.SendAsync(request);
+            await Assert.That(response.Content.Headers.ContentEncoding.Single()).IsEqualTo(encoding);
+            await Assert.That(response.Headers.Vary).Contains("Accept-Encoding");
+            await Assert.That(response.Headers.CacheControl!.ToString()).Contains("immutable");
+            await using var body = await response.Content.ReadAsStreamAsync();
+            await using Stream decoded = encoding == "br" ? new BrotliStream(body, CompressionMode.Decompress) : new GZipStream(body, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            await decoded.CopyToAsync(output);
+            await Assert.That(output.ToArray().SequenceEqual(bytes)).IsTrue();
+        }
+        using var refused = new HttpRequestMessage(HttpMethod.Get, "/css/terrascale.css");
+        refused.Headers.AcceptEncoding.ParseAdd("br;q=0, gzip;q=0");
+        using var identity = await client.SendAsync(refused);
+        await Assert.That(identity.Content.Headers.ContentEncoding).IsEmpty();
+    }
+
+    [Test]
     public async Task PublicReferenceHasMetadataFreshNoncesAndTheAbsoluteProductionServer()
     {
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);

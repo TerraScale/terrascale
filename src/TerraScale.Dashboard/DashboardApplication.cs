@@ -43,6 +43,11 @@ public static class DashboardApplication
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
         builder.Services.AddSafeHttpLogging();
         builder.Services.AddSingleton<AssetUrls>();
+        builder.Services.AddResponseCompression(options =>
+        {
+            // ASP.NET's required third-party setting: the loopback TLS edge forwards HTTPS requests.
+            options.EnableForHttps = true;
+        });
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = problem =>
             problem.ProblemDetails.Extensions["requestId"] = problem.HttpContext.TraceIdentifier);
         builder.Services.AddSingleton<ServiceSloTelemetry>();
@@ -199,6 +204,10 @@ public static class DashboardApplication
         // Browser forms and API clients both get an actionable body for otherwise empty failures.
         app.UseStatusCodePages(status => RequestError.Response(status.HttpContext,
             status.HttpContext.Response.StatusCode).ExecuteAsync(status.HttpContext));
+        // Compress public assets only; signed-in HTML, secrets and streaming responses keep their own delivery.
+        app.UseWhen(context => context.Request.Path.StartsWithSegments("/css") || context.Request.Path.StartsWithSegments("/js") ||
+            context.Request.Path.StartsWithSegments("/brand") || context.Request.Path.StartsWithSegments("/flags"),
+            assets => assets.UseResponseCompression());
         app.UseStaticFiles(new StaticFileOptions
         {
             OnPrepareResponse = response =>

@@ -169,8 +169,10 @@ public static class DatabaseEndpoints
             if (PlatformDatabases.IsPlatform(context.Organization?.Id)) contentsAvailable = false;
             else
             {
+                using var slots = new SemaphoreSlim(4);
                 var reads = await Task.WhenAll(context.Project.Databases.Values.Select(async database =>
                 {
+                    await slots.WaitAsync(http.RequestAborted);
                     try
                     {
                         var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);
@@ -180,6 +182,7 @@ public static class DatabaseEndpoints
                     catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
                         (failure is HttpRequestException or IOException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure)))
                     { return null; }
+                    finally { slots.Release(); }
                 }));
                 try
                 {

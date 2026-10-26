@@ -64,6 +64,10 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
     }
 
     public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+        => await TerraScale.Dashboard.Platform.Http.ServerTiming.ReadAsync((this, collection, id),
+            () => GetDocumentAsync(collection, id, cancellationToken));
+
+    private async Task<TerraBaseDocument?> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken)
     {
         var key = DocumentId(collection, id);
         var document = await Database().GetDocumentAsync(collection, key, cancellationToken);
