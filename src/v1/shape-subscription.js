@@ -51,6 +51,15 @@ function deepFreeze(value) {
 }
 // setTimeout overflows above 2^31-1 ms and fires at once, so a long Retry-After is waited in chunks.
 const maximumTimerMilliseconds = 2 ** 31 - 1;
+/** @template T @param {T | PromiseLike<T>} operation @param {AbortSignal} signal @returns {Promise<T>} */
+function waitForStore(operation, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(signal.reason); };
+    signal.addEventListener("abort", abort, { once: true });
+    void Promise.resolve(operation).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 /** @param {number} milliseconds @param {AbortSignal} signal @returns {Promise<void>} */
 function sleep(milliseconds, signal) {
   return new Promise((resolve, reject) => {
@@ -92,7 +101,7 @@ export class V1ShapeSubscription {
   #onUpdate;
   #replica;
   /** @type {string} */
-  #scope;
+  #scope = "";
   #external;
   #onExternalAbort = () => this.close();
   #done;
@@ -117,8 +126,6 @@ export class V1ShapeSubscription {
     this.#where = where === undefined ? undefined : requireFilter(parseExactJson(stringifyExactJson(requireFilter(where), "shape filter")));
     this.#onUpdate = onUpdate;
     this.#replica = replica;
-    // A replica restores only the identical shape it was saved from.
-    this.#scope = stringifyExactJson([this.#params.database, this.#params.collection, this.#where ?? null], "shape scope");
     this.#external = signal;
     if (signal?.aborted === true) this.close();
     else signal?.addEventListener("abort", this.#onExternalAbort);
@@ -136,11 +143,15 @@ export class V1ShapeSubscription {
   async #run() {
     const signal = this.#controller.signal;
     let retries = 0;
+    /** @type {import("./shapes.js").V1ShapeRequest | undefined} */
+    let retryRequest;
     try {
+      // Bind persisted authorization views to the service and project as well as the shape.
+      this.#scope = stringifyExactJson([await this.#transport.url("readFreeShape", this.#params, signal), this.#where ?? null], "shape scope");
       if (this.#replica !== undefined) await this.#restore(signal);
       for (;;) {
         signal.throwIfAborted();
-        const request = this.#request();
+        const request = retryRequest ?? this.#request();
         let page;
         try {
           page = await readShapePage(this.#transport, this.#params, request, signal);
@@ -148,16 +159,28 @@ export class V1ShapeSubscription {
           // Shape reads are replay-safe GETs: a lost connection keeps state and resumes at the same position.
           const lost = error instanceof RequestTransportError || error instanceof BodyTransportError;
           if (lost || (error instanceof TerraBaseV1Error && isRetryable(error))) {
+            retryRequest = request;
+            if (this.#upToDate) { this.#upToDate = false; this.#onUpdate?.(this); }
             retries = Math.min(retries + 1, maximumBackoffAttempt);
             await sleep(retryDelay(retries, lost ? undefined : error.retryAfter), signal);
             continue;
           }
+          retryRequest = undefined;
           if (!(error instanceof TerraBaseV1Error)) throw error;
+          if (error.status === 401 || error.status === 403) {
+            // Denial takes precedence over callback/storage failures. A stuck store
+            // cannot postpone the terminal auth error after local state is cleared.
+            try { this.#reset(); } catch { /* preserve the authorization failure */ }
+            try { void Promise.resolve(this.#replica?.save(undefined)).catch(() => {}); }
+            catch { /* a synchronous store failure must not mask denial either */ }
+            throw error;
+          }
           if (error.status !== 409 || error.code !== "must_refetch") throw error;
           this.#recover(request, error);
-          if (this.#handle === undefined) await this.#replica?.save(undefined);
+          if (this.#handle === undefined) await waitForStore(this.#replica?.save(undefined), signal);
           continue;
         }
+        retryRequest = undefined;
         retries = 0;
         this.#commit(page);
         await this.#persist(signal);
@@ -212,7 +235,8 @@ export class V1ShapeSubscription {
   }
   /** @param {AbortSignal} signal */
   async #restore(signal) {
-    const text = await this.#replica?.load();
+    signal.throwIfAborted();
+    const text = await waitForStore(this.#replica?.load(), signal);
     signal.throwIfAborted();
     if (text === undefined) return;
     /** @type {any} */
@@ -236,8 +260,9 @@ export class V1ShapeSubscription {
   async #persist(signal) {
     // Snapshot pages are not resumable positions; keep the previous replica until the snapshot completes.
     if (this.#replica === undefined || this.#handle === undefined || this.#offset.startsWith("snap.")) return;
-    await this.#replica.save(stringifyExactJson({ format: 1, scope: this.#scope, handle: this.#handle, offset: this.#offset,
-      cursor: this.#cursor ?? null, resume: this.#resume ?? null, documents: [...this.#documents] }, "shape replica"));
+    signal.throwIfAborted();
+    await waitForStore(this.#replica.save(stringifyExactJson({ format: 1, scope: this.#scope, handle: this.#handle, offset: this.#offset,
+      cursor: this.#cursor ?? null, resume: this.#resume ?? null, documents: [...this.#documents] }, "shape replica")), signal);
     signal.throwIfAborted();
   }
   /** @param {import("./shapes.js").V1ShapePage} page */
