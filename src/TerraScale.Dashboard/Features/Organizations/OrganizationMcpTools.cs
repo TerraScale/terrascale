@@ -127,12 +127,12 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
             pending.Invitation.ExpiresAt, pending.Invitation.Email.Equals(context.Account.Email, StringComparison.OrdinalIgnoreCase));
     });
 
-    [McpServerTool(Name = "respond_to_invitation", Title = "Respond to invitation", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Accept or decline an invitation addressed to the caller's email. Accepting joins and selects the organization.")]
+    [McpServerTool(Name = "respond_to_invitation", Title = "Respond to invitation", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Accept or decline an invitation addressed to the caller's email. Accepting selects the invited organization or project.")]
     public Task<OrganizationInvitationResponse> RespondToInvitation([Description("Invitation token or the full invitation link.")] string token,
         [Description("accept or decline.")] string action) => Invoke(async () =>
     {
         var context = await PrincipalAsync();
-        var organization = await invitations.RespondAsync(context.Session, Token(token), action, Cancellation);
+        var organization = (await invitations.RespondAsync(context.Session, Token(token), action, Cancellation)).Organization;
         return new OrganizationInvitationResponse(organization.Id, organization.Name, action.Trim().ToLowerInvariant());
     });
 

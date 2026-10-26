@@ -4,6 +4,7 @@
 @inject AssetUrls Assets
 <main class="ts-page ts-databases" data-project-id="@Model.Context.Project?.Id" data-organization-id="@Model.Context.Organization?.Id">
 <div class="ts-db-header"><div class="ts-stack-sm"><h1>Databases</h1><p class="ts-meta">TerraBase databases in @(Model.Context.Project?.Name ?? "this project"), with their status and regions.</p></div>@if(Model.CanProvision){<div class="ts-page-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/imports">@Icons.Render("Upload",16)<span>Import</span></a><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-database">@Icons.Render("Plus",16)<span>New database</span></button></div>}</div>
+@if(HttpContext!.Request.Query["invitation"] == "declined"){<p class="ts-alert ts-alert-success" role="status">Invitation declined. Your access has not changed.</p>}
 @if(Model.Error.Length > 0 && !Model.OpenCreate){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div>}
 @if(Model.All.Count > 0){<dl class="ts-stats" aria-label="Database totals">
 <div class="ts-stat"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Databases</dt><dd class="ts-stat-value">@Model.All.Count</dd><dd class="ts-stat-detail">In this project</dd></div>

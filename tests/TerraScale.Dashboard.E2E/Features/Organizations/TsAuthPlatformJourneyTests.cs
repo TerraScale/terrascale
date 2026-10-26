@@ -18,13 +18,16 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations;
 // production TsAuthGateway transport. The producer fake follows terrascale
 // e30ffdc2 PlatformEndpoints/InvitationEndpoints; it must be rechecked against
 // the corrected exported ts-dotnet auth fixtures before this counts as parity.
+// Collaborator listing and read boundaries follow terrascale 1d823d8534fc PlatformDirectory.
+// Project invitation lookup/acceptance follows local terrascale a095400a1 InvitationEndpoints/Invitations
+// and TerraScale.DotNet 0.0.12's Named, InvitationLookup and AcceptedInvitation DTOs.
 public sealed class TsAuthPlatformJourneyTests
 {
     [Test]
     [Arguments("viewer")]
     [Arguments("member")]
     [Arguments("admin")]
-    public async Task ProjectCollaboratorsReadOnlyTheirLiveProjectsWithoutOrganizationAuthority(string role)
+    public async Task ProjectInviteesAcceptAndReadOnlyTheirLiveProjectsWithoutOrganizationAuthority(string role)
     {
         await using var platform = await PlatformScenario.StartAsync();
         var user = platform.Principal("project-" + role);
@@ -37,7 +40,30 @@ public sealed class TsAuthPlatformJourneyTests
         var org = platform.Producer.AddOrganization("Shared projects", owner.Subject);
         var project = platform.Producer.AddProject(org, "Granted", owner.Subject);
         var sibling = platform.Producer.AddProject(org, "Hidden sibling", owner.Subject);
-        platform.Producer.AddCollaborator(org, user.Subject, project, role);
+        var token = platform.Producer.AddInvitation(org, user.Email, role, owner.Subject, project);
+        using (var preview = await client.GetAsync("/invitations/" + token))
+        {
+            await Assert.That(preview.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(preview.Headers.CacheControl?.NoStore).IsTrue();
+            await Assert.That(preview.Headers.GetValues("Referrer-Policy").Single()).IsEqualTo("strict-origin");
+            var html = await preview.Content.ReadAsStringAsync();
+            foreach (var copy in new[] { "Project invitation", "Join Granted", "This invitation grants " + role + " access to Granted in Shared projects.", "Your organization role is unchanged." })
+                await Assert.That(html).Contains(copy);
+            await Assert.That(html).DoesNotContain("join this organization");
+        }
+        using (var noCsrf = await HttpJourney.PostFormAsync(client, "/invitations/" + token + "/respond", new() { ["action"] = "accept" }))
+            await Assert.That(noCsrf.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        using (var accepted = await HttpJourney.PostFormAsync(client, "/invitations/" + token + "/respond?projectId=" + sibling,
+            new() { ["_csrf"] = csrf, ["action"] = "accept" }))
+        {
+            await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(accepted.Headers.CacheControl?.NoStore).IsTrue();
+            await Assert.That(accepted.Headers.Location!.OriginalString).IsEqualTo("/databases?organizationId=" + org + "&projectId=" + project);
+            using var landing = await client.GetAsync(accepted.Headers.Location);
+            await Assert.That(landing.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        await Assert.That((await Me(client)).GetProperty("projectId").GetString()).IsEqualTo(project);
+        await Assert.That(platform.Producer.Role(org, user.Subject)).IsNull();
         var database = AccountService.NewId();
         platform.SeedDatabase(new(database, project, "granted-db", DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
         var scope = "?organizationId=" + org + "&projectId=" + project;
@@ -166,6 +192,148 @@ public sealed class TsAuthPlatformJourneyTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DecliningAnInvitationKeepsSelectionAndAccessAndWrongEmailCannotRespond(bool projectInvite)
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var user = platform.Principal("decline-invitee");
+        var other = platform.Principal("wrong-email");
+        using var client = platform.Client();
+        using var wrong = platform.Client(replica: true);
+        using (var login = await HttpJourney.LoginAsync(client, user.Email, user.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using (var login = await HttpJourney.LoginAsync(wrong, other.Email, other.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var before = await Me(client);
+        var org = platform.Producer.AddOrganization("Declined workspace", other.Subject);
+        var project = platform.Producer.AddProject(org, "Declined project", other.Subject);
+        var token = platform.Producer.AddInvitation(org, user.Email, "admin", other.Subject, projectInvite ? project : null);
+        var path = "/invitations/" + token;
+        var wrongCsrf = await HttpJourney.CsrfAsync(wrong, path);
+        var html = await wrong.GetStringAsync(path);
+        await Assert.That(html).Contains("Sign out and switch account");
+        await Assert.That(html).DoesNotContain("Accept invitation");
+        foreach (var action in new[] { "accept", "decline" })
+            using (var refused = await HttpJourney.PostFormAsync(wrong, path + "/respond", new() { ["_csrf"] = wrongCsrf, ["action"] = action }))
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        foreach (var action in new[] { "accept", "decline" })
+            await Assert.That(platform.Producer.Count("POST", "/v1/terrascale/invitations/" + action, other.Subject)).IsEqualTo(0);
+        var csrf = await HttpJourney.CsrfAsync(client, path);
+        using (var declined = await HttpJourney.PostFormAsync(client, path + "/respond?organizationId=" + org + "&projectId=" + project,
+            new() { ["_csrf"] = csrf, ["action"] = "decline" }))
+        {
+            await Assert.That(declined.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(declined.Headers.Location!.OriginalString).IsEqualTo("/databases?invitation=declined");
+            using var landing = await client.GetAsync(declined.Headers.Location);
+            await Assert.That(landing.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await landing.Content.ReadAsStringAsync()).Contains("Invitation declined. Your access has not changed.");
+        }
+        var after = await Me(client);
+        foreach (var field in new[] { "organizationId", "projectId" })
+            await Assert.That(after.GetProperty(field).GetString()).IsEqualTo(before.GetProperty(field).GetString());
+        await Assert.That(platform.Producer.Role(org, user.Subject)).IsNull();
+        await Assert.That(platform.Producer.InvitationStatus(org, platform.Producer.InvitationId(org, token))).IsEqualTo("declined");
+        using (var refused = await client.GetAsync("/databases?organizationId=" + org + "&projectId=" + project))
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var consumed = await client.GetAsync(path)) await Assert.That(consumed.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        var expired = platform.Producer.AddInvitation(org, user.Email, "viewer", other.Subject, projectInvite ? project : null);
+        platform.Producer.ExpireInvitation(org, expired);
+        using (var unavailable = await client.GetAsync("/invitations/" + expired)) await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var refused = await HttpJourney.PostFormAsync(client, "/invitations/" + expired + "/respond", new() { ["_csrf"] = csrf, ["action"] = "accept" }))
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(platform.Producer.Count("POST", "/v1/terrascale/invitations/accept", user.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.Mutations(org, user.Subject)).IsEqualTo(0);
+        foreach (var resource in new[] { "members", "ownership-transfer", "invitations", "audit-events" })
+            await Assert.That(platform.Producer.Count("GET", "/v1/terrascale/organizations/" + org + "/" + resource, user.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("lookup-org-id")]
+    [Arguments("lookup-project-id")]
+    [Arguments("lookup-project-name")]
+    [Arguments("lookup-org-name")]
+    [Arguments("lookup-same-id")]
+    [Arguments("lookup-project-owner")]
+    [Arguments("accept-org")]
+    [Arguments("accept-project")]
+    [Arguments("accept-null")]
+    [Arguments("accept-org-to-project")]
+    [Arguments("accept-role")]
+    [Arguments("accept-cross-org-project")]
+    public async Task InvalidProducerInvitationScopeFailsClosedWithoutChangingSelection(string fault)
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var user = platform.Principal("scope-invitee");
+        var owner = platform.Principal("scope-owner");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, user.Email, user.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var before = await Me(client);
+        var org = platform.Producer.AddOrganization("Offered organization", owner.Subject);
+        var project = platform.Producer.AddProject(org, "Offered project", owner.Subject);
+        var sibling = platform.Producer.AddProject(org, "Other project", owner.Subject);
+        var other = platform.Producer.AddOrganization("Other organization", owner.Subject);
+        var foreignProject = platform.Producer.AddProject(other, "Foreign project", owner.Subject);
+        var offered = fault == "accept-org-to-project" ? null : project;
+        var token = platform.Producer.AddInvitation(org, user.Email, "member", owner.Subject, offered);
+        var path = "/invitations/" + token;
+        var csrf = await HttpJourney.CsrfAsync(client, path);
+        if (fault.StartsWith("lookup-", StringComparison.Ordinal) || fault == "accept-cross-org-project")
+            platform.Producer.InvitationReplies["lookup"] = new
+            {
+                organization = new { id = fault == "lookup-org-id" ? "invalid" : org, name = fault == "lookup-org-name" ? "" : "Offered organization" },
+                project = new
+                {
+                    id = fault switch { "lookup-project-id" => "invalid", "lookup-same-id" => org, "accept-cross-org-project" => foreignProject, _ => project },
+                    name = fault == "lookup-project-name" ? "" : "Offered project"
+                },
+                email = user.Email,
+                role = fault == "lookup-project-owner" ? "owner" : "member",
+                expires_at = DateTimeOffset.UtcNow.AddDays(1)
+            };
+        else
+            platform.Producer.InvitationReplies["accept"] = new
+            {
+                organization_id = fault == "accept-org" ? other : org,
+                project_id = fault switch { "accept-project" => sibling, "accept-null" => null, _ => project },
+                role = fault == "accept-role" ? "admin" : "member"
+            };
+        if (fault == "accept-cross-org-project")
+            platform.Producer.InvitationReplies["accept"] = new { organization_id = org, project_id = foreignProject, role = "member" };
+        using (var refused = await HttpJourney.PostFormAsync(client, path + "/respond", new() { ["_csrf"] = csrf, ["action"] = "accept" }))
+            await Assert.That(refused.StatusCode).IsEqualTo(fault == "accept-cross-org-project" ? HttpStatusCode.NotFound : HttpStatusCode.ServiceUnavailable);
+        var after = await Me(client);
+        foreach (var field in new[] { "organizationId", "projectId" })
+            await Assert.That(after.GetProperty(field).GetString()).IsEqualTo(before.GetProperty(field).GetString());
+        if (fault.StartsWith("lookup-", StringComparison.Ordinal))
+            await Assert.That(platform.Producer.Count("POST", "/v1/terrascale/invitations/accept", user.Subject)).IsEqualTo(0);
+        if (offered is not null) await Assert.That(platform.Producer.Role(org, user.Subject)).IsNull();
+        await Assert.That(platform.Producer.Role(other, user.Subject)).IsNull();
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("viewer", "admin", "admin")]
+    [Arguments("viewer", "member", "member")]
+    [Arguments("member", "viewer", "member")]
+    public async Task EffectiveProjectRolesAddAccessWithoutPromotingOrganizationMembership(string organizationRole, string grant, string expected)
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var user = platform.Principal("overlapping-roles");
+        using var client = platform.Client();
+        using var login = await HttpJourney.LoginAsync(client, user.Email, user.Password);
+        var org = platform.Producer.AddOrganization("Overlapping roles", platform.Principal("overlap-owner").Subject);
+        var project = platform.Producer.AddProject(org, "Explicit grant", user.Subject);
+        platform.Producer.AddMember(org, user.Subject, user.Email, organizationRole);
+        platform.Producer.AddCollaborator(org, user.Subject, project, grant);
+        using var response = await client.GetAsync("/api/v1/dashboard/context?organizationId=" + org + "&projectId=" + project);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var visible = body.RootElement.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("id").GetString() == org);
+        await Assert.That(visible.GetProperty("role").GetString()).IsEqualTo(organizationRole);
+        await Assert.That(visible.GetProperty("projects").GetProperty(project).GetProperty("role").GetString()).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task FirstSignInOnTwoReplicasCreatesOnePersonalWorkspaceAndFollowsTsAuthMembership()
     {
         await using var platform = await PlatformScenario.StartAsync();
@@ -268,10 +436,13 @@ public sealed class TsAuthPlatformJourneyTests
         var preview = await inviteeClient.GetStringAsync("/invitations/" + token);
         await Assert.That(preview.Contains("Join Wire company", StringComparison.Ordinal)).IsTrue();
         csrf = await HttpJourney.CsrfAsync(inviteeClient, "/invitations/" + token);
-        using (var accepted = await HttpJourney.PostFormAsync(inviteeClient, "/invitations/" + token + "/respond", new() { ["_csrf"] = csrf, ["action"] = "accept" }))
+        using (var accepted = await HttpJourney.PostFormAsync(inviteeClient, "/invitations/" + token + "/respond?organizationId=" + AccountService.NewId() + "&projectId=" + AccountService.NewId(),
+            new() { ["_csrf"] = csrf, ["action"] = "accept" }))
         {
             await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(accepted.Headers.Location?.OriginalString).IsEqualTo("/organization?tab=members&invitation=accepted");
+            using var landing = await inviteeClient.GetAsync(accepted.Headers.Location);
+            await Assert.That(landing.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
         await Assert.That(platform.Producer.Role(business, invitee.Subject)).IsEqualTo("member");
         await Assert.That((await Me(inviteeClient)).GetProperty("organizationId").GetString()).IsEqualTo(business);
@@ -886,6 +1057,7 @@ public sealed class TsAuthPlatformJourneyTests
         private readonly Dictionary<string, string> deletionReceipts = [];
         private readonly HashSet<string> deletedUsers = [];
         private bool deletionRefused;
+        public Dictionary<string, object> InvitationReplies { get; } = [];
         public HttpStatusCode DeletionStatus { get; set; } = HttpStatusCode.Accepted;
         public bool ReceiptAppearsIn(string html) { lock (gate) return deletionReceipts.Keys.Any(receipt => html.Contains(receipt, StringComparison.Ordinal)); }
         public void CompleteAccountDeletion(string userId)
@@ -932,6 +1104,7 @@ public sealed class TsAuthPlatformJourneyTests
         public void RemoveMember(string organizationId, string userId) { lock (gate) { var org = Find(organizationId)!; org.Members.Remove(userId); org.Collaborators.Remove(userId); } }
         public string? Role(string organizationId, string userId) { lock (gate) return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role; }
         public string InvitationId(string organizationId, string token) { lock (gate) return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id; }
+        public void ExpireInvitation(string org, string token) { lock (gate) Find(org)!.Invitations.Single(invitation => invitation.Token == token).ExpiresAt = DateTimeOffset.UtcNow.AddDays(-1); }
         public string? InvitationStatus(string organizationId, string invitationId) { lock (gate) return Find(organizationId)!.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId)?.Status; }
         public string AddInvitation(string organizationId, string email, string role, string invitedBy, string? projectId = null)
         {
@@ -1019,12 +1192,26 @@ public sealed class TsAuthPlatformJourneyTests
                     .FirstOrDefault(item => item.invite.Token == Field("token") && item.invite.Status == "pending");
                 if (invitation is null) return Error(HttpStatusCode.NotFound, "not_found", "Invitation not found.");
                 if (action == "lookup")
-                    return Json(new { organization = new { id = org.Id, name = org.Name }, project = (object?)null, email = invitation.Email, role = invitation.Role, expires_at = invitation.ExpiresAt });
+                {
+                    if (invitation.ExpiresAt <= DateTimeOffset.UtcNow) return Error(HttpStatusCode.NotFound, "not_found", "Invitation unavailable.");
+                    var offered = org.Projects.SingleOrDefault(project => project.Id == invitation.ProjectId);
+                    if (invitation.ProjectId is not null && offered is null) return Error(HttpStatusCode.NotFound, "not_found", "Project unavailable.");
+                    return InvitationJson(action, new
+                    {
+                        organization = new { id = org.Id, name = org.Name },
+                        project = offered is null ? null : new { id = offered.Id, name = offered.Name },
+                        email = invitation.Email,
+                        role = invitation.Role,
+                        expires_at = invitation.ExpiresAt
+                    });
+                }
                 if (!invitation.Email.Equals(caller.Email, StringComparison.OrdinalIgnoreCase)) return Error(HttpStatusCode.Forbidden, "email_mismatch", "Sign in with the invited email.");
+                if (invitation.ExpiresAt <= DateTimeOffset.UtcNow) return Error(HttpStatusCode.Conflict, "invitation_expired", "Invitation expired.");
                 invitation.Status = action == "accept" ? "accepted" : "declined";
                 if (action == "decline") return new(HttpStatusCode.NoContent);
-                org.Members[caller.UserId] = new(caller.Email, invitation.Role, DateTimeOffset.UtcNow);
-                return Json(new { organization_id = org.Id, project_id = (string?)null, role = invitation.Role });
+                if (invitation.ProjectId is { } projectId) AddCollaborator(org.Id, caller.UserId, projectId, invitation.Role);
+                else org.Members[caller.UserId] = new(caller.Email, invitation.Role, DateTimeOffset.UtcNow);
+                return InvitationJson(action, new { organization_id = org.Id, project_id = invitation.ProjectId, role = invitation.Role });
             }
             Require(parts.Length >= 2 && parts[0] == "organizations", "Unknown platform route.");
             var organization = Find(parts[1]);
@@ -1169,6 +1356,7 @@ public sealed class TsAuthPlatformJourneyTests
             return Rank(implied) >= Rank(granted) ? implied : granted;
         }
         private Organization? Find(string id) => organizations.FirstOrDefault(org => org.Id == id);
+        private HttpResponseMessage InvitationJson(string action, object body) => Json(InvitationReplies.GetValueOrDefault(action, body));
         private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status)
         { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, new MediaTypeHeaderValue("application/json")) };
         private static HttpResponseMessage Error(HttpStatusCode status, string code, string message) => Json(new { error = new { code, message } }, status);
@@ -1199,7 +1387,7 @@ public sealed class TsAuthPlatformJourneyTests
             public string Role { get; } = role;
             public string InvitedBy { get; } = invitedBy;
             public DateTimeOffset CreatedAt { get; } = createdAt;
-            public DateTimeOffset ExpiresAt { get; } = expiresAt;
+            public DateTimeOffset ExpiresAt { get; set; } = expiresAt;
             public string Status { get; set; } = "pending";
         }
     }
