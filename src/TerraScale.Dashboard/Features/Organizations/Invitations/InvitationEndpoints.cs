@@ -18,6 +18,7 @@ public static class InvitationEndpoints
             await PageAsync(http, sessions, invitations, token));
         endpoints.MapPost("/invitations/{token}/respond", async (HttpContext http, DashboardSessions sessions, InvitationService invitations, string token) =>
         {
+            Protect(http);
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             var session = await sessions.ReadAsync(http);
@@ -25,8 +26,12 @@ public static class InvitationEndpoints
             try
             {
                 var action = form["action"].ToString().Trim().ToLowerInvariant();
-                await invitations.RespondAsync(session, token, action, http.RequestAborted);
-                return HttpRedirects.SeeOther(action == "accept" ? "/organization?tab=members&invitation=accepted" : "/organization?invitation=declined");
+                var answered = await invitations.RespondAsync(session, token, action, http.RequestAborted);
+                // Invitation destinations come from the verified offer, never caller-supplied workspace query parameters.
+                http.Response.Headers.Location = action == "decline" ? "/databases?invitation=declined" : answered.Project is { } project
+                    ? "/databases?organizationId=" + answered.Organization.Id + "&projectId=" + project.Id
+                    : "/organization?tab=members&invitation=accepted";
+                return Results.StatusCode(StatusCodes.Status303SeeOther);
             }
             catch (TerraScale.Dashboard.Shared.Accounts.AccountAccessException error)
             { return await PageAsync(http, sessions, invitations, token, error.Message, error.StatusCode); }
@@ -35,6 +40,7 @@ public static class InvitationEndpoints
         // the invitee then signs in with the invited email and opens the link again.
         endpoints.MapPost("/invitations/{token}/switch-account", async (HttpContext http, string token) =>
         {
+            Protect(http);
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             return await Features.Auth.AuthEndpoints.SignOutAsync(http);
@@ -42,15 +48,20 @@ public static class InvitationEndpoints
         return endpoints;
     }
 
-    private static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, InvitationService invitations, string token, string error = "", int status = 200)
+    private static void Protect(HttpContext http)
     {
         http.Response.Headers.CacheControl = "no-store";
         // Retain the origin on native form POSTs without exposing the token path.
         http.Response.Headers["Referrer-Policy"] = "strict-origin";
+    }
+
+    private static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, InvitationService invitations, string token, string error = "", int status = 200)
+    {
+        Protect(http);
         // ts-auth looks an invitation up only for a signed-in holder of its token.
         var session = await sessions.ReadAsync(http);
         var pending = await invitations.FindAsync(session, token, http.RequestAborted);
-        var slice = InvitationView.Create(new(new("Organization invitation", DocumentModel.NonceFor(http)), Csrf.Token(http), token,
+        var slice = InvitationView.Create(new(new(pending?.Project is null ? "Invitation" : "Project invitation", DocumentModel.NonceFor(http)), Csrf.Token(http), token,
             pending, session, error));
         slice.StatusCode = pending is null && session is not null ? 404 : status;
         return slice;

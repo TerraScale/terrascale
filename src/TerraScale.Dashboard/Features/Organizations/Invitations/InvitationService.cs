@@ -6,7 +6,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
-public sealed record PendingInvitation(OrganizationRecord Organization, InvitationRecord Invitation);
+public sealed record PendingInvitation(OrganizationRecord Organization, InvitationRecord Invitation, TerraScaleAuthPlatformNamed? Project = null);
 
 // ts-auth stores invitations and their tokens, checks the invitee's verified
 // email and grants the membership. The dashboard keeps no token or index; it
@@ -106,11 +106,17 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         if (session is null || token.Length is 0 or > 4096 || token.Any(char.IsControl)) return null;
         var found = await platform.LookupInvitationAsync(session, token, cancellationToken);
         if (found is null || found.ExpiresAt <= time.GetUtcNow()) return null;
+        if (!ValidNamed(found.Organization) || found.Project is { } project && (!ValidNamed(project) || project.Id == found.Organization.Id) ||
+            found.Role is not ("viewer" or "member" or "admin" or "owner") || found.Project is not null && found.Role == "owner")
+            throw new IOException("ts-auth invitation scope is invalid.");
         return new(new OrganizationRecord { Id = found.Organization.Id, Name = found.Organization.Name },
-            new InvitationRecord { OrganizationId = found.Organization.Id, Email = found.Email, Role = found.Role, ExpiresAt = found.ExpiresAt });
+            new InvitationRecord { OrganizationId = found.Organization.Id, ProjectId = found.Project?.Id, Email = found.Email, Role = found.Role, ExpiresAt = found.ExpiresAt }, found.Project);
     }
 
-    public async Task<OrganizationRecord> RespondAsync(SessionRecord session, string token, string action, CancellationToken cancellationToken)
+    private static bool ValidNamed(TerraScaleAuthPlatformNamed? named) => named is not null && TerraScaleIds.IsValid(named.Id) &&
+        named.Name is { Length: >= 1 and <= 128 } name && name == name.Trim() && name.Any(char.IsLetterOrDigit) && !name.Any(char.IsControl);
+
+    public async Task<PendingInvitation> RespondAsync(SessionRecord session, string token, string action, CancellationToken cancellationToken)
     {
         action = action.Trim().ToLowerInvariant();
         if (action is not ("accept" or "decline")) throw new AccountAccessException("Choose whether to accept or decline the invitation.", 400);
@@ -120,13 +126,19 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         if (action == "decline")
         {
             await platform.DeclineInvitationAsync(session, token, cancellationToken);
-            return pending.Organization;
+            return pending;
         }
         var accepted = await platform.AcceptInvitationAsync(session, token, cancellationToken);
-        if (accepted.OrganizationId != pending.Organization.Id) throw new IOException("ts-auth accepted another organization's invitation.");
-        // The membership is ts-auth's; select the organization the caller joined.
-        await accounts.SwitchOrganizationAsync(session, accepted.OrganizationId, cancellationToken);
-        return pending.Organization;
+        if (accepted.OrganizationId != pending.Organization.Id || accepted.ProjectId != pending.Invitation.ProjectId || accepted.Role != pending.Invitation.Role)
+            throw new IOException("ts-auth accepted a different invitation scope.");
+        if (accepted.ProjectId is { } projectId)
+        {
+            // Confirm the pair through live authorization before changing the saved selection.
+            await accounts.GetContextAsync(session, cancellationToken, accepted.OrganizationId, projectId);
+            await accounts.SwitchProjectAsync(session, projectId, cancellationToken);
+        }
+        else await accounts.SwitchOrganizationAsync(session, accepted.OrganizationId, cancellationToken);
+        return pending;
     }
 
     private async Task<AccountContext> FreshAsync(AccountContext context, CancellationToken cancellationToken)
