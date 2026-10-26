@@ -143,3 +143,135 @@ func TestProjectDirectoryReadRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectDirectoryMutations(t *testing.T) {
+	calls := 0
+	u := directoryUser(t, func(r *http.Request) (*http.Response, error) {
+		calls++
+		want := []string{"disable", "enable", ""}[calls-1]
+		path := "/proxy/v1/" + directoryID + "/users/" + directoryID
+		if want != "" {
+			path += "/" + want
+		}
+		method := http.MethodPost
+		if want == "" {
+			method = http.MethodDelete
+		}
+		if r.Method != method || r.URL.Path != path || r.URL.RawQuery != "" || r.Body != nil || r.Header.Get("Content-Type") != "" || r.Header.Get("Authorization") != "Bearer private-test-token" {
+			t.Error("incorrect bodyless mutation")
+		}
+		if want == "" {
+			return directoryResponse(204, ""), nil
+		}
+		body := directoryUserJSON
+		if want == "disable" {
+			body = strings.Replace(body, "false", "true", 1)
+		}
+		return directoryResponse(200, body), nil
+	})
+	disabled, err := u.DisableProjectUser(t.Context(), directoryID, directoryID)
+	if err != nil || !disabled.Disabled {
+		t.Fatalf("disable: %v", err)
+	}
+	enabled, err := u.EnableProjectUser(t.Context(), directoryID, directoryID)
+	if err != nil || enabled.Disabled {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := u.DeleteProjectUser(t.Context(), directoryID, directoryID); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatal("mutation replay")
+	}
+}
+
+func directoryMutations(u *tsauth.User, ctx context.Context, id string) []func() error {
+	return []func() error{
+		func() error { _, err := u.DisableProjectUser(ctx, directoryID, id); return err },
+		func() error { _, err := u.EnableProjectUser(ctx, directoryID, id); return err },
+		func() error { return u.DeleteProjectUser(ctx, directoryID, id) },
+	}
+}
+
+func TestProjectDirectoryMutationRefusals(t *testing.T) {
+	for _, status := range []int{401, 403, 404, 429, 503, 307} {
+		calls := 0
+		u := directoryUser(t, func(r *http.Request) (*http.Response, error) {
+			calls++
+			return directoryResponse(status, `{"error":{"code":"forbidden_role","message":"private-test-token"}}`), nil
+		})
+		for _, mutate := range directoryMutations(u, t.Context(), directoryID) {
+			err := mutate()
+			var api *tsauth.APIError
+			if !errors.As(err, &api) || api.Status != status || !errors.Is(err, tsauth.ErrForbiddenRole) || strings.Contains(err.Error(), "private-test-token") {
+				t.Errorf("status %d: %v", status, err)
+			}
+		}
+		if calls != 3 {
+			t.Fatal("refused mutation replayed")
+		}
+	}
+	calls := 0
+	u := directoryUser(t, func(r *http.Request) (*http.Response, error) { calls++; return nil, errors.New("private-test-token") })
+	for _, mutate := range directoryMutations(u, t.Context(), "invalid") {
+		if mutate() == nil {
+			t.Error("accepted invalid user")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("invalid mutation dispatched")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, mutate := range directoryMutations(u, ctx, directoryID) {
+		if !errors.Is(mutate(), context.Canceled) {
+			t.Error("lost caller cancellation")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("canceled mutation dispatched")
+	}
+	for _, mutate := range directoryMutations(u, t.Context(), directoryID) {
+		if err := mutate(); err == nil || strings.Contains(err.Error(), "private-test-token") {
+			t.Error("lost/redaction failure")
+		}
+	}
+	if calls != 3 {
+		t.Fatal("uncertain mutation replayed")
+	}
+}
+
+func TestProjectDirectoryMutationResponseContract(t *testing.T) {
+	for _, test := range []struct {
+		status      int
+		media, body string
+	}{
+		{201, "application/json", directoryUserJSON},
+		{200, "text/html", directoryUserJSON},
+		{200, "application/json", strings.Replace(directoryUserJSON, `,"disabled":false`, "", 1)},
+		{204, "application/json", ""},
+	} {
+		u := directoryUser(t, func(r *http.Request) (*http.Response, error) {
+			res := directoryResponse(test.status, test.body)
+			res.Header.Set("Content-Type", test.media)
+			return res, nil
+		})
+		if _, err := u.DisableProjectUser(t.Context(), directoryID, directoryID); err == nil {
+			t.Error("accepted wrong mutation contract")
+		}
+	}
+	for _, status := range []int{200, 202} {
+		u := directoryUser(t, func(r *http.Request) (*http.Response, error) { return directoryResponse(status, ""), nil })
+		if u.DeleteProjectUser(t.Context(), directoryID, directoryID) == nil {
+			t.Error("accepted non-204 deletion")
+		}
+	}
+	u := directoryUser(t, func(r *http.Request) (*http.Response, error) {
+		return directoryResponse(403, `{"error":{"code":"private-test-token","message":"private-test-token"}}`), nil
+	})
+	err := u.DeleteProjectUser(t.Context(), directoryID, directoryID)
+	var api *tsauth.APIError
+	if !errors.As(err, &api) || api.Code != "http_403" || strings.Contains(err.Error(), "private-test-token") {
+		t.Error("unknown code leaked")
+	}
+}

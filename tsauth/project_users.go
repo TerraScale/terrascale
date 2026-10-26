@@ -213,3 +213,36 @@ func (u *User) projectDirectoryDo(ctx context.Context, project, method string, p
 	}
 	return errors.New("tsauth: project directory request failed or response does not match the contract")
 }
+
+// DisableProjectUser requires the admin project role. Disabling stops sign-in
+// and invalidates every existing session and token immediately. Sent once.
+func (u *User) DisableProjectUser(ctx context.Context, project, user string) (*ProjectUser, error) {
+	return u.projectUserState(ctx, project, user, "disable")
+}
+
+// EnableProjectUser requires the admin project role. New sign-ins are allowed;
+// sessions invalidated by disabling remain ended. Sent once, without replay.
+func (u *User) EnableProjectUser(ctx context.Context, project, user string) (*ProjectUser, error) {
+	return u.projectUserState(ctx, project, user, "enable")
+}
+
+func (u *User) projectUserState(ctx context.Context, project, user, action string) (*ProjectUser, error) {
+	if err := entityid.Check(user); err != nil {
+		return nil, err
+	}
+	var out ProjectUser
+	if err := u.projectDirectoryDo(ctx, project, http.MethodPost, []string{"users", user, action}, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteProjectUser requires the admin project role, releases the user's email,
+// and invalidates its sessions and tokens. A successful response is empty 204.
+// Sent once: reconcile an uncertain outcome before manually trying again.
+func (u *User) DeleteProjectUser(ctx context.Context, project, user string) error {
+	if err := entityid.Check(user); err != nil {
+		return err
+	}
+	return u.projectDirectoryDo(ctx, project, http.MethodDelete, []string{"users", user}, nil, nil)
+}

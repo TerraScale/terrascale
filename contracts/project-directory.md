@@ -20,3 +20,15 @@ Requests are sent once, redirects refused, cancellation honored, deadline 30s,
 responses bounded to 8 MiB. Caller HTTP clients remain owned by the caller.
 Captured generated OpenAPI has createdAt instead of runtime created_at (known
 producer schema drift TS1274); no schema parity or live qualification is claimed.
+
+| Method/path | Operation | Role | Success |
+| --- | --- | --- | --- |
+| POST /v1/{project}/users/{user}/disable | disable_project_user | admin | 200 ProjectUserBody |
+| POST /v1/{project}/users/{user}/enable | enable_project_user | admin | 200 ProjectUserBody |
+| DELETE /v1/{project}/users/{user} | delete_project_user | admin | 204 empty |
+
+These operations have no request body and document 401,403,404,503 JSON errors.
+Disable prevents sign-in and invalidates existing sessions/tokens immediately.
+Enable permits new sign-ins but does not restore ended sessions. Delete releases
+email and invalidates tokens/sessions. Never automatically replay any mutation;
+reconcile an uncertain response through the directory before a manual retry.
