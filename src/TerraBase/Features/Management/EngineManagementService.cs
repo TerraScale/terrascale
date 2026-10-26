@@ -752,6 +752,11 @@ internal sealed partial class EngineManagementService(
                 };
             }
 
+            if (!source.PlacedIn(options.Region))
+            {
+                return new Conflict("the snapshot's region is outside the database's current placement", "backup_region_not_placed");
+            }
+
             placement = source.Placement(options.Region) with { Version = 1 };
         }
 
