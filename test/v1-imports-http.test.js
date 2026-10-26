@@ -97,7 +97,7 @@ test.each(["postgres_plain", "sqlite", "ndjson"])("create sends the exact %s req
   expect(requests[0]?.headers["content-type"]).toBe("application/json");
 });
 
-test.each([{}, { exclude: null, collection: null }, { exclude: [], collection: "a".repeat(63) }])("update preserves legitimate optional/null options %j", async options => {
+test.each([{}, { exclude: null, collection: null }, { exclude: [], collection: "a".repeat(63) }, { collection: "com10" }, { collection: "console" }])("update preserves legitimate optional/null options %j", async options => {
   const { client, requests } = await fixture((_r, reply) => json(reply, job, 202));
   await client.database("app").imports.update({ options });
   expect(JSON.parse(requests[0]?.body ?? "")).toEqual({ options });
@@ -107,6 +107,7 @@ test.each([
   { missingPrimaryKey: "generate" }, { sourceRef: "anything" }, { collection: 1 }, { collection: "Uppercase" },
   { collection: "a".repeat(64) }, { collection: "sqlite_schema" }, { collection: "turso_rows" },
   { collection: "collections" }, { collection: "commit_offset" }, { collection: "terrascale-import" },
+  ...["fts_dir__tb_fts_index_rows", "_tb_fts_index_rows", "con", "prn", "aux", "nul", "com0", "com9", "lpt0", "lpt9"].map(collection => ({ collection })),
   { exclude: "public.rows" }, { exclude: [null] }, { exclude: [1] }, { exclude: [""] }, { exclude: ["table_only"] },
   { exclude: ["public.rows."] }, { exclude: ["public.rows.col.extra"] }, { exclude: ['public."unfinished'] },
   { exclude: ['public.""'] }, { exclude: ['public."rows"\n'] }, { exclude: ["public." + "a".repeat(506)] },

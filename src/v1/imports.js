@@ -39,7 +39,8 @@ function validateOptions(options) {
   }
   if (collection !== undefined && collection !== null) {
     requireName("collection", collection);
-    if (/^(?:sqlite_|turso_)/u.test(collection) || ["collections", "commit_offset", "terrascale-import"].includes(collection))
+    if (/^(?:sqlite_|turso_|fts_dir__tb_fts_index_)/u.test(collection) ||
+        /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$/u.test(collection) || ["collections", "commit_offset", "terrascale-import"].includes(collection))
       throw new TypeError("options.collection must be an unreserved collection name.");
   }
 }
