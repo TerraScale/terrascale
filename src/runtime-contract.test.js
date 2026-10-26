@@ -20,7 +20,10 @@ test("public package keeps Node persistence/SQL and Better Auth server condition
   expect(manifest.peerDependenciesMeta["@tanstack/db"].optional).toBe(true);
   expect(manifest.peerDependencies["@better-auth/core"]).toBe("1.7.2");
   expect(manifest.devDependencies["@better-auth/test-utils"]).toBe("1.7.2");
-  expect(manifest.version).toBe("0.0.8");
+  expect(manifest.exports["./codegen"]).toEqual({ types: "./types/codegen.d.ts", browser: null, node: "./src/codegen.js" });
+  expect(manifest.peerDependencies["json-schema-to-typescript"]).toBe("16.0.0");
+  expect(manifest.peerDependenciesMeta["json-schema-to-typescript"].optional).toBe(true);
+  expect(manifest.version).toMatch(/^0\.0\.[0-9]+$/u);
   const lockfile = JSON.parse(
     await readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
   );

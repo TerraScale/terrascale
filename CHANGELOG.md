@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.9 — declared JSON Schema models
+
+Node tooling at `@terrascale/sdk/codegen` generates document, create and
+merge-patch body types from `collection.getSchema()` or a schema file. Install
+the exact tooling peer `json-schema-to-typescript@16.0.0`; the `terrascale-models`
+command is separate from browser/runtime entrypoints. Unsupported constructs
+produce JSON Pointer diagnostics. Runtime validation remains authoritative.
+
 ## 0.0.7 — live shape reconnect, browser bootstrap and read replica
 
 `subscribeShape` keeps its state and retries the same position after a lost
