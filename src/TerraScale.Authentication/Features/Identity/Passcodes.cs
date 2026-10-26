@@ -107,6 +107,30 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
                 Tokens.Sha256Hex(pendingToken), cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Reissues a pending sign-up's code only for its original token, retaining its password hash and token binding.</summary>
+    public async Task<IssuedPasscode?> ResendSignUpAsync(string instanceId, string email, string pendingToken, CancellationToken cancellationToken = default)
+    {
+        if (Users.NormalizeEmail(email) is not { } normalized || pendingToken.Length != 43)
+        {
+            return null;
+        }
+
+        if (await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user)
+        {
+            return await this.RequestAsync(instanceId, user.Email, cancellationToken).ConfigureAwait(false);
+        }
+
+        var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, SignUpKey + normalized, cancellationToken).ConfigureAwait(false);
+        var previous = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
+        var tokenHash = Tokens.Sha256Hex(pendingToken);
+        return previous is { PasswordHash: { } hash, PendingTokenHash: { } binding, Consumed: false }
+            && previous.InstanceId == instanceId && previous.Email == normalized && previous.ExpiresAt > clock.GetUtcNow()
+            && Tokens.FixedTimeEquals(binding, tokenHash)
+            ? await this.IssueAsync(instanceId, SignUpKey + normalized, previous.UserId, normalized, previous.AuthEpoch, previous.AuthStamp,
+                PasscodePurpose.SignUp, hash, tokenHash, cancellationToken, requiredPendingTokenHash: tokenHash).ConfigureAwait(false)
+            : null;
+    }
+
     /// <summary>
     /// Redeems a sign-in code and opens a session. Returns <see langword="null"/> for an unknown email and for a wrong,
     /// expired, used, exhausted or superseded code alike. The code is consumed before the session is written, so a
@@ -238,11 +262,18 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         new(timestamp.UtcTicks / IssueWindow.Ticks * IssueWindow.Ticks, TimeSpan.Zero);
 
     private async Task<IssuedPasscode?> IssueAsync(string instanceId, string key, string userId, string email, long authEpoch, string? authStamp, PasscodePurpose purpose,
-        string? passwordHash, string? pendingTokenHash, CancellationToken cancellationToken)
+        string? passwordHash, string? pendingTokenHash, CancellationToken cancellationToken, string? requiredPendingTokenHash = null)
     {
         var now = clock.GetUtcNow();
         var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
         var previous = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
+        // Recheck on the exact version replaced below: a concurrent new sign-up must never be overwritten by an old resend.
+        if (requiredPendingTokenHash is not null && (previous is not { Consumed: false, PendingTokenHash: { } pending }
+            || previous.ExpiresAt <= now || !Tokens.FixedTimeEquals(pending, requiredPendingTokenHash)))
+        {
+            return null;
+        }
+
         if (previous is not null && (previous.InstanceId != instanceId || previous.Email != email
             || (purpose is not PasscodePurpose.SignUp && previous.UserId != userId)))
         {

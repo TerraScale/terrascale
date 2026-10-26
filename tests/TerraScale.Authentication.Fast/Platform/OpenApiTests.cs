@@ -123,8 +123,18 @@ public sealed partial class OpenApiTests
         await Assert.That(Scheme(paths.GetProperty("/v1/{slug}/__test/users").GetProperty("get"))).IsEqualTo("ManagementBearer");
         await Assert.That(Scheme(paths.GetProperty("/ui/{slug}/admin/__test").GetProperty("get"))).IsEqualTo("SessionCookie");
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get"))).IsEqualTo("OAuthAccessBearer");
-        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/token").GetProperty("post"))).IsEqualTo("clientBasic");
-        await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/revoke").GetProperty("post"))).IsEqualTo("clientBasic");
+        foreach (var path in new[] { "/{slug}/oauth/token", "/{slug}/oauth/revoke" })
+        {
+            var operation = paths.GetProperty(path).GetProperty("post");
+            var alternatives = operation.GetProperty("security").EnumerateArray().Select(requirement =>
+                string.Join(",", requirement.EnumerateObject().Select(scheme => scheme.Name))).ToArray();
+            await Assert.That(alternatives).IsEquivalentTo(["clientBasic", string.Empty]);
+            await Assert.That(operation.GetProperty("description").GetString()).Contains("client_secret_post");
+            await Assert.That(operation.GetProperty("description").GetString()).Contains("Public clients send client_id");
+        }
+
+        await Assert.That(paths.TryGetProperty("/{slug}/oauth/device", out _)).IsTrue();
+        await Assert.That(paths.TryGetProperty("/{slug}/oauth/device_authorization", out _)).IsFalse();
         await Assert.That(Scheme(paths.GetProperty("/v1/instances").GetProperty("post"))).IsEqualTo("OperatorBearer");
         await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__test").GetProperty("post"))).IsEqualTo("bearerAuth");
         // An endpoint's own declaration beats its group's; AllowAnonymous beats both.

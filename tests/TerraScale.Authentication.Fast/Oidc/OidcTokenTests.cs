@@ -168,14 +168,10 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         var code = await oidc.CodeAsync(session, challenge);
         var parent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.Private.AuthorizationCode);
 
-        var codeRace = await Race(index => oidc.RedeemCodeAsync(code, verifier, client: index % 2 == 0 ? oidc.Client : replica.Client));
-        await Assert.That(Outcomes(codeRace)).IsEqualTo(Expected);
-        var codeWinner = JsonSerializer.Deserialize<JsonElement>(codeRace.Single(result => result.Status == HttpStatusCode.OK).Body);
+        // Racing code redemptions end the grant (OidcCodeReplayTests); this race starts from one redemption.
+        using var redeemed = await oidc.RedeemCodeAsync(code, verifier);
+        var codeWinner = await OidcHarness.JsonAsync(redeemed);
         await AssertAccessWorksAsync(oidc, codeWinner, replica.Client);
-        foreach (var loser in codeRace.Where(result => result.Status != HttpStatusCode.OK))
-        {
-            await AssertConflictNoticeAsync(JsonSerializer.Deserialize<JsonElement>(loser.Body));
-        }
         var refreshParent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken);
         await AssertLineageAsync(oidc, parent, refreshParent);
         var refreshToken = codeWinner.GetProperty("refresh_token").GetString()!;
@@ -192,32 +188,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(await OidcHarness.ErrorAsync(afterRace)).IsEqualTo("invalid_grant");
         using var userInfo = await oidc.UserInfoAsync(winner.GetProperty("access_token").GetString()!, replica.Client);
         await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-    }
-
-    [Test]
-    public async Task Code_replay_rejects_the_parent_and_preserves_the_winning_descendants()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        await oidc.CreateUserAsync();
-        var session = await oidc.SignInAsync("alice@example.test");
-        var (verifier, challenge) = OidcHarness.Pkce();
-        var code = await oidc.CodeAsync(session, challenge);
-        var parent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.Private.AuthorizationCode);
-
-        using var first = await oidc.RedeemCodeAsync(code, verifier);
-        await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var tokens = await OidcHarness.JsonAsync(first);
-        var refreshParent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken);
-        await AssertLineageAsync(oidc, parent, refreshParent);
-
-        using var replay = await oidc.RedeemCodeAsync(code, verifier);
-        await AssertReplayRejectedAsync(replay);
-        await AssertAccessWorksAsync(oidc, tokens);
-        using var refresh = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
-        await Assert.That(refresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await AssertAccessWorksAsync(oidc, await OidcHarness.JsonAsync(refresh));
-        await AssertLineageAsync(oidc, refreshParent, await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken));
-        await AssertAccessWorksAsync(oidc, tokens);
     }
 
     [Test]

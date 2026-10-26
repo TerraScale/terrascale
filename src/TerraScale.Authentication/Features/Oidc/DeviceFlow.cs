@@ -9,6 +9,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
@@ -77,6 +78,27 @@ public static class DeviceFlow
                 StatusCodes.Status400BadRequest);
         }
 
+        // Resolve consent from the registered application and the code's validated scopes, never posted labels/scopes.
+        var applications = http.RequestServices.GetRequiredService<IOpenIddictApplicationManager>();
+        var application = await applications.FindByClientIdAsync(device.GetClaim(Claims.ClientId)!, cancellationToken);
+        var scopes = device.GetScopes();
+        var permissions = application is null ? [] : await applications.GetPermissionsAsync(application, cancellationToken);
+        if (application is null || !permissions.Contains(Permissions.Endpoints.DeviceAuthorization)
+            || !permissions.Contains(Permissions.GrantTypes.DeviceCode)
+            || scopes.Any(scope => PermissionDescription(scope) is null
+                || scope == Scopes.OfflineAccess && !permissions.Contains(Permissions.GrantTypes.RefreshToken)
+                || scope is not (Scopes.OpenId or Scopes.OfflineAccess) && !permissions.Contains(Permissions.Prefixes.Scope + scope)))
+        {
+            return SignInPageModel.Render(http, page with { ErrorTitle = "Device request unavailable", Error = "Start again from the application." }, StatusCodes.Status400BadRequest);
+        }
+
+        var clientName = await applications.GetDisplayNameAsync(application, cancellationToken);
+        page = page with
+        {
+            ClientName = string.IsNullOrWhiteSpace(clientName) ? device.GetClaim(Claims.ClientId) : clientName,
+            RequestedPermissions = scopes.Select(scope => $"{PermissionDescription(scope)} ({scope})").ToArray(),
+        };
+
         // Opening the link (GET) only shows the code: approval is always an explicit, origin-checked POST.
         var decision = post ? http.Request.Form["decision"].ToString() : string.Empty;
         if (decision == "deny")
@@ -102,6 +124,19 @@ public static class DeviceFlow
 
         return OidcResults.SignIn(user, session.CreatedAt, device.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
+
+    private static string? PermissionDescription(string scope) => scope switch
+    {
+        Scopes.OpenId => "Sign you in and identify your account",
+        Scopes.Email => "Read your email address",
+        Scopes.Profile => "Read your profile information",
+        Scopes.OfflineAccess => "Keep access through refresh tokens until access expires or is revoked",
+        TerraBaseScopes.DatabasesRead => "Read databases, schema, indexes, backups, policies and usage",
+        TerraBaseScopes.DatabasesWrite => "Create, change and delete databases, backups, policies and indexes",
+        TerraBaseScopes.DocumentsRead => "Read collections and documents and run queries",
+        TerraBaseScopes.DocumentsWrite => "Write collections and documents and run transactions",
+        _ => null,
+    };
 }
 
 /// <summary>

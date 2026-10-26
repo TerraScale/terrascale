@@ -57,8 +57,8 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     /// <summary>
     /// A sealed, five-minute second-factor challenge for a user whose primary credential was just verified. It names the
     /// user's authentication state and proof lineage, so a sign-out everywhere, reset or factor change voids it; each
-    /// attempt still needs an unused TOTP step or recovery code and charges the MFA attempt budget. Null when the user's
-    /// authentication state changed since <paramref name="user"/> was read.
+    /// attempt still needs an unused TOTP step or recovery code and charges the MFA attempt budget. It completes once
+    /// (<see cref="CompleteAsync"/>). Null when the user's authentication state changed since <paramref name="user"/> was read.
     /// </summary>
     public async Task<string?> ChallengeAsync(UserRecord user, CancellationToken cancellationToken = default)
     {
@@ -68,12 +68,16 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             return null;
         }
 
-        var challenge = new MfaChallenge(user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings);
+        var challenge = new MfaChallenge(AuthStore.NewId(), user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings);
         return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
     }
 
-    /// <summary>The user a live <see cref="Challenge"/> names, with its proof lineage, or null for anything else.</summary>
-    public async Task<UserRecord?> ChallengedUserAsync(string instanceId, string? sealedChallenge, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// The live, not yet completed <see cref="ChallengeAsync"/> challenge, or null for anything else. Its user carries the
+    /// challenge's proof lineage plus the slot its completion claims, so a session opened from it needs that completion to
+    /// be the replicated winner. Reads only: it spends no attempt and no proof.
+    /// </summary>
+    public async Task<ChallengedSignIn?> ChallengedAsync(string instanceId, string? sealedChallenge, CancellationToken cancellationToken = default)
     {
         MfaChallenge? challenge;
         try
@@ -87,11 +91,30 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             return null;
         }
 
-        return challenge is not null && challenge.ExpiresAt > clock.GetUtcNow() && TerraScaleIds.IsValid(challenge.UserId)
+        if (challenge is null || challenge.ExpiresAt <= clock.GetUtcNow() || !TerraScaleIds.IsValid(challenge.UserId) || !TerraScaleIds.IsValid(challenge.Id)
+            || challenge.Bindings.Count >= AuthStore.MaxCredentialBindings)
+        {
+            return null;
+        }
+
+        var completion = AuthStore.NewCredentialBinding("mfa-challenge", challenge.Id);
+        // A completed challenge fails fast here; the claim in the completing transaction is the authority.
+        return await store.FindUniqueAsync(instanceId, completion.Kind, completion.Key, cancellationToken).ConfigureAwait(false) is null
             && await users.GetAsync(instanceId, challenge.UserId, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
             && user.AuthEpoch == challenge.AuthEpoch && user.AuthStamp == challenge.AuthStamp
-                ? user with { AuthenticationBindings = challenge.Bindings }
+                ? new ChallengedSignIn(user with { AuthenticationBindings = [.. challenge.Bindings, completion] }, completion, challenge.ExpiresAt)
                 : null;
+    }
+
+    /// <summary>
+    /// Consumes an unused TOTP step or recovery code and completes <paramref name="challenged"/> in one transaction: of any
+    /// number of attempts on one challenge against the same regional store, at most one commits. Concurrent regional
+    /// winners reconcile through the completion lineage; this is not global linearizability. A refused commit spends no proof.
+    /// </summary>
+    public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(challenged);
+        return this.VerifyAsync(challenged.User, code, new MfaAuthorization(AuthStore.CredentialClaim(challenged.User.InstanceId, challenged.Completion), challenged.ExpiresAt), cancellationToken);
     }
 
     /// <summary>
@@ -370,9 +393,9 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
     private async Task LimitAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        if (!await limiter.TryAcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false))
+        if (await limiter.AcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false) is { } wait)
         {
-            throw new ApiException(429, "rate_limited", "Too many MFA attempts; retry after fifteen minutes.");
+            throw ApiException.RateLimited("Too many MFA attempts; retry after the Retry-After delay.", wait);
         }
     }
 
@@ -381,8 +404,11 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     private static string Context(string instanceId, string userId) => "totp:" + AuthStore.NaturalKeyId(instanceId, AuthStore.MfaCollection, userId);
 }
 
+/// <summary>A live sign-in challenge: its user with the proof lineage a completed session carries, and its one-use slot.</summary>
+public sealed record ChallengedSignIn(UserRecord User, CredentialBinding Completion, DateTimeOffset ExpiresAt);
+
 /// <summary>The sealed contents of a sign-in's second-factor challenge.</summary>
-internal sealed record MfaChallenge(string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings);
+internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings);
 
 /// <summary>A trusted caller's validated, expiring authorization transition, committed with the MFA change.</summary>
 internal sealed record MfaAuthorization(StoreOperation Operation, DateTimeOffset ExpiresAt);

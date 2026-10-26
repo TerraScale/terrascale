@@ -80,6 +80,20 @@ public static partial class OpenApiSetup
                     operation.Security = [Requirement(declared.Scheme, context.Document)];
                 }
 
+                if (operation.OperationId is "oauth_token" or "oauth_revoke")
+                {
+                    // OpenAPI cannot express credentials in a form body as a security scheme.
+                    // The empty alternative covers public clients and client_secret_post, not
+                    // anonymous grants: OpenIddict still validates the registered client.
+                    operation.Security = [Requirement(SecuritySchemes.ClientBasic, context.Document), new OpenApiSecurityRequirement()];
+                    operation.Description += " Public clients send client_id without a client secret; confidential clients authenticate with client_secret_basic (HTTP Basic) or client_secret_post (form client_id and client_secret). The empty OpenAPI security alternative represents requests without an Authorization header, not a bypass of client validation or grant permissions. Never send a confidential client's secret from a browser.";
+                }
+
+                if (operation.OperationId == "oauth_token")
+                {
+                    operation.Description += " A refresh scope subset limits the new access token, not the successor refresh token's original authority (RFC 6749 section 6); omitted scope requests the original set, and expanded or unknown scopes are rejected. The response scope may be omitted when equal to the explicit requested set. Rotation never extends the family's absolute expiry and can stop earlier at its ancestry proof budget; sign in again on invalid_grant. See docs/auth/regional/refresh-scope-lifetime.md for the scope and lifetime contract.";
+                }
+
                 if (operation.OperationId is "delete_account" or "account_deletion_status")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter

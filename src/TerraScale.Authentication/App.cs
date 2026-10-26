@@ -135,6 +135,9 @@ public static class App
         builder.Services.AddHttpClient(Features.Social.PlatformSocialSignIn.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         builder.Services.AddHostedService<SessionPruner>();
+        builder.Services.AddSingleton<OidcRetention>();
+        builder.Services.AddHostedService<OidcPruner>();
+        builder.Services.ConfigureOptions<OidcDiscoveryClaims>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
