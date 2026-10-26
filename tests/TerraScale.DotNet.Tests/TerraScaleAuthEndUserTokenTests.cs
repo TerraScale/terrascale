@@ -160,7 +160,7 @@ public sealed class TerraScaleAuthEndUserTokenTests
         await Assert.That(handler.Calls).IsEqualTo(1);
     }
 
-    private static TerraScaleAuthClient Client(HttpClient http) => new(http, new() { BaseAddress = new("https://auth.example.test"), InstanceSlug = "terrascale", MaxRetryAttempts = 2 });
+    private static TerraScaleAuthClient Client(HttpClient http) => new(http, new() { BaseAddress = new("https://auth.example.test"), InstanceSlug = "terrascale" });
     private static HttpResponseMessage Reply(string json, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {
