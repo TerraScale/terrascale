@@ -7,6 +7,8 @@ count the collection, or drain an unbounded backlog in one pass. A full traversa
 takes multiple ticks; concurrent creation behind the cursor is picked up on the
 next traversal. Cursors are scheduling hints. Losing them on restart repeats work
 safely; an invalidated cursor restarts the traversal.
+Each successful pass logs only its token/authorization deletion counts, providing
+an operational observation without exposing tenant or credential identifiers.
 
 Authorization-code, device-code, user-code, refresh, access and ID-token records
 become eligible thirty-one days after creation, and only when expired. Expired

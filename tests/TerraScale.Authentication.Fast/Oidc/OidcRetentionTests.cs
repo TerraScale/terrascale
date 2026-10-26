@@ -15,7 +15,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 
 /// <summary>Real TerraBase pagination, conditional claim cleanup and preservation of replay evidence.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
-public sealed class OidcRetentionTests(TerraBaseFixture fixture)
+public sealed partial class OidcRetentionTests(TerraBaseFixture fixture)
 {
     [Test]
     public async Task Concurrent_bounded_pages_clean_expired_records_and_exact_claims_across_tenants()

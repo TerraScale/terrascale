@@ -10,13 +10,14 @@ public sealed class OidcPruner(OidcRetention retention, TimeProvider clock, ILog
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval);
+        using var timer = new PeriodicTimer(Interval, clock);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             try
             {
-                await retention.PruneTokensAsync(clock.GetUtcNow(), null, stoppingToken).ConfigureAwait(false);
-                await retention.PruneAuthorizationsAsync(clock.GetUtcNow(), null, stoppingToken).ConfigureAwait(false);
+                var tokens = await retention.PruneTokensAsync(clock.GetUtcNow(), null, stoppingToken).ConfigureAwait(false);
+                var authorizations = await retention.PruneAuthorizationsAsync(clock.GetUtcNow(), null, stoppingToken).ConfigureAwait(false);
+                logger.ZLogInformation($"OIDC retention pruned {tokens} token records and {authorizations} authorization records");
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
