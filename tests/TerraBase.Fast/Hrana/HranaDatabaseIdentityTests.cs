@@ -35,8 +35,8 @@ public sealed class HranaDatabaseIdentityTests
             time.Advance(HranaStreams.IdleTimeout + TimeSpan.FromSeconds(1));
         }
 
-        var stale = await PostAsync(api, $$"""
-            {"baton":"{{baton}}","requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t"}},{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (98)"}},{"type":"close"}]}
+        var stale = await PostAsync(api, $$$"""
+            {"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t"}},{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (98)"}},{"type":"close"}]}
             """, version);
         await AssertExpiredAsync(stale);
         await AssertRowsAsync(api, version, """[[{"type":"integer","value":"7"}]]""");
@@ -59,8 +59,8 @@ public sealed class HranaDatabaseIdentityTests
             time.Advance(HranaStreams.IdleTimeout + TimeSpan.FromSeconds(1));
         }
 
-        var stale = await PostAsync(api, $$"""
-            {"baton":"{{baton}}","batch":{"steps":[{"stmt":{"sql":"INSERT INTO t VALUES (98)"}},{"stmt":{"sql":"SELECT x FROM t"}}]}}
+        var stale = await PostAsync(api, $$$"""
+            {"baton":"{{{baton}}}","batch":{"steps":[{"stmt":{"sql":"INSERT INTO t VALUES (98)"}},{"stmt":{"sql":"SELECT x FROM t"}}]}}
             """, "v3", endpoint: "cursor");
         await AssertCursorExpiredAsync(stale);
         await AssertRowsAsync(api, "v3", """[[{"type":"integer","value":"7"}]]""");
@@ -88,8 +88,8 @@ public sealed class HranaDatabaseIdentityTests
             time.Advance(HranaStreams.IdleTimeout + TimeSpan.FromSeconds(1));
         }
 
-        var resumed = await PostAsync(api, $$"""
-            {"baton":"{{baton}}","requests":[{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (24)"}},{"type":"close"}]}
+        var resumed = await PostAsync(api, $$$"""
+            {"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (24)"}},{"type":"close"}]}
             """, version);
         await Assert.That(Types(resumed.Json)).IsEqualTo("ok:execute,ok:close");
         await AssertRowsAsync(api, version, """[[{"type":"integer","value":"23"}],[{"type":"integer","value":"24"}]]""");
@@ -114,8 +114,8 @@ public sealed class HranaDatabaseIdentityTests
         foreach (var invalid in malformed)
         {
             var body = endpoint == "pipeline"
-                ? $$"""{"baton":"{{invalid}}","requests":[{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (99)"}},{"type":"close"}]}"""
-                : $$"""{"baton":"{{invalid}}","batch":{"steps":[{"stmt":{"sql":"INSERT INTO t VALUES (99)"}}]}}""";
+                ? $$$"""{"baton":"{{{invalid}}}","requests":[{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (99)"}},{"type":"close"}]}"""
+                : $$$"""{"baton":"{{{invalid}}}","batch":{"steps":[{"stmt":{"sql":"INSERT INTO t VALUES (99)"}}]}}""";
             var refused = await PostAsync(api, body, version, endpoint: endpoint);
             if (endpoint == "pipeline")
             {
@@ -127,7 +127,7 @@ public sealed class HranaDatabaseIdentityTests
             }
         }
 
-        var original = await PostAsync(api, $$"""{"baton":"{{baton}}","requests":[{"type":"get_autocommit"},{"type":"close"}]}""", version);
+        var original = await PostAsync(api, $$$"""{"baton":"{{{baton}}}","requests":[{"type":"get_autocommit"},{"type":"close"}]}""", version);
         await Assert.That(Types(original.Json)).IsEqualTo("ok:get_autocommit,ok:close");
         await AssertRowsAsync(api, version, "[]");
     }
