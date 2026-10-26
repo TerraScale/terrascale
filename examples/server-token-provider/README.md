@@ -10,4 +10,4 @@ const { client } = createServerClient()
 const db = client.database(process.env.TERRASCALE_DATABASE_NAME)
 ```
 
-The published SDK 0.0.13 helper exchanges an explicit project grant without resource. Concurrent renewals coalesce; the cache renews within five seconds of expiry and never falls back to stale credentials after failure. Root SDK data methods resolve the provider for every request/reconnect. Pass cancellation/deadline signals to data operations; the provider callback itself has no signal argument. Authentication failures stop the operation without replaying mutations. Request only the document scopes your application needs.
+The published SDK 0.0.16 helper exchanges an explicit project grant without resource. Concurrent renewals coalesce; the cache renews within five seconds of expiry and never falls back to stale credentials after failure. Root SDK data methods resolve the provider for every request/reconnect. Pass cancellation/deadline signals to data operations; the provider callback itself has no signal argument. Authentication failures stop the operation without replaying mutations. Request only the document scopes your application needs.

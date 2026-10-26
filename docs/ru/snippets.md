@@ -9,7 +9,7 @@ title: Code examples
 
 # Code examples
 
-Use the [JavaScript quickstart](/ru/getting-started/javascript) for the publicly installed `@terrascale/sdk@0.0.5` package. Download [quickstart.mjs](/examples/terrabase-js/quickstart.mjs) and [package.json](/examples/terrabase-js/package.json) for its standalone consumer.
+Use the [JavaScript quickstart](/ru/getting-started/javascript) for the publicly installed `@terrascale/sdk@0.0.16` package. Download [quickstart.mjs](/examples/terrabase-js/quickstart.mjs) and [package.json](/examples/terrabase-js/package.json) for its standalone consumer.
 
 The [C# quickstart](/ru/getting-started/csharp) builds the SDK package from source and includes a full CRUD/query example.
 

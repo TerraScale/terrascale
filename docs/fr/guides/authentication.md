@@ -75,7 +75,7 @@ Keep credentials in the application platform's secret store. Read them only on t
 
 For JavaScript, pass `token` to `createTerraBaseV1Client`. For C#, pass `ApiKey` or an `AccessTokenProvider`, exclusively. The provider can supply a refreshed credential per request and must honor cancellation. Go uses `Config.Token`. Do not write a raw request wrapper or a private endpoint to bypass the SDK.
 
-A complete [server token provider](/examples/server-token-provider/README.txt) uses published `@terrascale/sdk@0.0.13` to exchange the explicit project grant, coalesce requests and renew before expiry. Download its [module](/examples/server-token-provider/server-client.mjs) and [pinned package manifest](/examples/server-token-provider/package.json); keep the key server-side. Data operations receive a current token per request; failed authorization never replays a mutation.
+A complete [server token provider](/examples/server-token-provider/README.txt) uses published `@terrascale/sdk@0.0.16` to exchange the explicit project grant, coalesce requests and renew before expiry. Download its [module](/examples/server-token-provider/server-client.mjs) and [pinned package manifest](/examples/server-token-provider/package.json); keep the key server-side. Data operations receive a current token per request; failed authorization never replays a mutation.
 
 ## Browser applications
 

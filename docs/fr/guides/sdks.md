@@ -15,9 +15,9 @@ Use a TerraBase SDK to store and query JSON documents in a project database. Eac
 
 | Language | Package / entrypoint | Runtime | Install |
 | --- | --- | --- | --- |
-| JavaScript / TypeScript | `@terrascale/sdk@0.0.13`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/fr/getting-started/javascript) |
+| JavaScript / TypeScript | `@terrascale/sdk@0.0.16`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/fr/getting-started/javascript) |
 | C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Build the package from source; [quickstart](/fr/getting-started/csharp) |
-| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.5` |
+| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.6` |
 | Python | `terrascale`, `TerraScale` / `AsyncTerraScale` | Python ≥3.10, httpx | `pip install` from Git; [quickstart](/fr/getting-started/python) |
 | Rust | `terrascale::v1`, `Client::for_project` | Rust 2021 edition, Tokio | Git tag `v0.0.2`; not on crates.io yet |
 
@@ -26,7 +26,7 @@ The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its 
 ### JavaScript / TypeScript
 
 ```bash
-npm install --save-exact @terrascale/sdk@0.0.13
+npm install --save-exact @terrascale/sdk@0.0.16
 ```
 
 Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Filter` and typed errors. `client.database(name).collection(name)` selects a collection. It provides `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` and `items`; `db.execute`, `db.query` and `db.batch` run [SQL](/fr/guides/sql-http#from-the-sdks). See [the complete example](/fr/getting-started/javascript).
@@ -35,7 +35,7 @@ Generate [TypeScript document models](/fr/guides/schema-validation#generate-type
 
 #### JavaScript public operation reference
 
-This compact inventory covers published `@terrascale/sdk@0.0.13` exports and returned SDK handles. The installed `.d.ts` files define argument/result types; selecting a handle does not provision it. Constructors are exported, but obtain service handles through the factories. Availability still requires the owning service, scope and role; export presence is not live qualification. Mutations are sent once; reconcile ambiguous outcomes before replay. Reuse an authorized endpoint until automatic eligible-region discovery ships.
+This compact inventory records published `@terrascale/sdk@0.0.13` exports and returned SDK handles. The installed `.d.ts` files define argument/result types; selecting a handle does not provision it. Constructors are exported, but obtain service handles through the factories. Availability still requires the owning service, scope and role; export presence is not live qualification. Mutations are sent once; reconcile ambiguous outcomes before replay. Reuse an authorized endpoint until automatic eligible-region discovery ships.
 
 | Entrypoint / handle | Exports, members and return handles |
 | --- | --- |
@@ -89,7 +89,7 @@ Imports below use the `@terrascale/sdk` prefix. Framework utilities do not suppl
 ### Go
 
 ```bash
-go get terrascale.tech/sdk@v0.0.5
+go get terrascale.tech/sdk@v0.0.6
 ```
 
 Import `terrascale.tech/sdk/v1`. `New(Config)` takes a `BaseURL` (or a `Resolver`) and a `Token`. `Database(projectId, name)` and named collections scope document operations; `ExecuteSQL`, `QuerySQL` and `BatchSQL` run [SQL](/fr/guides/sql-http#from-the-sdks).
@@ -121,7 +121,7 @@ Match the installed artifact to the example. A source method or HTTP fixture doe
 
 | Artifact | Full-text / vector queries | Streaming document export | Installation |
 | --- | --- | --- | --- |
-| Go `v0.0.5` ([source](https://github.com/TerraScale/ts-go/tree/b2b7a55a66da4dd0db6588d27d571efe2177f31c)) | Included | Not included | Published module; used by the Go quickstart |
+| Go `v0.0.5` ([source](https://github.com/TerraScale/ts-go/tree/b2b7a55a66da4dd0db6588d27d571efe2177f31c)) | Included | Not included | Historical published module |
 | Go source [`416faaad8787ef883b7ff0be3bbbb90c5b0f8567`](https://github.com/TerraScale/ts-go/tree/416faaad8787ef883b7ff0be3bbbb90c5b0f8567) | Included | `Database.Export` | `go get terrascale.tech/sdk@416faaad8787ef883b7ff0be3bbbb90c5b0f8567`; Go records its immutable pseudo-version |
 | .NET source [`e786f2e38b34985293446fd1eb5bfa602e041b85`](https://github.com/TerraScale/ts-dotnet/tree/e786f2e38b34985293446fd1eb5bfa602e041b85), local pack `0.0.12` | Included | `TerraBaseDatabase.ExportAsync` | Source/local feed only; used by the C# quickstart |
 

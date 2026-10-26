@@ -11,7 +11,7 @@ description: Integrate per-user TerraBase todos without sending project credenti
 # Browser todos with end-user access
 
 ::: tip Bring your application session
-This example uses published **`@terrascale/sdk@0.0.5`**, project-scoped end-user tokens and collection rules. Complete the [backend token integration](/fr/getting-started/browser-backend-tokens) with your application's validated session. Hosted login is outside this example's scope. Never substitute a project access token in the browser.
+This example uses published **`@terrascale/sdk@0.0.16`**, project-scoped end-user tokens and collection rules. Complete the [backend token integration](/fr/getting-started/browser-backend-tokens) with your application's validated session. Hosted login is outside this example's scope. Never substitute a project access token in the browser.
 :::
 
 Integrate an already authenticated end-user session with the [browser example source](https://github.com/TerraScale/ts-docs/tree/main/examples/browser-todos). The browser creates, lists, edits, completes and deletes that user's todos through the SDK. It never creates collections, sets rules, exchanges project credentials, or owns identity records. Identity, organizations, projects and keys belong to ts-auth; todo data belongs to TerraBase.
