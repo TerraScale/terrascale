@@ -53,12 +53,24 @@ public sealed class SqlCatalogBrowserJourneyTests(DashboardE2EFixture fixture)
         await page.Keyboard.PressAsync("Enter");
         var sql = await page.Locator("#sql").InputValueAsync();
         await Assert.That(sql).Contains("\"declared_only\"");
+        var pending = new TaskCompletionSource<(string Busy, string Message)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await page.ExposeBindingAsync("recordCatalogPending", (BindingSource _, string busy, string message) =>
+            pending.TrySetResult((busy, message)));
+        await page.Locator("#sql-query-form").EvaluateAsync("""
+            form => window.addEventListener('submit', event => {
+                if (event.target !== form) return;
+                const catalog = document.querySelector('#sql-tables');
+                void recordCatalogPending(catalog.getAttribute('aria-busy'), catalog.querySelector('[role="status"]').textContent);
+            })
+            """);
         var refresh = page.GetByRole(AriaRole.Button, new() { Name = "Refresh SQL tables", Exact = true }).ClickAsync();
         try
         {
             await loading.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await page.WaitForFunctionAsync("() => document.querySelector('#sql-tables')?.getAttribute('aria-busy') === 'true'");
-            await Assert.That(await page.Locator("#sql-tables").GetAttributeAsync("aria-busy")).IsEqualTo("true");
+            // Native navigation pauses browser evaluation; capture the real DOM during submission.
+            var state = await pending.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(state.Busy).IsEqualTo("true");
+            await Assert.That(state.Message).Contains("Loading SQL tables");
         }
         finally { release.TrySetResult(); }
         await refresh;
