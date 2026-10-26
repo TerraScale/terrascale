@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.OpenApi;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -17,13 +18,29 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         Get(DocumentRoute.Document);
         Name("getDocument");
         Summary("Reads a JSON document");
-        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match. A retained loser of a replicated uniqueness conflict returns 409 unique_violation with its source state's ETag.");
+        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. Optional If-Match is checked first using strong comparison; a failed condition returns 412 precondition_failed, including If-Match: * on an absent or deleted document. If-None-Match uses weak comparison against a live document; a match returns 304 with ETag and no response body. Malformed conditional headers return 400. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match. A retained loser of a replicated uniqueness conflict returns 409 unique_violation with its source state's ETag.");
         Tags("Documents");
+        Metadata(new OpenApiParameter
+        {
+            Name = "If-Match",
+            In = ParameterLocation.Header,
+            Description = "Optional * or list of entity tags, compared strongly before If-None-Match; a failed condition returns 412 precondition_failed.",
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+        });
+        Metadata(new OpenApiParameter
+        {
+            Name = "If-None-Match",
+            In = ParameterLocation.Header,
+            Description = "Optional * or list of entity tags, compared weakly against a live document; a match returns 304 with ETag and no body.",
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+        });
         Produces<DocumentBody>();
+        Produces(StatusCodes.Status304NotModified);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
     }

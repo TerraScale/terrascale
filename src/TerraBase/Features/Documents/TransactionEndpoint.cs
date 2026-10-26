@@ -36,6 +36,8 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status415UnsupportedMediaType);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
     }

@@ -32,6 +32,8 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status415UnsupportedMediaType);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
     }

@@ -16,7 +16,7 @@ public sealed class ListIndexesEndpoint(IManagementService management, IIndexSer
         Get(ProjectApiRoute.Indexes);
         Name("listIndexes");
         Summary("Lists the indexes of a database");
-        Description("Query: collection (optional) keeps the indexes of one collection. Items are in name order; state is always active." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Query: collection (optional) keeps the indexes of one collection. Items are in name order. A vector index reports state building while existing documents are indexed in the background, then active; btree and text indexes are built before creation returns and report active." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Indexes");
         Produces<IndexListBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

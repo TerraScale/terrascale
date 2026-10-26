@@ -16,6 +16,7 @@ public readonly union CollectionTtlResult(CollectionTtlBody, NotFound, PayloadTo
 internal sealed partial class DocumentService
 {
     private const int SweepPage = 100;
+    private static readonly string[] TtlDateTimeFormats = ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd't'HH:mm:ss"];
 
     public ValueTask<CollectionTtlResult> GetCollectionTtlAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
         ReadCertifiedAsync<CollectionTtlResult>(database, async _ =>
@@ -108,10 +109,10 @@ internal sealed partial class DocumentService
             return 0;
         }
 
-        // UTC RFC 3339 text sorts like time to the second, so this candidate set holds every expired one; parsing confirms each.
+        // Include the whole UTC day so lowercase 't' timestamps are candidates too; parsing confirms the exact expiry.
         var member = new DocumentPath(segments);
         var filter = new CompareFilter(member, Comparison.Less,
-            new ScalarValue(ScalarKind.Text, now.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture)));
+            new ScalarValue(ScalarKind.Text, now.UtcDateTime.Date.AddDays(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
         var deleted = 0;
         QueryPosition? after = null;
         QueryPage page;
@@ -164,8 +165,18 @@ internal sealed partial class DocumentService
             }
         }
 
-        return value.ValueKind == JsonValueKind.String
-            && DateTimeOffset.TryParse(value.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var expires)
+        if (value.ValueKind != JsonValueKind.String || value.GetString() is not { } timestamp)
+        {
+            return false;
+        }
+
+        var suffix = timestamp.EndsWith('Z') || timestamp.EndsWith('z') ? 1 : timestamp.EndsWith("+00:00", StringComparison.Ordinal) ? 6 : 0;
+        var end = timestamp.Length - suffix;
+        // Validate the exact date/time and optional decimal fraction before parsing, preserving supported sub-tick fractions.
+        return suffix > 0 && end >= 19
+            && DateTimeOffset.TryParseExact(timestamp.AsSpan(0, 19), TtlDateTimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out _)
+            && (end == 19 || (timestamp[19] == '.' && end > 20 && timestamp.AsSpan(20, end - 20).IndexOfAnyExceptInRange('0', '9') < 0))
+            && DateTimeOffset.TryParse(timestamp, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var expires)
             && expires < now;
     }
 }

@@ -26,6 +26,7 @@ public sealed class PutCollectionRulesEndpoint(IDocumentService documents, ITena
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status415UnsupportedMediaType);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
     }
