@@ -85,6 +85,17 @@ internal static class SqlGuard
         }
     }
 
+    /// <summary>Parentheses preserve column affinity; unary operators and computed expressions do not.</summary>
+    public static Expression Unwrap(Expression expression)
+    {
+        while (expression is Expression.Nested nested)
+        {
+            expression = nested.Expression;
+        }
+
+        return expression;
+    }
+
     /// <summary>
     /// Applies column affinity to the constant side of comparisons, as SQLite does for a column with a declared type: a
     /// table column reads through a CTE as an expression without affinity, so <c>int_col = '2'</c> would match nothing.
@@ -133,6 +144,19 @@ internal static class SqlGuard
 
         return parameters;
     }
+
+    public static SqlValue ComparisonValue(SqlAffinity affinity, SqlValue value) =>
+        value.Kind == SqlValueKind.Text && value.Text!.Any(c => char.IsWhiteSpace(c) && c is not (' ' or '\t' or '\n' or '\r' or '\v' or '\f'))
+            ? value : SqlWrite.Apply(affinity, value);
+
+    public static SqlAffinity? Conversion(SqlAffinity? source, SqlAffinity? target) => source switch
+    {
+        SqlAffinity.Integer or SqlAffinity.Real or SqlAffinity.Numeric when target is not (SqlAffinity.Integer or SqlAffinity.Real or SqlAffinity.Numeric) => SqlAffinity.Numeric,
+        SqlAffinity.Text when target is null => SqlAffinity.Text,
+        _ => null,
+    };
+
+    public static FormatException Unsupported() => new("comparison requires unsupported row-dependent affinity conversion");
 
     private static SqlValue? Literal(Expression.LiteralValue literal) => literal.Value switch
     {
