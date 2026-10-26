@@ -11,7 +11,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         var user = platform.Principal("grant-browser");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var loginPage = await browser.NewPageAsync();
+        var loginPage = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true });
         await BrowserAudit.SignInAsync(loginPage, platform.Origin, "/project/members", user.Email, user.Password);
         var destination = loginPage.Url;
         var scope = new Uri(destination).Query;
@@ -22,6 +22,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         var output = BrowserAudit.Output(Directory.GetCurrentDirectory(), "q03-project-grant-list");
         await using var recording = await browser.NewContextAsync(new()
         {
+            IgnoreHTTPSErrors = true,
             StorageState = await loginPage.Context.StorageStateAsync(),
             ViewportSize = new() { Width = 1440, Height = 1000 },
             ColorScheme = ColorScheme.Dark,

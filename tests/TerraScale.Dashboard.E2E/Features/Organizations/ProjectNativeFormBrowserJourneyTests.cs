@@ -11,12 +11,13 @@ public sealed partial class TsAuthPlatformJourneyTests
         var user = platform.Principal("native-project-rename");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var loginPage = await browser.NewPageAsync();
+        var loginPage = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true });
         await BrowserAudit.SignInAsync(loginPage, platform.Origin, "/project", user.Email, user.Password);
         var destination = loginPage.Url;
         var output = BrowserAudit.Output(Directory.GetCurrentDirectory(), "q03-project-settings");
         await using var recording = await browser.NewContextAsync(new()
         {
+            IgnoreHTTPSErrors = true,
             StorageState = await loginPage.Context.StorageStateAsync(),
             ViewportSize = new() { Width = 1440, Height = 1000 },
             ColorScheme = ColorScheme.Dark,
