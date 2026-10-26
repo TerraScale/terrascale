@@ -116,6 +116,12 @@ The schema routes take a ts-auth project access token, not a `tb_` API key:
 use it as `Config.Token` with `databases:read` (reads) or `databases:write`
 (declares) plus `documents:write` for the writes.
 
+Select an explicit acknowledgement guarantee with `col.Put(ctx, id, doc, tb.RemoteDurable)`
+or `db.Tx().Put("users", id, doc).WithDurability(tb.RemoteDurable).Commit(ctx)`.
+The default is local durability; inspect the returned receipt rather than assuming a
+remote request proves replication. See [write durability](contracts/write-durability.md)
+for preexecution refusal and uncertain-outcome semantics; uncertain writes never replay.
+
 Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
 version is the `ETag`. Versions are opaque tokens (`tbv1-…`, `tbv2-…`):
 compare and pass them back, never parse them. Unknown `state` and
