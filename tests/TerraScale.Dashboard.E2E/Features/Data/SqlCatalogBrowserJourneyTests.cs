@@ -57,6 +57,7 @@ public sealed class SqlCatalogBrowserJourneyTests(DashboardE2EFixture fixture)
         try
         {
             await loading.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await page.WaitForFunctionAsync("() => document.querySelector('#sql-tables')?.getAttribute('aria-busy') === 'true'");
             await Assert.That(await page.Locator("#sql-tables").GetAttributeAsync("aria-busy")).IsEqualTo("true");
         }
         finally { release.TrySetResult(); }
