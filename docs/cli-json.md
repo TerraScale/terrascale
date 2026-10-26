@@ -4,9 +4,10 @@
 the command. `--json=false` retains ordinary output. Flag values and operands
 after `--` are preserved.
 
-This first slice supports version, help and database list/info/create/delete/
-branch/regions. Other commands temporarily return a structured failure before
-authentication. More families will follow before the complete CLI release.
+All original command forms support JSON, with objects for finite results, arrays
+for resource lists and NDJSON record/complete/error envelopes for unbounded streams.
+See the cli-json-auth, cli-json-streams, cli-json-metadata, cli-json-documents,
+cli-json-functions, cli-json-migrations and cli-json-diff documents for field shapes.
 
 Success is one JSON value followed by a newline: metadata objects, arrays for
 lists (including `[]`), `{name,deleted:true}` for deletion, `{version}` for

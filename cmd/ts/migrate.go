@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -247,8 +248,16 @@ func migrationStatus(ctx context.Context, db *v1.Database, ms []migration, out i
 // collection without a SQL table and each index, keyed by kind and name.
 // TerraBase reserves sqlite_schema, so it reads the collection and index
 // lists and each table's result columns instead.
-func schema(ctx context.Context, db *v1.Database) (map[string]string, error) {
-	out := map[string]string{}
+type schemaEntity struct {
+	Kind       string         `json:"kind"`
+	Name       string         `json:"name"`
+	Columns    []v1.SQLColumn `json:"columns,omitempty"`
+	Collection string         `json:"collection,omitempty"`
+	Fields     []string       `json:"fields,omitempty"`
+}
+
+func schema(ctx context.Context, db *v1.Database) (map[string]schemaEntity, error) {
+	out := map[string]schemaEntity{}
 	for cursor := ""; ; {
 		page, err := db.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
 		if err != nil {
@@ -257,19 +266,13 @@ func schema(ctx context.Context, db *v1.Database) (map[string]string, error) {
 		for _, c := range page.Items {
 			res, err := db.ExecuteSQL(ctx, `SELECT * FROM "`+c.Name+`" LIMIT 0`)
 			if noTable(err) {
-				out["collection "+c.Name] = "collection " + c.Name
+				out["collection "+c.Name] = schemaEntity{Kind: "collection", Name: c.Name}
 				continue
 			}
 			if err != nil {
 				return nil, fmt.Errorf("%s: %s: %w", db.Name(), c.Name, err)
 			}
-			var cols []string
-			for _, col := range res.Columns {
-				if col.DeclType != nil {
-					cols = append(cols, strings.TrimSpace(col.Name+" "+*col.DeclType))
-				}
-			}
-			out["table "+c.Name] = fmt.Sprintf("table %s (%s)", c.Name, strings.Join(cols, ", "))
+			out["table "+c.Name] = schemaEntity{Kind: "table", Name: c.Name, Columns: res.Columns}
 		}
 		if cursor = page.NextCursor; cursor == "" {
 			break
@@ -280,7 +283,7 @@ func schema(ctx context.Context, db *v1.Database) (map[string]string, error) {
 		return nil, fmt.Errorf("%s: %w", db.Name(), err)
 	}
 	for _, ix := range indexes {
-		out["index "+ix.Name] = fmt.Sprintf("index %s ON %s (%s)", ix.Name, ix.Collection, strings.Join(ix.Fields, ", "))
+		out["index "+ix.Name] = schemaEntity{Kind: "index", Name: ix.Name, Collection: ix.Collection, Fields: ix.Fields}
 	}
 	return out, nil
 }
@@ -319,8 +322,71 @@ func (s *session) migrateDiff(ctx context.Context, branch, base string, out io.W
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, schemaDiff(base, branch, from, to))
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			Base    string         `json:"base"`
+			Branch  string         `json:"branch"`
+			Changes []schemaChange `json:"changes"`
+		}{base, branch, schemaChanges(from, to)})
+	}
+	_, err = io.WriteString(out, schemaDiff(base, branch, schemaDescriptions(from), schemaDescriptions(to)))
 	return err
+}
+
+type schemaChange struct {
+	Kind   string        `json:"kind"`
+	Name   string        `json:"name"`
+	Before *schemaEntity `json:"before"`
+	After  *schemaEntity `json:"after"`
+}
+
+func schemaChanges(from, to map[string]schemaEntity) []schemaChange {
+	keys := map[string]struct{}{}
+	for k := range from {
+		keys[k] = struct{}{}
+	}
+	for k := range to {
+		keys[k] = struct{}{}
+	}
+	changes := []schemaChange{}
+	for _, k := range slices.Sorted(maps.Keys(keys)) {
+		old, inFrom := from[k]
+		cur, inTo := to[k]
+		if inFrom && inTo && reflect.DeepEqual(old, cur) {
+			continue
+		}
+		change := schemaChange{Kind: cmp.Or(cur.Kind, old.Kind), Name: cmp.Or(cur.Name, old.Name)}
+		if inFrom {
+			change.Before = &old
+		}
+		if inTo {
+			change.After = &cur
+		}
+		changes = append(changes, change)
+	}
+	return changes
+}
+
+// Human output is rendered from the same typed SDK metadata as JSON.
+func schemaDescriptions(items map[string]schemaEntity) map[string]string {
+	out := map[string]string{}
+	for key, item := range items {
+		switch item.Kind {
+		case "collection":
+			out[key] = "collection " + item.Name
+		case "index":
+			out[key] = fmt.Sprintf("index %s ON %s (%s)", item.Name, item.Collection, strings.Join(item.Fields, ", "))
+		case "table":
+			var cols []string
+			for _, col := range item.Columns {
+				if col.DeclType != nil {
+					cols = append(cols, strings.TrimSpace(col.Name+" "+*col.DeclType))
+				}
+			}
+			out[key] = fmt.Sprintf("table %s (%s)", item.Name, strings.Join(cols, ", "))
+		}
+	}
+	return out
 }
 
 func schemaDiff(base, branch string, from, to map[string]string) string {
