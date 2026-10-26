@@ -9,6 +9,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Npgsql" />
     <!-- The vs-Turso benchmark lives with the benchmarks; it compiles here because it boots local nodes with this harness. -->
     <Compile Include="../../benchmark/dotnet/VsTurso/*.cs" Link="Benchmarks/%(Filename)%(Extension)" />
     <!-- Built at test time by WalFaults/WalSyncFaults.cs with the host's C compiler. -->
