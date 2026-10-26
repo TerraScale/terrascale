@@ -3,12 +3,68 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TUnit.Core;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
 {
+    [Test]
+    [Arguments("sessions")]
+    [Arguments("auth_credentials")]
+    [Arguments("dashboard_accounts")]
+    [Arguments("dashboard_account_identities")]
+    [Arguments("dashboard_organizations")]
+    public async Task AnExternalUpdateIsVisibleInsideTheWaitingReadRequest(string collection)
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        Check(await scenario.StartHostsAsync(), "The fixed state schema initializes.");
+        var state = scenario.RegistrationState;
+        await state.PutAsync(collection, "synthetic-lease", JsonSerializer.SerializeToElement(new { lease = "held" }), TerraBasePrecondition.Absent, default);
+        var original = (await state.GetAsync(collection, "synthetic-lease", default))!;
+        var rotate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // This task belongs to a different request, outside the waiting request's timing context.
+        var writer = Task.Run(async () =>
+        {
+            await rotate.Task;
+            await state.PutAsync(collection, "synthetic-lease", JsonSerializer.SerializeToElement(new { lease = "rotated" }),
+                TerraBasePrecondition.Matches(original.Version), default);
+        });
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, async () =>
+        {
+            var before = (await state.GetAsync(collection, "synthetic-lease", default))!;
+            await Assert.That(before.Document.GetProperty("lease").GetString()).IsEqualTo("held");
+            rotate.SetResult();
+            await writer;
+            var after = (await state.GetAsync(collection, "synthetic-lease", default))!;
+            await Assert.That(after.Document.GetProperty("lease").GetString()).IsEqualTo("rotated");
+        }, NullLogger.Instance);
+    }
+
+    [Test]
+    public async Task ReadinessUsesOneSchemaPageAndConsumesPaginationWithoutCachingDroppedCollections()
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        Check(await scenario.StartHostsAsync(), "The fixed state schema initializes.");
+        using var client = scenario.CreateClient();
+        var before = (await ObserveAsync(controls)).GetProperty("collectionLists").GetInt32();
+        await ReadyAsync(client);
+        Check((await ObserveAsync(controls)).GetProperty("collectionLists").GetInt32() == before + 1,
+            "A readiness probe checks all required collections through one SDK metadata page.");
+        await ControlAsync(controls, new { command = "mode", value = "paged-collections" });
+        await ReadyAsync(client);
+        Check((await ObserveAsync(controls)).GetProperty("collectionLists").GetInt32() == before + 4,
+            "A producer returning ten collections per page is fully traversed.");
+        await ControlAsync(controls, new { command = "drop-collection", name = "auth-flows" });
+        using var missing = await client.GetAsync("/readyz");
+        Check(missing.StatusCode == HttpStatusCode.ServiceUnavailable, "The next probe immediately refuses a missing collection.");
+        CheckProtocol(await ObserveAsync(controls));
+    }
+
     [Test]
     public async Task ConcurrentColdStartNativeSignupCasAndColdRestartUseTheProductionStateSdk()
     {
@@ -79,11 +135,15 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         rpc = await HttpJourney.McpAsync(coldReplica, secret, "tools/call", new { name = "get_profile", arguments = new { } });
         Check(rpc.GetProperty("result").GetProperty("structuredContent").GetProperty("locale").GetString() == "pt-BR", "The native-issued PAT remains valid on a cold replacement replica.");
 
-        var beforePrivateReads = (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32();
+        var beforeReady = await ObserveAsync(controls);
         await ReadyAsync(coldClient);
+        var afterReady = await ObserveAsync(controls);
+        Check(afterReady.GetProperty("collectionLists").GetInt32() == beforeReady.GetProperty("collectionLists").GetInt32() + 1 &&
+            afterReady.GetProperty("privateRequests").GetInt32() > beforeReady.GetProperty("privateRequests").GetInt32(),
+            "Readiness checks the required schema in one collection listing through the private listener.");
         Check((await MeAsync(coldReplica)).GetProperty("email").GetString() == account.Email &&
-            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 16,
-            "Readiness and encrypted account/session reads use the private listener without a durable API key or public data bearer.");
+            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() > afterReady.GetProperty("privateRequests").GetInt32(),
+            "Encrypted account/session reads independently use the private listener without a durable API key or public data bearer.");
         using (var deleted = await HttpJourney.PostFormAsync(coldReplica, "/api/v1/dashboard/data/saved-queries/delete", new()
         { ["_csrf"] = localeCsrf, ["id"] = queryId }))
             Check(deleted.StatusCode == HttpStatusCode.NoContent, "Native cleanup deletes the saved query through an opaque producer If-Match.");

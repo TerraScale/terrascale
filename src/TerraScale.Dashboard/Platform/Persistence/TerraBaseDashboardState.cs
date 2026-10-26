@@ -59,13 +59,24 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
     public async Task CheckReadyAsync(CancellationToken cancellationToken)
     {
         var database = Database();
-        await Task.WhenAll(DashboardStateSchema.Collections.Select(async name =>
-            ValidateCollection(await database.GetCollectionAsync(name, cancellationToken), name)));
+        // One metadata page covers the fixed schema, rather than 27 concurrent point reads per probe.
+        // Read it afresh every time: a dropped collection still fails the next readiness check.
+        var missing = DashboardStateSchema.Collections.ToHashSet(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? cursor = null;
+        do
+        {
+            var page = await database.ListCollectionsAsync(200, cursor, cancellationToken);
+            foreach (var collection in page.Items) missing.Remove(collection.Name);
+            cursor = page.NextCursor;
+            if (!string.IsNullOrEmpty(cursor) && !seen.Add(cursor)) throw new IOException("State schema pagination did not advance.");
+        } while (missing.Count > 0 && !string.IsNullOrEmpty(cursor));
+        if (missing.Count > 0) throw new IOException("Required dashboard state collections are unavailable.");
     }
 
     public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
-        => await TerraScale.Dashboard.Platform.Http.ServerTiming.ReadAsync((this, collection, id),
-            () => GetDocumentAsync(collection, id, cancellationToken));
+        // Coordination, account and billing rereads must observe other requests' writes too.
+        => await GetDocumentAsync(collection, id, cancellationToken);
 
     private async Task<TerraBaseDocument?> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken)
     {

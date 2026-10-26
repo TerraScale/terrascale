@@ -17,6 +17,7 @@ public sealed class ServerTiming
     private int writes;
     private int pendingWrites;
     private bool reads;
+    private bool probe;
 
     // A point in this request's upstream history: it stays current until the request sends something that can change
     // state (a state write, or a ts-auth or Stripe mutation), so a value read before it is still as fresh as a re-read.
@@ -118,7 +119,12 @@ public sealed class ServerTiming
 
     public static async Task MiddlewareAsync(HttpContext context, Func<Task> next, ILogger logger)
     {
-        var timing = new ServerTiming { reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method), logger = logger };
+        var timing = new ServerTiming
+        {
+            reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method),
+            logger = logger,
+            probe = context.Request.Path == "/readyz" || context.Request.Path == "/health/ready"
+        };
         Current.Value = timing;
         context.Response.OnStarting(() =>
         {
@@ -164,7 +170,7 @@ public sealed class ServerTiming
                 timing.Record(upstream, started, ended);
                 // Only fixed operation names escape: no URL, query, token, document ID or customer name.
                 var operation = Operation(request.RequestUri);
-                timing.logger?.LogInformation("Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms",
+                if (!timing.probe) timing.logger?.LogInformation("Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms",
                     upstream, upstream == "other" ? "[other]" : request.RequestUri?.Host, SafeHttpLogging.Method(request.Method.Method), operation,
                     response is null ? 0 : (int)response.StatusCode, started, ended - started);
             }

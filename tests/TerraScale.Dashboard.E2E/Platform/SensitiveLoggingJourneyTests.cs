@@ -30,6 +30,7 @@ public sealed class SensitiveLoggingJourneyTests(DashboardRootFixture fixture)
             builder.Logging.ClearProviders();
             builder.Logging.SetMinimumLevel(LogLevel.Trace);
             builder.Logging.AddFilter(_ => true);
+            builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Trace);
             builder.Logging.AddProvider(captured);
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new FailingMeasurements(secret)));
             var original = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
