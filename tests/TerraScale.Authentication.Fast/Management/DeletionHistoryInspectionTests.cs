@@ -23,7 +23,6 @@ public sealed class DeletionHistoryInspectionTests(TerraBaseFixture fixture)
         {
             delete.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             delete.Headers.Add("X-TerraScale-Deletion-Receipt", receipt);
-            await oidc.AttachStepUpAsync(delete, token);
             using var response = await oidc.Client.SendAsync(delete);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         }

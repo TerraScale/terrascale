@@ -23,7 +23,7 @@ public static class PlatformCalls
     }
 
     /// <summary>Sends <paramref name="body"/> (as JSON, unless null) with <paramref name="token"/> as the bearer.</summary>
-    public static async Task<HttpResponseMessage> CallAsync(this OidcHarness oidc, HttpMethod method, string path, string? token, object? body = null, HttpClient? client = null)
+    public static Task<HttpResponseMessage> CallAsync(this OidcHarness oidc, HttpMethod method, string path, string? token, object? body = null, HttpClient? client = null)
     {
         var request = new HttpRequestMessage(method, path);
         if (token is not null)
@@ -36,8 +36,7 @@ public static class PlatformCalls
             request.Content = JsonContent.Create(body);
         }
 
-        await oidc.AttachStepUpAsync(request, token);
-        return await (client ?? oidc.Client).SendAsync(request);
+        return (client ?? oidc.Client).SendAsync(request);
     }
 
     /// <summary>The JSON answer of a call that must succeed with <paramref name="status"/>.</summary>

@@ -25,7 +25,6 @@ public sealed record ProjectSession(string Id, SessionRecord Session, string Ema
 /// </summary>
 public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock)
 {
-    internal const string ClientIssuanceCaller = "ts-auth:client-issuance-caller";
     // Bounds the pages a filtered list reads for one answer; a sparse match answers fewer items and a cursor.
     private const int MaxRounds = 10;
 
@@ -118,15 +117,10 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
     /// manager, with the request's tenant set to the project so its store writes into the project's instance. A
     /// confidential client's secret is returned once; OpenIddict keeps only its hash.
     /// </summary>
-    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
+    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(manager);
-        ArgumentNullException.ThrowIfNull(caller);
-        if (caller.StepUpBindings.Count == 0)
-        {
-            throw StepUpProofs.Required();
-        }
         var secret = type == ClientTypes.Confidential ? Tokens.RandomToken(48) : null;
         var descriptor = new OpenIddictApplicationDescriptor
         {
@@ -148,7 +142,6 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         descriptor.PostLogoutRedirectUris.UnionWith(redirectUris);
         var previous = context.Items[Tenancy.ItemKey];
         context.Items[Tenancy.ItemKey] = projectId;
-        context.Items[ClientIssuanceCaller] = caller;
         try
         {
             return ((OidcApplication)await manager.CreateAsync(descriptor, cancellationToken).ConfigureAwait(false), secret);
@@ -160,7 +153,6 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         finally
         {
             context.Items[Tenancy.ItemKey] = previous;
-            context.Items.Remove(ClientIssuanceCaller);
         }
     }
 

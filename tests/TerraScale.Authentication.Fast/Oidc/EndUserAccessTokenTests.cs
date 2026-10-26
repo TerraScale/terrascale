@@ -69,36 +69,25 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Rotated_keys_survive_browser_sign_out_but_stop_on_grace_expiry_key_or_global_revocation(bool expirePrevious)
+    public async Task Rotated_keys_outlive_creator_sign_out_and_stop_on_grace_expiry_or_revocation(bool expirePrevious)
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await this.StartAsync(clock);
-        var (creator, session, tokens) = await oidc.SignInAndRedeemAsync("owner@example.test");
-        var owner = tokens.GetProperty("access_token").GetString()!;
-        var organization = await oidc.CreateOrganizationAsync(owner);
-        var project = await oidc.CreateProjectAsync(owner, organization, "Production");
+        var (owner, organization, project) = await SetupAsync(oidc);
         var original = await KeyAsync(oidc, owner, organization, project);
         var rotation = await oidc.OkAsync(HttpMethod.Post, $"{Keys(organization, project)}/{original[..26]}/rotate", owner,
             new { previous_secret_ttl = 60 });
         var current = rotation.GetProperty("key").GetString()!;
-        var epochKey = await KeyAsync(oidc, owner, organization, project);
-        var (other, otherToken) = await oidc.SignInUserAsync("other@example.test");
-        await Assert.That(await oidc.AddMemberAsync(organization, other.Id, "admin")).IsTrue();
-        var otherKey = await KeyAsync(oidc, otherToken, organization, project);
         var body = new { user_id = AuthStore.NewId() };
         await oidc.OkAsync(HttpMethod.Post, Path(project), original, body);
         await oidc.OkAsync(HttpMethod.Post, Path(project), current, body);
 
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var key = (await store.GetAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, original[..26]))!;
-        using (var signOut = await oidc.RevokeAsync(tokens.GetProperty("refresh_token").GetString()!))
-        {
-            await Assert.That(signOut.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
-        await Assert.That(await sessions.RevokeAsync(OidcIssuer.InstanceId, session)).IsTrue();
-        await Assert.That(await oidc.FailAsync(HttpMethod.Get, Organizations, owner)).IsEqualTo((401, "unauthorized"));
-        // Browser revocation leaves fresh credential lineage current.
+        var creator = key.Document.Deserialize(PlatformJson.Default.ApiKeyRecord)!.CreatedBy;
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<Sessions>()
+            .RevokeAllAsync(OidcIssuer.InstanceId, creator)).IsTrue();
+        // Project keys belong to the backend and retain their authority after the creator signs out.
         await oidc.OkAsync(HttpMethod.Post, Path(project), original, body);
         await oidc.OkAsync(HttpMethod.Post, Path(project), current, body);
 
@@ -117,16 +106,6 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
                 await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), secret, body)).IsEqualTo((401, "unauthorized"));
             }
         }
-
-        // Keep an undeleted key live so the deletion branch cannot mask global account-state revocation.
-        await oidc.OkAsync(HttpMethod.Post, Path(project), epochKey, body);
-        await oidc.OkAsync(HttpMethod.Post, Path(project), otherKey, body);
-        await Assert.That(await sessions.RevokeAllAsync(OidcIssuer.InstanceId, creator.Id)).IsTrue();
-        foreach (var secret in new[] { original, current, epochKey })
-        {
-            await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), secret, body)).IsEqualTo((401, "unauthorized"));
-        }
-        await oidc.OkAsync(HttpMethod.Post, Path(project), otherKey, body);
     }
 
     [Test]

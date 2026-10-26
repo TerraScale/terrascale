@@ -38,7 +38,11 @@ public sealed class AccountDeletion(
             var current = await platform.ClosureAsync("account", user.Id, cancellationToken).ConfigureAwait(false);
             var created = ClosureJob.New(PlatformDirectory.Instance, "account", user.Id, null, user.Id, clock);
             var closure = current?.Value ?? created.Job;
-            List<StoreOperation> operations = [.. StepUpProofs.Requirements(user)];
+            List<StoreOperation> operations =
+            [
+                AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id,
+                    PlatformDirectory.Filter("eq", new System.Text.Json.Nodes.JsonArray("/authStamp", user.AuthStamp))),
+            ];
             var candidates = new HashSet<string>(StringComparer.Ordinal);
             if (current is null)
             {
