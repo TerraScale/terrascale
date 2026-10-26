@@ -75,37 +75,14 @@ The feed keeps changes for 7 days. A cursor older than 7 days, or one that canno
 
 ## Follow the feed in JavaScript
 
-The SDK iterator parses SSE and reconnects normal EOF with its last cursor. Supply an SDK database handle from the [quickstart](/de/getting-started/javascript), configured with a current-token provider. Other errors reach the caller; respect `error.retryAfter` (seconds) before retrying a safe read.
+The SDK iterator parses SSE and reconnects normal EOF with its last cursor. Download `follow-changes.mjs` beside your application module and configure `db` as in the [quickstart](/de/getting-started/javascript), using your application's current-token provider.
 
 ```js
-// db is an SDK database handle configured with a current-token provider.
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+import { followChanges } from './follow-changes.mjs'
 
-async function followChanges({ db, onChange, onReset, signal }) {
-  let lastEventId = null
-  let delay = 1000
-  while (!signal.aborted) {
-    let expired = false
-    try {
-      for await (const event of db.changes({ cursor: 'now', collections: ['posts'], lastEventId: lastEventId ?? undefined }, { signal })) {
-        if (event.type === 'change') await onChange(event)
-        if (event.cursor !== undefined) lastEventId = event.cursor
-      }
-    } catch (error) {
-      throw error // Includes terminal auth, expired history and application failures.
-    }
-    if (expired) {
-      lastEventId = null // The next request starts again at cursor=now.
-      await onReset()
-      continue
-    }
-    await sleep(delay)
-    delay = Math.min(delay * 2, 30_000)
-  }
-}
+// db is your SDK database handle with a current-token provider.
+await followChanges({ db, onChange, onReset, onCheckpoint, signal })
 ```
-
-The client token provider supplies a current access token on each reconnect. Apply changes idempotently before advancing the checkpoint; application failures stop consumption. Expired history stops here for an explicit rebuild.
 
 Use the maintained [SDK follower](/examples/terrabase-js/follow-changes.mjs) for checkpoint persistence, cancellable overload backoff and expired-history rebuilding. It captures a fresh position before the full re-read and then replays from it, covering writes during that read. `onChange` must be idempotent; `onCheckpoint` saves only successfully applied positions. Use a deadline signal; 401/403, terminal SSE errors, malformed data and lost connections stop. Only safe 429/503 reads retry, waiting at least `retryAfter` seconds (numeric or HTTP-date Retry-After); application failures stop. A fresh authorized token comes from the client provider.
 
