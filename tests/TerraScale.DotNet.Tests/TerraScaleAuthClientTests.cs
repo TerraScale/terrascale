@@ -34,15 +34,15 @@ public sealed class TerraScaleAuthClientTests
     }
 
     [Test]
-    public async Task ManagementRoutesCarryBearerKeyAndInstanceSlug()
+    public async Task PlatformRoutesCarryTheCallerSignInToken()
     {
-        var handler = new RecordingHandler("""{"id":"ins_1","slug":"acme","name":"Acme","logo_url":null,"theme_color":null,"created_at":7}""");
+        var handler = new RecordingHandler("""{"items":[],"next":null}""");
         var client = CreateClient(handler);
 
-        _ = await client.Instance.GetAsync();
+        _ = await client.Platform.ListOrganizationsAsync("fixture-sign-in");
 
-        await Assert.That(handler.Authorization).IsEqualTo("Bearer sk_key_secret");
-        await Assert.That(handler.RequestUri).IsEqualTo("/v1/acme/instance");
+        await Assert.That(handler.Authorization).IsEqualTo("Bearer fixture-sign-in");
+        await Assert.That(handler.RequestUri).IsEqualTo("/v1/terrascale/organizations");
         await Assert.That(handler.Accept).IsEqualTo("application/json");
     }
 
@@ -58,7 +58,7 @@ public sealed class TerraScaleAuthClientTests
             InstanceSlug = "acme",
         });
 
-        _ = await client.Instance.GetAsync();
+        _ = await client.Oidc.GetJwksAsync();
 
         await Assert.That(hosts).IsEquivalentTo(["auth.terrascale.tech"]);
     }
@@ -142,7 +142,7 @@ public sealed class TerraScaleAuthClientTests
     [Test]
     public async Task RetriesRepeatSafeReadsButNeverMutations()
     {
-        var readHandler = new FlakyOnceHandler("""{"id":"ins_1","slug":"acme","name":"Acme","logo_url":null,"theme_color":null,"created_at":7}""");
+        var readHandler = new FlakyOnceHandler("""{"keys":[]}""");
         var readClient = CreateClient(readHandler, new TerraScaleAuthClientOptions
         {
             BaseAddress = new Uri("https://auth.example.test/"),
@@ -151,8 +151,8 @@ public sealed class TerraScaleAuthClientTests
             MaxRetryAttempts = 1,
             RetryDelay = TimeSpan.Zero,
         });
-        var instance = await readClient.Instance.GetAsync();
-        await Assert.That(instance.Id).IsEqualTo("ins_1");
+        var keys = await readClient.Oidc.GetJwksAsync();
+        await Assert.That(keys.Keys.Count).IsEqualTo(0);
         await Assert.That(readHandler.Attempts).IsEqualTo(2);
 
         var mutationHandler = new AlwaysFailingHandler();
@@ -355,7 +355,7 @@ public sealed class TerraScaleAuthClientTests
             hosts.Add(request.RequestUri!.Host);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("""{"id":"ins_1","slug":"acme","name":"Acme","logo_url":null,"theme_color":null,"created_at":7}""", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent("""{"keys":[]}""", System.Text.Encoding.UTF8, "application/json"),
             });
         }
     }

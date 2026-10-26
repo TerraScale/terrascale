@@ -60,7 +60,6 @@ public sealed class TerraScaleAuthClient
         Sessions = new TerraScaleAuthSessionsClient(this);
         Webhooks = new TerraScaleAuthWebhooksClient(this);
         AuditEvents = new TerraScaleAuthAuditClient(this);
-        Instance = new TerraScaleAuthInstanceClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
@@ -77,9 +76,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Instance audit event listing.</summary>
     public TerraScaleAuthAuditClient AuditEvents { get; }
-
-    /// <summary>Instance record and hosted-UI branding settings.</summary>
-    public TerraScaleAuthInstanceClient Instance { get; }
 
     /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }

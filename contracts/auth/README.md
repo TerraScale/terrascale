@@ -93,3 +93,5 @@ The legacy instance `auth.Organizations` client and its exclusive membership, in
 The unsupported instance `auth.Connections` (OIDC/SAML) and `auth.Directories` (SCIM) clients and their exclusive DTOs are retired. This removes only the old instance management authority; supported organization OIDC SSO administration and project provider/export APIs keep their own contracts and DTOs. No SAML or SCIM adapter is introduced.
 
 Legacy instance `auth.JwtTemplates` and `auth.OAuthClients` and their exclusive DTOs are retired. Supported project OAuth-client administration, trusted-backend end-user token issuance and OIDC token operations retain their exact contracts. No template or legacy client authority is silently reinterpreted.
+
+Legacy instance `auth.Instance` settings/branding operations and their exclusive DTOs are retired. Origin, bearer-authority and transport coverage now uses shipped Platform or public JWKS operations; neither is a replacement instance-management API.

@@ -108,4 +108,18 @@ public sealed class TerraScaleAuthRetiredApiTests
             await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
         }
     }
+
+    [Test]
+    public async Task LegacyInstanceSettingsHaveNoFactoryOrDtos()
+    {
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("Instance")).IsNull();
+        foreach (var name in new[]
+        {
+            "TerraScaleAuthInstanceClient", "TerraScaleAuthInstanceRecord", "TerraScaleAuthInstanceSettings",
+            "TerraScaleAuthUpdateInstance"
+        })
+        {
+            await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
+        }
+    }
 }
