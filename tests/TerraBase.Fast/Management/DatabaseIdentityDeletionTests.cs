@@ -2,7 +2,6 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Management;
-using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -164,7 +163,7 @@ public sealed class DatabaseIdentityDeletionTests
                         Interlocked.Increment(ref resolutions);
                     }
                 }, operation => operation == nameof(IManagementService.GetDatabaseAsync) && Interlocked.Exchange(ref armed, 0) == 1
-                    ? ReplaceBeforePlacementAsync() : null);
+                    ? new ValueTask<GetDatabaseResult>(ReplaceBeforePlacementAsync()) : null);
             });
         });
         fixture = api;
@@ -177,7 +176,7 @@ public sealed class DatabaseIdentityDeletionTests
         await Assert.That(Volatile.Read(ref resolutions)).IsEqualTo(1);
         await AssertDocumentAsync(client, replacementDocument!);
 
-        async ValueTask<GetDatabaseResult> ReplaceBeforePlacementAsync()
+        async Task<GetDatabaseResult> ReplaceBeforePlacementAsync()
         {
             using var deleted = await fixture!.Client.DeleteAsync(Uri(original!.Path));
             deleted.EnsureSuccessStatusCode();
