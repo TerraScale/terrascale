@@ -6,6 +6,7 @@ public static class BackupsExtensions
     /// <summary>Registers <see cref="IManagedBackupService"/> the backup scheduler and scheduled exports.</summary>
     public static IServiceCollection AddTerraBaseManagementBackups(this IServiceCollection services) =>
         services
+            .AddSingleton<ISelectiveRecovery, SelectiveRecovery>()
             .AddSingleton<IManagedBackupService, EngineManagedBackupService>()
             .AddSingleton<TerraBase.Features.Backup.IProjectBackupDestinations, ProjectBackupDestinations>()
             .AddHostedService<BackupScheduler>()

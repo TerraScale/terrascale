@@ -112,7 +112,8 @@ internal static class ETags
     /// <paramref name="version"/> is the current version, a tombstone's included, or <see langword="null"/> when absent.
     /// </summary>
     public static VersionCheck CheckVersion(Precondition precondition, bool live, string? version) =>
-        precondition.IfNoneMatch && live ? Failed("the document exists")
+        precondition.IfNeverWritten && version is not null ? Failed("the document acquired a version after recovery preview")
+        : precondition.IfNoneMatch && live ? Failed("the document exists")
         : (precondition.IfMatchAny && !live) || (precondition.IfMatch is { } accepted && (version is null || !accepted.Contains(version)))
             ? Failed("the document version does not match")
             : new Done();
