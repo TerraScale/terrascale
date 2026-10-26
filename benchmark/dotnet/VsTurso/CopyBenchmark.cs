@@ -23,7 +23,7 @@ namespace TerraBase.E2E
             {
                 var path = Path.Combine(directory.FullName, "source.db");
                 TestMasterKey.Create(path);
-                using (var source = new SqliteConnection(TestMasterKey.ConnectionString(path)))
+                using (var source = new SqliteConnection(TestMasterKey.ConnectionString(path, SqliteOpenMode.ReadWriteCreate)))
                 {
                     source.Open();
                     using var command = source.CreateCommand();
@@ -58,7 +58,7 @@ namespace TerraBase.E2E
                     begin.ExecuteNonQuery();
                     var target = Path.Combine(directory.FullName, $"copy-{repeat}.db");
                     TestMasterKey.Create(target);
-                    var connectionString = TestMasterKey.ConnectionString(target);
+                    var connectionString = TestMasterKey.ConnectionString(target, SqliteOpenMode.ReadWriteCreate);
                     var allocated = GC.GetTotalAllocatedBytes(precise: true);
                     var started = Stopwatch.GetTimestamp();
                     TursoCopy.Write(reader, connectionString, cancellationToken);
