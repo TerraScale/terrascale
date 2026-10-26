@@ -316,7 +316,7 @@ internal sealed class GetShapeEndpoint(
 
     // The continuation target: where (canonical), then handle, then offset, so clients converge on identical URLs.
     private string Location(ShapeRequest request, int handleLength, string offset, string? handle = null) =>
-        $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext).Value}/collections/{request.Scope.Collection.Name}/shape?"
+        $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext)}/collections/{request.Scope.Collection.Name}/shape?"
         + (request.Scope.Filter.RequestCanonical.Length == 0 ? "" : $"where={Uri.EscapeDataString(request.Scope.Filter.RequestCanonical)}&")
         + $"handle={handle ?? new string('0', handleLength)}&offset={offset}";
 

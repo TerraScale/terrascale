@@ -235,19 +235,19 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             return Denied;
         }
 
-        if (!EntityIds.IsValid(project) || !DatabaseName.TryParse(database, out var name))
+        if (!EntityIds.IsValid(project) || !EntityIds.IsValid(database) && !DatabaseName.TryParse(database, out _))
         {
-            return new Validation("project must be a canonical uppercase ULID and database a lowercase name of at most 63 characters");
+            return new Validation("project must be a canonical uppercase ULID and database a canonical uppercase ULID or lowercase name of at most 63 characters");
         }
 
-        var found = await services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken).ConfigureAwait(false);
+        var found = await services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(key.OrganizationId, project, database, cancellationToken).ConfigureAwait(false);
         if (found is not TenantContext tenant || !key.Reaches(tenant))
         {
             return found is Unavailable unavailable ? unavailable : DocumentRoute.UnknownDatabase;
         }
 
         var region = services.GetRequiredService<TerraBaseOptions>().Region;
-        return await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(key.OrganizationId, project, name.Value, cancellationToken).ConfigureAwait(false) switch
+        return await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(key.OrganizationId, project, tenant.DatabaseId!, cancellationToken).ConfigureAwait(false) switch
         {
             ManagedDatabase record when !record.PlacedIn(region) => new Unavailable($"the database is served in {record.Home(region)}", "wrong_region"),
             Unavailable error => error,

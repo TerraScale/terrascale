@@ -140,7 +140,8 @@ public static class UserAuthExtensions
             // Project tokens never enter the membership-based compatibility API: that would discard their narrowing.
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.FindFirst("project_id") is not null
                 && (context.Features.Get<LegacyManagementRoute>() is not null
-                    || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)))
+                    || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)
+                    || context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "legacyCreateDatabase"))
             {
                 await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                 return;
@@ -160,9 +161,7 @@ public static class UserAuthExtensions
                 var jwt = Identity(context.User, UserAuthenticationHandler.SchemeName);
                 if (jwt is not null)
                 {
-                    var database = jwt.FindFirst("database")?.Value;
-                    if (jwt.FindFirst("project_id")?.Value != project
-                        || database is not null && context.Request.RouteValues["database"] is string name && database != name)
+                    if (jwt.FindFirst("project_id")?.Value != project)
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                         return;
@@ -254,9 +253,14 @@ public static class UserAuthExtensions
             if (managementRoute)
             {
                 context.Request.RouteValues["organization"] = organization;
+            }
+
+            // Check immutable narrowing before placement can disclose another database's serving regions.
+            if (managementRoute || restricted is not null)
+            {
                 if (context.Request.RouteValues["database"] is string name)
                 {
-                    if (!DatabaseName.TryParse(name, out _))
+                    if (!Primitives.EntityIds.IsValid(name) && !DatabaseName.TryParse(name, out _))
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                         return;
@@ -274,7 +278,17 @@ public static class UserAuthExtensions
                         return;
                     }
 
-                    context.Request.RouteValues["databaseName"] = name;
+                    if (restricted is not null && restrictedId != record.Id)
+                    {
+                        await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (managementRoute)
+                    {
+                        context.Request.RouteValues["databaseName"] = record.Name;
+                    }
+                    // Keep this admitted request on its authorized identity if the name is reused before placement.
                     context.Request.RouteValues["database"] = record.Id;
                 }
             }

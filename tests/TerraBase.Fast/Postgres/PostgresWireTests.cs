@@ -119,6 +119,22 @@ public sealed class PostgresWireTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Dashboard_database_restrictions_can_connect_by_immutable_id(bool idRestriction)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var key = DashboardKey(api, database, "documents:read documents:write", idRestriction ? database.Id : database.Name);
+        await using var source = Source(api, key, database.Id);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, People);
+        await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", Faker.Name.FullName());
+        await Assert.That((await ReadAsync(connection, "SELECT count(*) FROM people"))[0][0]).IsEqualTo("1");
+    }
+
+    [Test]
     public async Task Dashboard_api_keys_are_passwords_within_their_scopes_and_database()
     {
         await using var api = await ManagementApi.StartAsync();
