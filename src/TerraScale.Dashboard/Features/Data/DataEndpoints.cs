@@ -13,8 +13,9 @@ public static class DataEndpoints
     {
         endpoints.MapDocumentChanges();
         endpoints.MapSchemaPreview();
+        endpoints.MapDeclaredSchema();
         Features.Webhooks.WebhookEndpoints.MapChangeWebhooks(endpoints);
-        foreach (var section in new[] { "documents", "sql", "schema", "indexes", "history" })
+        foreach (var section in new[] { "documents", "sql", "indexes", "history" })
         {
             var tab = section;
             endpoints.MapGet("/databases/{databaseId}/" + section, async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
@@ -166,7 +167,7 @@ public static class DataEndpoints
                     var section = action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : action.Contains("sql", StringComparison.Ordinal) || action.StartsWith("saved-queries", StringComparison.Ordinal) ? "sql" : "documents";
                     var dialog = action == "collections" ? "new-collection" : action == "collections/delete" ? "delete-collection" : action == "saved-queries" ? "save-query" : action == "documents" ? form["operation"] == "create" ? "add-document" : form["operation"] == "delete" ? "delete-document" : "edit-document" : "";
                     var submittedId = error is DocumentWriteOutcomeUnknownException unknown ? unknown.DocumentId : form["id"].ToString();
-                    return await PageAsync(http, context, id, section, data, saved, collection, DatabaseEndpoints.Message(error), dialog, submittedId, form["document"].ToString(), form["version"].ToString(), form["operation"].ToString(), form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
+                    return await PageAsync(http, context, id, section, data, saved, collection, DatabaseEndpoints.Message(error), dialog, submittedId, form["document"].ToString(), form["version"].ToString(), form["operation"].ToString(), form["sql"].ToString(), queryName: action == "indexes" ? form["field"].ToString() : form["name"].ToString(), status: DatabaseEndpoints.Status(error));
                 }
             });
         }
@@ -240,8 +241,6 @@ public static class DataEndpoints
                 if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "";
                 catalog = await data.CatalogAsync(context, id, [], http.RequestAborted);
             }
-            // A collection exists once it holds a document; until then there is no schema to infer.
-            else if (section == "schema" && collections.Any(item => item.Name == collection)) schema = JsonSerializer.Serialize(await data.SchemaAsync(context, id, collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
             else if (section == "indexes") indexes = await data.IndexesAsync(context, id, http.RequestAborted);
             else if (section == "history") documentId = http.Request.Query["id"].ToString() is { Length: > 0 } historyId ? DataService.ValidDocumentId(historyId) : "";
         }
