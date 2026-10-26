@@ -91,3 +91,5 @@ Instance `auth.ApiKeys` and its exclusive `sk_` DTOs are retired. Use only exist
 The legacy instance `auth.Organizations` client and its exclusive membership, invitation and domain DTOs are retired. `TerraScaleAuthOrganization` remains only because the not-yet-retired user membership result embeds it. Existing `Platform` organization/member/invitation and `Projects` APIs retain their exact authority and DTOs.
 
 The unsupported instance `auth.Connections` (OIDC/SAML) and `auth.Directories` (SCIM) clients and their exclusive DTOs are retired. This removes only the old instance management authority; supported organization OIDC SSO administration and project provider/export APIs keep their own contracts and DTOs. No SAML or SCIM adapter is introduced.
+
+Legacy instance `auth.JwtTemplates` and `auth.OAuthClients` and their exclusive DTOs are retired. Supported project OAuth-client administration, trusted-backend end-user token issuance and OIDC token operations retain their exact contracts. No template or legacy client authority is silently reinterpreted.

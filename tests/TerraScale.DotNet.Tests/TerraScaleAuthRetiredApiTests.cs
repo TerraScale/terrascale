@@ -91,4 +91,21 @@ public sealed class TerraScaleAuthRetiredApiTests
             await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
         }
     }
+
+    [Test]
+    public async Task LegacyInstanceTemplatesAndOAuthClientsHaveNoPublicFactoriesOrDtos()
+    {
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("JwtTemplates")).IsNull();
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("OAuthClients")).IsNull();
+        foreach (var name in new[]
+        {
+            "TerraScaleAuthJwtTemplatesClient", "TerraScaleAuthJwtTemplate", "TerraScaleAuthMintedToken",
+            "TerraScaleAuthCreateJwtTemplate", "TerraScaleAuthUpdateJwtTemplate", "TerraScaleAuthMintJwtToken",
+            "TerraScaleAuthOAuthClientsClient", "TerraScaleAuthOAuthClient", "TerraScaleAuthCreatedOAuthClient",
+            "TerraScaleAuthOAuthClientList", "TerraScaleAuthCreateOAuthClient"
+        })
+        {
+            await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
+        }
+    }
 }
