@@ -29,6 +29,20 @@ Token and revoke requests use form encoding. Public clients send `client_id` wit
 
 Refresh tokens rotate: securely replace the predecessor with its successor. Never retry a consumed code automatically; on `invalid_grant`, restart sign-in. Revocation and clearing your application session are separate. Offline JWT validation does not learn revocation immediately; enforce expiry and your API's revocation policy. OIDC access tokens last at most five minutes; API-key and scoped data tokens have separate lifetimes.
 
+## Refresh scopes and lifetime
+
+Refresh requests follow [RFC 6749 section 6](https://www.rfc-editor.org/rfc/rfc6749#section-6):
+
+| Requested `scope` | Result |
+| --- | --- |
+| Omitted or equal to the original authorization | Original authorized scopes. |
+| A subset of the original authorization | Only that subset in the access token and its UserInfo permissions. |
+| Expanded or unknown scopes | OAuth error, with no added permissions; the refused request does not consume the refresh token. |
+
+A replacement refresh token retains the **original authorized scopes**, even after a reduced-scope access token. For example, refreshing `openid email offline_access` with `scope=openid` omits email from UserInfo; the successor can request the original scopes again. This never grants scopes outside the original authorization. Sign-in scopes are limited to `openid`, `email`, `profile` and `offline_access`, subject to client permissions; resource permissions require a separate role-checked token exchange.
+
+Platform refresh families expire at most **14 days after the initial token exchange**. Project refresh families follow the project's session policy, up to **30 days from the original authentication**. Rotation does not extend those deadlines. Revocation or a finite rotation limit can require sign-in earlier; these lifetimes do not promise unlimited refreshes. Stop automatic retries on `invalid_grant` and start sign-in again.
+
 Cross-origin browser `fetch` to ts-auth is not currently supported through an API CORS policy. Use hosted browser navigation and an appropriate backend exchange; never put confidential client secrets in a browser. Redirect registration does not grant CORS permission. Existing data-API CORS behavior is a separate contract. Staged `allowed_origins`, `allow_anonymous`, guest-upgrade and SAML examples are not available setup instructions. To report a conflicting claim, use [support](/zh-cn/legal/support) with the page URL and observed route/status, without credentials or customer data.
 
 </div>
