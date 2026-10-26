@@ -99,7 +99,7 @@ public sealed class SqlAlterTableTests
 
         await SqlApi.OkAsync(api, "CREATE TABLE t (id TEXT PRIMARY KEY)");
         var id = TerraBase.Primitives.EntityIds.New().ToString();
-        var written = await api.SendAsync(HttpMethod.Put, $"{api.Collections}/t/documents/{id}", JsonContent.Create(new { extra = "existing" }));
+        var written = await api.SendAsync(HttpMethod.Put, $"{api.Collections}/t/documents/by-key?id={id}", new { extra = "existing" });
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
         await SqlApi.OkAsync(api, "ALTER TABLE t ADD extra TEXT");
         var values = await SqlApi.OkAsync(api, "SELECT extra FROM t");
