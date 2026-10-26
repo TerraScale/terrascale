@@ -2,6 +2,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-settings-title">
     <header class="ts-page-header"><h1 id="project-settings-title">Project settings</h1><p>These permissions apply to the selected project only. Project admin access allows renaming this project; organization settings require a separate organization role.</p></header>
+    <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Explicit project grants</a>
     @if (Model.Renamed) { <p class="ts-alert ts-alert-success" role="status">Project renamed.</p> }
     @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" id="project-settings-error" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Reload project settings</a></p> }
     <section class="ts-card ts-card-boxed" aria-labelledby="project-details-title" data-signals="{_renamingProject: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_renamingProject = true)" data-on:pageshow__window="$_renamingProject = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_renamingProject = false)">

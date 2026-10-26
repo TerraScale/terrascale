@@ -1,0 +1,22 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page" aria-labelledby="project-grants-title">
+    <header class="ts-page-header"><h1 id="project-grants-title">Explicit project grants</h1><p>@Model.Shell.Context.Project!.Name</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
+    <p>This list contains explicit grants for the selected project only. Organization-implied access is not listed. Your effective project role is @Model.Shell.Context.Project.Role.</p>
+    <p>Removing an explicit grant preserves organization-implied access and independent service keys. It does not promise total access revocation.</p>
+    @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }
+    else if (Model.Grants.Count == 0) { <p class="ts-empty" role="status">No explicit project grants on this page. Organization-implied access may still apply.</p> }
+    else
+    {
+        <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Explicit project grants"><table class="ts-table"><thead><tr><th>User ID</th><th>Email</th><th>Explicit role</th></tr></thead><tbody>
+        @foreach (var grant in Model.Grants) { <tr data-project-grant-user="@grant.UserId"><td class="ts-mono">@grant.UserId</td><td>@grant.Email</td><td>@grant.Role</td></tr> }
+        </tbody></table></div>
+    }
+    <nav aria-label="Project grant pages">
+        @if (Model.HasPrevious) { <a class="ts-link" href="@Model.Url">First page</a> }
+        @if (Model.Next is not null) { <a class="ts-link" rel="next" href="@(Model.Url + "&after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }
+    </nav>
+</main>
+@functions {
+    public ShellModel LayoutModel => Model.Shell;
+}
