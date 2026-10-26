@@ -13,6 +13,9 @@ namespace TerraBase.Fast.Replication;
 /// <summary>Authorized pin guidance over real HTTP, PostgreSQL and Wire listeners in three regions.</summary>
 public sealed class EndpointRegionPinTests
 {
+    private static readonly string[] HttpEndpoints = ["documents", "sql", "hrana"];
+    private static readonly string[] Sjc = ["sjc"];
+    private static readonly bool[] ReplayStates = [false, true];
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -23,7 +26,7 @@ public sealed class EndpointRegionPinTests
         var project = cell.Database.ProjectId!;
         await cell.Gru.Api.SetPlanAsync(cell.User, org, "enterprise");
         using var created = await cell.Gru.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{org}/projects/{project}/databases"),
-            allRegions ? (object)new { name = "pinned", allRegions = true } : new { name = "pinned", replicaRegions = new[] { "sjc" } });
+            allRegions ? (object)new { name = "pinned", allRegions = true } : new { name = "pinned", replicaRegions = Sjc });
         created.EnsureSuccessStatusCode();
         var path = $"/v1/projects/{project}/databases/pinned";
         var regions = allRegions ? new[] { "fra", "gru", "sjc" } : ["gru", "sjc"];
@@ -43,7 +46,7 @@ public sealed class EndpointRegionPinTests
                 var accepted = regions.Contains(machine.Region) && (pin is null || pin == machine.Region);
                 var target = pin is not null && regions.Contains(pin) ? pin : regions[0];
                 var id = EntityIds.New().ToString();
-                foreach (var (endpoint, replayed) in new[] { "documents", "sql", "hrana" }.SelectMany(endpoint => new[] { false, true }, (endpoint, replayed) => (endpoint, replayed)))
+                foreach (var (endpoint, replayed) in HttpEndpoints.SelectMany(endpoint => ReplayStates, (endpoint, replayed) => (endpoint, replayed)))
                 {
                     using var request = new HttpRequestMessage(endpoint == "documents" ? accepted ? HttpMethod.Get : HttpMethod.Put : HttpMethod.Post,
                         ManagementApi.Uri(path + (endpoint == "documents" ? $"/collections/items/documents/by-key?id={id}" : endpoint == "sql" ? "/sql/execute" : "/libsql/v2/pipeline")))
@@ -79,7 +82,7 @@ public sealed class EndpointRegionPinTests
                         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
                         var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
                         await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("wrong_region");
-                        await Assert.That(error.GetProperty("regions").EnumerateArray().Select(value => value.GetString())).IsEquivalentTo(regions);
+                        await Assert.That(error.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!)).IsEquivalentTo(regions);
                         await Assert.That(error.GetProperty("host").GetString()).IsEqualTo(RegionGuidance.Host(target));
                         await Assert.That(error.GetProperty("docs").GetString()).IsEqualTo(RegionGuidance.Docs);
                         var replay = replayed ? null : pin is null ? string.Join(',', regions) : regions.Contains(pin) ? pin : null;
@@ -95,8 +98,13 @@ public sealed class EndpointRegionPinTests
 
                 await using var pg = new NpgsqlConnection(new NpgsqlConnectionStringBuilder
                 {
-                    Host = "127.0.0.1", Port = machine.Api.Server.PostgresPort, Username = "wire", Password = key,
-                    Database = $"{project}/pinned" + (pin is null ? "" : "@" + pin), SslMode = SslMode.Disable, Pooling = false,
+                    Host = "127.0.0.1",
+                    Port = machine.Api.Server.PostgresPort,
+                    Username = "wire",
+                    Password = key,
+                    Database = $"{project}/pinned" + (pin is null ? "" : "@" + pin),
+                    SslMode = SslMode.Disable,
+                    Pooling = false,
                 }.ConnectionString);
                 if (accepted)
                 {
