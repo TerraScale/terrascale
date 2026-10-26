@@ -43,14 +43,14 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     public Task<ProjectApiKeySecret> CreateM2mClient(string name, string[] scopes, string databaseId = "", string? organizationId = null, string? projectId = null) =>
         CreateCredentialAsync(Scope(organizationId, projectId), "m2m", name, scopes, databaseId, 0, []);
 
-    [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Replace an API key's secret and return the new secret once; store it securely. The old secret keeps working for previousSecretTtlSeconds (0 to 86400, default 0 = stops immediately); another rotation is refused while that grace period lasts. Requires an owner or admin role.")]
+    [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Replace an API key's secret and return the new secret once; store it securely. With previousSecretTtlSeconds = 0 (default), the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With a grace period (up to 86400 seconds), the old secret works until it ends; these bounds start then. Another rotation is refused during the grace. Requires an owner or admin role.")]
     public async Task<ProjectApiKeySecret> RotateApiKey(string keyId, int previousSecretTtlSeconds = 0, string? organizationId = null, string? projectId = null)
     {
         var result = await keys.RotateAsync(Scope(organizationId, projectId), keyId, previousSecretTtlSeconds, Cancellation);
         return new(ApiKeyService.Metadata(result.Key), result.Secret);
     }
 
-    [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoke a project API key to prevent new token issuance. Previously issued tokens remain valid until they expire, within 60 seconds.")]
+    [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.")]
     public async Task<McpCredentialRevoked> RevokeApiKey(string keyId, string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);

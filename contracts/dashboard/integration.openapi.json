@@ -384,7 +384,7 @@
           "Credentials"
         ],
         "summary": "Revoke a project key",
-        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Already-issued tokens are validated offline and stay valid until they expire (at most 60 seconds). A failed revoke call is re-checked, so 204/303 means the key is gone.",
+        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone.",
         "operationId": "revokeDashboardCredentialById",
         "parameters": [
           {
@@ -545,7 +545,7 @@
           "Credentials"
         ],
         "summary": "Rotate a project key and reveal its new secret once",
-        "description": "Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period; 0 stops it immediately. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.",
+        "description": "Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period. With 0, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With grace, these bounds apply from its end. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.",
         "operationId": "rotateDashboardCredential",
         "requestBody": {
           "content": {
