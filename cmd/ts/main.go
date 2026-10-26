@@ -56,6 +56,9 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   completion bash | zsh | fish            print a shell completion script
 
   db list | create <db> | delete <db>     manage the project's databases
+                                          create placement: -home-region <region>,
+                                          -replica-regions <region>,...|none,
+                                          or -placement all (before command)
                                           delete requires typing the database
                                           name; -yes before db delete consents
                                           explicitly for unattended use
@@ -270,6 +273,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	scope := fs.String("scope", "", "keys create: read or read-write")
 	collection := fs.String("collection", "", "ndjson import: destination collection")
+	homeRegion := fs.String("home-region", "", "db create: requested home region")
+	replicaRegions := fs.String("replica-regions", "", "db create: comma-separated replicas, or none")
+	placementMode := fs.String("placement", "", "db create: all for every serving region")
 	if err := fs.Parse(args); err != nil {
 		return parserError(err)
 	}
@@ -297,9 +303,15 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
 	}
 	var collectionSet, yesSet, scopeSet, keyOptionsSet bool
+	var placementSet, replicasSet bool
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "expires" || f.Name == "allow-cidr" {
+		switch f.Name {
+		case "expires", "allow-cidr":
 			keyOptionsSet = true
+		case "home-region", "placement":
+			placementSet = true
+		case "replica-regions":
+			placementSet, replicasSet = true, true
 		}
 		if f.Name == "scope" {
 			scopeSet = true
@@ -311,6 +323,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			collectionSet = true
 		}
 	})
+	if placementSet && name != "db create" {
+		return fmt.Errorf("placement options are only accepted for db create: %w", errUsage)
+	}
+	requestedPlacement, err := placementRequest(*homeRegion, *replicaRegions, *placementMode, replicasSet)
+	if err != nil {
+		return err
+	}
 	if scopeSet && name != "keys create" {
 		return fmt.Errorf("-scope is only accepted for keys create: %w", errUsage)
 	}
@@ -353,6 +372,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	case "migrate new":
 		return newMigration(operands[0], out)
 	}
+	dispatch := func(s *session) error {
+		if placementSet {
+			return createPlacedDatabase(ctx, s.tb.Database(s.project, operands[0]), requestedPlacement, out)
+		}
+		return s.dispatch(ctx, name, fn, *collection, operands, out)
+	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
 			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
@@ -369,7 +394,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 				return err
 			}
 		}
-		return s.dispatch(ctx, name, fn, *collection, operands, out)
+		return dispatch(s)
 	}
 	var keyReq tsauth.APIKeyRequest
 	if name == "keys create" {
@@ -468,7 +493,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	return s.dispatch(ctx, name, fn, *collection, operands, out)
+	return dispatch(s)
 }
 
 // dispatch runs a project command.

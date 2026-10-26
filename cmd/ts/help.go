@@ -74,7 +74,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "project", "org", "scope", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit", "cursor":
+			case "project", "org", "scope", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit", "cursor", "home-region", "replica-regions", "placement":
 				if !equal {
 					i++
 				}
@@ -160,6 +160,10 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "db create":
+		options["-home-region <region>"] = "requested home; server validates serving placement"
+		options["-replica-regions <region>,...|none"] = "explicit replicas; none may be rejected by minimum-copy policy"
+		options["-placement all"] = "every serving region; cannot combine with -replica-regions"
 	case strings.HasPrefix(name, "keys create"):
 		options["-scope read|read-write"] = "requested grants; default read-write, server permissions still apply"
 		options["-expires 30d|90d|365d|never"] = "key expiry; default never"
