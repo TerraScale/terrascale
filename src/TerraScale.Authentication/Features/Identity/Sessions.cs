@@ -57,6 +57,37 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     public async Task<(SessionRecord Session, UserRecord User)?> ResolveAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         await this.ReadLiveAsync(instanceId, token, cancellationToken).ConfigureAwait(false) is { } live ? (live.Session, live.User) : null;
 
+    /// <summary>As <see cref="ResolveAsync"/>, with the version of the session document a caller's commit can be bound to.</summary>
+    internal Task<(SessionRecord Session, string Version, UserRecord User)?> ResolveVersionedAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
+        this.ReadLiveAsync(instanceId, token, cancellationToken);
+
+    /// <summary>
+    /// Asserts, inside a caller's transaction, that <paramref name="session"/> is still stored unrevoked, unexpired at
+    /// <paramref name="now"/> and at the authentication state it was opened with: a sign-out that lands before the commit fails it.
+    /// </summary>
+    internal static StoreOperation Live(SessionRecord session, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var live = new JsonObject
+        {
+            ["and"] = new JsonArray(
+                new JsonObject { ["eq"] = new JsonArray("/instanceId", session.InstanceId) },
+                new JsonObject { ["eq"] = new JsonArray("/userId", session.UserId) },
+                new JsonObject { ["eq"] = new JsonArray("/tokenHash", session.TokenHash) },
+                new JsonObject { ["eq"] = new JsonArray("/authEpoch", session.AuthEpoch) },
+                new JsonObject { ["ne"] = new JsonArray("/revoked", true) },
+                // Expiries are written from UTC instants, so their ISO 8601 text orders chronologically.
+                new JsonObject { ["gt"] = new JsonArray("/expiresAt", JsonSerializer.SerializeToNode(now, IdentityJson.Default.DateTimeOffset)) }),
+        };
+        if (session.AuthStamp is not null)
+        {
+            ((JsonArray)live["and"]!).Add(new JsonObject { ["eq"] = new JsonArray("/authStamp", session.AuthStamp) });
+        }
+
+        using var filter = JsonDocument.Parse(live.ToJsonString());
+        return AuthStore.Require(AuthStore.SessionCollection, session.InstanceId, session.TokenHash, filter.RootElement.Clone());
+    }
+
     /// <summary>
     /// Replaces a live session with a new token after a privilege change. The old token stops working first, so
     /// concurrent regional rotations converge to one usable successor; the successor keeps the old expiry.
