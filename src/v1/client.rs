@@ -743,7 +743,8 @@ impl Client {
                                         | "storage_unavailable"
                                         | "dependencies_unavailable"
                                         | "storage_busy"
-                                        | "not_primary",
+                                        | "not_primary"
+                                        | "auth_unavailable",
                                     ),
                                 ) => replay_safe,
                                 _ => false,
@@ -876,34 +877,63 @@ impl Client {
         if anonymous {
             return request.send().await.map_err(transport);
         }
-        let token = self.inner.auth.bearer(&self.inner.http, None).await?;
-        let replay = request.try_clone();
-        let response = request
-            .header(AUTHORIZATION, token.as_ref().clone())
-            .send()
-            .await
-            .map_err(transport)?;
-        if response.status() != StatusCode::UNAUTHORIZED
-            || *refreshed
-            || !self.inner.auth.refreshable()
-        {
-            return Ok(response);
+        let mut request = request;
+        let mut rejected = None;
+        loop {
+            let token = self
+                .inner
+                .auth
+                .bearer(&self.inner.http, rejected.as_ref())
+                .await?;
+            let replay = request.try_clone();
+            let mut response = request
+                .header(AUTHORIZATION, token.as_ref().clone())
+                .send()
+                .await
+                .map_err(transport)?;
+            if response.status() != StatusCode::UNAUTHORIZED || !self.inner.auth.refreshable() {
+                return Ok(response);
+            }
+            let headers = response.headers().clone();
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(transport)? {
+                if body.len() + chunk.len() > self.inner.max_response {
+                    return Err(Error::ResponseTooLarge {
+                        limit: self.inner.max_response,
+                        status: 401,
+                        may_have_applied: false,
+                    });
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let error = errors::from_project_response(
+                401,
+                None,
+                None,
+                headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+                &body,
+            );
+            let decoded = match &error {
+                Error::Response { error, .. } => error.as_ref(),
+                _ => &error,
+            };
+            let permanent = match decoded {
+                Error::KeyRevoked { message } => Some(("key_revoked", message.clone())),
+                Error::KeyExpired { message } => Some(("key_expired", message.clone())),
+                _ => None,
+            };
+            if let Some((code, message)) = permanent {
+                self.inner.auth.reject(code, message).await;
+            } else if !*refreshed {
+                if let Some(replay) = replay {
+                    *refreshed = true;
+                    rejected = Some(token);
+                    request = replay;
+                    continue;
+                }
+            }
+            return Err(error);
         }
-        let Some(replay) = replay else {
-            return Ok(response);
-        };
-        *refreshed = true;
-        drop(response);
-        let token = self
-            .inner
-            .auth
-            .bearer(&self.inner.http, Some(&token))
-            .await?;
-        replay
-            .header(AUTHORIZATION, token.as_ref().clone())
-            .send()
-            .await
-            .map_err(transport)
     }
 
     fn response_error(

@@ -107,14 +107,16 @@ async fn exchange_refusals_are_not_retried_or_classified_as_uncertain_commits() 
             .await
             .err()
             .unwrap();
-        assert!(matches!(
-            error,
-            Error::TokenExchange {
-                code: "token_exchange_refused",
-                ..
-            }
-        ));
+        assert!(matches!(error, Error::TokenExchange { .. }));
         assert_eq!(error.status(), Some(status));
+        assert_eq!(
+            error.code(),
+            Some(if status == 401 {
+                "invalid_key"
+            } else {
+                "token_exchange_refused"
+            })
+        );
         assert!(!error.is_uncertain());
         assert!(error.raw_body().is_none());
         assert!(!format!("{error:?} {error}").contains("fixture-sensitive"));
@@ -342,4 +344,70 @@ async fn independent_projects_never_share_cached_grants_or_routes() {
     assert_eq!(seen[1].path, format!("/v1/projects/{OTHER}/databases"));
     assert_eq!(seen[2].headers[AUTHORIZATION], "Bearer first");
     assert_eq!(seen[2].path, format!("/v1/projects/{PROJECT}/databases"));
+}
+
+#[tokio::test]
+async fn permanent_key_refusals_stop_exchanges_but_authority_outages_retry() {
+    for code in ["key_revoked", "key_expired", "auth_unavailable"] {
+        let auth = Fixture::new(|_| ok(grant("access-one", 900))).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let data = Fixture::new(move |_| {
+            if count.fetch_add(1, Ordering::SeqCst) > 0 && code == "auth_unavailable" {
+                return ok("{}".into());
+            }
+            (
+                if code == "auth_unavailable" { 503 } else { 401 },
+                "application/json",
+                json!({"error":{"code":code,"message":"Replace the key."}}).to_string(),
+            )
+        })
+        .await;
+        let mut client = data.client(&auth);
+        Arc::get_mut(&mut client.inner).unwrap().retry = RetryPolicy::default();
+        if code == "auth_unavailable" {
+            read(&client).await.unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        } else {
+            for _ in 0..2 {
+                let error = read(&client).await.err().unwrap();
+                assert_eq!(error.code(), Some(code));
+                assert!(error.to_string().contains("Replace the key."));
+                let decoded = match &error {
+                    Error::Response { error, .. } => error.as_ref(),
+                    _ => &error,
+                };
+                assert!(matches!(
+                    decoded,
+                    Error::KeyRevoked { .. } | Error::KeyExpired { .. }
+                ));
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+        assert_eq!(auth.seen.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn invalid_client_is_a_terminal_invalid_key_error() {
+    let auth = Fixture::new(|_| {
+        (
+            401,
+            "application/json",
+            r#"{"error":"invalid_client"}"#.into(),
+        )
+    })
+    .await;
+    let data = Fixture::new(|_| panic!("data request after invalid key")).await;
+    let client = data.client(&auth);
+    for _ in 0..2 {
+        assert!(matches!(
+            read(&client).await,
+            Err(Error::TokenExchange {
+                code: "invalid_key",
+                ..
+            })
+        ));
+    }
+    assert_eq!(auth.seen.lock().unwrap().len(), 1);
 }

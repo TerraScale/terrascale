@@ -87,3 +87,12 @@ do not provide parameter binding.
 Project-scoped collection shapes are documented in [shape reads](docs/shape-reads.md).
 Database-wide changes are available through `Database::changes` (typed events) and
 `Database::change_bytes` (raw SSE). API-key clients refresh credentials when reconnecting.
+
+API-key `401 key_revoked` / `401 key_expired` errors carry `Error::KeyRevoked` /
+`Error::KeyExpired` with the server message (inside `Error::Response`, accessible
+by matching its boxed `error` field), and `code()` retains the code. They never retry or
+re-exchange. The SDK drops cached tokens and retains the refusal across clones;
+create a new client with a replacement key. A refused token exchange with HTTP
+401 is the terminal `Error::TokenExchange` code `invalid_key` (upstream bodies
+remain redacted). `503 auth_unavailable` uses the existing replay-safe backoff
+and `Retry-After` policy without discarding the token.
