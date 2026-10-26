@@ -2,10 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using RazorSlices;
 using TerraScale.Dashboard.Features.Analytics;
@@ -76,14 +73,15 @@ public sealed class ChartBucketJourneyTests
         app.MapGet("/datastar.js", () => Results.File(Path.Combine(assets, "js/vendor/datastar.js"), "text/javascript"));
         app.MapGet("/", async (HttpContext http) =>
         {
-            using var a = AnalyticsLineView.Create(analytics);
+            var context = new AccountContext(null!, new(), [], null, new() { Id = "01JA0000000000000000000001" });
+            using var a = AnalyticsChartView.Create(new("Reads", analytics, new(context, "7d", "", ""))); a.HttpContext = http;
             using var r = HomeRequestChartView.Create(requests); r.HttpContext = http;
             using var o = ActivityChart.Create(operations);
-            var css = await File.ReadAllTextAsync(Path.Combine(assets, "css/tokens.css")) + await File.ReadAllTextAsync(Path.Combine(assets, "css/data.css"));
-            return Results.Content("<style>" + css + "</style><button id='before'>Before</button>" + await a.RenderAsync() + await r.RenderAsync() + await o.RenderAsync() + "<button id='after'>After</button><script type='module' src='/datastar.js'></script>", "text/html");
+            var css = await File.ReadAllTextAsync(Path.Combine(assets, "css/tokens.css")) + await File.ReadAllTextAsync(Path.Combine(assets, "css/data.css")) + await File.ReadAllTextAsync(Path.Combine(root, "src/TerraScale.Dashboard/Features/Analytics/analytics.css"));
+            return Results.Content("<style>" + css + "</style><button id='before'>Before</button>" + await a.RenderAsync() + "<button data-chart-exit>After analytics</button>" + await r.RenderAsync() + "<button data-chart-exit>After requests</button>" + await o.RenderAsync() + "<button id='after'>After</button><script type='module' src='/datastar.js'></script>", "text/html");
         });
         await app.StartAsync();
-        var origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        var origin = app.Urls.Single();
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         var page = await browser.NewPageAsync(new() { ViewportSize = new() { Width = width, Height = 1080 } });
@@ -93,6 +91,22 @@ public sealed class ChartBucketJourneyTests
         await page.GotoAsync(origin);
         await page.WaitForFunctionAsync("() => document.querySelectorAll('.ts-chart-column[tabindex=\"-1\"]').length > 0");
         Console.WriteLine($"{count} buckets at {width}px × three charts: navigation and Datastar initialization {clock.Elapsed.TotalMilliseconds:F1}ms");
+        // Enter through each production slice's final range link, including its real region
+        // wrapper. Counting bucket tabindex values alone misses an extra wrapper/SVG stop.
+        var sections = await page.Locator("section.ts-card:has(.ts-chart-shell)").AllAsync();
+        await Assert.That(sections.Count).IsEqualTo(2);
+        foreach (var section in sections)
+        {
+            var bucket = section.Locator(".ts-chart-column").Last;
+            await section.Locator("nav a").Last.FocusAsync();
+            await page.Keyboard.PressAsync("Tab");
+            await Assert.That(await bucket.EvaluateAsync<string>("el => el === document.activeElement ? 'bucket' : document.activeElement.outerHTML.slice(0, 200)")).IsEqualTo("bucket");
+            await Assert.That(await section.Locator(".ts-chart-overlay").EvaluateAsync<bool>("el => el.classList.contains('is-active')")).IsTrue();
+            await page.Keyboard.PressAsync("Tab");
+            await Assert.That(await section.EvaluateAsync<bool>("el => document.activeElement === el.nextElementSibling && document.activeElement.hasAttribute('data-chart-exit')")).IsTrue();
+            await page.Keyboard.PressAsync("Shift+Tab");
+            await Assert.That(await bucket.EvaluateAsync<bool>("el => el === document.activeElement")).IsTrue();
+        }
         foreach (var chart in await page.Locator("svg.ts-chart[role=group]").AllAsync())
         {
             var columns = chart.Locator(".ts-chart-column"); var layer = chart.Locator(":scope > .ts-chart-overlay");

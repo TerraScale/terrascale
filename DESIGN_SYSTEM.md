@@ -110,17 +110,18 @@ such as `Features/Home/ActivityChart.cshtml`,
 `Features/Home/HomeRequestChartView.cshtml`,
 `Features/Analytics/AnalyticsLineView.cshtml` and
 `Features/Usage/UsageShareBar.cshtml` render SVG on the server: monotone curves, a gradient
-area for single series, a dashed grid, and focusable hover columns (capped at
-60) with a guide line, dots and an SVG tooltip listing the point label and the
+area for single series, a dashed grid, and a focusable column for every plotted
+bucket, with a guide line, dots and an SVG tooltip listing the point label and the
 exact value of every series. Each additional group of three series reuses the
 categorical tokens with a distinct dash length, matching curves, legend strokes,
 tooltip keys and markers. The tooltip is sized from its monospaced text and
-flips left near the plot end, so it never leaves the viewBox. With Datastar
-running a line chart is one tab stop, starting on the latest point; the arrow
-keys, Home and End move between points. Rings and share bars sit in a
-focusable `ts-chart-meter` whose `ts-chart-tooltip` shows name and percent
-above it. Tooltips appear on `:hover` and `:focus-visible`; no chart
-library or script.
+flips left near the plot end. Datastar initializes `ChartInteraction` with a
+cached chronological column list and one displayed tooltip overlay. A line
+chart is one Tab stop, starting on the latest point; arrow keys, Home and End
+move between points. Pointer hover and keyboard focus show the tooltip; Escape
+dismisses it. Named chart regions do not add a separate Tab stop. Rings and
+share bars sit in a focusable `ts-chart-meter` whose CSS tooltip shows name
+and percent on `:hover` and `:focus-visible`. No chart library is loaded.
 
 ## Performance
 

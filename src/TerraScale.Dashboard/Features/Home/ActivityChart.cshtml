@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.OperationChart>
 @using TerraScale.Dashboard.Shared.Charts
-<svg class="ts-chart" viewBox="0 0 720 180" role="group" aria-label="@Model.Label" data-init="@TerraScale.Dashboard.Features.Analytics.ChartInteraction.Initialize"
+<svg class="ts-chart" viewBox="0 0 720 180" tabindex="-1" role="group" aria-label="@Model.Label" data-init="@TerraScale.Dashboard.Features.Analytics.ChartInteraction.Initialize"
  data-on:focusin="el.chartFocus(evt)" data-on:focusout="el.chartBlur()"
  data-on:pointermove="el.chartPointer(evt)" data-on:pointerdown="el.chartPointer(evt)" data-on:pointerleave="el.chartLeave()"
  data-on:resize__window="el.chartResize()" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.chartDismiss()" data-on:keydown="el.chartKey(evt)">

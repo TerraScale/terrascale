@@ -2,7 +2,7 @@
 @using System.Globalization
 @* Plot coordinates are 720x200 units with the plot at x 48..708. Here x becomes a percentage of the
    fluid SVG width and y stays in pixels, so text, dots and tooltips render at their real size. *@
-<svg class="ts-chart ts-analytics-plot" role="group" aria-label="@Model.Label" data-init="@TerraScale.Dashboard.Features.Analytics.ChartInteraction.Initialize"
+<svg class="ts-chart ts-analytics-plot" tabindex="-1" role="group" aria-label="@Model.Label" data-init="@TerraScale.Dashboard.Features.Analytics.ChartInteraction.Initialize"
  data-on:focusin="el.chartFocus(evt)" data-on:focusout="el.chartBlur()"
  data-on:pointermove="el.chartPointer(evt)" data-on:pointerdown="el.chartPointer(evt)" data-on:pointerleave="el.chartLeave()"
  data-on:resize__window="el.chartResize()" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.chartDismiss()" data-on:keydown="el.chartKey(evt)">
