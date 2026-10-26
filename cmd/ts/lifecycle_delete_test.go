@@ -34,7 +34,7 @@ func TestLifecycleConsentUsesCanonicalIDAndRefusesOffline(t *testing.T) {
 
 func TestProjectDeleteGuardsAndFailures(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"nonempty", "later-page-nonempty", "list-denied", "consent-denied", "delete-denied", "success", "writer-failed"} {
+	for _, mode := range []string{"nonempty", "later-page-nonempty", "list-denied", "consent-denied", "delete-denied", "success", "pending", "writer-failed"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			var deletes, prompts atomic.Int32
@@ -46,6 +46,10 @@ func TestProjectDeleteGuardsAndFailures(t *testing.T) {
 				if mode == "delete-denied" {
 					w.WriteHeader(http.StatusForbidden)
 					io.WriteString(w, `{"error":{"code":"forbidden_role","message":"admin required"}}`)
+					return
+				}
+				if mode == "pending" {
+					w.WriteHeader(http.StatusAccepted)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -84,7 +88,14 @@ func TestProjectDeleteGuardsAndFailures(t *testing.T) {
 			}
 			err := deleteProjectLifecycle(t.Context(), u, c, &tsauth.Project{ID: managementProjectID, OrganizationID: managementOrgID, Name: "app"}, consent, writer)
 			switch mode {
-			case "success":
+			case "success", "pending":
+				var result struct {
+					Deleted bool `json:"deleted"`
+					Pending bool `json:"pending"`
+				}
+				if decodeErr := json.Unmarshal(out.Bytes(), &result); decodeErr != nil || result.Deleted != (mode == "success") || result.Pending != (mode == "pending") {
+					t.Fatalf("closure outcome = %q, %v", out.String(), decodeErr)
+				}
 				if err != nil || deletes.Load() != 1 || !json.Valid(out.Bytes()) {
 					t.Fatalf("delete result = %v, calls %d, %q", err, deletes.Load(), out.String())
 				}
