@@ -62,7 +62,7 @@ public sealed class DatabaseIdentityDeletionTests
         }
 
         var database = new ManagedDatabaseRef(organization, project, body.GetProperty("id").GetString()!, "main");
-        await ErrorAssert.ErrorAsync(client.DeleteAsync(Uri(database.Data + "/if-id/" + EntityIds.New())), HttpStatusCode.Conflict, "database_identity_mismatch");
+        await ErrorAssert.ErrorAsync(client.DeleteAsync(Uri(database.Data + "/if-id/" + EntityIds.New())), HttpStatusCode.Conflict, "database_identity_mismatch", "the database identity does not match expectedId");
         using var deleted = await client.DeleteAsync(Uri(database.Data + "/if-id/" + database.Id));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
         await Assert.That(Volatile.Read(ref placementChanges)).IsEqualTo(0);
@@ -136,7 +136,7 @@ public sealed class DatabaseIdentityDeletionTests
         var replacement = await api.CreateManagedDatabaseAsync(original.Organization, original.Project, original.Name);
         await Assert.That(replacement.Id).IsNotEqualTo(original.Id);
         var document = await PutDocumentAsync(client, replacement);
-        await ErrorAssert.ErrorAsync(client.DeleteAsync(Uri(original.Data + "/if-id/" + original.Id)), HttpStatusCode.Conflict, "database_identity_mismatch");
+        await ErrorAssert.ErrorAsync(client.DeleteAsync(Uri(original.Data + "/if-id/" + original.Id)), HttpStatusCode.Conflict, "database_identity_mismatch", "the database identity does not match expectedId");
         await AssertDocumentAsync(client, document);
     }
 
@@ -212,7 +212,7 @@ public sealed class DatabaseIdentityDeletionTests
         }
 
         // A matching ID from another database is a conflict, never authority to delete that database.
-        await ErrorAssert.ErrorAsync(allowed.DeleteAsync(Uri(database.Data + "/if-id/" + second.Id)), HttpStatusCode.Conflict, "database_identity_mismatch");
+        await ErrorAssert.ErrorAsync(allowed.DeleteAsync(Uri(database.Data + "/if-id/" + second.Id)), HttpStatusCode.Conflict, "database_identity_mismatch", "the database identity does not match expectedId");
         using var secondStillExists = await allowed.GetAsync(Uri(second.Data));
         await Assert.That(secondStillExists.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await AssertDocumentAsync(allowed, document);
