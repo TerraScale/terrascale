@@ -36,10 +36,8 @@ public sealed partial class TsAuthPlatformJourneyTests
         await using var platform = await PlatformScenario.StartAsync(builder =>
         {
             var fallback = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
-            var state = DispatchProxy.Create<IDashboardState, DataState>();
-            ((DataState)state).Inner = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
-            ((DataState)state).Accessed = () => Interlocked.Increment(ref stateAccess);
-            builder.Services.Replace(ServiceDescriptor.Singleton(state));
+            var inner = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
+            builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(new DataState(inner, () => Interlocked.Increment(ref stateAccess))));
             wire.Fallback = fallback;
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(wire));
             builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(tokens));
@@ -246,17 +244,20 @@ public sealed partial class TsAuthPlatformJourneyTests
         await Assert.That(project.Role).IsEqualTo("admin").Because("display must not alter ts-auth authority");
     }
 
-    public class DataState : DispatchProxy
+    // The persistence contract has internal primitives; a generated proxy assembly cannot implement them.
+    private sealed class DataState(IDashboardState inner, Action accessed) : IDashboardState
     {
-        public IDashboardState Inner { get; set; } = null!;
-        public Action Accessed { get; set; } = null!;
-        protected override object? Invoke(MethodInfo? method, object?[]? args)
-        {
-            if (args?.FirstOrDefault() is "dashboard_saved_queries") Accessed();
-            try { return method!.Invoke(Inner, args); }
-            catch (TargetInvocationException error) when (error.InnerException is not null)
-            { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw(); throw; }
-        }
+        private string Track(string collection) { if (collection == "dashboard_saved_queries") accessed(); return collection; }
+        public Task InitializeAsync(CancellationToken ct) => inner.InitializeAsync(ct);
+        public Task CheckReadyAsync(CancellationToken ct) => inner.CheckReadyAsync(ct);
+        public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct) => inner.GetAsync(Track(collection), id, ct);
+        public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct) => inner.ListAsync(Track(collection), ct);
+        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct) => inner.QueryPageAsync(Track(collection), query, ct);
+        public Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken ct) => inner.PutAsync(Track(collection), id, document, precondition, ct);
+        public Task DeleteAsync(string collection, string id, string version, CancellationToken ct) => inner.DeleteAsync(Track(collection), id, version, ct);
+        public Task DeleteListedAsync(string collection, TerraBaseDocument document, CancellationToken ct) => inner.DeleteListedAsync(Track(collection), document, ct);
+        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct) => inner.ReadPageAsync(Track(collection), filter, limit, cursor, ct);
+        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct) => inner.TransactAsync(operations, ct);
     }
 
     private sealed class WarmDataTokens : IProjectAccessTokens
