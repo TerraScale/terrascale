@@ -67,12 +67,14 @@ func deleteProjectLifecycle(ctx context.Context, u *tsauth.User, tb *v1.Client, 
 	if err := consent("project", p.Name, p.ID); err != nil {
 		return err
 	}
-	if err := u.DeleteProject(ctx, p.OrganizationID, p.ID); err != nil {
+	result, err := u.DeleteProject(ctx, p.OrganizationID, p.ID)
+	if err != nil {
 		return err
 	}
 	return emitJSON(out, struct {
 		Deleted        bool   `json:"deleted"`
+		Pending        bool   `json:"pending"`
 		OrganizationID string `json:"organizationId"`
 		ProjectID      string `json:"projectId"`
-	}{true, p.OrganizationID, p.ID})
+	}{result == tsauth.ProjectDeletionCompleted, result == tsauth.ProjectDeletionPending, p.OrganizationID, p.ID})
 }

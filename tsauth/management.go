@@ -108,6 +108,8 @@ type Project struct {
 	CreatedBy      string    `json:"created_by" ulid:"required"`
 	CreatedAt      time.Time `json:"created_at"`
 	Role           Role      `json:"role"`
+	// AllowedCIDRs restrict every API key token of the project; empty allows any address.
+	AllowedCIDRs []string `json:"allowed_cidrs"`
 }
 
 // ProjectMember is an explicit role on one project.
@@ -192,6 +194,8 @@ type APIKey struct {
 	CreatedBy      string     `json:"created_by" ulid:"required"`
 	CreatedAt      time.Time  `json:"created_at"`
 	ExpiresAt      *time.Time `json:"expires_at"`
+	// LastUsedAt is the last successful token exchange, up to five minutes stale; nil means never used.
+	LastUsedAt *time.Time `json:"last_used_at"`
 	// AllowedCIDRs are the client networks the key works from; empty allows
 	// any address.
 	AllowedCIDRs []string `json:"allowed_cidrs"`
@@ -415,10 +419,41 @@ func (u *User) RenameProject(ctx context.Context, org, project, name string) (*P
 	return call[Project](ctx, u, http.MethodPatch, projectPath(org, project), nil, nameBody{name})
 }
 
-// DeleteProject deletes a project, its tenant and its keys; delete its
-// TerraBase databases first.
-func (u *User) DeleteProject(ctx context.Context, org, project string) error {
-	return u.none(ctx, http.MethodDelete, projectPath(org, project), nil, nil)
+// ProjectDeletionResult is the outcome of one project closure request, derived
+// from the HTTP status rather than a JSON field. Its zero value is not success.
+type ProjectDeletionResult uint8
+
+const (
+	// ProjectDeletionPending means 202: closure was accepted but is still pending.
+	ProjectDeletionPending ProjectDeletionResult = iota + 1
+	// ProjectDeletionCompleted means 204: logical closure completed, not physical erasure.
+	ProjectDeletionCompleted
+)
+
+// DeleteProject requests closure as project admin. It makes one request without
+// polling or retries. Pending closure can be resumed by repeating the request;
+// 409 not_empty, closure_conflict or binding_conflict remain *APIError values.
+func (u *User) DeleteProject(ctx context.Context, org, project string) (ProjectDeletionResult, error) {
+	status, err := u.doStatus(ctx, http.MethodDelete, projectPath(org, project), nil, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	switch status {
+	case http.StatusAccepted:
+		return ProjectDeletionPending, nil
+	case http.StatusNoContent:
+		return ProjectDeletionCompleted, nil
+	default:
+		return 0, fmt.Errorf("tsauth: DELETE project: unexpected success status %d", status)
+	}
+}
+
+// SetProjectAllowedCIDRs replaces the project's allowlist as project admin.
+// Pass an explicit empty slice to allow any address; nil is invalid. The server
+// validates up to 32 IPv4/IPv6 networks or addresses. Newly issued key tokens
+// adopt the policy within 60 seconds, in addition to their key's own allowlist.
+func (u *User) SetProjectAllowedCIDRs(ctx context.Context, org, project string, cidrs []string) (*Project, error) {
+	return call[Project](ctx, u, http.MethodPut, projectPath(org, project, "allowed-cidrs"), nil, map[string][]string{"allowed_cidrs": cidrs})
 }
 
 // ProjectMembers lists a project's explicit members.
@@ -554,49 +589,59 @@ func (u *User) none(ctx context.Context, method string, path []string, query url
 // do sends one request. A path segment may not be empty, a dot segment or
 // contain a slash, since it would address another resource.
 func (u *User) do(ctx context.Context, method string, path []string, query url.Values, in, out any) error {
+	_, err := u.doStatus(ctx, method, path, query, in, out)
+	return err
+}
+
+func (u *User) doStatus(ctx context.Context, method string, path []string, query url.Values, in, out any) (int, error) {
 	if u.token == "" || strings.ContainsFunc(u.token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-		return errors.New("tsauth: WithToken needs a sign-in access token without whitespace")
+		return 0, errors.New("tsauth: WithToken needs a sign-in access token without whitespace")
 	}
 	if err := entityid.Path(path); err != nil {
-		return fmt.Errorf("tsauth: %s request path: %w", method, err)
+		return 0, fmt.Errorf("tsauth: %s request path: %w", method, err)
 	}
 	if project := query.Get("project_id"); project != "" {
 		if err := entityid.Check(project); err != nil {
-			return fmt.Errorf("tsauth: %s request project_id: %w", method, err)
+			return 0, fmt.Errorf("tsauth: %s request project_id: %w", method, err)
 		}
 	}
 	target := u.c.base
 	for _, s := range path {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {
-			return fmt.Errorf("tsauth: path segment %q is empty, a dot segment or contains a slash", s)
+			return 0, fmt.Errorf("tsauth: path segment %q is empty, a dot segment or contains a slash", s)
 		}
 		target += "/" + url.PathEscape(s)
 	}
 	if len(query) > 0 {
 		target += "?" + query.Encode()
 	}
-	return sendJSON(ctx, u.c.hc, method, target, "Bearer "+u.token, in, out)
+	return sendJSONStatus(ctx, u.c.hc, method, target, "Bearer "+u.token, in, out)
 }
 
 // sendJSON sends a JSON request with an Authorization header and decodes a
 // 2xx JSON answer into out; other answers are *APIError.
 func sendJSON(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) error {
+	_, err := sendJSONStatus(ctx, hc, method, target, authorization, in, out)
+	return err
+}
+
+func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var body io.Reader
 	if in != nil {
 		data, err := json.Marshal(in)
 		if err != nil {
-			return fmt.Errorf("tsauth: encode request: %w", err)
+			return 0, fmt.Errorf("tsauth: encode request: %w", err)
 		}
 		if err := entityid.Body(data); err != nil {
-			return fmt.Errorf("tsauth: %s request body: %w", method, err)
+			return 0, fmt.Errorf("tsauth: %s request body: %w", method, err)
 		}
 		body = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Authorization", authorization)
 	req.Header.Set("Accept", "application/json")
@@ -605,15 +650,15 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("tsauth: %s %s: %w", method, req.URL.Path, err)
+		return 0, fmt.Errorf("tsauth: %s %s: %w", method, req.URL.Path, err)
 	}
 	defer res.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(res.Body, (8<<20)+1))
 	if err != nil {
-		return fmt.Errorf("tsauth: read %s %s response: %w", method, req.URL.Path, err)
+		return 0, fmt.Errorf("tsauth: read %s %s response: %w", method, req.URL.Path, err)
 	}
 	if len(data) > 8<<20 {
-		return &ResponseContractError{}
+		return 0, &ResponseContractError{}
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		e := &APIError{Status: res.StatusCode, Code: ErrorCode("http_" + strconv.Itoa(res.StatusCode)), RetryAfter: retryAfter(res.Header.Get("Retry-After"))}
@@ -626,20 +671,20 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 		if json.Unmarshal(data, &env) == nil && env.Error.Code != "" {
 			e.Code, e.Message = ErrorCode(env.Error.Code), env.Error.Message
 		}
-		return e
+		return res.StatusCode, e
 	}
 	// Decoding errors quote response values, such as a created key: the
 	// cause is dropped.
 	if out != nil {
 		if bytes.Equal(bytes.TrimSpace(data), []byte("null")) || json.Unmarshal(data, out) != nil {
-			return &ResponseContractError{}
+			return 0, &ResponseContractError{}
 		}
 		if err := validateAuthResponse(data, reflect.TypeOf(out)); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if err := entityid.Model(out); err != nil {
-		return &ResponseContractError{}
+		return 0, &ResponseContractError{}
 	}
-	return nil
+	return res.StatusCode, nil
 }
