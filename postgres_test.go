@@ -67,6 +67,7 @@ func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
 	for key, value := range map[string]string{"PGHOST": "untrusted.invalid", "PGPORT": "bad-port", "PGDATABASE": "wrong", "PGUSER": "wrong", "PGPASSWORD": "do-not-read",
 		"PGPASSFILE": "/nonexistent/do-not-read", "PGSERVICEFILE": "/nonexistent/do-not-read", "PGSSLMODE": "disable", "PGSSLCERT": "/nonexistent/do-not-read",
 		"PGSSLKEY": "/nonexistent/do-not-read", "PGSSLROOTCERT": "/nonexistent/do-not-read", "PGSSLNEGOTIATION": "wrong", "PGCONNECT_TIMEOUT": "invalid",
+		"PGMINPROTOCOLVERSION": "malformed", "PGMAXPROTOCOLVERSION": "malformed",
 		"PGTARGETSESSIONATTRS": "read-only", "PGOPTIONS": "untrusted", "PGTZ": "untrusted"} {
 		t.Setenv(key, value)
 	}
@@ -80,6 +81,9 @@ func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
 	}
 	if driver.TLSConfig.MinVersion != tls.VersionTLS13 || driver.TLSConfig.MaxVersion != 0 || driver.TLSConfig.InsecureSkipVerify || driver.TLSConfig.ServerName != config.TLSServerName || driver.ConnectTimeout != 5*time.Second {
 		t.Fatal("TLS contract weakened")
+	}
+	if driver.MinProtocolVersion != "3.0" || driver.MaxProtocolVersion != "3.0" {
+		t.Fatal("ambient protocol versions affected explicit config")
 	}
 	if !slices.Equal(driver.TLSConfig.NextProtos, []string{"postgresql"}) || driver.TLSConfig.VerifyConnection == nil {
 		t.Fatal("PostgreSQL ALPN policy absent")

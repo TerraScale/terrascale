@@ -22,7 +22,7 @@ const (
 	postgresConnectTimeout = 5 * time.Second
 )
 
-// PostgresConfig addresses the public PostgreSQL listener with a dashboard API key.
+// PostgresConfig addresses the public PostgreSQL listener with a project-scoped dashboard API key.
 // Zero routing/trust fields use pg.terrascale.tech:5432 and verified system trust.
 type PostgresConfig struct {
 	// Host and Port override the public listener address for a custom deployment.
@@ -31,7 +31,7 @@ type PostgresConfig struct {
 	// TLSServerName defaults to Host; CACertificatePEM replaces system roots when supplied.
 	TLSServerName    string
 	CACertificatePEM []byte
-	// Database is a name, or project ULID/name for an organization-wide key.
+	// Database is a name, optionally qualified as the key's project ULID/name.
 	Database string
 	// KeyID is optional; when supplied it must equal the ID in Password.
 	KeyID string
@@ -168,7 +168,7 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 	if os.Getenv("PGSERVICE") != "" {
 		return nil, &PostgresError{Kind: "configuration"}
 	}
-	const stub = "host=localhost port=1 dbname=unused user=unused password=unused sslmode=disable sslrootcert='' sslcert='' sslkey='' sslpassword='' sslsni=1 sslnegotiation=postgres connect_timeout=5 target_session_attrs=any application_name='' options='' timezone='' passfile=''"
+	const stub = "host=localhost port=1 dbname=unused user=unused password=unused sslmode=disable sslrootcert='' sslcert='' sslkey='' sslpassword='' sslsni=1 sslnegotiation=postgres min_protocol_version=3.0 max_protocol_version=3.0 connect_timeout=5 target_session_attrs=any application_name='' options='' timezone='' passfile=''"
 	driver, err := pgx.ParseConfig(stub)
 	if err != nil {
 		return nil, &PostgresError{Kind: "configuration"}
