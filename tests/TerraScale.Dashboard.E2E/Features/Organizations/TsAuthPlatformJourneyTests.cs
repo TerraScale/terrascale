@@ -923,6 +923,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         private IDashboardState? state;
         private TestDatabases? databases;
         public PlatformProducer Producer { get; private set; } = null!;
+        public Uri Origin => origin;
         private Uri origin = null!;
         private Uri replica = null!;
 
@@ -1224,6 +1225,20 @@ public sealed partial class TsAuthPlatformJourneyTests
                 return Error(HttpStatusCode.NotFound, "not_found", "Organization not found.");
             if (organization.RequireMfa && !enrolled.ContainsKey(caller.UserId))
                 return Error(HttpStatusCode.Forbidden, "mfa_required", "This organization requires two-factor authentication.");
+            // PlatformDirectory.RenameProjectAsync checks current effective project authority, not organization admin.
+            if (method == "PATCH" && parts[2..] is ["projects", var renamedProject])
+            {
+                var found = organization.Projects.SingleOrDefault(project => project.Id == renamedProject);
+                if (found is null || EffectiveRole(organization, found, caller.UserId) is null)
+                    return Error(HttpStatusCode.NotFound, "not_found", "Project not found.");
+                if (EffectiveRole(organization, found, caller.UserId) != "admin")
+                    return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs project admin.");
+                if (organization.Projects.Any(project => project.Id != found.Id && project.Name.Equals(Field("name"), StringComparison.OrdinalIgnoreCase)))
+                    return Error(HttpStatusCode.Conflict, "name_taken", "Name taken.");
+                var renamed = found with { Name = Field("name") };
+                organization.Projects[organization.Projects.IndexOf(found)] = renamed;
+                return Json(Wire(organization, renamed, caller.UserId));
+            }
             if (self is null)
             {
                 if (method == "GET" && parts[2..] is ["projects"])
