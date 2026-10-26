@@ -39,7 +39,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             var original = await flow.MeAsync(ownerContext);
             var projectId = original.GetProperty("projectId").GetString()!;
             var orders = await DatabaseAsync("orders-" + suffix, ["GRU", "SFO"]);
-            var archive = await DatabaseAsync("archive-" + suffix, ["SFO"]);
+            var archive = await DatabaseAsync("archive-" + suffix, ["SFO", "GRU"]);
 
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders + "&region=GRU&range=24h");
             await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("10");
@@ -62,7 +62,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             }
             await ownerPage.Locator("#analytics-database").SelectOptionAsync(archive);
             await ApplyAnalyticsAsync();
-            await Assert.That(await ownerPage.Locator("#analytics-region").InputValueAsync()).IsEqualTo("").Because("native database changes clear a stale region");
+            await Assert.That(await ownerPage.Locator("#analytics-region").InputValueAsync()).IsEqualTo("GRU").Because("native database changes keep a region the new database also uses");
             await Assert.That((await flow.MeAsync(ownerContext)).GetProperty("projectId").GetString()).IsEqualTo(projectId).Because("reporting filters do not save a new selected project");
             flow.Checks.Add("native Analytics range/database/region filters, measured counters/latest gauges and Datastar chart keyboard navigation");
 
@@ -175,6 +175,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
                 await ownerPage.GetByRole(AriaRole.Button, new() { Name = "New database", Exact = true }).First.ClickAsync();
                 await ownerPage.Locator("#create-database[open]").WaitForAsync();
                 await ownerPage.Locator("#database-name").FillAsync(name);
+                await ownerPage.Locator("#database-home").SelectOptionAsync(placement[0]);
                 foreach (var region in new[] { "GRU", "SFO" })
                     await ownerPage.Locator("#database-region input[value=\"" + region + "\"]").SetCheckedAsync(placement.Contains(region));
                 await flow.SubmitAsync(ownerPage, "#create-database form", "Create database");
@@ -425,7 +426,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(exportData.GetProperty("events").EnumerateArray().All(item => Text(item, "action")!.Contains("invitation", StringComparison.Ordinal))).IsTrue();
             var csvHref = await ownerPage.GetByRole(AriaRole.Link, new() { Name = "Export CSV", Exact = true }).GetAttributeAsync("href");
             await Assert.That(await (await ownerContext.APIRequest.GetAsync(flow.Origin + csvHref)).TextAsync()).StartsWith("auditEventId,occurredAt,actor,actorType");
-            await flow.GotoAsync(guestPage, "/organization?tab=audit");
+            await flow.GotoAsync(guestPage, "/organization?tab=audit", 403);
             await Assert.That((await guestContext.APIRequest.GetAsync(flow.Origin + "/audit/export?format=json")).Status).IsEqualTo(403);
             flow.Checks.Add("member query/role/page filters, 7d audit defaults, action search, actual JSON/CSV export and member export authorization");
 

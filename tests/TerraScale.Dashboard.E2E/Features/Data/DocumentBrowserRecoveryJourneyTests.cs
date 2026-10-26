@@ -207,7 +207,8 @@ public sealed class DocumentBrowserRecoveryJourneyTests(DashboardRootFixture fix
         if (!fallback)
         {
             var editor = dialog.Locator("ts-code-editor[data-ready]");
-            await Microsoft.Playwright.Assertions.Expect(editor).ToBeVisibleAsync();
+            // Monaco starts after page load; match the 15s editor-ready budget of the other browser journeys.
+            await Microsoft.Playwright.Assertions.Expect(editor).ToBeVisibleAsync(new() { Timeout = 15000 });
             foreach (var widget in new[] { "find", "suggest" })
             {
                 await editor.EvaluateAsync("""

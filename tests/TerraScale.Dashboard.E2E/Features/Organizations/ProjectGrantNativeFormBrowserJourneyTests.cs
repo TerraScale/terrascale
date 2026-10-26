@@ -18,12 +18,12 @@ public sealed partial class TsAuthPlatformJourneyTests
         await platform.StoreAsync(new OrganizationRecord { Id = org });
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var page = await browser.NewPageAsync();
+        var page = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true });
         var errors = new List<string>();
         await BrowserAudit.SignInAsync(page, platform.Origin, "/project/members?organizationId=" + org + "&projectId=" + project, user.Email, user.Password);
         var output = BrowserAudit.Output(Directory.GetCurrentDirectory(), "q03-project-grant-mutations");
         var destination = new Uri(platform.Origin, "/project/members?organizationId=" + org + "&projectId=" + project).ToString();
-        await using var recording = await browser.NewContextAsync(new() { StorageState = await page.Context.StorageStateAsync(), RecordVideoDir = output, ViewportSize = new() { Width = 1440, Height = 1000 }, ColorScheme = ColorScheme.Dark });
+        await using var recording = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, StorageState = await page.Context.StorageStateAsync(), RecordVideoDir = output, ViewportSize = new() { Width = 1440, Height = 1000 }, ColorScheme = ColorScheme.Dark });
         await recording.RouteAsync("**/css/terrascale.css*", async route => { var response = await route.FetchAsync(); await route.FulfillAsync(new() { Response = response, Body = await response.TextAsync() + "\n.ts-account-trigger,.ts-account-card,main tbody td:nth-child(2),[id^=edit-grant-] label,[id^=edit-grant-] h2+p,[id^=remove-grant-] h2+p{visibility:hidden!important}" }); });
         await page.Context.CloseAsync();
         page = await recording.NewPageAsync();

@@ -17,7 +17,7 @@ public sealed class AuthenticationResponsiveBrowserJourneyTests(DashboardRootFix
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = 1000 } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = 1000 } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin, returnTo: "/auth/social");
         await page.GotoAsync(new Uri(scenario.Origin, "/auth/social").ToString());

@@ -119,6 +119,25 @@ public sealed class AnalyticsBackendContractTests
         await Assert.That(wire.Reads).IsEqualTo(0);
     }
 
+    // Databases need two regions (#224) and the browser host serves only GRU and SFO, so the journey cannot reach this branch.
+    [Test]
+    public async Task ChangingToADatabaseWithoutTheSelectedRegionClearsOnlyThatRegion()
+    {
+        var context = Selection("24h").Context;
+        var organization = context.Organization!;
+        organization.Members["user"] = new() { UserId = "user", Email = "synthetic@example.test", Role = "owner" };
+        var project = context.Project!;
+        var orders = project.Databases.Values.Single();
+        orders.Regions = ["GRU", "SFO"];
+        const string archive = "01JA0000000000000000000007";
+        project.Databases.Add(archive, new() { Id = archive, ProjectId = project.Id, Name = "archive", Region = "SFO", Regions = ["SFO", "SJC"] });
+        await Assert.That(AnalyticsSelection.For(context, project.Id, archive, "GRU", "24h").Region).IsEqualTo("");
+        await Assert.That(AnalyticsSelection.For(context, project.Id, archive, "sjc", "24h").Region).IsEqualTo("SJC");
+        await Assert.That(AnalyticsSelection.For(context, project.Id, orders.Id, "gru", "24h").Region).IsEqualTo("GRU");
+        var unknown = Assert.Throws<AccountAccessException>(() => AnalyticsSelection.For(context, project.Id, archive, "IAD", "24h"));
+        await Assert.That(unknown.StatusCode).IsEqualTo(400);
+    }
+
     private static AnalyticsSelection Selection(string range)
     {
         var project = new ProjectRecord { Id = "01JA0000000000000000000001", OrganizationId = "01JA0000000000000000000002", Name = "project" };

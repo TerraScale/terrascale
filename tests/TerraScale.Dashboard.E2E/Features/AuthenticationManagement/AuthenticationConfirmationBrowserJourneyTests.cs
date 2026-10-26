@@ -21,7 +21,7 @@ public sealed class AuthenticationConfirmationBrowserJourneyTests(DashboardRootF
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true });
         var cspViolations = new ConcurrentQueue<string>();
         await context.ExposeBindingAsync("recordCspViolation", (BindingSource _, string directive) => cspViolations.Enqueue(directive));
         await context.AddInitScriptAsync("""
