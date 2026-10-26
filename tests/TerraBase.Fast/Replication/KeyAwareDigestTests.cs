@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Text;
 using System.Text.Json;
@@ -98,6 +99,58 @@ public sealed class KeyAwareDigestTests
         await Assert.That(await gru.ReadAsync(second)).IsEqualTo(Encoding.UTF8.GetString(joined.Materialize() ?? []));
     }
 
+    [Test]
+    public async Task A_row_lost_outside_the_engine_after_digests_matched_is_repaired_from_the_peer_and_stays_matched()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (gru, sjc) = (pair.Gru, pair.Sjc);
+        var states = Enumerable.Range(0, 8).Select(i => new RepairState(Items, EntityIds.New().ToString(),
+            DocumentState.Bottom.Set(new EntryVersion(new Hlc(1_000 + (ulong)i), Origin), "n", Json(i.ToString(System.Globalization.CultureInfo.InvariantCulture))))).ToArray();
+        await gru.SeedAsync(states);
+        await sjc.SeedAsync(states);
+        var beforeStats = await sjc.StatsAsync();
+        await Assert.That(beforeStats.Documents).IsEqualTo(8);
+        // Digests compared and rounds run before the loss: nothing may depend on a check made only once per copy.
+        var before = await sjc.DigestsAsync();
+        var beforePeer = await gru.DigestsAsync();
+        await Assert.That(before.SequenceEqual(beforePeer)).IsTrue();
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+
+        // The row and its body go, _tb_merkle keeps their contribution: the file a lost apply or a stray delete leaves.
+        var (lost, expected) = (states[3].Id, states[3].State);
+        await sjc.LoseAsync(lost);
+        await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+        var bucket = TursoStorageTransaction.Bucket(Items, lost);
+        var diverged = await sjc.DigestsAsync();
+        var peer = await gru.DigestsAsync();
+        await Assert.That(diverged.AsSpan(bucket * 16, 16).SequenceEqual(peer.AsSpan(bucket * 16, 16))).IsFalse()
+            .Because("the digests come from the rows, so the loss differs from the peer");
+        await Assert.That((await sjc.MerkleAsync()).SequenceEqual(diverged)).IsTrue().Because("the maintained digests are rewritten to the rows for a build that reads them");
+
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await Assert.That(await sjc.StateAsync(lost)).IsEqualTo(expected);
+        await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo(Encoding.UTF8.GetString(expected.Materialize() ?? []));
+        await Assert.That(await sjc.StatsAsync()).IsEqualTo(beforeStats).Because("restoring a lost body counts its documents and bytes once");
+
+        // Later rounds on both sides find nothing left to repair, and the maintained digests stay those of the rows.
+        for (var round = 0; round < 3; round++)
+        {
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            var matched = await sjc.DigestsAsync();
+            var matchedPeer = await gru.DigestsAsync();
+            await Assert.That(matched.SequenceEqual(matchedPeer)).IsTrue().Because($"round {round}");
+            await Assert.That((await sjc.MerkleAsync()).SequenceEqual(matched)).IsTrue().Because($"round {round}");
+        }
+
+        foreach (var state in states)
+        {
+            await Assert.That(await gru.StateAsync(state.Id)).IsEqualTo(state.State);
+        }
+    }
+
     private static JsonElement Json(string text)
     {
         using var document = JsonDocument.Parse(text);
@@ -179,6 +232,12 @@ public sealed class KeyAwareDigestTests
             return await transaction.GetAsync(Items, id, CancellationToken.None) is { Deleted: false } document ? Encoding.UTF8.GetString(document.Json.Span) : null;
         }
 
+        public async Task<CollectionStats> StatsAsync()
+        {
+            await using var read = await (await OpenAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
+            return (await read.ListCollectionStatsAsync(CancellationToken.None)).Single(stats => stats.Name == Items);
+        }
+
         // The 16 bytes of one bucket of the database's digests, as anti-entropy compares them.
         public async Task<byte[]> BucketAsync(int bucket)
         {
@@ -187,6 +246,81 @@ public sealed class KeyAwareDigestTests
             return await replica.DigestAsync(Database, incarnation, CancellationToken.None) is { } digests
                 ? digests.Buckets.AsSpan(bucket * 16, 16).ToArray()
                 : throw new InvalidOperationException("the database is not held");
+        }
+
+        // All 4096 bucket digests, as a peer's comparison receives them.
+        public async Task<byte[]> DigestsAsync()
+        {
+            var replica = Api.Server.Services.GetRequiredService<IReplicaStates>();
+            var incarnation = ((TursoDatabaseStore)await OpenAsync()).Incarnation;
+            return await replica.DigestAsync(Database, incarnation, CancellationToken.None) is { } digests
+                ? digests.Buckets
+                : throw new InvalidOperationException("the database is not held");
+        }
+
+        // The stored _tb_merkle rows, laid out as the digests.
+        public async Task<byte[]> MerkleAsync()
+        {
+            var store = (TursoDatabaseStore)await OpenAsync();
+            return await store.WithWriterAsync(session =>
+            {
+                var digests = new byte[TursoStorageTransaction.Buckets * 16];
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT bucket, h1, h2 FROM _tb_merkle;";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var slot = digests.AsSpan(checked((int)reader.GetInt64(0)) * 16, 16);
+                    BinaryPrimitives.WriteInt64LittleEndian(slot, reader.GetInt64(1));
+                    BinaryPrimitives.WriteInt64LittleEndian(slot[8..], reader.GetInt64(2));
+                }
+
+                return digests;
+            }, "a test reading the maintained digests", CancellationToken.None);
+        }
+
+        // Deletes the document's state row and body outside the engine, leaving _tb_merkle and the change feed as they were.
+        public async Task LoseAsync(string id)
+        {
+            var store = (TursoDatabaseStore)await OpenAsync();
+            var rows = await store.WithWriterAsync(session =>
+            {
+                // Uncaptured, as a change outside the engine: the change log never ships it to the peer.
+                _ = Execute(session, store.Captures ? TursoSession.CaptureOff : null);
+                try
+                {
+                    return Execute(session, "DELETE FROM _tb_state WHERE collection = $collection AND id = $id;")
+                        + Execute(session, $"DELETE FROM \"{Items}\" WHERE id = $id;");
+                }
+                finally
+                {
+                    _ = Execute(session, store.Captures ? TursoSession.CaptureOn : null);
+                }
+            }, "a test losing a row", CancellationToken.None);
+            store.ForgetCollections();
+            await Assert.That(rows).IsEqualTo(2);
+
+            int Execute(TursoSession session, string? sql)
+            {
+                if (sql is null)
+                {
+                    return 0;
+                }
+
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = sql;
+                if (sql.Contains("$collection", StringComparison.Ordinal))
+                {
+                    command.Parameters.AddWithValue("$collection", Items);
+                }
+
+                if (sql.Contains("$id", StringComparison.Ordinal))
+                {
+                    command.Parameters.AddWithValue("$id", id);
+                }
+
+                return command.ExecuteNonQuery();
+            }
         }
 
         // The whole state of the document, read through the bucket path anti-entropy uses.

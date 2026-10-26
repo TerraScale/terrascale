@@ -16,33 +16,93 @@ internal sealed partial class TursoStorageTransaction
 
     /// <summary>4096 × (h1, h2), little-endian.</summary>
     internal ValueTask<byte[]> ReadDigestsAsync(CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            var digests = new byte[Buckets * 16];
-            // CASE keeps unchecked TEXT/BLOB values out of the driver's managed projection.
-            using var reader = Command("""
-                SELECT CASE WHEN typeof(bucket) = 'integer' AND bucket >= 0 AND bucket < 4096
-                    AND typeof(h1) = 'integer' AND typeof(h2) = 'integer' THEN 1 ELSE 0 END,
-                    CASE WHEN typeof(bucket) = 'integer' THEN bucket ELSE 0 END,
-                    CASE WHEN typeof(h1) = 'integer' THEN h1 ELSE 0 END,
-                    CASE WHEN typeof(h2) = 'integer' THEN h2 ELSE 0 END
-                FROM _tb_merkle;
-                """).ExecuteReader();
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (reader.GetInt64(0) != 1)
-                {
-                    throw StoredDataCorruption.Create("a stored digest has a non-integer hash or an invalid bucket");
-                }
+        RunAsync(() => Digests("_tb_merkle", cancellationToken), cancellationToken);
 
-                var slot = digests.AsSpan((int)reader.GetInt64(1) * 16, 16);
-                BinaryPrimitives.WriteInt64LittleEndian(slot, BinaryPrimitives.ReadInt64LittleEndian(slot) ^ reader.GetInt64(2));
-                BinaryPrimitives.WriteInt64LittleEndian(slot[8..], BinaryPrimitives.ReadInt64LittleEndian(slot[8..]) ^ reader.GetInt64(3));
+    /// <summary>
+    /// The digests as <see cref="ReadDigestsAsync"/> lays them out, recomputed from the <c>_tb_state</c> rows: what
+    /// <c>_tb_merkle</c> holds unless a row was deleted, added or rehashed outside the engine. A whole-table scan.
+    /// </summary>
+    internal ValueTask<byte[]> ReadRowDigestsAsync(CancellationToken cancellationToken) =>
+        RunAsync(() => Digests("_tb_state", cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Replaces <c>_tb_merkle</c> with the digests of the <c>_tb_state</c> rows when they differ, so the buckets of rows
+    /// changed outside the engine differ from the peers' and anti-entropy repairs them. Uncaptured: the change log never saw
+    /// the outside change, and a restore or a rebuild checks its own copy the same way. Whether it rewrote anything.
+    /// </summary>
+    internal async ValueTask<bool> ReconcileDigestsAsync(CancellationToken cancellationToken)
+    {
+        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        return await RunAsync(() =>
+        {
+            var rows = Digests("_tb_state", cancellationToken);
+            if (rows.AsSpan().SequenceEqual(Digests("_tb_merkle", cancellationToken)))
+            {
+                return false;
             }
 
-            return digests;
-        }, cancellationToken);
+            Command("DELETE FROM _tb_merkle;").ExecuteNonQuery();
+            var insert = Command("INSERT INTO _tb_merkle (bucket, h1, h2) VALUES ($bucket, $h1, $h2);");
+            var bucket = insert.Parameters.AddWithValue("$bucket", 0L);
+            var h1 = insert.Parameters.AddWithValue("$h1", 0L);
+            var h2 = insert.Parameters.AddWithValue("$h2", 0L);
+            for (var index = 0; index < Buckets; index++)
+            {
+                var slot = rows.AsSpan(index * 16, 16);
+                if (slot.ContainsAnyExcept((byte)0))
+                {
+                    bucket.Value = (long)index;
+                    h1.Value = BinaryPrimitives.ReadInt64LittleEndian(slot);
+                    h2.Value = BinaryPrimitives.ReadInt64LittleEndian(slot[8..]);
+                    insert.ExecuteNonQuery();
+                }
+            }
+
+            if (!store.IsSystem)
+            {
+                // Outside changes may remove bodies too: recount before repairs put them back, counting each once.
+                Command("DELETE FROM _tb_collection_stats;").ExecuteNonQuery();
+                foreach (var name in CollectionNames(cancellationToken))
+                {
+                    Command($"""
+                        INSERT INTO _tb_collection_stats (collection, documents, bytes)
+                        SELECT $collection, count(*), coalesce(sum(octet_length(doc)), 0) FROM {Table(name)};
+                        """, name).ExecuteNonQuery();
+                }
+            }
+
+            return true;
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // Worker-only: the XOR per bucket of the (bucket, h1, h2) rows of `table`, _tb_merkle or _tb_state.
+    private byte[] Digests(string table, CancellationToken cancellationToken)
+    {
+        var digests = new byte[Buckets * 16];
+        // CASE keeps unchecked TEXT/BLOB values out of the driver's managed projection.
+        using var reader = Command($"""
+            SELECT CASE WHEN typeof(bucket) = 'integer' AND bucket >= 0 AND bucket < 4096
+                AND typeof(h1) = 'integer' AND typeof(h2) = 'integer' THEN 1 ELSE 0 END,
+                CASE WHEN typeof(bucket) = 'integer' THEN bucket ELSE 0 END,
+                CASE WHEN typeof(h1) = 'integer' THEN h1 ELSE 0 END,
+                CASE WHEN typeof(h2) = 'integer' THEN h2 ELSE 0 END
+            FROM {table};
+            """).ExecuteReader();
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (reader.GetInt64(0) != 1)
+            {
+                throw StoredDataCorruption.Create("a stored digest has a non-integer hash or an invalid bucket");
+            }
+
+            var slot = digests.AsSpan((int)reader.GetInt64(1) * 16, 16);
+            BinaryPrimitives.WriteInt64LittleEndian(slot, BinaryPrimitives.ReadInt64LittleEndian(slot) ^ reader.GetInt64(2));
+            BinaryPrimitives.WriteInt64LittleEndian(slot[8..], BinaryPrimitives.ReadInt64LittleEndian(slot[8..]) ^ reader.GetInt64(3));
+        }
+
+        return digests;
+    }
 
     /// <summary>
     /// The whole states of the documents in <paramref name="buckets"/> after <paramref name="after"/> (bucket, collection,

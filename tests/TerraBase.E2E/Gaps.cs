@@ -14,9 +14,6 @@ internal static class Gaps
     // not on main, and fails today exactly as its signature says, the way it must stop failing when the slice lands.
     private static readonly Dictionary<string, Gap> Waiting = new(StringComparer.Ordinal)
     {
-        // LatticeE2ETests: SQL writes are R9 (no PR yet); the subset refuses an UPDATE before the scenario's checks.
-        ["E11"] = new("SQL writes over peer streams (R9, no PR yet)", "only SELECT statements are supported"),
-
         // CatalogE2ETests: live move is R11 (no PR yet), whose route does not exist.
         ["E13"] = new("home region and live move (R11, no PR yet)", "unknown_route"),
 

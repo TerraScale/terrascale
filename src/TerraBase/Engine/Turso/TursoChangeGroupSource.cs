@@ -419,15 +419,37 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             return null;
         }
 
+        bool stale;
+        ReplicaDigest digest;
         await using (transaction.ConfigureAwait(false))
         {
-            // One snapshot: the head is the change id the digests cover, and the feed head the seq they cover.
-            var buckets = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+            // One snapshot: the head is the change id the digests cover, and the feed head the seq they cover. The digests
+            // come from the rows, so a row deleted, added or rehashed outside the engine (a damaged or tampered file) differs
+            // from the peers' and anti-entropy repairs it; the maintained _tb_merkle only shows whether that happened.
+            var buckets = await transaction.ReadRowDigestsAsync(cancellationToken).ConfigureAwait(false);
+            var maintained = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+            stale = !buckets.AsSpan().SequenceEqual(maintained);
             var head = await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
             var feed = opened.IsSystem ? 0 : await transaction.ReadShapeFrontierAsync(remote: false, cancellationToken).ConfigureAwait(false);
             var collectedBefore = await transaction.GetCollectedBeforeAsync(cancellationToken).ConfigureAwait(false);
-            return new ReplicaDigest(named, head, buckets, feed) { CollectedBefore = collectedBefore };
+            digest = new ReplicaDigest(named, head, buckets, feed) { CollectedBefore = collectedBefore };
         }
+
+        // Rewrites _tb_merkle from the rows (checked again under the writer), so a build that still serves _tb_merkle
+        // after a rollback sends the same digests.
+        if (stale && await BeginAsync(database, named, write: true, cancellationToken).ConfigureAwait(false) is (_, var writer))
+        {
+            await using (writer.ConfigureAwait(false))
+            {
+                if (await writer.ReconcileDigestsAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    _logger.ZLogWarning($"The bucket digests of database {database.DatabaseId:@Database} did not match its stored states (a change outside the engine); recomputed them from the states");
+                }
+            }
+        }
+
+        return digest;
     }
 
     public async ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken)
