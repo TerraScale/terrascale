@@ -29,9 +29,13 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        DeleteAsync(HttpContext, management, options, cancellationToken);
+
+    internal static async ValueTask<IResult> DeleteAsync(
+        HttpContext context, IManagementService management, TerraBaseOptions options, CancellationToken cancellationToken)
     {
-        var placement = await DatabaseRegions.ElsewhereAsync(HttpContext, management, options.Region);
+        var placement = await DatabaseRegions.ElsewhereAsync(context, management, options.Region);
         if (placement is not Done)
         {
             return placement switch
@@ -43,7 +47,7 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
             };
         }
 
-        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken) switch
+        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), ManagementRoute.Value(context, "database"), cancellationToken) switch
         {
             Done => TypedResults.NoContent(),
             NotFound error => ManagementRoute.DatabaseNotFound(error),
