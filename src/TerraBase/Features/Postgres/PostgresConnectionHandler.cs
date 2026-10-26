@@ -456,6 +456,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 }
 
                 var parsedStatement = parsed is [var single] ? single : new PgStatement(PgKind.Empty, "", "", 0);
+                if (Aborted(session, parsedStatement) is { } parseAborted)
+                {
+                    return parseAborted;
+                }
+
                 oids.AddRange(Enumerable.Repeat(0, Math.Max(0, parsedStatement.Parameters - oids.Count)));
                 session.Statements[statementName] = new Prepared(parsedStatement, [.. oids]);
                 output.Empty('1');
@@ -468,6 +473,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 if (!session.Statements.TryGetValue(boundName, out var bound))
                 {
                     return new PgError("26000", "prepared statement does not exist");
+                }
+
+                if (Aborted(session, bound.Statement) is { } bindAborted)
+                {
+                    return bindAborted;
                 }
 
                 if (values.Length != bound.Oids.Length || formats.Length > 1 && formats.Length != values.Length)
@@ -563,6 +573,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
                 }
 
+                if (Aborted(session, running.Statement) is { } executeAborted)
+                {
+                    running.Pending = null;
+                    return executeAborted;
+                }
+
                 var executedOutcome = running.Pending ?? await RunAsync(session, running.Statement, running.Args, cancellationToken).ConfigureAwait(false);
                 running.Pending = null;
                 if (executedOutcome is PgError executeError)
@@ -590,6 +606,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     // A statement's result columns before it runs, and whether it only reads; SHOW and catalog reads run to find out.
     private async ValueTask<(PgColumn[]? Columns, bool ReadOnly, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
     {
+        if (Aborted(session, statement) is { } aborted)
+        {
+            return (null, false, aborted);
+        }
+
         switch (statement.Kind)
         {
             case PgKind.Show or PgKind.Catalog:
@@ -619,11 +640,18 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
+    // As in PostgreSQL, Parse, Bind, Describe and Execute in an aborted transaction refuse everything but its exits, so
+    // nothing replays the failed transaction's log until ROLLBACK or ROLLBACK TO SAVEPOINT.
+    private static PgError? Aborted(Session session, PgStatement statement) =>
+        session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.RollbackTo or PgKind.Empty)
+            ? new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block")
+            : null;
+
     private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken)
     {
-        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.RollbackTo or PgKind.Empty))
+        if (Aborted(session, statement) is { } aborted)
         {
-            return new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block");
+            return aborted;
         }
 
         switch (statement.Kind)

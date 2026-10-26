@@ -109,13 +109,21 @@ public sealed class PostgresSavepointTests
         await using var connection = await source.OpenConnectionAsync();
         await using var writer = await source.OpenConnectionAsync();
         await ExecuteAsync(connection, Table);
+        await using var prepared = new NpgsqlCommand("SELECT count(label) FROM items", connection);
+        await prepared.PrepareAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         await transaction.SaveAsync("recover");
         await ScalarAsync(connection, "SELECT count(*) FROM items");
         await ExecuteAsync(writer, "INSERT INTO items (label) VALUES ('concurrent')");
         await StateAsync(connection, "SELECT count(*) FROM items", "40001");
+        // Parse, and Bind of a prepared read, refuse without replaying the conflicting read again.
+        await StateAsync(connection, "SELECT count(*) FROM items", "25P02");
+        var bound = await Assert.ThrowsAsync<PostgresException>(() => prepared.ExecuteScalarAsync());
+        await Assert.That(bound!.SqlState).IsEqualTo("25P02");
         await StateAsync(connection, "INSERT INTO items (label) VALUES ('refused')", "25P02");
         await transaction.RollbackAsync("recover");
+        await Assert.That(await ScalarAsync(connection, "SELECT count(*) FROM items")).IsEqualTo("1");
+        await Assert.That(Convert.ToString(await prepared.ExecuteScalarAsync(), CultureInfo.InvariantCulture)).IsEqualTo("1");
         await ExecuteAsync(connection, "INSERT INTO items (label) VALUES ('recovered')");
         await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("1");
         await transaction.CommitAsync();
