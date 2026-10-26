@@ -13,6 +13,45 @@ public sealed class ProjectApiKeyContractTests
     private const string ProjectId = "01JA0000000000000000000001";
     private const string KeyId = "01JA0000000000000000000003";
     private const string DatabaseId = "01JA0000000000000000000004";
+    private const string CreatorId = "01JA0000000000000000000009";
+
+    [Test]
+    [Arguments("documents:read", "Read-only key")]
+    [Arguments("documents:write", "Write-only key")]
+    [Arguments("documents:read,documents:write", "Read-write key")]
+    [Arguments("documents:read,documents:write,databases:read,databases:write", "Full-access key")]
+    public async Task CredentialLabelsMatchTheCanonicalPermissions(string scopes, string label)
+    {
+        var key = new ProjectCredential(KeyId, ProjectId, "Synthetic", scopes.Split(','), null, "", DateTimeOffset.UtcNow);
+        await Assert.That(ApiKeysPage.CredentialType(key).Label).IsEqualTo(label);
+    }
+
+    [Test]
+    [Arguments(CreatorId, true)]
+    [Arguments(CreatorId, false)]
+    [Arguments("", false)]
+    public async Task CreatorProvenanceUsesIssuerIdentityAndOnlyTheScopedOrganizationMember(string createdBy, bool knownMember)
+    {
+        using var wire = new Wire { CreatedBy = createdBy };
+        var context = Context();
+        context.Organization!.Members["user"].Email = "current-user@example.test";
+        if (knownMember)
+            context.Organization!.Members.Add(CreatorId, new() { UserId = CreatorId, Email = "creator@example.test" });
+        var service = new ApiKeyService(wire, TimeProvider.System);
+        var listed = (await service.ListAsync(context, CancellationToken.None)).Single();
+        var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 0, [], CancellationToken.None);
+        var rotated = await service.RotateAsync(context, KeyId, 0, CancellationToken.None);
+        foreach (var key in new[] { listed, created.Key, rotated.Key })
+        {
+            await Assert.That(key.CreatedByUserId).IsEqualTo(createdBy);
+            await Assert.That(key.CreatedByEmail).IsEqualTo(knownMember ? "creator@example.test" : "");
+            foreach (var metadata in new[] { ApiKeyService.Metadata(key), ApiKeyService.CredentialMetadata(key) })
+            {
+                await Assert.That(metadata.CreatedByUserId).IsEqualTo(createdBy);
+                await Assert.That(metadata.CreatedByEmail).IsEqualTo(key.CreatedByEmail);
+            }
+        }
+    }
 
     [Test]
     public async Task IssuanceUsesOriginalUserBearerAndCanonicalRestrictionsWithoutPersistingSecret()
@@ -236,6 +275,7 @@ public sealed class ProjectApiKeyContractTests
     private sealed class Wire : HttpMessageHandler, IHttpClientFactory
     {
         public string Failure { get; init; } = "";
+        public string CreatedBy { get; init; } = "user";
         public string? LastUsedAt { get; init; }
         public int Requests { get; private set; }
         public string? Body { get; private set; }
@@ -290,7 +330,7 @@ public sealed class ProjectApiKeyContractTests
                 project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
                 database = "app",
                 scopes = new[] { "documents:read", "documents:write" },
-                created_by = "user",
+                created_by = CreatedBy,
                 created_at = "2026-01-01T00:00:00+00:00",
                 expires_at = expiresAt,
                 previous_secret_expires_at = (string?)null,

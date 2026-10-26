@@ -14,6 +14,8 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
     {
         var port = FreePort();
         using var process = Start("true", port);
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
         try
         {
             using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
@@ -31,10 +33,22 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
             await Assert.That(admin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
             await Assert.That(await admin.Content.ReadAsStringAsync()).StartsWith("DEMO:");
         }
-        finally
+        catch (Exception failure)
         {
-            Stop(process);
+            var exited = process.HasExited;
+            var exitCode = exited ? process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "running";
+            var log = "";
+            var collected = false;
+            try { Stop(process); if (process.HasExited) { log = await output + await error; collected = true; } }
+            catch (Exception) { } // Diagnostic collection must never replace the original failure.
+            var announcement = log.Contains($"DEMO (synthetic data) on port {port};", StringComparison.Ordinal);
+            var bindFailure = log.Contains("Failed to bind", StringComparison.OrdinalIgnoreCase);
+            var addressInUse = log.Contains("AddressInUseException", StringComparison.Ordinal) ||
+                log.Contains("address already in use", StringComparison.OrdinalIgnoreCase) || log.Contains("EADDRINUSE", StringComparison.Ordinal);
+            throw new IOException($"Demo child diagnostics: pid={process.Id}; port={port}; exitedBeforeCleanup={exited}; " +
+                $"exitCodeBeforeCleanup={exitCode}; collected={collected}; announcement={announcement}; bindFailure={bindFailure}; addressInUse={addressInUse}.", failure);
         }
+        Stop(process);
     }
 
     [Test]
@@ -80,11 +94,9 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
 
     private static async Task<JsonElement> ReadyAsync(HttpClient client, Process process)
     {
-        _ = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
         for (var attempt = 0; attempt < 120; attempt++)
         {
-            if (process.HasExited) throw new IOException("The demo exited: " + await error);
+            if (process.HasExited) throw new IOException("The demo exited before readiness.");
             try
             {
                 using var response = await client.GetAsync("/health/ready");

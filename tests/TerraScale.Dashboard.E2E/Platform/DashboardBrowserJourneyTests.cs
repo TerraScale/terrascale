@@ -201,7 +201,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                     await textarea.EvaluateAsync("(el, text) => { el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); }", value);
                     await Assert.That(await textarea.InputValueAsync()).IsEqualTo(value);
                 }
-                Task ShotAsync(string key) => page.ScreenshotAsync(new() { Path = Path.Combine(output, $"{key}-{size}.png"), FullPage = true, Caret = ScreenshotCaret.Hide });
+                Task ShotAsync(string key) => page.ScreenshotAsync(new() { Path = Path.Combine(output, $"{key}-{size}.png"), FullPage = true, Caret = ScreenshotCaret.Hide, Mask = [page.Locator(".ts-apikeys-secret-value, #access-token-secret, input[type=password]")] });
                 Task<IAPIResponse> McpAsync(object rpc) => context.APIRequest.PostAsync(origin + "/mcp", new()
                 {
                     Headers = new Dictionary<string, string> { ["Authorization"] = "Bearer " + secret, ["Accept"] = "application/json, text/event-stream" },
@@ -212,14 +212,18 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
         }
         catch when (activePage is { IsClosed: false })
         {
-            await activePage.ScreenshotAsync(new() { Path = Path.Combine(output, "failure.png"), FullPage = true });
-            await File.WriteAllTextAsync(Path.Combine(output, "failure.html"), await activePage.ContentAsync());
-            Console.Error.WriteLine("Browser failed at " + activePage.Url);
+            await activePage.ScreenshotAsync(new() { Path = Path.Combine(output, "failure.png"), FullPage = true, Mask = [activePage.Locator(".ts-apikeys-secret-value, #access-token-secret, input[type=password]")] });
+            await File.WriteAllTextAsync(Path.Combine(output, "failure.html"), RedactCredentialEvidence(await activePage.ContentAsync()));
+            Console.Error.WriteLine("Browser failed at " + RedactCredentialEvidence(activePage.Url));
             var body = await activePage.Locator("body").InnerTextAsync();
-            Console.Error.WriteLine(body[Math.Max(0, body.Length - 2000)..]);
+            var sanitized = RedactCredentialEvidence(body);
+            Console.Error.WriteLine(sanitized[Math.Max(0, sanitized.Length - 2000)..]);
             throw;
         }
     }
+
+    private static string RedactCredentialEvidence(string value) => Regex.Replace(value,
+        @"\b[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}\b|\btspat_[A-Za-z0-9_-]+\b", "[REDACTED]");
 
     [Test]
     public async Task SharedTextLinksAndStepsMeetWcagAcrossViewports()

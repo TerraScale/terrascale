@@ -82,7 +82,7 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
     private async Task<CreatedProfileToken> StoreAsync(string userId, string name, DateTimeOffset expiresAt, string credential, string? mcpClientId, CancellationToken cancellationToken)
     {
         var secret = "tspat_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-        var token = new ProfileToken(Guid.CreateVersion7().ToString(), name, secret[^4..], time.GetUtcNow(), expiresAt);
+        var token = new ProfileToken(AccountService.NewId(), name, secret[^4..], time.GetUtcNow(), expiresAt);
         var stored = new StoredToken(token, Hash(secret), credential, McpClientId: mcpClientId);
         // The index alone cannot authenticate: the account's CAS-protected
         // token set must still contain the token on every request.
