@@ -9,8 +9,11 @@ hosted pages as a registered OIDC client. RFC 7009 revocation remains served.
 The historical `/headless/v1/email-code/start`, `/sign-up`,
 `/password-reset/start` and `/password-reset/complete` operations are removed
 from the SDK. No replacement HTTP route, caller-IP header, signup adapter or
-email-code grant is invented. Remaining legacy password/email-code declarations
-are also unsupported and will retire separately.
+email-code grant is invented. The Headless client/configuration, password/email-code
+grants and exclusive historical fake-server tests are also removed. Its refresh
+and revoke methods belonged to that retired client; Device refresh/revoke and
+registered-client OIDC methods remain supported. Shared Tokens and error values
+retain their public types and exact values.
 
 Device, API-key/client-credential and token exchange, shared Tokens/error codes,
 platform/project APIs and registered OIDC remain distinct supported surfaces.
