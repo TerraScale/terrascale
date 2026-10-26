@@ -128,7 +128,7 @@ public static class DataEndpoints
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
-        foreach (var operation in new[] { "documents", "collections", "collections/delete", "sql", "sql/check", "saved-queries", "saved-queries/delete", "indexes", "indexes/delete" })
+        foreach (var operation in new[] { "documents", "collections", "collections/delete", "sql", "sql/check", "sql/catalog", "saved-queries", "saved-queries/delete", "indexes", "indexes/delete" })
         {
             var action = operation;
             var route = operation.StartsWith("indexes", StringComparison.Ordinal) ? "/api/v1/dashboard/" + operation : "/api/v1/dashboard/data/" + operation;
@@ -167,6 +167,7 @@ public static class DataEndpoints
                         await data.DropCollectionAsync(context, id, collection, form["confirmName"].ToString(), http.RequestAborted);
                         return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "documents")) : Results.NoContent();
                     }
+                    if (action == "sql/catalog") return await PageAsync(http, context, id, "sql", data, saved, sql: form["sql"].ToString());
                     if (action == "sql/check")
                     {
                         var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
@@ -217,6 +218,7 @@ public static class DataEndpoints
         IReadOnlyList<DatabaseIndex> indexes = [];
         IReadOnlyList<SavedQuery> queries = [];
         SqlCatalog? catalog = null;
+        var catalogError = "";
         IReadOnlyList<string> history = [];
         IReadOnlyDictionary<string, long> collectionCounts = new Dictionary<string, long>();
         IFormCollection? submittedForm = null;
@@ -244,9 +246,12 @@ public static class DataEndpoints
             if (countsRead is not null)
                 _ = countsRead.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-            collections = await data.CollectionsAsync(context, id, http.RequestAborted);
-            // Default to a collection that exists; a database without collections has none selected.
-            if (collection.Length == 0) collection = collections.FirstOrDefault()?.Name ?? "";
+            if (section != "sql")
+            {
+                collections = await data.CollectionsAsync(context, id, http.RequestAborted);
+                // Default to a collection that exists; a database without collections has none selected.
+                if (collection.Length == 0) collection = collections.FirstOrDefault()?.Name ?? "";
+            }
             if (collection.Length > 0) DataService.ValidCollection(collection);
             if (section == "documents" && collections.Count > 0)
             {
@@ -273,7 +278,10 @@ public static class DataEndpoints
                 // SQL runs on the database's SQL tables; document collections are not visible to /sql/execute,
                 // so the editor neither prefills nor suggests collection names.
                 if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "";
-                catalog = await data.CatalogAsync(context, id, [], http.RequestAborted);
+                try { catalog = await data.CatalogAsync(context, id, http.RequestAborted); }
+                catch (Exception error) when (!http.RequestAborted.IsCancellationRequested &&
+                    (DatabaseResults.KnownFailure(error) || error is HttpRequestException or OperationCanceledException or JsonException))
+                { catalogError = "SQL table suggestions are unavailable. You can still run queries. Retry to reload the catalog."; }
             }
             else if (section == "indexes") indexes = await data.IndexesAsync(context, id, http.RequestAborted);
             else if (section == "history") documentId = http.Request.Query["id"].ToString() is { Length: > 0 } historyId ? DataService.ValidDocumentId(historyId) : "";
@@ -283,7 +291,7 @@ public static class DataEndpoints
             errorMessage = DatabaseResults.KnownFailure(error) ? DatabaseResults.Message(error) : "The live data plane is unavailable. Try again shortly.";
             if (DatabaseResults.KnownFailure(error) && DatabaseResults.Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
         }
-        var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(section)), database, section, collection, collections, browse, search, sort, descending, layout, errorMessage, formError, dialog, documentId, body, version, operation, sql, sqlResult, indexes, schema, queries, queryName, catalog, history, collectionCounts, sqlChecked));
+        var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(section)), database, section, collection, collections, browse, search, sort, descending, layout, errorMessage, formError, dialog, documentId, body, version, operation, sql, sqlResult, indexes, schema, queries, queryName, catalog, history, collectionCounts, sqlChecked, catalogError));
         result.StatusCode = status;
         return result;
     }

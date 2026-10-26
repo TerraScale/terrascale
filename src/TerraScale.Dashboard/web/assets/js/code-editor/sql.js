@@ -1,5 +1,5 @@
 // SQL support for editors inside an element with data-sql-catalog: completion
-// of collections, fields and TerraBase keywords, hovers, inline problems from
+// of SQL tables, columns and TerraBase keywords, hovers, inline problems from
 // the server's SQL check, query formatting, and a per-database run history.
 // The page embeds the catalog and the first diagnostics as JSON scripts, so
 // opening the console makes no extra request.
@@ -25,11 +25,11 @@ export function attach(api, editor, textarea, host) {
   if (!model || !textarea.form) {
     return () => {};
   }
-  const catalog = readJSON(host.dataset.sqlCatalog) ?? { keywords: [], collections: [] };
+  const catalog = readJSON(host.dataset.sqlCatalog) ?? { keywords: [], tables: [] };
   const context = {
     catalog,
     form: textarea.form,
-    collections: new Map(catalog.collections.map(collection => [collection.name, collection])),
+    collections: new Map(catalog.tables.map(collection => [collection.name, collection])),
     keywords: new Set(catalog.keywords.flatMap(keyword => keyword.split(' '))),
   };
   contexts.set(model, context);
@@ -40,7 +40,7 @@ export function attach(api, editor, textarea, host) {
   let timer;
   let request;
   const mark = server => {
-    api.editor.setModelMarkers(model, 'terrascale-sql', [...server, ...localDiagnostics(context, model.getValue())].map(diagnostic => {
+    api.editor.setModelMarkers(model, 'terrascale-sql', server.map(diagnostic => {
       const start = model.getPositionAt(diagnostic.from);
       const end = model.getPositionAt(Math.max(diagnostic.to, diagnostic.from + 1));
       return {
@@ -176,10 +176,10 @@ function register(api) {
 
       if (inFrom) {
         return {
-          suggestions: context.catalog.collections.map(collection => ({
+          suggestions: context.catalog.tables.map(collection => ({
             label: collection.name,
             kind: Kind.Module,
-            detail: documentCount(collection),
+            detail: 'SQL table',
             documentation: collectionSummary(collection),
             insertText: sqlName(collection.name),
             filterText: collection.name,
@@ -220,7 +220,7 @@ function register(api) {
       const range = { startLineNumber: position.lineNumber, startColumn: model.getPositionAt(token.start).column, endLineNumber: position.lineNumber, endColumn: model.getPositionAt(token.end).column };
       const collection = context.collections.get(token.text);
       if (collection) {
-        return { range, contents: [{ value: `**${collection.name}** collection` }, { value: collectionSummary(collection) }] };
+        return { range, contents: [{ value: `**${collection.name}** SQL table` }, { value: collectionSummary(collection) }] };
       }
       // Hovering a in a.b.c names a; hovering c names the whole path.
       const segment = token.text.slice(offset - token.start).match(/^[A-Za-z0-9_]*/)[0];
@@ -248,7 +248,7 @@ function fieldItem(Kind, collection, field, label, range) {
     kind: Kind.Field,
     detail: field.type,
     documentation: `${field.path}: ${field.type}\n${fieldSource(collection)}`,
-    insertText: label,
+    insertText: sqlName(label),
     sortText: `1${field.path.startsWith('_') ? '~' : ''}${field.path}`,
     range,
   };
@@ -262,11 +262,9 @@ function snippets(Kind, Rule, collection, range) {
   ].map(([label, insertText]) => ({ label, kind: Kind.Snippet, insertText, insertTextRules: Rule.InsertAsSnippet, sortText: `0${label}`, range }));
 }
 
-// sqlName writes a collection name as SQL: as it is when it reads as one
-// name (single hyphens between parts included, as the dashboard runs them),
-// double-quoted otherwise, as for spaces or a -- that would start a comment.
+// Quote SQL identifiers, including reserved words, spaces and embedded quotes.
 function sqlName(name) {
-  return /^[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
+  return `"${name.replaceAll('"', '""')}"`;
 }
 
 // Words after which a field stands, so a FROM there is a field named from.
@@ -307,29 +305,12 @@ function statementCollection(context, text) {
   return context.collections.get(fromTargets(text)[0]?.name ?? context.form.elements.collection?.value);
 }
 
-function documentCount(collection) {
-  if (collection.approximate && collection.documents === 0) {
-    return 'collection';
-  }
-  const count = `${collection.documents.toLocaleString()} document${collection.documents === 1 ? '' : 's'}`;
-  return collection.approximate ? `at least ${count}` : count;
-}
-
 function collectionSummary(collection) {
-  const fields = collection.fields.filter(field => !field.path.startsWith('_')).length;
-  return `${documentCount(collection)} · ${fields} field${fields === 1 ? '' : 's'} ${collection.source === 'schema' ? 'in its schema' : 'in sampled documents'}`;
+  return `${collection.fields.length} declared columns`;
 }
 
 function fieldSource(collection) {
-  return collection.source === 'schema' ? `Declared in the ${collection.name} schema.` : `Inferred from recent ${collection.name} documents.`;
-}
-
-// Problems the catalog shows without asking the server: unknown collections.
-function localDiagnostics(context, text) {
-  if (context.catalog.collections.length === 0) {
-    return [];
-  }
-  return fromTargets(text).flatMap(({ name, from, to }) => (context.collections.has(name) ? [] : [{ severity: 'warning', message: `This database has no collection named ${name}.`, from, to }]));
+  return `Declared in SQL table ${collection.name}.`;
 }
 
 // formatSQL puts each clause on its own line and each AND or OR on an

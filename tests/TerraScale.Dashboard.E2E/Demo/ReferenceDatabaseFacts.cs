@@ -155,6 +155,7 @@ internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, Reference
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct) => inner.BranchAsync(scope, home, id, name, ct);
     public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.DeleteAsync(scope, home, id, ct);
     public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string id, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken ct) => inner.SetRegionsAsync(scope, home, id, placement, allRegions, ct);
+    public Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.SqlTablesAsync(scope, home, id, ct);
     public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string id, string statement, bool write, CancellationToken ct) => inner.SqlAsync(scope, home, id, statement, write, ct);
     public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.IndexesAsync(scope, home, id, ct);
     public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string id, string collection, IReadOnlyList<string> fields, CancellationToken ct) => inner.CreateIndexAsync(scope, home, id, collection, fields, ct);

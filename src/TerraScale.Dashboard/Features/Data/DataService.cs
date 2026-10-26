@@ -162,42 +162,12 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         return await backend.SqlAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, statement, write, cancellationToken);
     }
 
-    public async Task<SqlCatalog> CatalogAsync(AccountContext context, string databaseId, IReadOnlyList<TerraBaseCollection> collections, CancellationToken cancellationToken)
+    public async Task<SqlCatalog> CatalogAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
     {
         var database = DatabaseService.Database(context, databaseId);
-        var home = await databases.HomeAsync(context, database, cancellationToken);
-        var scope = DatabaseService.Scope(context);
-        var entries = await Task.WhenAll(collections.Select(async (collection, index) =>
-        {
-            var fields = new Dictionary<string, string>(StringComparer.Ordinal) { ["_id"] = "string", ["_rev"] = "string" };
-            long count = 0;
-            var approximate = true;
-            if (index < 20)
-            {
-                try
-                {
-                    var sample = await documents.DocumentsAsync(scope, home, database.Name, collection.Name, new TerraBaseQuery { Limit = 20, Count = true }, cancellationToken);
-                    count = sample.Count?.Value ?? sample.Items.Count;
-                    approximate = sample.Count?.Exact != true;
-                    foreach (var row in sample.Items) Infer(row.Document, "", 0, fields);
-                }
-                catch (HttpRequestException) { }
-            }
-            return new SqlCatalogCollection(collection.Name, count, approximate, "sample", fields.OrderBy(field => field.Key, StringComparer.Ordinal).Select(field => new SqlCatalogField(field.Key, field.Value)).ToArray());
-        }));
-        return new(["SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL", "ORDER BY", "ASC", "DESC", "LIMIT", "TRUE", "FALSE"], entries);
-    }
-
-    private static void Infer(JsonElement value, string prefix, int depth, Dictionary<string, string> fields)
-    {
-        if (value.ValueKind != JsonValueKind.Object || depth >= 8) return;
-        foreach (var field in value.EnumerateObject())
-        {
-            var path = prefix + field.Name;
-            var type = field.Value.ValueKind switch { JsonValueKind.String => "string", JsonValueKind.Number => "number", JsonValueKind.True or JsonValueKind.False => "boolean", JsonValueKind.Object => "object", JsonValueKind.Array => "array", _ => "null" };
-            fields[path] = fields.TryGetValue(path, out var existing) && existing != type ? "mixed" : type;
-            Infer(field.Value, path + ".", depth + 1, fields);
-        }
+        var tables = await backend.SqlTablesAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, cancellationToken);
+        return new(SqlCatalog.Empty.Keywords, tables.Tables.Select(table => new SqlCatalogTable(table.Name,
+            table.Columns.Select(column => new SqlCatalogField(column.Name, string.IsNullOrEmpty(column.Decltype) ? "No declared type" : column.Decltype)).ToArray())).ToArray(), tables.Truncated);
     }
 
     public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
@@ -253,6 +223,9 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
 
 public sealed record DocumentBrowse(IReadOnlyList<TerraBaseDocument> Documents, int Matched, int Page, int PageCount, bool More,
     string Cursor = "", string NextCursor = "", int Scanned = 0);
-public sealed record SqlCatalog(IReadOnlyList<string> Keywords, IReadOnlyList<SqlCatalogCollection> Collections);
-public sealed record SqlCatalogCollection(string Name, long Documents, bool Approximate, string Source, IReadOnlyList<SqlCatalogField> Fields);
+public sealed record SqlCatalog(IReadOnlyList<string> Keywords, IReadOnlyList<SqlCatalogTable> Tables, bool Truncated = false)
+{
+    public static SqlCatalog Empty { get; } = new(["SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL", "ORDER BY", "ASC", "DESC", "LIMIT", "TRUE", "FALSE"], []);
+}
+public sealed record SqlCatalogTable(string Name, IReadOnlyList<SqlCatalogField> Fields);
 public sealed record SqlCatalogField(string Path, string Type);
