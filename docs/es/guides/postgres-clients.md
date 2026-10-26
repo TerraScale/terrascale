@@ -27,8 +27,8 @@ postgresql://{label}@pg.terrascale.tech:5432/{database}?sslmode=verify-full&sslr
 | Part | Value |
 | --- | --- |
 | `{label}` | Any user name. TerraBase ignores it; use it to tell your applications apart in your own logs. |
-| Password (supply separately via `PGPASSWORD`) | The password: an API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. Revocation and expiry refuse new connections and statements within 2 seconds in every region; open sessions close within 3 seconds. See [Authentication](/es/guides/authentication#revocation-and-rotation). |
-| `{database}` | The database name in the key's project. With an organization-wide key, use `{projectId}/{name}`, written `{projectId}%2F{name}` in a URL. |
+| Password (supply separately via `PGPASSWORD`) | A project-scoped API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. Revocation and expiry refuse new connections and statements within 2 seconds in every region; open sessions close within 3 seconds. See [Authentication](/es/guides/authentication#revocation-and-rotation). |
+| `{database}` | The database name in that API key's project. |
 | `sslmode=verify-full&sslrootcert=system` | For libpq 16+: require TLS and verify the certificate chain and hostname using installed system CA certificates. Encryption alone (`require`) does not guarantee hostname verification. |
 
 Every connection needs `documents:read`; add `documents:write` for writes and `CREATE`/`DROP`. Create it in the dashboard, keep it in your server's secret store, and pass the URL to your application through an environment variable. Never commit it, put it on a command line or log it.
@@ -144,10 +144,15 @@ var name = (string?)await cmd.ExecuteScalarAsync();
 ## Java (JDBC)
 
 ```java
+var password = System.getenv("PGPASSWORD");
+if (password == null || password.isBlank()) {
+    throw new IllegalStateException("Set PGPASSWORD to your dashboard API key");
+}
 var props = new java.util.Properties();
 props.setProperty("user", "app");
-props.setProperty("password", System.getenv("PGPASSWORD"));
-props.setProperty("sslmode", "require");
+props.setProperty("password", password);
+props.setProperty("sslmode", "verify-full");
+props.setProperty("sslfactory", "org.postgresql.ssl.DefaultJavaSSLFactory");
 
 try (var conn = java.sql.DriverManager.getConnection("jdbc:postgresql://pg.terrascale.tech:5432/shop", props);
      var stmt = conn.prepareStatement("SELECT name FROM sql_customers WHERE id = ?")) {
@@ -159,6 +164,8 @@ try (var conn = java.sql.DriverManager.getConnection("jdbc:postgresql://pg.terra
 ```
 
 Use the PostgreSQL JDBC driver (`org.postgresql:postgresql`), the same `PGPASSWORD` environment variable and your database name in place of `shop`.
+
+[`DefaultJavaSSLFactory`](https://jdbc.postgresql.org/documentation/ssl/) uses the JVM's default trust configuration to validate the certificate; `verify-full` also checks the hostname. Your JVM must trust the server certificate's issuing CA. If verification fails, update its trusted CA certificates; do not use a trust-all factory or custom permissive hostname verifier. The libpq `sslrootcert=system` setting above does not configure JVM trust. This JDBC example has not been verified against production; it does not expand the dated verified-client list above.
 
 ## Transactions
 
@@ -216,7 +223,7 @@ Drivers that fetch results in batches through a cursor need that turned off: for
 - **`28000` with `key_revoked:` or `key_expired:`.** The refusal is permanent for that key or secret and its tokens. Replace the credential. Existing sessions, idle or busy, close within 3 seconds and open transactions roll back.
 - **`57P03` with `auth_unavailable:`.** Authentication is temporarily unavailable. Retry after 1 second, within a deadline.
 - **`28000` for missing TLS.** Use the verifying TLS settings above: `sslmode=verify-full&sslrootcert=system` for libpq 16+, `SSL Mode=VerifyFull` for Npgsql, or the explicit Node `ssl` object. Keep certificate verification enabled.
-- **`28P01` on connect.** The API key is wrong or from another project, or the database name does not exist in the key's project. With an organization-wide key, use `{projectId}%2F{name}` as the database.
+- **`28P01` on connect.** The API key is wrong or from another project, or the database name does not exist in the key's project. Use a project-scoped dashboard API key and a database name in its project.
 - **`0A000`.** The statement or protocol feature is not supported; check [Supported](#supported). GUI tools that browse the system catalog are a common source.
 - **`40001` at `COMMIT`.** Another writer changed what your transaction read. Retry from `BEGIN`.
 
