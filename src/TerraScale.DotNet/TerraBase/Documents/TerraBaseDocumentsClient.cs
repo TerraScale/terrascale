@@ -229,9 +229,9 @@ public sealed partial class TerraBaseDatabase
         }
 
         if (query.Sort?.Any(static sort => sort.Nearest is not null) == true
-            && (query.Sort.Count != 1 || query.Cursor is not null || query.Limit > 100 || TerraBaseFilter.SearchCount(query.Filter) != 0))
+            && (query.Sort.Count != 1 || query.Cursor is not null || query.Limit is < 1 or > 1000 || TerraBaseFilter.SearchCount(query.Filter) != 0))
         {
-            throw new ArgumentException("A near sort is the only sort key, without a cursor or search, and limit is at most 100.", nameof(query));
+            throw new ArgumentException("A near sort is the only sort key, without a cursor or search, and limit is 1 to 1000.", nameof(query));
         }
 
         if (query.Aggregate is { } aggregate)
