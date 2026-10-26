@@ -15,7 +15,7 @@ public sealed class TerraBasePublicInventoryTests
         using var inventory = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("current-public-routes.json"));
         await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("e7fa366ddb289f5612c93d316b316fb92c568151");
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
-        await Assert.That(expected.Count).IsEqualTo(88);
+        await Assert.That(expected.Count).IsEqualTo(91);
         (string Method, string Path)? sent = null;
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
@@ -44,6 +44,9 @@ public sealed class TerraBasePublicInventoryTests
             ("listChangeWebhooks", () => db.ListChangeWebhooksAsync("items")),
             ("deleteChangeWebhook", () => db.DeleteChangeWebhookAsync("items", EntityId)),
             ("listChangeWebhookDeliveries", () => db.ListChangeWebhookDeliveriesAsync("items", EntityId)),
+            ("invokeFunction", () => db.InvokeFunctionAsync("hello")),
+            ("listFunctionLogs", () => db.ListFunctionLogsAsync("hello")),
+            ("listFunctionDeliveries", () => db.ListFunctionDeliveriesAsync("hello")),
             ("listFunctions", () => db.ListFunctionsAsync()),
             ("deployFunction", () => db.DeployFunctionAsync("hello", new("function handler(event) { return event; }"))),
             ("getFunction", () => db.GetFunctionAsync("hello")),

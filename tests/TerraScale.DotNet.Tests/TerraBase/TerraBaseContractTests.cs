@@ -90,6 +90,9 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "listChangeWebhooks", client => Db(client).ListChangeWebhooksAsync("users"));
         yield return ("documents", "deleteChangeWebhook", client => Db(client).DeleteChangeWebhookAsync("users", User));
         yield return ("documents", "listChangeWebhookDeliveries", client => Db(client).ListChangeWebhookDeliveriesAsync("users", User));
+        yield return ("documents", "invokeFunction", client => Db(client).InvokeFunctionAsync("hello"));
+        yield return ("documents", "listFunctionLogs", client => Db(client).ListFunctionLogsAsync("hello"));
+        yield return ("documents", "listFunctionDeliveries", client => Db(client).ListFunctionDeliveriesAsync("hello"));
         yield return ("documents", "listFunctions", client => Db(client).ListFunctionsAsync());
         yield return ("documents", "deployFunction", client => Db(client).DeployFunctionAsync("hello", new("function handler(event) { return event; }")));
         yield return ("documents", "getFunction", client => Db(client).GetFunctionAsync("hello"));
