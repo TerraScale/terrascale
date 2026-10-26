@@ -161,7 +161,7 @@ public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
         await Assert.That(complete.GetProperty("allowances")[0].GetProperty("used").GetInt64()).IsEqualTo(29);
         var emptyProjectId = partial.GetProperty("projects").EnumerateArray().Single(row => row.GetProperty("id").GetString() != projectId).GetProperty("id").GetString();
         var completeBody = WebUtility.HtmlDecode(await first.GetStringAsync("/usage?project=" + emptyProjectId));
-        await Assert.That(completeBody).Contains("ts-usage-gauge-value\">29</span>");
+        await Assert.That(completeBody).Contains("ts-usage-gauge-value\" title=\"29\">29</span>");
         await Assert.That(completeBody).Contains("No activity yet");
         await Assert.That(completeBody.Contains("ts-usage-chart-shell", StringComparison.Ordinal)).IsFalse();
 

@@ -116,7 +116,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         await Assert.That(Regex.IsMatch(measured, "aria-current=\"page\"[^>]*><span>Replication</span>")).IsTrue();
         await Assert.That(measured).Contains("Per database and region · 1h · TerraBase replication_bytes meter");
         await Assert.That(measured).Contains("aria-label=\"Replication totals\"");
-        await Assert.That(measured).Contains("<dd class=\"ts-stat-value\">20</dd>");
+        await Assert.That(measured).Contains("<dd class=\"ts-stat-value\" title=\"20\">20</dd>");
         await Assert.That(measured).Contains("111 B");
         await Assert.That(measured).Contains("100 B");
         await Assert.That(measured).Contains("<span class=\"ts-mono\">sfo</span></span></td>");

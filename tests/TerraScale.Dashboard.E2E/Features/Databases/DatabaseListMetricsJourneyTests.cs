@@ -86,6 +86,7 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
         await Assert.That(html).Contains("href=\"/databases?range=7d#project-databases\">Clear</a>").Because("clearing the search keeps the range");
 
         var measured = Row(html, "measured-list");
+        await Assert.That(measured).Contains(">5.0B</span>");
         await Assert.That(measured).Contains("title=\"5,000,000,000 reads in 7d\"").Because("large counters keep every digit");
         await Assert.That(measured).Contains("title=\"6 puts, patches and deletes in 7d\"");
         await Assert.That(measured).Contains("<title>Reads trend, 7d</title>");

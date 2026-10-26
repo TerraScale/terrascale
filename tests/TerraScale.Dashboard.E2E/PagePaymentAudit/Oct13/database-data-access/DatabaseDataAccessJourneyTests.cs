@@ -91,6 +91,6 @@ public sealed class DatabaseDataAccessJourneyTests(DashboardRootFixture fixture)
     private static string DocumentTotal(string html)
     {
         var stat = Regex.Match(html, "<div class=\"ts-stat\" data-tone=\"violet\">(?<body>.*?)</div>", RegexOptions.Singleline);
-        return Regex.Match(stat.Groups["body"].Value, "<dd class=\"ts-stat-value\">(?<value>[^<]*)</dd>").Groups["value"].Value;
+        return Regex.Match(stat.Groups["body"].Value, "<dd class=\"ts-stat-value\"[^>]*>(?<value>[^<]*)</dd>").Groups["value"].Value;
     }
 }

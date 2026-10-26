@@ -1,12 +1,13 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
 @using System.Text.Json
+@using System.Globalization
 @{ var result = Model.SqlResult!; var shown = result.Rows.Take(200).ToArray(); }
 <section class="ts-card ts-card-flush" id="sql-result" aria-labelledby="sql-result-title" data-sql-result>
-<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-result-title">Query result</h2><p class="ts-card-description">@result.Rows.Count rows · @result.RowsAffected rows affected@(result.LastInsertRowId is { } id && result.RowsAffected > 0 ? " · last insert rowid " + id : "")</p></div></header>
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-result-title">Query result</h2><p class="ts-card-description">@result.Rows.Count.ToString("N0", CultureInfo.InvariantCulture) rows · @result.RowsAffected.ToString("N0", CultureInfo.InvariantCulture) rows affected@(result.LastInsertRowId is { } id && result.RowsAffected > 0 ? " · last insert rowid " + id : "")</p></div></header>
 <div class="ts-card-body ts-stack-sm">
-@if(result.Columns.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">Statement ran.</p><p class="ts-empty-detail">@result.RowsAffected rows affected.</p></div>}
+@if(result.Columns.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">Statement ran.</p><p class="ts-empty-detail">@result.RowsAffected.ToString("N0", CultureInfo.InvariantCulture) rows affected.</p></div>}
 else{
-<p role="status" aria-live="polite" aria-atomic="true" data-sql-range>Rows @(shown.Length == 0 ? 0 : 1)–@shown.Length of @result.Rows.Count</p>
+<p role="status" aria-live="polite" aria-atomic="true" data-sql-range>Rows @(shown.Length == 0 ? 0 : 1)–@shown.Length.ToString("N0", CultureInfo.InvariantCulture) of @result.Rows.Count.ToString("N0", CultureInfo.InvariantCulture)</p>
 @if(shown.Length == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No rows matched.</p><p class="ts-empty-detail">The query ran and returned no rows.</p></div>}
 else{<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" aria-labelledby="sql-result-title"><table class="ts-table ts-data-result"><thead><tr>@foreach(var column in result.Columns){<th scope="col" title="@column.Decltype">@column.Name</th>}</tr></thead><tbody>@foreach(var row in shown){<tr>@foreach(var cell in row){<td class="@(cell.ValueKind == JsonValueKind.Number ? "ts-num" : null)" data-kind="@(cell.ValueKind == JsonValueKind.Null ? "null" : cell.ValueKind == JsonValueKind.Number ? "number" : "string")">@(cell.ValueKind == JsonValueKind.String ? cell.GetString() : cell.GetRawText())</td>}</tr>}</tbody></table></div>}
 <nav class="ts-pager" aria-label="SQL result pages" tabindex="0" data-sql-pages hidden><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-page="-1">Previous rows</button><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-page="1">Next rows</button><span class="ts-hint">Arrow keys, Home and End change pages.</span></nav>

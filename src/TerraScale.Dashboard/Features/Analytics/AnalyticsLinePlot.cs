@@ -20,7 +20,7 @@ public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<
         double X(int index) => 48 + 660d * index / Math.Max(1, starts.Count - 1);
         double Y(long value) => 14 + 154 * (1 - value / scale);
         string C(double value) => ChartGeometry.Coordinate(value);
-        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? Axis(Math.Floor(scale * (4 - step) / 4)) : step == 4 ? "0" : "")).ToArray();
+        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? ChartGeometry.Compact(Math.Floor(scale * (4 - step) / 4)) : step == 4 ? "0" : "")).ToArray();
         var seen = new HashSet<int>();
         var ticks = Enumerable.Range(0, 5).Select(step =>
         {
@@ -56,8 +56,4 @@ public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<
         }
         return new(label, series.Count == 1 && !(series[0].Missing?.Contains(true) ?? false) ? paths[0].Path + " L 708,168 L 48,168 Z" : "", grid, ticks, paths, markers, columns);
     }
-
-    // Axis labels fit the 48-unit gutter: "750k", not "750.0k".
-    private static string Axis(double value) => value >= 1000000 ? (value / 1000000).ToString("0.#", CultureInfo.InvariantCulture) + "M" :
-        value >= 1000 ? (value / 1000).ToString("0.#", CultureInfo.InvariantCulture) + "k" : value.ToString(CultureInfo.InvariantCulture);
 }

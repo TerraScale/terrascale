@@ -2,6 +2,7 @@ using System.Globalization;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Home;
+using TerraScale.Dashboard.Shared.Charts;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Usage;
@@ -15,7 +16,7 @@ public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Rea
 {
     public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
 }
-public sealed record UsageAllowance(string Name, string Allowance, string Used, int? Percent, string PlanName)
+public sealed record UsageAllowance(string Name, string Allowance, string Used, int? Percent, string PlanName, string? ExactUsed = null, string? ExactAllowance = null)
 {
     public string Tone => Percent >= 100 ? "danger" : Percent >= 80 ? "warning" : "success";
     public string Label => $"{Name}: {Percent}% of the {PlanName} plan's allowance";
@@ -120,9 +121,9 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
         };
 
-        UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured) => new(title, allowance,
-            measured ? bytes ? UsageFormat.Bytes(used) : used.ToString("N0", CultureInfo.InvariantCulture) : "Not metered",
-            measured && limit > 0 ? (int)Math.Min(int.MaxValue, Math.Round(used / (double)limit * 100, MidpointRounding.AwayFromZero)) : null, name);
+        UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured) => new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " operation units/month" : allowance,
+            measured ? bytes ? UsageFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
+            measured && limit > 0 ? (int)Math.Min(int.MaxValue, Math.Round(used / (double)limit * 100, MidpointRounding.AwayFromZero)) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " operation units/month" : null);
         async Task<UsageStorageSnapshot?> StoredAsync() => tab == "overview" ? await storage.ReadAsync(selection, cancellationToken) : null;
     }
     private static int Share(long part, long total) => part <= 0 || total <= 0 ? 0 : Math.Max(1, (int)Math.Round(part / (double)total * 100, MidpointRounding.AwayFromZero));

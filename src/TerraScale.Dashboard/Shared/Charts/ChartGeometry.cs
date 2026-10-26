@@ -14,7 +14,25 @@ public static class ChartGeometry
 {
     public static string Coordinate(double value) => value.ToString("F1", CultureInfo.InvariantCulture);
 
-    internal static string Compact(double value) => value >= 1000000 ? (value / 1000000).ToString("F1", CultureInfo.InvariantCulture) + "M" : value >= 1000 ? (value / 1000).ToString("F1", CultureInfo.InvariantCulture) + "k" : Math.Truncate(value).ToString(CultureInfo.InvariantCulture);
+    internal static string Compact(double value)
+    {
+        string[] suffixes = ["", "k", "M", "B", "T"];
+        var tier = 0;
+        while (Math.Abs(value) >= 1000 && tier < suffixes.Length - 1)
+        {
+            value /= 1000;
+            tier++;
+        }
+        if (tier == 0) return Math.Truncate(value).ToString("N0", CultureInfo.InvariantCulture);
+        var rounded = Math.Round(value, 1, MidpointRounding.AwayFromZero);
+        // Promote after rounding so a boundary never appears as 1000.0k/M/B.
+        if (Math.Abs(rounded) >= 1000 && tier < suffixes.Length - 1)
+        {
+            rounded = Math.Round(rounded / 1000, 1, MidpointRounding.AwayFromZero);
+            tier++;
+        }
+        return rounded.ToString("F1", CultureInfo.InvariantCulture) + suffixes[tier];
+    }
     internal static string Smooth((double X, double Y)[] points)
     {
         var path = new StringBuilder($"M {Coordinate(points[0].X)},{Coordinate(points[0].Y)}");

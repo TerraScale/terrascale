@@ -17,7 +17,9 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
     public AccountContext Context => Shell.Context;
     public SqlAnalysis Analysis => SqlValidation.Analyze(Sql);
     public string CollectionLabel(string name) => CollectionCounts is not null && CollectionCounts.TryGetValue(name, out var count)
-        ? name + " (" + count.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")" : name;
+        ? name + " (" + TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(count) + ")" : name;
+    public string? CollectionTitle(string name) => CollectionCounts is not null && CollectionCounts.TryGetValue(name, out var count)
+        ? count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " documents" : null;
     public DataGrid Grid => DataGrid.Create(Browse.Documents.Select(document => new DatabaseSqlRow(document.Id, document.Document)).ToArray(), Browse.Matched, Browse.More);
     public string BrowsePath(params (string Key, string Value)[] changes)
     {
@@ -36,8 +38,8 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
     public string NextPath => BrowsePath(("cursor", ""), ("page", (Browse.Page + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)));
     public string FirstPath => BrowsePath(("cursor", ""), ("page", ""));
     public string Summary => Error.Length > 0 ? "Document results unavailable." : Search.Length > 0
-        ? $"{Browse.Documents.Count} matches in {Browse.Scanned} documents checked this scan · " + (Browse.More ? "Partial search. Continue searching the collection." : "End of collection reached.")
-        : $"{Browse.Documents.Count} documents on page {Browse.Page} · " + (Browse.More ? "More documents available." : "End of collection reached.");
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Browse.Documents.Count:N0} matches in {Browse.Scanned:N0} documents checked this scan · ") + (Browse.More ? "Partial search. Continue searching the collection." : "End of collection reached.")
+        : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Browse.Documents.Count:N0} documents on page {Browse.Page:N0} · ") + (Browse.More ? "More documents available." : "End of collection reached.");
     public string EmptyTitle => Error.Length > 0 ? "Documents could not be loaded." : Search.Length > 0
         ? Browse.More ? "No matches in this scan." : Browse.Cursor.Length > 0 ? "No more matches." : "No documents match your search."
         : Browse.Cursor.Length > 0 ? "No more documents." : "This collection has no documents yet.";
