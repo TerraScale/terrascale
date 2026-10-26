@@ -6,6 +6,8 @@ namespace TerraScale.DotNet;
     Converters = new[] { typeof(TerraScaleAuthIpAddressConverter) })]
 [JsonSerializable(typeof(TerraScaleAuthPlatformName))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformRole))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformMfaPolicy))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformAccountMfa))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformOrganization))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthPlatformOrganization>))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformMember))]
