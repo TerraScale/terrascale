@@ -527,7 +527,9 @@
     {"client": "documents", "operation": "deleteFunction", "method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
     {"client": "documents", "operation": "invokeFunction", "method": "POST", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/invoke", "contract": "function-invocations.json"},
     {"client": "documents", "operation": "listFunctionLogs", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/logs", "contract": "function-invocations.json"},
-    {"client": "documents", "operation": "listFunctionDeliveries", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/deliveries", "contract": "function-invocations.json"}
+    {"client": "documents", "operation": "listFunctionDeliveries", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/deliveries", "contract": "function-invocations.json"},
+    {"client": "documents", "operation": "getExportSchedule", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/export-schedule", "contract": "export-schedules.json"},
+    {"client": "documents", "operation": "setExportSchedule", "method": "PUT", "path": "/v1/projects/{project}/databases/{database}/export-schedule", "contract": "export-schedules.json"}
   ],
   "producerCommit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a"
 }

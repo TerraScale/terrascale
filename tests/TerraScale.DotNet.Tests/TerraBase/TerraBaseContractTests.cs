@@ -93,6 +93,8 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "invokeFunction", client => Db(client).InvokeFunctionAsync("hello"));
         yield return ("documents", "listFunctionLogs", client => Db(client).ListFunctionLogsAsync("hello"));
         yield return ("documents", "listFunctionDeliveries", client => Db(client).ListFunctionDeliveriesAsync("hello"));
+        yield return ("documents", "getExportSchedule", client => Db(client).GetExportScheduleAsync());
+        yield return ("documents", "setExportSchedule", client => Db(client).SetExportScheduleAsync(null));
         yield return ("documents", "listFunctions", client => Db(client).ListFunctionsAsync());
         yield return ("documents", "deployFunction", client => Db(client).DeployFunctionAsync("hello", new("function handler(event) { return event; }")));
         yield return ("documents", "getFunction", client => Db(client).GetFunctionAsync("hello"));
