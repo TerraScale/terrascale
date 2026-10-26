@@ -27,7 +27,7 @@ func TestWriteDurabilityGuaranteesPreservePreconditions(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					if operation == "tx" {
 						var body struct{ Ops []map[string]any }
-						if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Ops[0]["if_match"] != `"opaque"` {
+						if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Ops) != 1 || body.Ops[0]["if_match"] != `"opaque"` {
 							t.Error("transaction precondition lost")
 						}
 						fmt.Fprintf(w, `{"results":[{"id":%q,"version":"opaque"}],"offset":"1","durability":"local_durable"}`, testProject)
@@ -94,5 +94,20 @@ func TestDurabilityPreExecutionRefusalAndCancellation(t *testing.T) {
 	}
 	if len(transport.requests) != 1 {
 		t.Fatal("cancellation dispatched a mutation")
+	}
+}
+
+func TestTransactionDurabilityUncertainOutcomeIsNeverReplayed(t *testing.T) {
+	_, db, transport := scriptedUsers(t, scripted{status: 503, body: `{"error":{"code":"write_outcome_unknown","region":"gru","machine":"fixture"}}`})
+	_, err := db.Tx().Put("t", testProject, map[string]any{}, tb.IfMatch("opaque")).WithDurability(tb.RemoteDurable).Commit(t.Context())
+	var api *tb.APIError
+	if !errors.Is(err, tb.ErrCommitUncertain) || !errors.As(err, &api) || api.Code != tb.ErrWriteOutcomeUnknown || len(transport.requests) != 1 {
+		t.Fatalf("uncertain transaction replayed or lost its typed error: %v", err)
+	}
+	for _, d := range []tb.Durability{tb.ObjectDurable, tb.Unchanged, "invalid"} {
+		_, err = db.Tx().Put("t", testProject, map[string]any{}).WithDurability(d).Commit(t.Context())
+		if err == nil || len(transport.requests) != 1 {
+			t.Fatal("invalid transaction guarantee reached transport")
+		}
 	}
 }
