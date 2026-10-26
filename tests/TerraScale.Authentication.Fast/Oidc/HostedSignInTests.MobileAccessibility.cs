@@ -270,7 +270,9 @@ public sealed partial class HostedSignInTests
         if (await control.CountAsync() > 0)
         {
             await control.ScrollIntoViewIfNeededAsync();
-            await Assert.That(await control.EvaluateAsync<bool>("el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }")).IsTrue();
+            var bounds = await control.EvaluateAsync<double[]>("el => { const r = el.getBoundingClientRect(); return [r.top, r.bottom, innerHeight]; }");
+            await Assert.That(bounds[0] >= 0 && bounds[1] <= bounds[2]).IsTrue()
+                .Because($"the first control must fit the reduced viewport: top={bounds[0]}, bottom={bounds[1]}, height={bounds[2]}");
         }
         await page.SetViewportSizeAsync(viewport.Width, viewport.Height);
         await Assert.That(await page.EvaluateAsync<bool>("""
@@ -291,7 +293,7 @@ public sealed partial class HostedSignInTests
             await page.GetByRole(AriaRole.Combobox, new() { Name = "Theme", Exact = true }).SelectOptionAsync(theme);
             await ExpectSchemeAsync(page, theme);
             // Return rule IDs only: axe's HTML/node output can contain passwords or sealed handles.
-            var violations = await page.EvaluateAsync<string[]>("async () => (await window.axe.run(document)).violations.map(v => v.id)");
+            var violations = await page.EvaluateAsync<string[]>("async () => (await window.axe.run(document)).violations.map(v => v.id + ': ' + v.nodes.flatMap(n => n.target).join(', '))");
             await Assert.That(violations).IsEmpty();
         }
     }
