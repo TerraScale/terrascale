@@ -37,6 +37,7 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   help                                    print this help
   auth login | logout                     sign in with your browser, or sign out
   whoami                                  print the signed-in account
+  billing                                 print the dashboard billing URL (offline)
   orgs                                    list every accessible organization
   projects                                list the projects you can reach
   projects create <name>                  create a project (and an organization
@@ -141,6 +142,7 @@ var commands = map[string][]int{
 	"auth login":        {0},
 	"auth logout":       {0},
 	"whoami":            {0},
+	"billing":           {0},
 	"projects":          {0},
 	"orgs":              {0},
 	"projects create":   {1},
@@ -224,20 +226,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		if jsonMode(out) {
 			return emitJSON(out, struct {
 				Version string `json:"version"`
-			}{version})
+			}{cliVersion()})
 		}
-		_, err := fmt.Fprintln(out, "ts", version)
+		_, err := fmt.Fprintln(out, "ts", cliVersion())
 		return err
 	}
-	if len(args) == 1 && args[0] == "help" || slices.ContainsFunc(args, func(a string) bool {
-		return a == "-h" || a == "-help" || a == "--help"
-	}) {
-		if jsonMode(out) {
-			return emitJSON(out, struct {
-				Commands map[string][]int `json:"commands"`
-			}{commands})
-		}
-		_, err := io.WriteString(out, usage)
+	if handled, err := requestedHelp(args, out); handled {
 		return err
 	}
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
@@ -250,7 +244,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	scope := fs.String("scope", "", "keys create: read or read-write")
 	collection := fs.String("collection", "", "ndjson import: destination collection")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%s: %w", err, errUsage)
+		return parserError(err)
 	}
 	args = fs.Args()
 	name, operands := "", args
@@ -270,10 +264,16 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		}
 	}
 	if !slices.Contains(commands[name], len(operands)) {
-		return errUsage
+		if name == "" {
+			return fmt.Errorf("unknown command; run ts help: %w", errUsage)
+		}
+		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
 	}
-	var collectionSet, yesSet, scopeSet bool
+	var collectionSet, yesSet, scopeSet, keyOptionsSet bool
 	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "expires" || f.Name == "allow-cidr" {
+			keyOptionsSet = true
+		}
 		if f.Name == "scope" {
 			scopeSet = true
 		}
@@ -287,6 +287,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if scopeSet && name != "keys create" {
 		return fmt.Errorf("-scope is only accepted for keys create: %w", errUsage)
 	}
+	if keyOptionsSet && name != "keys create" {
+		return fmt.Errorf("key expiry and network options are only accepted for keys create: %w", errUsage)
+	}
 	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
 		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
 	}
@@ -299,6 +302,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		}
 	}
 	switch name {
+	case "billing":
+		return showBilling(out)
 	case "completion":
 		return completion(operands[0], out)
 	case "migrate new":
@@ -1085,7 +1090,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		items := []tsauth.APIKey{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		if !jsonMode(out) {
-			fmt.Fprintln(w, "NAME\tID\tDATABASE\tSCOPES\tEXPIRES")
+			fmt.Fprintln(w, "NAME\tID\tDATABASE\tSCOPES\tEXPIRES\tALLOWED CIDRS")
 		}
 		for k, err := range pages(func(after string) (*v1.Page[tsauth.APIKey], error) {
 			p, err := s.user.APIKeys(ctx, s.org, s.project, tsauth.PageOptions{Limit: 100, After: after})
@@ -1102,7 +1107,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			if k.ExpiresAt != nil {
 				expires = k.ExpiresAt.Format(time.RFC3339)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", k.Name, k.ID, cmp.Or(k.Database, "*"), strings.Join(k.Scopes, ","), expires)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", k.Name, k.ID, cmp.Or(k.Database, "*"), strings.Join(k.Scopes, ","), expires, cmp.Or(strings.Join(k.AllowedCIDRs, ","), "*"))
 		}
 		if jsonMode(out) {
 			return emitJSON(out, items)
