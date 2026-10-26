@@ -115,6 +115,11 @@ internal static class TursoCopy
         // An unfinished chunk rolls back when the connection closes: the target is scratch until Write returns.
         Execute(copy, "BEGIN IMMEDIATE;");
         using var rows = read.ExecuteReader();
+        if (rows.FieldCount != names.Count)
+        {
+            throw new InvalidDataException("a copied table's columns do not match its shape");
+        }
+
         while (rows.Read())
         {
             cancellationToken.ThrowIfCancellationRequested();
