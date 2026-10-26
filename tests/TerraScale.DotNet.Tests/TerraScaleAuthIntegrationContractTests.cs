@@ -41,10 +41,6 @@ public sealed class TerraScaleAuthIntegrationContractTests
     [Arguments("get_project_api_key")]
     [Arguments("revoke_project_api_key")]
     [Arguments("rotate_project_api_key")]
-    [Arguments("headless_email_code_start")]
-    [Arguments("headless_sign_up")]
-    [Arguments("headless_password_reset_start")]
-    [Arguments("headless_password_reset_complete")]
     [Arguments("create_invitation")]
     [Arguments("list_invitations")]
     [Arguments("revoke_invitation")]
@@ -245,7 +241,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
         using var security = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("security.json")));
         using var vocabulary = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("error-codes.json")));
         var codes = vocabulary.RootElement.GetProperty("codes").EnumerateArray().Select(code => code.GetString()!).ToHashSet(StringComparer.Ordinal);
-        foreach (var list in new[] { "platform_codes", "headless_codes", "token_codes" })
+        foreach (var list in new[] { "platform_codes", "token_codes" })
             foreach (var code in security.RootElement.GetProperty("errors").GetProperty(list).EnumerateArray())
                 await Assert.That(codes.Contains(code.GetString()!)).IsTrue();
     }

@@ -620,90 +620,6 @@
       "sdk_method": "Platform.RotateProjectApiKeyAsync"
     },
     {
-      "operation_id": "headless_email_code_start",
-      "method": "POST",
-      "path": "/{slug}/headless/v1/email-code/start",
-      "request_dto": "HeadlessEmailCodeRequest",
-      "response_dto": null,
-      "success_status": 202,
-      "errors": [
-        400,
-        401,
-        404,
-        429,
-        503
-      ],
-      "security": "client_secret_basic",
-      "request_media_type": "application/json",
-      "response_media_type": null,
-      "pagination": null,
-      "retry": "none; no idempotency contract",
-      "sdk_method": "Headless.StartEmailCodeAsync"
-    },
-    {
-      "operation_id": "headless_sign_up",
-      "method": "POST",
-      "path": "/{slug}/headless/v1/sign-up",
-      "request_dto": "HeadlessSignUpRequest",
-      "response_dto": "HeadlessSignUpResponse",
-      "success_status": 202,
-      "errors": [
-        400,
-        401,
-        404,
-        429,
-        503
-      ],
-      "security": "client_secret_basic",
-      "request_media_type": "application/json",
-      "response_media_type": "application/json",
-      "pagination": null,
-      "retry": "none; no idempotency contract",
-      "sdk_method": "Headless.SignUpAsync"
-    },
-    {
-      "operation_id": "headless_password_reset_start",
-      "method": "POST",
-      "path": "/{slug}/headless/v1/password-reset/start",
-      "request_dto": "HeadlessEmailRequest",
-      "response_dto": null,
-      "success_status": 202,
-      "errors": [
-        400,
-        401,
-        404,
-        429,
-        503
-      ],
-      "security": "client_secret_basic",
-      "request_media_type": "application/json",
-      "response_media_type": null,
-      "pagination": null,
-      "retry": "none; no idempotency contract",
-      "sdk_method": "Headless.StartPasswordResetAsync"
-    },
-    {
-      "operation_id": "headless_password_reset_complete",
-      "method": "POST",
-      "path": "/{slug}/headless/v1/password-reset/complete",
-      "request_dto": "HeadlessPasswordResetRequest",
-      "response_dto": null,
-      "success_status": 204,
-      "errors": [
-        400,
-        401,
-        404,
-        429,
-        503
-      ],
-      "security": "client_secret_basic",
-      "request_media_type": "application/json",
-      "response_media_type": null,
-      "pagination": null,
-      "retry": "none; no idempotency contract",
-      "sdk_method": "Headless.CompletePasswordResetAsync"
-    },
-    {
       "operation_id": "create_invitation",
       "method": "POST",
       "path": "/v1/terrascale/organizations/{organization}/invitations",
@@ -962,31 +878,6 @@
       ],
       "retry": "none",
       "grants": {
-        "password": {
-          "grant_type": "urn:terrascale:params:oauth:grant-type:password",
-          "required": [
-            "email",
-            "password",
-            "ip_address"
-          ],
-          "optional": [
-            "scope"
-          ],
-          "sdk_method": "Headless.SignInWithPasswordAsync"
-        },
-        "email_code": {
-          "grant_type": "urn:terrascale:params:oauth:grant-type:email-code",
-          "required": [
-            "email",
-            "code",
-            "ip_address"
-          ],
-          "optional": [
-            "pending_token",
-            "scope"
-          ],
-          "sdk_method": "Headless.SignInWithEmailCodeAsync"
-        },
         "token_exchange": {
           "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
           "required": [
