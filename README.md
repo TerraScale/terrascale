@@ -127,11 +127,13 @@ with an explicit replica list turns all-regions placement off and cannot change
 the home region. An empty `replicaRegions` in a response with `allRegions: true`
 represents all-regions placement.
 
-Deletion returns 409 `database_replicated` while replicas exist. First call
-`client.databases.update(name, { replicaRegions: [] })`, then
-`client.databases.delete(name)` immediately. This empty-list update is allowed
-only as transient teardown: document writes return 409 `placement_needs_two_regions`
-until deletion. It is not a supported single-region database.
+Call `client.databases.delete(name)` directly in the database's home region,
+without a preceding placement update. Permanent purge authority removes every
+replica, including all-regions placement; branches remain independent. A 204
+response records logical deletion and local cleanup. Remote erasure is retried
+durably, so 204 does not guarantee synchronous remote erasure. An empty replica-list
+update can temporarily make document writes return 409 `placement_needs_two_regions`;
+it is not required for deletion and does not provide supported single-region placement.
 
 Project, collection catalog, and database catalog IDs are canonical uppercase
 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()` retain that

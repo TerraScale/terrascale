@@ -141,9 +141,9 @@ export class V1Databases {
   /**
    * Replaces the replica list from the database's home region, which cannot change.
    * An explicit list turns allRegions off. A writable database needs at least
-   * one replica besides the home. An empty list is allowed only as transient
-   * teardown immediately before delete; document writes then return
-   * 409 placement_needs_two_regions, not a supported single-region database.
+   * one replica besides the home. An empty list can temporarily make document
+   * writes return 409 placement_needs_two_regions; it is not required for
+   * deletion and does not provide supported single-region placement.
    * allRegions: true instead includes every serving region and regions that join later.
    * @param {string} name @param {V1DatabaseUpdateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
    */
@@ -167,9 +167,10 @@ export class V1Databases {
   }
 
   /**
-   * Deletes the database. While replicas exist, the server returns 409 database_replicated.
-   * First update with replicaRegions: [], then delete immediately. The empty update
-   * is transient teardown; document writes then return 409 placement_needs_two_regions.
+   * Deletes directly in the home region without a preceding placement update.
+   * Permanent purge authority removes every replica, including all-regions placement;
+   * branches remain independent. A 204 response records logical deletion and local
+   * cleanup; remote erasure is retried durably, not guaranteed synchronous.
    * @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>}
    */
   async delete(name, options = {}) {
