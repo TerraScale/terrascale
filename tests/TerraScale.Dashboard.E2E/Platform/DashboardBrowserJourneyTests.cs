@@ -58,6 +58,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await sfo.SetCheckedAsync(sfoInitially);
                 await page.WaitForFunctionAsync(pressed, sfoInitially);
                 await page.Locator("#create-database input[name=\"region\"][value=\"GRU\"]").CheckAsync();
+                await sfo.CheckAsync();
                 await SubmitAsync("#create-database form", "Create database");
                 var databaseId = new Uri(page.Url).AbsolutePath.Split('/').ElementAtOrDefault(2);
                 await Assert.That(databaseId).IsNotNullOrEmpty().Because("Created database opens its details");
