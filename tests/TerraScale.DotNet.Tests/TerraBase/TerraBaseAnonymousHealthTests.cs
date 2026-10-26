@@ -22,7 +22,7 @@ public sealed class TerraBaseAnonymousHealthTests
                 throw new InvalidOperationException("Unexpected anonymous request.");
             var body = new StringContent(request.RequestUri.AbsolutePath == "/health/replication"
                 ? """{"region":"gru","status":"ok","maxLagSeconds":null,"peers":[]}"""
-                : """{"status":"ok","version":"0","region":"gru","storageFormat":"10","revision":null,"machine":"test"}""");
+                : """{"status":"ok","version":"0","region":"gru"}""");
             bodies.Add(body);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = body });
         });
