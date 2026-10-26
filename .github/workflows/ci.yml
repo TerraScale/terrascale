@@ -29,6 +29,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: requirements-ci.txt
       - run: 'uv pip sync --require-hashes --only-binary :all: requirements-ci.txt'
+      - name: validate active build requirements on every supported interpreter
+        run: python scripts/check-build-requirements.py
       - name: check resolved graph
         if: matrix.python == '3.12'
         run: bash scripts/check-ci-lock.sh

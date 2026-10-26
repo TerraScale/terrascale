@@ -8,3 +8,4 @@ trap 'rm -f "$resolved"' EXIT
 bash "$(dirname "$0")/compile-ci-lock.sh" \
   --constraints requirements-ci.txt --output-file "$resolved"
 diff -u requirements-ci.txt "$resolved"
+python "$(dirname "$0")/check-build-requirements.py"

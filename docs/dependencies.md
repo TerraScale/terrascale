@@ -11,7 +11,13 @@ Every matrix entry installs this same graph from wheels with hash verification.
 `requirements-ci.in`. The backend requirement has no duplicate declaration.
 CI checks the lock against these same inputs and runs pip-audit once, in the
 existing Python 3.12 test job. A missing or incompatible locked backend fails the
-input check before the audit or build. Publication repeats both checks before building. The audit
+input check before the audit or build. In addition, every Python 3.10–3.13 matrix
+entry validates its active PEP 508 build requirements and backend extras against
+the installed exact lock. This evaluates Python-version and other environment
+markers with the real interpreter, so a requirement conditional on Python 3.11+
+cannot be hidden by the resolver's Python 3.10 target. Missing, incompatible or
+unlocked backend dependencies fail before editable installation or building.
+Publication repeats both checks before building. The audit
 fails on findings at **every severity**, dependency collection failures and feed
 errors. Its HTTP cache honors feed freshness; uv's package cache is also reused.
 There are no ignored advisories. Dependabot proposes pip and Action updates;
