@@ -173,8 +173,10 @@ new database. The time must be inside the database's restore window; a time
 continuous backup has not yet covered fails with `backup_history_incomplete`.
 
 ::: danger Database deletion
-`ts db delete example-preview` deletes that database immediately, without a
-confirmation prompt. Check the selected project and database name before running it.
+`ts db delete example-preview` asks you to type the database name before deleting
+it. Check the selected project first. For automation, explicitly confirm with
+`ts -yes db delete example-preview`; non-interactive deletion otherwise fails
+without changing the database.
 :::
 
 ## Collections and documents
