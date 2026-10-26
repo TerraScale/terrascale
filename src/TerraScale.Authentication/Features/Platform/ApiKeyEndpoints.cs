@@ -262,6 +262,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var cidrs = ApiKeys.NormalizeCidrs(body.AllowedCidrs) ?? throw InvalidCidrs();
+        caller = await this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>().ConsumeHeaderAsync(caller, this.HttpContext.Request, "create_api_key", cancellationToken);
         var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cidrs, cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key, null), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
     }
@@ -308,6 +309,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
             throw Invalid("previous_secret_ttl must be 0 to 86400 seconds.");
         }
 
+        caller = await this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>().ConsumeHeaderAsync(caller, this.HttpContext.Request, "rotate_api_key", cancellationToken);
         var (key, secret) = await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
         var used = await keys.LastUsedAsync([key], cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), secret), PlatformApiJson.Default.ApiKeySecretBody);

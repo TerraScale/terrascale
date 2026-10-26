@@ -29,6 +29,10 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     [JsonIgnore]
     public IReadOnlyList<CredentialBinding> AuthenticationBindings { get; init; } = [];
 
+    /// <summary>Fresh primary proof ancestry for a newly issued secret; excludes the caller's browser authorization.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<CredentialBinding> StepUpBindings { get; init; } = [];
+
     /// <summary>Whether this authentication attempt proved the account's second factor; never written back to the account.</summary>
     [JsonIgnore]
     public bool MultiFactor { get; init; }
@@ -68,11 +72,12 @@ public sealed record SessionRecord(string InstanceId, string UserId, string Toke
 /// <param name="Consumed">Set once the code is redeemed.</param>
 /// <param name="WindowStartedAt">Timestamp identifying the current UTC clock-hour issue-limit window.</param>
 /// <param name="IssuedInWindow">Codes issued in that window.</param>
-/// <param name="Purpose"><c>password-reset</c> or <c>sign-up</c>; <see langword="null"/> for a sign-in code.</param>
+/// <param name="Purpose"><c>password-reset</c>, <c>sign-up</c> or <c>step-up</c>; <see langword="null"/> for a sign-in code.</param>
 /// <param name="PasswordHash">A pending sign-up's Argon2id hash, cleared when the code is redeemed.</param>
 /// <param name="PendingTokenHash">
 /// Lowercase hex SHA-256 of the pending token handed to whoever started the sign-up; only that requester can redeem
-/// the code, so a third party cannot attach their password to someone else's address.
+/// the code, so a third party cannot attach their password to someone else's address. For step-up, the digest of the
+/// request id binds the code to exactly that request instead.
 /// </param>
 public sealed record PasscodeRecord(
     string InstanceId,
@@ -103,6 +108,9 @@ public sealed record PasscodeRecord(
 
     /// <summary>Pruning removes code material but retains the issuance anchor.</summary>
     public bool Pruned { get; init; }
+
+    /// <summary>Dedicated step-up request id; its passcode never inherits sign-in code ancestry or resets authentication.</summary>
+    public string? StepUpRequestId { get; init; }
 
     /// <summary>The winning redemption this result depends on; not part of the stored passcode.</summary>
     [JsonIgnore]
