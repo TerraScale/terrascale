@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,7 +16,9 @@ import (
 // Pass this writer unchanged to command helpers; never capture textual output.
 type jsonOutput struct {
 	io.Writer
-	failed bool
+	failed   bool
+	stream   bool
+	terminal bool
 }
 
 func jsonMode(out io.Writer) bool {
@@ -29,6 +32,36 @@ func emitJSON(out io.Writer, value any) error {
 		w.failed = true // A partial write cannot be repaired with another JSON value.
 	}
 	return err
+}
+
+// Stream helpers preserve backpressure: each record is written before the next
+// is fetched. A complete record certifies clean EOF, not a database snapshot.
+func beginJSONStream(out io.Writer) {
+	if w, ok := out.(*jsonOutput); ok {
+		w.stream = true
+	}
+}
+
+func emitJSONRecord(out io.Writer, value any) error {
+	if !jsonMode(out) {
+		return emitJSON(out, value)
+	}
+	beginJSONStream(out)
+	return emitJSON(out, struct {
+		Type string `json:"type"`
+		Data any    `json:"data"`
+	}{"record", value})
+}
+
+func finishJSONStream(out io.Writer) error {
+	w, ok := out.(*jsonOutput)
+	if !ok || !w.stream || w.terminal || w.failed {
+		return nil
+	}
+	w.terminal = true
+	return emitJSON(out, struct {
+		Type string `json:"type"`
+	}{"complete"})
 }
 
 type jsonFailure struct{ error }
@@ -94,6 +127,8 @@ func emitJSONError(out io.Writer, err error) error {
 	var auth *tsauth.APIError
 	var token *tsauth.Error
 	switch {
+	case errors.Is(err, context.Canceled):
+		detail.Code, detail.Message = "interrupted", "Command interrupted; output is incomplete."
 	case errors.Is(err, errUsage):
 		detail.Code, detail.Message = "invalid_arguments", errUsage.Error()
 	case errors.As(err, &api):
@@ -112,9 +147,14 @@ func emitJSONError(out io.Writer, err error) error {
 	if errors.Is(err, v1.ErrCommitUncertain) {
 		detail.Message = "Write outcome unknown; inspect the resource before retrying."
 	}
+	kind := ""
+	if w, ok := out.(*jsonOutput); ok && w.stream {
+		kind, w.terminal = "error", true
+	}
 	return emitJSON(out, struct {
+		Type  string       `json:"type,omitempty"`
 		Error commandError `json:"error"`
-	}{detail})
+	}{kind, detail})
 }
 
 func safeIdentifier(s string) string {
