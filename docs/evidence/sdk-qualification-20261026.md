@@ -1,6 +1,6 @@
 # SDK qualification reconciliation — 2026-10-26
 
-Snapshot: 2026-10-26 05:04 UTC. TS-1154 remains incomplete. This is a reconciliation of saved evidence, not a new live run or a product qualification receipt. TS-1154/P04 owns qualification; TS-1173 owns Q02/orchestrator closure only. Missing authorized fixtures are PENDING, never Done. No private ledgers, credentials, cookies or live services were accessed for this document.
+Historical snapshot: 2026-10-26 05:04 UTC; current additive update below records 05:11–05:34 UTC evidence. TS-1154 remains incomplete. This document reconciles saved evidence and the separately executed role run; it is not a blanket product qualification receipt. TS-1154/P04 owns qualification; TS-1173 owns Q02/orchestrator closure only. Missing authorized fixtures are PENDING, never Done. Private ledgers, credentials and cookies are excluded from this document.
 
 ## Versioned evidence anchors
 
@@ -11,7 +11,7 @@ Snapshot: 2026-10-26 05:04 UTC. TS-1154 remains incomplete. This is a reconcilia
 | Import | Q11 `import-installed-live-results.json`; installed 0.0.13, 04:37:44.500–04:38:03.283 | 22 scenario checks PASS; existing owned job lifecycle, no create/delete calls in this run. Independent of P04 destination-create 409. |
 | NDJSON | Q11 `ndjson-installed-live-results.json`; installed 0.0.13, 04:39:33.220–04:39:58.867 | 13 checks PASS: owned database deletion/404 and recreation with automatic default placement; NDJSON import create 201/upload/preview/start/completion, two-row checksum and generated ULIDs. Separate allocation from P04 quota refusal. |
 | Userinfo | Q11 `userinfo-installed-live-results.json`; installed 0.0.11, 04:29:38.008 | Named `oidc.userinfo` 200 with own-email/subject checks; no originating-client introspection/revocation or tenant-admin admission implied. |
-| Current | Repository package 0.0.16 | 0.0.14 removed Better Auth public entrypoint; 0.0.15 cancellation proof is local; 0.0.16 source removes legacy entrypoints. Source removal merged as `15fc1af`; tag pushed, registry removal qualification remains pending. No automatic promotion of old evidence to this version. |
+| Current | Repository package 0.0.16 | 0.0.14 removed Better Auth public entrypoint; 0.0.15 cancellation proof is local; 0.0.16 source removes legacy entrypoints. Source removal merged as `15fc1af`; tag pushed; registry removal qualification was pending at 05:04 and passed at 05:11:30.872 (additive update below). No automatic promotion of old evidence to this version. |
 
 Artifacts Q11 reside in the sibling `qa-q11-sdk-js/.qa-q11/`; P04 artifacts reside in `/home/mariogk/scratch/p04-js/`. Filenames and operation anchors below identify sanitized records without exposing allocation identifiers.
 
@@ -74,9 +74,11 @@ All following names belong to `createTerraScaleIdentityManagementClient()` unles
 | Exact methods | Evidence type / remaining fixture |
 |---|---|
 | `mintEndUserToken` | PENDING: registered customer app/project assertion, separate customer-app authority. |
-| `acceptInvitation, createInvitation, declineInvitation, lookupInvitation, revokeInvitation` | PENDING: exact owned invitation capability, authorized mail flow and invited second identity. |
+| `acceptInvitation, createInvitation` | Installed 0.0.16 positive invitation 201 / acceptance 200 at approximately 05:27; exact owned invitation and second verified identity. |
+| `declineInvitation, lookupInvitation, revokeInvitation` | PENDING: exact owned invitation capability and applicable invitation state; creation/acceptance does not qualify these methods. |
 | `cancelOwnershipTransfer, startOwnershipTransfer, confirmOwnershipTransfer` | PENDING: second owned member, owner authority and transfer confirmation capability. |
-| `leaveOrganization, removeMember, removeProjectMember, setProjectMemberRole` | PENDING: second disposable member and organization/project role assignments; preserve last-owner guard. |
+| `removeMember` | Installed 0.0.16 owner removed the disposable participant: 204 during role-fixture cleanup. |
+| `leaveOrganization, removeProjectMember, setProjectMemberRole` | PENDING: second disposable member and organization/project role assignments; preserve last-owner guard. |
 | `accountUnlinkProvider` | PENDING: owned linked provider and authorized unlink email code. |
 | `deleteSsoConnection, putSsoConnection, verifySsoDomain` | PENDING: owned registered SSO application/domain and organization administrator. |
 | `accountDeletionHistory, deleteOrganization` | PENDING: project closure prerequisite; no logical/physical erasure claim. |
@@ -84,7 +86,7 @@ All following names belong to `createTerraScaleIdentityManagementClient()` unles
 | `getAccountMfa, getOwnershipTransfer, changeMemberRole, listInvitations, createOrganizationApiKey, listOrganizationApiKeys, createOrganization, listOrganizations, createProjectApiKey, listProjectApiKeys, createProject, listProjects, getOrganization, renameOrganization, getProject, renameProject, getOrganizationApiKey, revokeOrganizationApiKey, getProjectApiKey, revokeProjectApiKey, listAuditEvents, listMembers, listProjectMembers, rotateOrganizationApiKey, rotateProjectApiKey, setOrganizationMfaPolicy, setOrganizationApiKeyAllowedCidrs, setProjectAllowedCidrs, setProjectApiKeyAllowedCidrs, accountLinkedProviders, getSsoConnection` | 0.0.12 exercised scenarios; getOwnershipTransfer/getSsoConnection expected 404; changeMemberRole preserves owner and tests 409 last_owner. |
 | `deleteAccount` | 202 acceptance exercised once; receipt completion 204 PENDING. |
 
-`mintEndUserToken` belongs to `createTerraScaleProjectIdentityClient()`; `accountDeletionStatus/History` belong to `createTerraScaleAccountDeletionClient()`. Final receipt-only check at 04:32:11.666 returned 202 (`cleanup-final-receipt-check.json`); TS-969 symptom retained without asserting root cause. No active reusable P04 fixture remains available to qualify new methods.
+`mintEndUserToken` belongs to `createTerraScaleProjectIdentityClient()`; `accountDeletionStatus/History` belong to `createTerraScaleAccountDeletionClient()`. Final receipt-only check at 04:32:11.666 returned 202 (`cleanup-final-receipt-check.json`); TS-969 symptom retained without asserting root cause. That original fixture was unavailable for reuse; the later owned two-identity role fixture and its ongoing cleanup are recorded below.
 
 ## Retired surfaces and separate gates
 
@@ -92,7 +94,7 @@ All following names belong to `createTerraScaleIdentityManagementClient()` unles
 
 Registry-installed 0.0.15 passed local cancellation fixtures at 04:50:19.774 (`published-cancellation-evidence.json`), sufficient for TS-1151. These do not qualify a producer or privileged role. TS-1153 current producer/reactive and mounted-framework gates remain independent of helper tests.
 
-0.0.16 source removes `local`, `postgres`, `schema`, `sql`, `tanstack`; registry-installed removal proof is PENDING (TS-1152). Every historical Q11 row under these entrypoints is RETIRED, never PASS: SQLite runtime/factory/client/adapter methods, PostgresClient query/close/connect and postgresQuery, schema/sql builders, TanStack publisher/sync/options and returned callbacks. `createDatabaseQuery`, returned `subscribe`, `DatabaseSubscriptionView.{getSnapshot,getRequest,restart,apply}`, and native result branches were also removed in 0.0.16: RETIRED, not fixture gates. Retired rows remain historical inventory, not current producer conformance.
+0.0.16 source removes `local`, `postgres`, `schema`, `sql`, `tanstack`; registry-installed removal proof was PENDING at 05:04; it passed at 05:11:30.872 and TS-1152 is Done. Every historical Q11 row under these entrypoints is RETIRED, never PASS: SQLite runtime/factory/client/adapter methods, PostgresClient query/close/connect and postgresQuery, schema/sql builders, TanStack publisher/sync/options and returned callbacks. `createDatabaseQuery`, returned `subscribe`, `DatabaseSubscriptionView.{getSnapshot,getRequest,restart,apply}`, and native result branches were also removed in 0.0.16: RETIRED, not fixture gates. Retired rows remain historical inventory, not current producer conformance.
 
 ## Q01 exact-fragment gate (limited TS-1154 scope)
 
@@ -114,3 +116,23 @@ Only canonical sources `docs/guides/realtime.md` and `docs/guides/sdks.md` are i
 | `docs/guides/sdks.md` `2004a581a3012e0ffc676868c8a8298f357a65086d97991e916bd128302cb990` | request response or literal data | PENDING |
 
 Completion requires a current registry-installed per-method run with owned active fixture, explicit registered tenant/app/resource roles, separately authorized administrator, backup destination/webhook, and sufficient allocation limits; attach exact version/time/status/type, bounded cleanup and published-contract parity. Current evidence does not satisfy those gates.
+
+## Additive update — 2026-10-26 05:11–05:34 UTC
+
+Installed registry `0.0.16` removal proof (`published-removal-evidence.json`) PASS at 05:11:30.872 UTC; TS-1152 Done. Package integrity: `sha512-zqYj/Qa4qEt8AtC7uAtSIwavInH5M6xHdkYj77nZuB5mLEhkkDhho/433NDA4AWkD4H29ug2GbR9vemnWwL21w==`. This closes installed removal verification; historical retired rows remain RETIRED, not operation PASS. Sanitized artifact: `/home/mariogk/scratch/p04-js/published-removal-evidence.json`.
+
+Installed registry `0.0.16` owned organization role matrix (`roles-matrix-results.json`) PASS at approximately 05:27 UTC: two verified owned identities, three messages total including one invitation 201 and acceptance 200. Four roles (owner, admin, member, viewer) each exercised nine methods: 36 role checks, plus two setup calls, two invitation/acceptance calls and two role changes = 42 calls before cleanup. These are current identity-factory results, independent of tenant `TsAuth*` admission.
+
+| Exact identity methods / scenario | owner | admin | member | viewer |
+|---|---|---|---|---|
+| `listMembers`, `getOrganization`, `listProjects`, `getProject` | 200 | 200 | 200 | 200 |
+| `renameOrganization`, `renameProject` | 200 | 200 | 403 | 403 |
+| `createProject` | 201 | 201 | 201 | 403 |
+| `listAuditEvents` | 200 | 200 | 403 | 403 |
+| `changeMemberRole`: attempt to change last owner | 409 `last_owner` | 403 | 403 | 403 |
+
+The primary project was owner-created; the member-created project explicitly granted admin to its creator and was never used as a denial target. `createInvitation` 201 and `acceptInvitation` 200 now have positive owned-fixture coverage. The two role transitions demonstrate those tested changes only. No platform/staff administrator success or broader ownership-transfer/project-role coverage is inferred.
+
+The run used restored global/auth routing; SJC qualification remains PENDING. Sanitized `/home/mariogk/scratch/p04-js/roles-matrix-results.json` records 51 matrix calls: 42 before cleanup, four distinct `deleteProject` requests accepted 202, four bounded `getProject` observations still 200, and participant removal 204. No deletion request was replayed. Separate account calls returned participant deletion 204, receipt status 204 and history 200. Owner deletion lost its response; its protected receipt subsequently returned status 202 and declared history 404. The owner was the sole remaining member, with only the four saved projects, before account deletion was requested. Both accounts had no extra bootstrap allocations.
+
+Remaining cleanup is one owner account, one organization and four projects, handed to the orchestrator under its closure-stall instruction. Protected receipt and exact fixture IDs remain outside git; sanitized report: `/home/mariogk/scratch/p04-js/ROLES-FINAL-REPORT.md`. Owner logical completion and physical erasure remain unproven. TS-1154 overall remains incomplete: registered tenant/app/resource and `sk_` authority, privileged platform admission, backup destination/restore capacity, webhook/storage and other per-method gates above remain open. Positive org-admin admission does not qualify staff administration or tenant `TsAuth*` operations.
