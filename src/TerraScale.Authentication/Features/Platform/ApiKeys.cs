@@ -222,9 +222,11 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             return null;
         }
 
-        var current = key.SecretBindings.Count > 0 && await store.AreCredentialsCurrentAsync(Instance, key.SecretBindings, cancellationToken).ConfigureAwait(false);
+        // A secret issued before fresh-proof lineage existed has none to lose and keeps working; every secret issued since
+        // carries its lineage (CreateAsync and RotateAsync refuse a caller without one), so only those can lose it.
+        var current = key.SecretBindings.Count == 0 || await store.AreCredentialsCurrentAsync(Instance, key.SecretBindings, cancellationToken).ConfigureAwait(false);
         var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
-            && key.PreviousSecretBindings.Count > 0 && await store.AreCredentialsCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken).ConfigureAwait(false);
+            && (key.PreviousSecretBindings.Count == 0 || await store.AreCredentialsCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken).ConfigureAwait(false));
         // These digests are a transient authentication view; the stored rotation record keeps both original lineages.
         return current || previous ? key with { SecretHash = current ? key.SecretHash : string.Empty, PreviousSecretHash = previous ? key.PreviousSecretHash : null } : null;
     }

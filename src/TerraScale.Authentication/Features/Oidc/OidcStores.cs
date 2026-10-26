@@ -88,8 +88,9 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
             return null;
         }
 
+        // As for API keys: a client secret issued before fresh-proof lineage existed has none to lose and keeps working.
         if (application.ClientSecret is not null && Tenancy.IsProject(application.InstanceId)
-            && (application.SecretBindings.Count == 0 || !await store.AreCredentialsCurrentAsync(PlatformDirectory.Instance, application.SecretBindings, cancellationToken).ConfigureAwait(false)))
+            && application.SecretBindings.Count > 0 && !await store.AreCredentialsCurrentAsync(PlatformDirectory.Instance, application.SecretBindings, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }

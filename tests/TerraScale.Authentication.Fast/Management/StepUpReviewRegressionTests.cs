@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Contracts;
@@ -113,6 +114,38 @@ public sealed class StepUpReviewRegressionTests(TerraBaseFixture fixture)
         using var rejectedClient = await oidc.PostTokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = "invalid" }, clientId, secret, tenant: project);
         await Assert.That((await OidcHarness.JsonAsync(rejectedClient)).GetProperty("error").GetString()).IsEqualTo("invalid_client");
         await oidc.OkAsync(HttpMethod.Get, PlatformCalls.Organizations, token);
+    }
+
+    [Test]
+    public async Task A_key_secret_issued_before_fresh_proof_lineage_keeps_exchanging()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (user, token) = await oidc.SignInUserAsync(new Faker().Internet.Email());
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var binding = AuthStore.NewCredentialBinding("step-up-test", AuthStore.NewId());
+        await store.TransactAsync([AuthStore.CredentialClaim(user.InstanceId, binding)]);
+        CredentialBinding[] lineage = [.. user.AuthenticationBindings, binding];
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var keyProof = await oidc.ApprovedProofAsync(token, "create_api_key", bindings: lineage);
+        using var create = new HttpRequestMessage(HttpMethod.Post, $"{PlatformCalls.Organizations}/{organization}/api-keys")
+        { Content = JsonContent.Create(new { name = "before lineage", scopes = ReadScopes }) };
+        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        create.Headers.Add(StepUpProofs.Header, keyProof);
+        using var created = await oidc.Client.SendAsync(create);
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var key = (await OidcHarness.JsonAsync(created)).GetProperty("key").GetString()!;
+
+        // Stored as every key issued before fresh-proof lineage existed: no lineage at all.
+        var stored = (await store.GetAsync(AuthStore.ApiKeyCollection, PlatformDirectory.Instance, key[..26]))!;
+        var record = stored.Document.Deserialize(PlatformJson.Default.ApiKeyRecord)! with { SecretBindings = [] };
+        await Assert.That(await store.TransactAsync([AuthStore.Replace(AuthStore.ApiKeyCollection, PlatformDirectory.Instance, key[..26],
+            JsonSerializer.SerializeToElement(record, PlatformJson.Default.ApiKeyRecord), stored.Version)])).IsNull();
+
+        // The creator losing a lineage the secret never had leaves it working.
+        var claim = (await store.FindUniqueAsync(user.InstanceId, binding.Kind, binding.Key))!.Value;
+        await store.TransactAsync([AuthStore.Reclaim(user.InstanceId, binding.Kind, binding.Key, AuthStore.NewId(), claim.Version)]);
+        using var exchange = await oidc.ApiKeyTokenAsync(key);
+        await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
