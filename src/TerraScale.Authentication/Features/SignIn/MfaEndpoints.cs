@@ -153,7 +153,7 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
         Post("/ui/{slug}/security/totp");
         Name("ui_security_totp_begin");
         Summary("Start authenticator enrolment");
-        Description("Same-origin form post from a live session opened in the last 15 minutes (otherwise the page asks to sign in again). Shows a QR code and key for a new TOTP secret (SHA-1, 6 digits, 30 seconds) that stays pending for 10 minutes until confirmed, and never past the end of that 15-minute window. The change commits only while the session is still live. 409 page when an authenticator is already active.");
+        Description("Same-origin form post from a live session opened in the last 15 minutes (otherwise the page asks to sign in again). Shows a QR code and key for a new TOTP secret (SHA-1, 6 digits, 30 seconds) that stays pending for 10 minutes until confirmed, and never past the end of that 15-minute window. A sign-out that lands before the change commits refuses it. 409 page when an authenticator is already active.");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -252,7 +252,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
 }
 
 /// <summary><c>POST /ui/{slug}/security/totp/disable</c>: removes the authenticator after a TOTP or recovery code.</summary>
-public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, Users users, PlatformDirectory platform, AuthOptions options, ILogger<TotpDisableEndpoint> logger) : EndpointWithoutRequest<IResult>
+public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, AuthOptions options, ILogger<TotpDisableEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -285,7 +285,8 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        if (!await mfa.DisableAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken))
+        if (await mfa.DisabledUserAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken)
+            is not { } user)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
                 StatusCodes.Status401Unauthorized, cancellationToken);
@@ -293,7 +294,7 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
 
         logger.ZLogInformation($"Audit: user {live.User.Id:@UserId} turned off two-factor authentication");
         await SecurityFlow.AuditAsync(platform, tenant, live.User.Id, "member.mfa_disabled", cancellationToken);
-        var user = await users.GetAsync(tenant, live.User.Id, cancellationToken) ?? live.User;
+        // The replacement carries the authority this change committed: a sign-out everywhere since then refuses it.
         if (await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is { } session)
         {
             BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, tenant);
@@ -317,8 +318,10 @@ internal static class SecurityFlow
     }
 
     /// <summary>
-    /// Binds enrolment to the caller's session at commit: it must still be live, and the commit lands before both its
-    /// expiry and the end of its reauthentication window, which also bounds the pending secret.
+    /// Binds enrolment to the caller's session. Immediately before submission the change is refused once the session's
+    /// expiry or the end of its reauthentication window has passed; the transaction itself asserts that the session is
+    /// still stored, unrevoked and at its authentication state, and was unexpired at the time this request sampled. A
+    /// commit the store acknowledges is kept even if it lands after a deadline; the pending secret expires by the earlier one.
     /// </summary>
     public static MfaAuthorization Fresh(HttpContext context, SessionRecord session)
     {
@@ -328,7 +331,8 @@ internal static class SecurityFlow
 
     /// <summary>
     /// Consumes the caller's session, at the version that authorized the request, in the factor change's commit: a
-    /// sign-out, rotation or revocation that lands first fails the change. The endpoint then opens the replacement.
+    /// sign-out, rotation or revocation that lands first fails the change. Its expiry is checked immediately before
+    /// submission. The endpoint then opens the replacement from the committed user state.
     /// </summary>
     public static MfaAuthorization Consumed(SessionRecord session, string version) =>
         new(AuthStore.Delete(AuthStore.SessionCollection, session.InstanceId, session.TokenHash, version), session.ExpiresAt);
