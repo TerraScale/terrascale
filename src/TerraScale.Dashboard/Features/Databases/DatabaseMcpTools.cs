@@ -101,7 +101,8 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
         if (db.AllRegions)
             try { catalog = await backend.RegionsAsync(Cancellation); }
             catch (Exception error) when (!Cancellation.IsCancellationRequested &&
-                (error is HttpRequestException or JsonException or OperationCanceledException || DatabaseEndpoints.KnownFailure(error))) { }
+                (error is HttpRequestException or JsonException or OperationCanceledException || DatabaseEndpoints.KnownFailure(error)))
+            { }
         return new(db.Id, db.Name, db.Status, db.Region, DatabaseService.ServingRegions(db, catalog), db.CreatedAt, db.AllRegions);
     }
 }

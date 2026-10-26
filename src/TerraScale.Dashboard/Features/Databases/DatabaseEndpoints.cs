@@ -39,7 +39,7 @@ public static class DatabaseEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             await databases.SyncAsync(context, http.RequestAborted);
-            return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
+            return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).Select(DatabaseOutput).ToArray() ?? []);
         });
         foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
         {
@@ -74,7 +74,7 @@ public static class DatabaseEndpoints
                     regions = index < 0 ? [home, .. regions] : [home, .. regions[..index], .. regions[(index + 1)..]];
                 }
                 var database = await databases.CreateAsync(context, form["name"].ToString(), regions, form["allRegions"] == "true", http.RequestAborted);
-                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(database, statusCode: 201);
+                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
             {
@@ -97,7 +97,7 @@ public static class DatabaseEndpoints
                         if (action == "branch")
                         {
                             var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted);
-                            return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(branch, statusCode: 201);
+                            return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
                         }
                         if (action == "regions")
                             await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), form["allRegions"] == "true", http.RequestAborted);
@@ -121,6 +121,24 @@ public static class DatabaseEndpoints
             http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));
         return endpoints;
     }
+
+    // Keep the storage revision private; database responses retain their existing fields.
+    private static object DatabaseOutput(DatabaseRecord database) => new
+    {
+        database.Id,
+        database.ProjectId,
+        database.Name,
+        database.Region,
+        database.Regions,
+        database.AllRegions,
+        database.Endpoint,
+        database.Status,
+        database.SpendCapCents,
+        database.OperationLimits,
+        database.BackupRetentionDays,
+        database.BranchedFrom,
+        database.CreatedAt
+    };
 
     internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
         string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200, string? homeRegion = null, bool allRegions = false)

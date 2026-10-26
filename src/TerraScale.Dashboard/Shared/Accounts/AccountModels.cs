@@ -133,6 +133,8 @@ public sealed class DatabaseRecord
     public List<string> Regions { get; set; } = [];
     // Every serving region holds a copy, including regions that join later; Regions then lists only the home.
     public bool AllRegions { get; set; }
+    // Every persisted placement change advances this, including saves that repeat the existing values.
+    public long PlacementRevision { get; set; }
     public string Endpoint { get; set; } = "";
     public string Status { get; set; } = "active";
     public long SpendCapCents { get; set; }

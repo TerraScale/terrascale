@@ -30,14 +30,15 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
             if (http.Request.Method != "GET" || http.Request.Path != "/v1/projects/" + projectId + "/databases") return null;
             var answer = Volatile.Read(ref mode);
             if (answer is "normal" or "expansion-outage") return null;
-            if (answer == "paused")
+            if (answer.StartsWith("paused", StringComparison.Ordinal))
             {
                 if (Interlocked.Increment(ref pausedListings) != 1) return null;
                 entered.TrySetResult(); await release.Task.WaitAsync(http.RequestAborted);
             }
             http.Response.Headers["X-TerraBase-Region"] = "gru";
-            return Results.Json(new { items = new[] { new { id, projectId, name = "refresh", branchedFrom = (string?)null, createdAt = DateTimeOffset.UnixEpoch,
-                region = "gru", homeRegion = "gru", replicaRegions = answer == "invalid" ? new[] { "fra", "fra" } : new[] { "fra", "sfo" }, allRegions = false } }, next = (string?)null });
+            var items = new[] { new { id, projectId, name = "refresh", branchedFrom = (string?)null, createdAt = DateTimeOffset.UnixEpoch,
+                region = "gru", homeRegion = "gru", replicaRegions = answer == "invalid" ? new[] { "fra", "fra" } : new[] { "fra", "sfo" }, allRegions = false } };
+            return Results.Json(new { items = answer == "paused-missing" ? [] : items, next = (string?)null });
         });
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();
@@ -55,27 +56,43 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
         var detail = WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + id + "/replication"));
         await Assert.That(detail).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, sfo · San Francisco, fra · Frankfurt</dd>");
         using (var narrowed = await SaveAsync(false)) await Assert.That(narrowed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await producer.PostAsJsonAsync("/__test/control", new { command = "add-replica", value = "fra" });
+        await producer.PostAsJsonAsync("/__test/control", new { command = "add-replica", value = "sfo" });
         var rpc = (await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "get_database", arguments = new { databaseId = id, organizationId, projectId } })).GetProperty("result");
-        await Assert.That(rpc.GetProperty("structuredContent").GetProperty("placement").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA" });
+        await Assert.That(rpc.GetProperty("structuredContent").GetProperty("placement").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
         // Invalid canonical placement must leave the last validated record intact.
         Volatile.Write(ref mode, "invalid");
         var listed = await ReadAsync(client, "/api/v1/dashboard/databases");
-        await Assert.That(listed[0].GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA" });
-        Volatile.Write(ref mode, "paused");
-        var pending = client.GetAsync("/api/v1/dashboard/databases");
-        try
+        await Assert.That(listed[0].GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
+        foreach (var race in new[] { "paused", "paused-missing", "paused-all" })
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
-            using var saved = await SaveAsync(true);
-            await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            Volatile.Write(ref mode, "normal");
+            using (var reset = await SaveAsync(false)) await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            await producer.PostAsJsonAsync("/__test/control", new { command = "add-replica", value = "sfo" });
+            entered = new(TaskCreationOptions.RunContinuationsAsynchronously); release = new(TaskCreationOptions.RunContinuationsAsynchronously); pausedListings = 0;
+            Volatile.Write(ref mode, race);
+            var pending = client.GetAsync("/api/v1/dashboard/databases");
+            var allRegions = race == "paused-all";
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                using var saved = await SaveAsync(allRegions);
+                await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+            finally { release.TrySetResult(); }
+            var expected = allRegions ? new[] { "GRU" } : new[] { "GRU", "FRA" };
+            using (var completed = await pending)
+            {
+                var refreshed = (await JsonAsync(completed))[0];
+                await Assert.That(refreshed.TryGetProperty("placementRevision", out _)).IsFalse();
+                await Assert.That(refreshed.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
+                await Assert.That(refreshed.GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(expected)
+                    .Because("a stale listing must not replace or delete a newer save, even when the saved values repeat the snapshot");
+            }
+            var context = await ReadAsync(client, "/api/v1/dashboard/context");
+            var stored = context.GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == organizationId)
+                .GetProperty("projects").GetProperty(projectId).GetProperty("databases").GetProperty(id);
+            await Assert.That(stored.GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(expected);
         }
-        finally { release.TrySetResult(); }
-        using (var completed = await pending) await Assert.That((await JsonAsync(completed))[0].GetProperty("allRegions").GetBoolean()).IsTrue();
-        var context = await ReadAsync(client, "/api/v1/dashboard/context");
-        var stored = context.GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == organizationId)
-            .GetProperty("projects").GetProperty(projectId).GetProperty("databases").GetProperty(id);
-        await Assert.That(stored.GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU" }).Because("a stale sync must not overwrite the newer all-regions mutation with its old explicit replica list");
         Volatile.Write(ref mode, "normal");
         var all = (await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "get_database", arguments = new { databaseId = id, organizationId, projectId } })).GetProperty("result").GetProperty("structuredContent");
         await Assert.That(all.GetProperty("placement").GetArrayLength()).IsEqualTo(3);
@@ -91,8 +108,14 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
         await Assert.That(fallback.GetProperty("allRegions").GetBoolean()).IsTrue();
         await Assert.That(fallback.GetProperty("placement").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU" });
 
-        Task<HttpResponseMessage> SaveAsync(bool all) => HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/regions", new()
-            { ["_csrf"] = csrf, ["databaseId"] = id, ["region"] = "GRU", ["allRegions"] = all ? "true" : "false" });
+        Task<HttpResponseMessage> SaveAsync(bool all)
+        {
+            var fields = new List<KeyValuePair<string, string>> { new("_csrf", csrf), new("databaseId", id), new("region", "GRU"), new("allRegions", all ? "true" : "false") };
+            if (!all) fields.Add(new("region", "FRA"));
+            var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases/regions") { Content = new FormUrlEncodedContent(fields) };
+            request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            return client.SendAsync(request);
+        }
     }
 
     private static async Task<JsonElement> ReadAsync(HttpClient client, string path)

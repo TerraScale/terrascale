@@ -183,6 +183,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             current.Region = home.Code;
             current.Regions = placement.Select(region => region.Code).ToList();
             current.AllRegions = allRegions;
+            current.PlacementRevision = checked(current.PlacementRevision + 1);
         }, cancellationToken);
     }
 
@@ -228,7 +229,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var seen = project.Databases.Values.ToArray();
             // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
             var observed = seen.ToDictionary(record => record.Id, record =>
-                (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions));
+                (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
             var listings = await Task.WhenAll(homes.Select(async home =>
@@ -258,7 +259,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             }
             if (gone.Count == 0 && imported.Count == 0 && refreshed.Count == 0) return;
             bool Unchanged(DatabaseRecord record) => observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
-                record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
+                record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
             void Apply(ProjectRecord target)
             {
                 // Rechecked on every storage CAS attempt: a newer dashboard placement must survive an older listing.
@@ -270,6 +271,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                         current.Regions = record.Regions.ToList();
                         current.AllRegions = record.AllRegions;
                         current.Endpoint = record.Endpoint;
+                        current.PlacementRevision = checked(current.PlacementRevision + 1);
                     }
                 foreach (var record in imported.Where(record => !target.Databases.ContainsKey(record.Id) && target.Databases.Values.All(database => database.Name != record.Name)))
                     target.Databases[record.Id] = record;
