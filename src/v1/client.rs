@@ -573,7 +573,10 @@ impl Client {
         let mut url = base.clone();
         let mut scoped = segments.to_vec();
         if let Some(project) = &self.inner.project {
-            if segments.first() == Some(&"v1") && segments.get(1) != Some(&"platform") {
+            if segments.first() == Some(&"v1")
+                && segments.get(1) != Some(&"platform")
+                && segments.get(1) != Some(&"regions")
+            {
                 scoped.splice(1..1, ["projects", project.as_str()]);
             }
         }
@@ -692,6 +695,7 @@ impl Client {
                     "platform"
                         | "databases"
                         | "saved-queries"
+                        | "metrics"
                         | "buckets"
                         | "backup-destination"
                         | "usage"

@@ -36,6 +36,7 @@ mod functions;
 mod ids;
 mod imports;
 mod management;
+mod observability;
 mod query;
 mod reporting;
 mod rules;
@@ -70,6 +71,7 @@ pub use functions::{
 };
 pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
+pub use observability::ServingRegions;
 pub use query::{
     Aggregate, Area, Count, Filter, GeoNear, Group, Metric, Near, Order, Pages, Path, Query,
     QueryPage, Scalar, SortKey,
