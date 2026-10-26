@@ -25,10 +25,11 @@ public static class DatabaseEndpoints
         .AddSingleton<TerraScale.Dashboard.Features.Webhooks.WebhookService>()
         .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
         .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
-        .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddDatabaseLogs().AddDatabaseFunctions();
+        .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<SelectiveRecovery>().AddDatabaseLogs().AddDatabaseFunctions();
 
     public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapSelectiveRecovery();
         endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
