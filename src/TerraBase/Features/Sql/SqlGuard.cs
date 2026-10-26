@@ -116,10 +116,10 @@ internal static class SqlGuard
     /// Applies column affinity to each comparison independently. Extra bound slots name the original parameter and
     /// the conversion for this occurrence; projections and other uses retain the original slots.
     /// </summary>
-    public static List<(int Parameter, SqlAffinity Affinity)> Affinity(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables, int parameterCount)
+    public static List<(int Parameter, SqlAffinity Affinity)> Affinity(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables, int parameterCount, string? keyed)
     {
         var parameters = new List<(int Parameter, SqlAffinity Affinity)>();
-        var resolver = new SqlAffinityResolver(query, tables);
+        var resolver = new SqlAffinityResolver(query, tables, keyed);
         var finder = new Comparisons();
         ((IElement)query).Visit(finder);
         foreach (var comparison in finder.Found)

@@ -15,6 +15,7 @@ internal sealed class SqlAffinityResolver
     private readonly SqlAffinityBudget _budget = new();
     private readonly Func<Query, List<Scope>, List<Column>?> _output;
     private readonly IReadOnlyDictionary<string, SqlTableDefinition> _tables;
+    private readonly string? _keyed;
     private readonly Dictionary<string, CommonTableExpression> _ctes = [with(SqlIdentifierComparer.Instance)];
     private readonly Dictionary<string, List<Column>> _tableColumns = [with(SqlIdentifierComparer.Instance)];
     private readonly Dictionary<Query, List<Column>?> _outputs = [with(ReferenceEqualityComparer.Instance)];
@@ -27,9 +28,10 @@ internal sealed class SqlAffinityResolver
     private int _groups;
     private int _aliasNumber;
 
-    public SqlAffinityResolver(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables)
+    public SqlAffinityResolver(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables, string? keyed)
     {
         _tables = tables;
+        _keyed = keyed;
         _output = Output;
         foreach (var word in new Tokenizer().Tokenize(query.ToSql(), new SqlDialect()).OfType<Word>())
         {
@@ -238,6 +240,8 @@ internal sealed class SqlAffinityResolver
                 {
                     columns = [];
                     _budget.Add(columns, definition.Columns.Select(column => new Column(column.Name, column.Affinity == SqlAffinity.Blob ? null : column.Affinity)));
+                    // Internal UPDATE/DELETE reads expose the document key alongside declared columns.
+                    if (Same(table.Value, _keyed ?? "")) _budget.Add(columns, [new Column("_id", SqlAffinity.Text)]);
                     _tableColumns.Add(table.Value, columns);
                 }
             }
