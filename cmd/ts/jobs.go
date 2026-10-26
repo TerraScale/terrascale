@@ -64,29 +64,6 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 	return nil
 }
 
-// tailChanges prints each committed change as a JSON line, starting now.
-func tailChanges(ctx context.Context, db *v1.Database, collections []string, out io.Writer) error {
-	beginJSONStream(out)
-	for e, err := range db.Changes(ctx, v1.ChangesOptions{Cursor: "now", Collections: collections}) {
-		if errors.Is(err, context.Canceled) && !jsonMode(out) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if e.Type != "change" {
-			continue
-		}
-		if err := emitJSONRecord(out, e); err != nil {
-			return err
-		}
-	}
-	if jsonMode(out) && ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return finishJSONStream(out)
-}
-
 // importPoll is how often import waits for the job's next state.
 const importPoll = 2 * time.Second
 
@@ -209,7 +186,7 @@ func completion(shell string, out io.Writer) error {
 		words[k] = slices.Compact(v)
 	}
 	words["completion"] = []string{"bash", "fish", "zsh"}
-	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement"}
+	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement", "cursor"}
 	var valuePatterns []string
 	flags := "-h -help --help -yes --yes"
 	for _, flag := range valueFlags {

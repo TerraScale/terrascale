@@ -144,6 +144,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 func parserError(err error) error {
 	message := "invalid option or value"
 	switch {
+
 	case strings.HasPrefix(err.Error(), "flag provided but not defined:"):
 		message = "unknown option"
 	case strings.HasPrefix(err.Error(), "flag needs an argument:"):
@@ -160,6 +161,8 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "db changes":
+		options["-cursor <cursor|now|empty>"] = "resume the same database/filter set; default now; accepts at most64 collection filters"
 	case name == "db create":
 		options["-home-region <region>"] = "requested home; server validates serving placement"
 		options["-replica-regions <region>,...|none"] = "explicit replicas; none may be rejected by minimum-copy policy"

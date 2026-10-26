@@ -78,7 +78,8 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   export <db>                             stream all live documents (NDJSON);
                                           excludes relational tables and metadata
   db changes <db> [<collection>...]       print committed changes as JSON lines
-                                          until interrupted
+                                          until interrupted; at most64 filters;
+                                          -cursor <cursor|now|empty> resumes
   collection list <db>                    list a database's collections
   collection create | drop <db> <name>    create or drop a collection
   doc list <db> <collection>              print every document as JSON lines
@@ -174,7 +175,7 @@ var commands = map[string][]int{
 	"projects create":   {1},
 	"usage":             {0, 1},
 	"completion":        {1},
-	"db changes":        {1, 2, 3, 4, 5},
+	"db changes":        changesOperandCounts(),
 	"export":            {1},
 	"backup restore-at": {3, 4},
 	"backup policy":     {1},
@@ -276,6 +277,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	homeRegion := fs.String("home-region", "", "db create: requested home region")
 	replicaRegions := fs.String("replica-regions", "", "db create: comma-separated replicas, or none")
 	placementMode := fs.String("placement", "", "db create: all for every serving region")
+	cursor := fs.String("cursor", "now", "db changes: server cursor, now, or empty for retained history")
 	if err := fs.Parse(args); err != nil {
 		return parserError(err)
 	}
@@ -303,11 +305,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
 	}
 	var collectionSet, yesSet, scopeSet, keyOptionsSet bool
-	var placementSet, replicasSet bool
+	var placementSet, replicasSet, cursorSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
+		case "cursor":
+			cursorSet = true
 		case "home-region", "placement":
 			placementSet = true
 		case "replica-regions":
@@ -323,6 +327,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			collectionSet = true
 		}
 	})
+	if cursorSet && name != "db changes" {
+		return fmt.Errorf("-cursor is only accepted for db changes: %w", errUsage)
+	}
 	if placementSet && name != "db create" {
 		return fmt.Errorf("placement options are only accepted for db create: %w", errUsage)
 	}
@@ -373,6 +380,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	dispatch := func(s *session) error {
+		if name == "db changes" {
+			return tailChangesFrom(ctx, s.tb.Database(s.project, operands[0]), *cursor, operands[1:], out)
+		}
 		if placementSet {
 			return createPlacedDatabase(ctx, s.tb.Database(s.project, operands[0]), requestedPlacement, out)
 		}
@@ -967,7 +977,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 	case "export":
 		return exportDatabase(ctx, db, out)
 	case "db changes":
-		return tailChanges(ctx, db, args[1:], out)
+		return tailChangesFrom(ctx, db, "now", args[1:], out)
 	case "exec":
 		res, err := db.ExecuteSQL(ctx, args[1])
 		if err != nil {
