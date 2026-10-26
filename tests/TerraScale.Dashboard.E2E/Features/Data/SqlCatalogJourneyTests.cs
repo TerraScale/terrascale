@@ -47,11 +47,15 @@ public sealed class SqlCatalogJourneyTests(DashboardRootFixture fixture)
             await Assert.That(statements.SequenceEqual(names.Take(100).Select(name => "PRAGMA table_info('" + name.Replace("'", "''", StringComparison.Ordinal) + "')"))).IsTrue();
             return answer switch
             {
-                "denied" => Results.StatusCode(403), "malformed" => Results.Text("{", "application/json"),
+                "denied" => Results.StatusCode(403),
+                "malformed" => Results.Text("{", "application/json"),
                 "oversized" => Results.Text(new string(' ', 8 * 1024 * 1024 + 1), "application/json"),
                 "missing-result" => Results.Json(new { results = Array.Empty<object>() }),
-                _ => Results.Json(new { results = statements.Select(_ => Result(["cid", "name", "type", "notnull", "dflt_value", "pk"],
-                    answer == "missing-columns" ? [] : [new object?[] { 0, "declared_only", answer == "no-type" ? "" : "TEXT", 0, null, 0 }])).ToArray() })
+                _ => Results.Json(new
+                {
+                    results = statements.Select(_ => Result(["cid", "name", "type", "notnull", "dflt_value", "pk"],
+                    answer == "missing-columns" ? [] : [new object?[] { 0, "declared_only", answer == "no-type" ? "" : "TEXT", 0, null, 0 }])).ToArray()
+                })
             };
         });
         using var client = scenario.CreateClient();
