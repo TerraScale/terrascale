@@ -7,7 +7,6 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from test_changes import Chunks
 
 from terrascale import file_transfer
 from terrascale.file_transfer import AsyncFileTransfer, FileTransfer, FileTransferError
@@ -17,6 +16,21 @@ DATA = b"hello"
 HASH = base64.b64encode(hashlib.sha256(DATA).digest()).decode()
 CAP = FileSignedUrl("01ARZ3NDEKTSV4RRFFQ69G5FAD", "https://files.example/object?sig=fixture%2Fprivate%2Btoken",
                     "2099-01-01T00:00:00Z", {})
+
+
+class Chunks(httpx.SyncByteStream, httpx.AsyncByteStream):
+    def __init__(self, chunks):
+        self.chunks = chunks
+
+    def __iter__(self):
+        for chunk in self.chunks:
+            if isinstance(chunk, Exception):
+                raise chunk
+            yield chunk
+
+    async def __aiter__(self):
+        for chunk in self:
+            yield chunk
 
 
 @pytest.fixture(params=[False, True])
