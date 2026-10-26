@@ -44,7 +44,7 @@ public static class ImportEndpoints
             {
                 var job = await imports.CreateAsync(context, form["database"].ToString(), form["format"].ToString(),
                     long.TryParse(form["sourceBytes"], NumberStyles.None, CultureInfo.InvariantCulture, out var bytes) ? bytes : 0,
-                    form["sourceSha256"].ToString(), http.RequestAborted);
+                    form["sourceSha256"].ToString(), form["collection"].ToString(), http.RequestAborted);
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(http, error))

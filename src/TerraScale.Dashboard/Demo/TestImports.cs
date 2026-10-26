@@ -29,6 +29,8 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
         public required long Bytes;
         public string State = "awaiting_source";
         public List<string> Exclude = [];
+        public string? Collection;
+        public JsonElement[] PlainDocuments = [];
         public MemoryStream Received = new();
         public bool Staged, CancelRequested, Corrupt, Manual;
         public required DatabaseScope Scope;
@@ -142,7 +144,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             return Error(HttpStatusCode.BadRequest, "invalid_request");
         if (existing is not null)
             return existing.Format == request["format"]!.GetValue<string>() && existing.Bytes == request["sourceBytes"]!.GetValue<long>() &&
-                existing.Sha256 == sha && existing.Exclude.SequenceEqual(exclude.Select(item => item!.GetValue<string>()))
+                existing.Sha256 == sha && existing.Collection == options["collection"]?.GetValue<string>() && existing.Exclude.SequenceEqual(exclude.Select(item => item!.GetValue<string>()))
                 ? Reply(HttpStatusCode.OK, existing) : Error(HttpStatusCode.Conflict, "import_exists");
         if (documents.Statistics(scope, database).Count > 0) return Error(HttpStatusCode.Conflict, "destination_not_empty");
         var job = new Job
@@ -155,7 +157,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             Format = request["format"]!.GetValue<string>(),
             Bytes = request["sourceBytes"]!.GetValue<long>(),
             Sha256 = sha,
-            Exclude = exclude.Select(item => item!.GetValue<string>()).ToList()
+            Exclude = exclude.Select(item => item!.GetValue<string>()).ToList(), Collection = options["collection"]?.GetValue<string>()
         };
         jobs[project + "/" + database] = job;
         await documents.CreateCollectionAsync(scope, home, database, "terrascale-import", ct);
@@ -192,6 +194,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
         if (JsonNode.Parse(body)?["options"] is not JsonObject options || options.Any(field => field.Key is not ("exclude" or "collection")) ||
             options["exclude"] is not JsonArray exclude) return Error(HttpStatusCode.BadRequest, "invalid_request");
         job.Exclude = exclude.Select(item => item!.GetValue<string>()).ToList();
+        job.Collection = options["collection"]?.GetValue<string>();
         job.State = "analyzing";
         job.PreviewId = null;
         return Reply(HttpStatusCode.Accepted, job);
@@ -239,6 +242,11 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             var source = job.Received.ToArray();
             job.Fixture = job.Format == "postgres_plain" && Encoding.UTF8.GetString(source).StartsWith("-- TerraScale import fixture: shop\n", StringComparison.Ordinal) ? "shop"
                 : job.Format == "sqlite" && source.Length >= 100 && Encoding.ASCII.GetString(source, 0, 16) == "SQLite format 3\0" ? source[18] == 1 && source[19] == 1 ? "notes" : "wal" : "";
+            if (job.Format == "ndjson" && job.Collection is not null)
+            {
+                job.PlainDocuments = Encoding.UTF8.GetString(source).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+                job.Fixture = job.PlainDocuments.All(row => row.ValueKind == JsonValueKind.Object) ? "ndjson" : "";
+            }
             if (job.Fixture is "" or "wal")
             {
                 job.State = "rejected";
@@ -268,7 +276,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
                 var (table, index) = Locate(job, row);
                 await documents.CreateCollectionAsync(scope, home, job.Database, table.Collection, ct);
                 await documents.WriteAsync(scope, home, job.Database, table.Collection, "create", "01K78D0C00000000" + row.ToString("D10", CultureInfo.InvariantCulture),
-                    JsonSerializer.SerializeToElement(new { row = index + 1 }), "", ct);
+                    job.Fixture == "ndjson" ? job.PlainDocuments[(int)index] : JsonSerializer.SerializeToElement(new { row = index + 1 }), "", ct);
             }
             job.Written += batch;
             if (job.Written == total) job.State = "validating";
@@ -331,7 +339,9 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
     private static JsonObject Constraint(string kind, string? name, string[] columns, string? references) =>
         new() { ["kind"] = kind, ["name"] = name, ["columns"] = new JsonArray(columns.Select(item => (JsonNode?)item).ToArray()), ["references"] = references, ["enforced"] = false };
 
-    private static Table[] Tables(Job job) => (job.Fixture == "shop" ? Shop : Notes).Where(table => !job.Exclude.Contains(table.Source)).ToArray();
+    private static Table[] SourceTables(Job job) => job.Fixture == "ndjson" ? [new("main." + job.Collection, job.Collection!, job.PlainDocuments.Length, [], [new("document", "jsonb", "json")], [])]
+        : job.Fixture == "shop" ? Shop : Notes;
+    private static Table[] Tables(Job job) => SourceTables(job).Where(table => !job.Exclude.Contains(table.Source)).ToArray();
     private static (Table Table, long Index) Locate(Job job, long row)
     {
         foreach (var table in Tables(job)) { if (row < table.Rows) return (table, row); row -= table.Rows; }
@@ -342,7 +352,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
     {
         var tables = new JsonArray();
         int blocking = 0, warnings = 0;
-        foreach (var table in job.Fixture == "shop" ? Shop : Notes)
+        foreach (var table in SourceTables(job))
         {
             var excluded = job.Exclude.Contains(table.Source);
             var issues = new JsonArray();
@@ -397,7 +407,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             ["region"] = "gru",
             ["state"] = job.State,
             ["cancelRequested"] = job.CancelRequested,
-            ["options"] = new JsonObject { ["exclude"] = new JsonArray(job.Exclude.Select(item => (JsonNode?)item).ToArray()) },
+            ["options"] = new JsonObject { ["exclude"] = new JsonArray(job.Exclude.Select(item => (JsonNode?)item).ToArray()), ["collection"] = job.Collection },
             ["source"] = new JsonObject
             {
                 ["format"] = job.Format,
