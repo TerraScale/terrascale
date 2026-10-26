@@ -19,6 +19,8 @@ public sealed class NotFoundJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await anonymous.Content.ReadAsStringAsync()).DoesNotContain("id=\"ts-navigation\"");
 
+        await Assert.That(await anonymous.Content.ReadAsStringAsync()).Contains(anonymous.Headers.GetValues("X-Request-ID").Single());
+
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var signedIn = await client.GetAsync("/__missing-page");
@@ -26,6 +28,7 @@ public sealed class NotFoundJourneyTests(DashboardE2EFixture fixture)
         var html = await signedIn.Content.ReadAsStringAsync();
         await Assert.That(html).Contains("id=\"ts-navigation\"");
         await Assert.That(html).Contains("Back to dashboard");
+        await Assert.That(html).Contains(signedIn.Headers.GetValues("X-Request-ID").Single());
 
         foreach (var path in new[] { "/api/__missing-page", "/__missing-page", "/databases/__missing/documents/orders" })
         {

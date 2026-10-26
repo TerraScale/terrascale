@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Admin;
 
@@ -33,11 +34,11 @@ public static class AdminEndpoints
         }
 
         if (await roles.PlatformRoleAsync(session, context.RequestAborted) != "admin")
-            return Results.Text("forbidden\n", "text/plain; charset=utf-8", statusCode: StatusCodes.Status403Forbidden);
+            return RequestError.Response(context, StatusCodes.Status403Forbidden, "Your account does not have platform admin access. Ask an owner or admin for access.");
 
         // These original admin operation contracts have not been published by
         // their owning providers. Verified authority cannot invent inventories
         // or permit local substitutes for provider mutations.
-        return Results.Text("Platform administration is unavailable.\n", "text/plain; charset=utf-8", statusCode: StatusCodes.Status503ServiceUnavailable);
+        return RequestError.Response(context, StatusCodes.Status503ServiceUnavailable, "Platform administration is unavailable. Please try again later.");
     }
 }

@@ -269,7 +269,7 @@ public sealed class AuthProviderJourneyTests(DashboardRootFixture fixture)
             Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "A recovered producer admits the hosted sign-in");
         await Control(controls, new { command = "spoof-stored-admin" });
         using (var admin = await browser.GetAsync("/admin/users"))
-            Check(admin.StatusCode == HttpStatusCode.Forbidden && await admin.Content.ReadAsStringAsync() == "forbidden\n",
+            Check(admin.StatusCode == HttpStatusCode.Forbidden && (await admin.Content.ReadAsStringAsync()).Contains("Your account does not have platform admin access.", StringComparison.Ordinal),
                 "Stored dashboard fields cannot manufacture a platform administrator claim");
         Check((await Observations(controls)).GetProperty("storedClaimSpoof").GetBoolean(), "The fixture actually injected the untrusted persisted claims");
         await Control(controls, new { command = "fault", value = "userinfo-outage" });

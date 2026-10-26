@@ -22,8 +22,13 @@ public sealed class PlatformRoleJourneyTests(DashboardRootFixture fixture)
         Check((await Observe(producer)).GetProperty("issuedAdminRoleGrants").GetInt32() == 1, "The original signed-in grant actually carried the producer's operator role");
         await Control(producer, new { command = "platform-role", value = "" });
         using (var removed = await browser.GetAsync("/admin/users"))
-            Check(removed.StatusCode == HttpStatusCode.Forbidden && await removed.Content.ReadAsStringAsync() == "forbidden\n",
-                "Removal is reflected before an unexpired cached operator access token can authorize");
+        {
+            var body = await removed.Content.ReadAsStringAsync();
+            Check(removed.StatusCode == HttpStatusCode.Forbidden && removed.Content.Headers.ContentType?.MediaType == "text/html" &&
+                body.Contains("Your account does not have platform admin access.", StringComparison.Ordinal) &&
+                body.Contains(removed.Headers.GetValues("X-Request-ID").Single(), StringComparison.Ordinal),
+                "Removal is reflected with a styled denial and request ID before a cached operator token can authorize");
+        }
         Check((await Observe(producer)).GetProperty("refreshes").GetInt32() == 1, "Role removal is checked by a real persisted rotation");
 
         await Control(producer, new { command = "platform-role", value = "admin" });
@@ -322,8 +327,10 @@ public sealed class PlatformRoleJourneyTests(DashboardRootFixture fixture)
 
     private static async Task Unavailable(HttpResponseMessage response)
     {
+        var body = await response.Content.ReadAsStringAsync();
         Check(response.StatusCode == HttpStatusCode.ServiceUnavailable && response.Headers.CacheControl?.NoStore == true &&
-            await response.Content.ReadAsStringAsync() == "Platform administration is unavailable.\n",
+            body.Contains("Platform administration is unavailable.", StringComparison.Ordinal) &&
+            body.Contains(response.Headers.GetValues("X-Request-ID").Single(), StringComparison.Ordinal),
             "Verified operator authority reports the absent owning operation contract explicitly and without a fabricated inventory");
     }
 
