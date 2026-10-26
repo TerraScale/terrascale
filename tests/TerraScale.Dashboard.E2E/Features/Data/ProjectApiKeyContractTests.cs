@@ -16,6 +16,17 @@ public sealed class ProjectApiKeyContractTests
     private const string CreatorId = "01JA0000000000000000000009";
 
     [Test]
+    [Arguments("documents:read", "Read-only key")]
+    [Arguments("documents:write", "Write-only key")]
+    [Arguments("documents:read,documents:write", "Read-write key")]
+    [Arguments("documents:read,documents:write,databases:read,databases:write", "Full-access key")]
+    public async Task CredentialLabelsMatchTheCanonicalPermissions(string scopes, string label)
+    {
+        var key = new ProjectCredential(KeyId, ProjectId, "Synthetic", scopes.Split(','), null, "", DateTimeOffset.UtcNow);
+        await Assert.That(ApiKeysPage.CredentialType(key).Label).IsEqualTo(label);
+    }
+
+    [Test]
     [Arguments(CreatorId, true)]
     [Arguments(CreatorId, false)]
     [Arguments("", false)]

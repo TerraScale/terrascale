@@ -228,8 +228,3 @@ dialog.ts-credential-dialog {
   display: none;
 }
 
-@media (max-width: 767px) {
-  .ts-apikeys-date {
-    display: none;
-  }
-}

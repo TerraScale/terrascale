@@ -106,6 +106,9 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     public Task RecordAsync(AccountService accounts, AccountContext context, string keyId, bool created, CancellationToken cancellationToken) =>
         accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, created ? "api_key.created" : "api_key.revoked", keyId, "api_key", time.GetUtcNow())), cancellationToken);
 
+    // Callers exclude client aborts before treating cancellation as a dependency timeout.
+    internal static bool FollowUpFailure(Exception error) => error is HttpRequestException or IOException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
+
     // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
     public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken)
     {
@@ -220,6 +223,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
 
 public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Kind = "", string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
 {
+    public string Warning { get; init; } = "";
     public static string Lines(IReadOnlyList<string>? cidrs) => string.Join('\n', cidrs ?? []);
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<ProjectCredential> Filtered => Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (Kind.Length == 0 || Kind == "key" || Kind == "api-key") && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase))).ToArray();
@@ -258,7 +262,8 @@ public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell
     public static string PermissionSummary(string kind) => "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'database:read,database:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'database:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'database:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
     public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
     {
-        if (key.Scopes.Contains("*")) return ("Full-access key", "rose", "ShieldAlert");
+        if (new[] { "documents:read", "documents:write", "databases:read", "databases:write" }.All(key.Scopes.Contains))
+            return ("Full-access key", "rose", "ShieldAlert");
         if (key.Scopes.Any(scope => scope.EndsWith(":write", StringComparison.Ordinal)))
             return key.Scopes.Any(scope => scope.EndsWith(":read", StringComparison.Ordinal)) ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
         return ("Read-only key", "sky", "Eye");
