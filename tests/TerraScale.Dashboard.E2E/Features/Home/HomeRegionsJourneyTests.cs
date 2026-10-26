@@ -52,7 +52,7 @@ public sealed class HomeRegionsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(patch).Contains("event: datastar-patch-elements");
         await Assert.That(patch).Contains("id=\"home-regions\"");
         await Assert.That(patch).DoesNotContain("data-init");
-        await Assert.That(patch).Contains(unavailable ? "Region measurements unavailable" : "12.50 ms");
+        await Assert.That(patch).Contains(unavailable ? "Region measurements unavailable" : "12.5 ms");
         using var emptyClient = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() }) { BaseAddress = client.BaseAddress };
         using var emptyLogin = await HttpJourney.LoginAsync(emptyClient);
         var empty = environment.Workspace.Organizations.Values.Single(org => org.OwnerUserId == "test-user");

@@ -88,7 +88,7 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
         var measured = Row(html, "measured-list");
         await Assert.That(measured).Contains(">5.0B</span>");
         await Assert.That(measured).Contains("title=\"5,000,000,000 reads in 7d\"").Because("large counters keep every digit");
-        await Assert.That(measured).Contains("title=\"6 puts, patches and deletes in 7d\"");
+        await Assert.That(measured).Contains("title=\"6 writes (puts, patches and deletes) in 7d\"");
         await Assert.That(measured).Contains("<title>Reads trend, 7d</title>");
         await Assert.That(measured.Split("Not reported").Length - 1).IsEqualTo(2).Because("explicit null gauges in the latest bucket stay missing");
         await Assert.That(measured).DoesNotContain("4.1 kB").Because("an older storage reading is not current");
@@ -96,7 +96,7 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
 
         var current = Row(html, "current-list");
         await Assert.That(current).Contains(">8.2 kB</span>");
-        await Assert.That(current).Contains(">3.5 ms</span>");
+        await Assert.That(current).Contains(">3.50 ms</span>");
         await Assert.That(current).Contains("title=\"3 reads in 7d\"");
 
         var quiet = Row(html, "quiet-list");
