@@ -5,15 +5,69 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
+using TerraBase.Fast.Sql;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
+using static TerraBase.Fast.Hrana.HranaPipelineTests;
 
 namespace TerraBase.Fast.Qos;
 
 public sealed class StorageQuotaTests
 {
+    [Test]
+    public async Task Sql_drop_releases_warm_quota_only_after_commit_and_accounts_for_same_batch_writes()
+    {
+        await using var api = await StartAsync();
+        const string create = "CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT)";
+        const string insert = "INSERT INTO t VALUES (1, '1234567890')"; // 28 stored JSON bytes of the 32-byte quota.
+        await SqlApi.OkAsync(api, create, insert);
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+
+        var failed = await SqlApi.ExecuteAsync(api, "DROP TABLE t", "SELECT * FROM missing");
+        await Assert.That(SqlApi.Error(failed).Sqlite).IsEqualTo("SQLITE_ERROR");
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
+
+        // Replacing a full table in one transaction has no net growth; include a just-inserted row in the drop.
+        await SqlApi.OkAsync(api, "INSERT INTO t VALUES (2, 'x')", "DROP TABLE t", create, insert);
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        await SqlApi.OkAsync(api, "DROP TABLE t");
+        await Assert.That((await api.PutAsync(DocumentApi.NewId(), Data(21))).Status).IsEqualTo(HttpStatusCode.Created);
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+    }
+
+    [Test]
+    [Arguments("COMMIT")]
+    [Arguments("ROLLBACK")]
+    public async Task Sql_drop_replay_updates_warm_quota_once_and_rollback_keeps_it(string finish)
+    {
+        await using var api = await StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT)", "INSERT INTO t VALUES (1, '1234567890')");
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        var begun = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"BEGIN"}},{"type":"execute","stmt":{"sql":"DROP TABLE t"}}]}""");
+        await Assert.That(Types(begun.Json)).IsEqualTo("ok:execute,ok:execute");
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        var replay = await PostAsync(api, $$"""{"baton":"{{begun.Json.GetProperty("baton").GetString()}}","requests":[{"type":"execute","stmt":{"sql":"SELECT 1"}}]}""");
+        await Assert.That(Types(replay.Json)).IsEqualTo("ok:execute");
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+        var ended = await PostAsync(api, $$"""{"baton":"{{replay.Json.GetProperty("baton").GetString()}}","requests":[{"type":"execute","stmt":{"sql":"{{finish}}"}},{"type":"close"}]}""");
+        await Assert.That(Types(ended.Json)).IsEqualTo("ok:execute,ok:close");
+        var reuse = await api.PutAsync(DocumentApi.NewId(), Data(21));
+        if (finish == "COMMIT")
+        {
+            await Assert.That(reuse.Status).IsEqualTo(HttpStatusCode.Created);
+        }
+        else
+        {
+            await IsQuotaAsync(reuse);
+            await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
+        }
+
+        await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
+    }
+
     [Test]
     public async Task Cold_quota_accounting_ignores_query_deadlines_but_foreground_queries_remain_limited()
     {

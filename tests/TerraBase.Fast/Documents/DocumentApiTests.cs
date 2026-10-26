@@ -334,7 +334,7 @@ public sealed class DocumentApiTests
         var first = await api.PutAsync(id, new { n = 1 }, DocumentApi.IfNoneMatch("*"));
 
         var createAgain = await api.PutAsync(id, new { n = 2 }, DocumentApi.IfNoneMatch("*"));
-        var second = await api.PutAsync(id, new { n = 2 }, DocumentApi.IfMatch(first.Version));
+        var second = await api.PutAsync(id, new { n = 2, body = new string('x', 10 * 1024) }, DocumentApi.IfMatch(first.Version));
         var stale = await api.PutAsync(id, new { n = 3 }, DocumentApi.IfMatch(first.Version));
         var stalePatch = await api.SendRawAsync(
             HttpMethod.Patch, api.Document(id), """{"n":3}""", "application/merge-patch+json", DocumentApi.IfMatch(first.Version));
@@ -346,7 +346,9 @@ public sealed class DocumentApiTests
         var weakIfMatch = await api.PutAsync(
             id, new { n = 3 }, request => request.Headers.IfMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{second.Version}\"", isWeak: true)));
         var malformedIfMatch = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", "not-an-etag"));
+        var beforeMalformed = await api.ReadUsageAsync();
         var malformedIfNoneMatch = await api.GetAsync(id, request => request.Headers.TryAddWithoutValidation("If-None-Match", "tbv1-unquoted"));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeMalformed);
         var emptyIfMatch = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", ""));
         var quotedStar = await api.PutAsync(id, new { n = 3 }, request => request.Headers.IfMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue("\"*\"")));
         var starInList = await api.PutAsync(id, new { n = 3 }, request => request.Headers.TryAddWithoutValidation("If-Match", $"*, \"{second.Version}\""));
@@ -358,7 +360,9 @@ public sealed class DocumentApiTests
         var other = DocumentApi.NewId();
         var anyAbsent = await api.PutAsync(other, new { n = 1 }, request => request.Headers.IfMatch.Add(System.Net.Http.Headers.EntityTagHeaderValue.Any));
         // Reads evaluate If-Match first (strongly), and parse both headers before reporting absence.
+        var beforeStale = await api.ReadUsageAsync();
         var readStale = await api.GetAsync(id, DocumentApi.IfMatch(first.Version));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeStale);
         var readCurrent = await api.GetAsync(id, DocumentApi.IfMatch(recreated.Version));
         var readAbsentIfMatch = await api.GetAsync(other, DocumentApi.IfMatch("*"));
         var readAbsentMalformed = await api.GetAsync(other, request => request.Headers.TryAddWithoutValidation("If-None-Match", "unquoted"));
@@ -393,6 +397,8 @@ public sealed class DocumentApiTests
         await Assert.That(readAbsentIfMatch.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That((readAbsentMalformed.Status, readAbsentMalformed.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
         await Assert.That((weakNoneMatch.Status, weakNoneMatch.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        // Only the two 200 bodies count (3 + 1 units). 304, 400, 412 and absent reads return no object.
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((4L, 2L));
     }
 
     [Test]

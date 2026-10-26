@@ -45,7 +45,10 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
 
     private sealed record Grant(ApiKey Key, TenantContext Database, long Sequence);
 
-    private sealed record Frame(uint Id, byte Op, byte[] Body, IMemoryReservation Reservation);
+    private sealed record Frame(uint Id, byte Op, byte[] Body, IMemoryReservation Reservation)
+    {
+        public Action? AcceptRead { get; set; }
+    }
 
     // An answer to write, and what to release once it is written: the request's slot and memory.
     private sealed record Outgoing(byte[] Answer, Action? Release = null);
@@ -292,6 +295,10 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             // Held until written, so a client that stops reading holds at most MaxInFlight admitted answers.
             held = services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, answer.Length, session.Grant.Database);
             answer = held is null ? Error(frame.Id, new QuotaExceeded("organization memory budget exceeded", "tenant_memory")) : answer;
+            if (held is not null)
+            {
+                frame.AcceptRead?.Invoke();
+            }
         }
         catch (Exception) when (closed.IsCancellationRequested)
         {
@@ -436,7 +443,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             return await documents.GetAsync(key, cancellationToken).ConfigureAwait(false) switch
             {
                 StoredDocument { UniqueConflict: true } => Error(frame.Id, new Conflict("the document lost a replicated uniqueness conflict", "unique_violation")),
-                StoredDocument { Deleted: false } document => Read(frame.Id, ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json), document.Json.Span),
+                StoredDocument { Deleted: false } document => StageRead(documents, key, frame, document),
                 StoredDocument or NeverWritten => Error(frame.Id, new NotFound("the document does not exist")),
                 NotFound error => Error(frame.Id, error),
                 Validation error => Error(frame.Id, error),
@@ -466,6 +473,13 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
                 frame.Id, written.Results[0].Created ? (ushort)201 : (ushort)200,
                 [(byte)(written.Durability == WriteResult.RemoteDurable ? 1 : 0), .. Short(written.Results[0].ETag!)], []),
         };
+    }
+
+    private static byte[] StageRead(IDocumentService documents, DocumentKey key, Frame frame, StoredDocument document)
+    {
+        var answer = Read(frame.Id, ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json), document.Json.Span);
+        frame.AcceptRead = () => documents.AcceptRead(key, document);
+        return answer;
     }
 
     // A frame: u32 length of the rest, u32 request id, u8 operation, body. The memory budget admits it while it is read; the

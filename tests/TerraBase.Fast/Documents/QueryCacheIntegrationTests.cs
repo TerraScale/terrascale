@@ -240,6 +240,7 @@ public sealed class QueryCacheIntegrationTests
             return new("items", new ExistsFilter(new DocumentPath(["n"])),
                 [new SortKey(new DocumentPath(["n"]), false)], null, 1, 8 * 1024 * 1024);
         }
+        var beforeInternal = await api.ReadUsageAsync();
         var (firstPage, _) = Ok(await documents.QueryAsync(database, Query(), 100_000, deadline.Token));
         var (equivalentPage, equivalentCount) = Ok(await documents.QueryAsync(database, Query(), 100_000, deadline.Token));
         await Assert.That(ReferenceEquals(firstPage, equivalentPage)).IsFalse();
@@ -251,6 +252,7 @@ public sealed class QueryCacheIntegrationTests
         await Assert.That(withoutCount).IsNull();
         var (_, boundedCount) = Ok(await documents.QueryAsync(database, Query(), 1, deadline.Token));
         await Assert.That(boundedCount).IsEqualTo(((long Count, bool Complete)?)(1L, false));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeInternal).Because("internal queries do not accept client read charges");
         var next = await api.QueryAsync(new
         {
             request.filter,
@@ -359,6 +361,10 @@ public sealed class QueryCacheIntegrationTests
             Reads++;
             return inner.GetAsync(key, cancellationToken);
         }
+
+        public void AcceptRead(DocumentKey key, StoredDocument document) => inner.AcceptRead(key, document);
+
+        public void AcceptRead(TenantContext database, string collection, QueryPage page) => inner.AcceptRead(database, collection, page);
 
         public ValueTask<QueryResult> QueryAsync(
             TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>

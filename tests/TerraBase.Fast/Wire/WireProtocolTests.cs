@@ -4,6 +4,10 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Fast.Documents;
+using TerraBase.Features.Memory;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Wire;
@@ -13,6 +17,38 @@ public sealed class WireProtocolTests
     private const string Items = "items";
 
     private static readonly Faker Faker = new();
+
+    [Test]
+    public async Task Outgoing_memory_refusal_does_not_accept_a_wire_read_charge()
+    {
+        await using var api = await DocumentApi.StartAsync(services: services =>
+        {
+            var memory = services.Last(service => service.ServiceType == typeof(IMemoryBudget));
+            services.AddSingleton<IMemoryBudget>(provider => new RefusedWireAnswer((IMemoryBudget)memory.ImplementationFactory!(provider)));
+        });
+        var id = DocumentApi.NewId();
+        var document = new { body = new string('x', 10 * 1024) };
+        var put = await api.PutAsync(id, document);
+        put.Status.ShouldBe(HttpStatusCode.Created);
+        var budget = (RefusedWireAnswer)api.Server.Services.GetRequiredService<IMemoryBudget>();
+        budget.Bytes = 11 + put.Version.Length + Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(document));
+        var key = await api.Server.IssueNarrowedAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, null, "documents:read");
+        await using var session = await WireClient.OpenAsync(api.Server.WirePort, key, api.Tenant.ProjectId, DocumentApi.Database);
+        var refused = await session.GetAsync(Items, id);
+        await Assert.That((refused.Status, refused.Code)).IsEqualTo((429, "tenant_memory"));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((0L, 0L));
+        budget.Bytes = 0;
+        await Assert.That((await session.GetAsync(Items, id)).Status).IsEqualTo(200);
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((3L, 1L));
+    }
+
+    private sealed class RefusedWireAnswer(IMemoryBudget inner) : IMemoryBudget
+    {
+        public long Bytes { get; set; } = -1;
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => inner.TryReserve(lane, bytes);
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant) =>
+            tenant is not null && lane == MemoryLane.Foreground && bytes == Bytes ? null : inner.TryReserve(lane, bytes, tenant);
+    }
 
     [Test]
     [Arguments(false)]

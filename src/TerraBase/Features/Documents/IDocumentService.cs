@@ -164,12 +164,18 @@ public interface IDocumentService
     /// <summary>Drops a collection and every document in it.</summary>
     ValueTask<CollectionResult> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
-    /// <summary>Reads a document or its tombstone.</summary>
+    /// <summary>Reads a document or its tombstone without accepting a client read charge.</summary>
     ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken);
+
+    /// <summary>Counts one live document once, after a client response accepts its body.</summary>
+    void AcceptRead(DocumentKey key, StoredDocument document);
+
+    /// <summary>Counts one accepted client page, rounding each returned stored document independently.</summary>
+    void AcceptRead(TenantContext database, string collection, QueryPage page);
 
     /// <summary>
     /// Runs a query and, when <paramref name="countLimit"/> is set, counts matches among at most that many
-    /// documents (<c>Complete</c> is <see langword="false"/> when more exist).
+    /// documents (<c>Complete</c> is <see langword="false"/> when more exist). Does not accept a client read charge.
     /// </summary>
     ValueTask<QueryResult> QueryAsync(TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
 

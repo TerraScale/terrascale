@@ -118,7 +118,14 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         }
 
         tally.Tables.Remove(drop.Name);
+        // Use retained bytes before and after: collection statistics omit hidden uniqueness conflicts.
+        var before = tally.Measure ? await transaction.GetStoredDocumentBytesAsync(cancellationToken).ConfigureAwait(false) : 0;
         await transaction.DropCollectionAsync(drop.Name, cancellationToken).ConfigureAwait(false);
+        if (tally.Measure)
+        {
+            tally.Delta += await transaction.GetStoredDocumentBytesAsync(cancellationToken).ConfigureAwait(false) - before;
+        }
+
         return Empty;
     }
 

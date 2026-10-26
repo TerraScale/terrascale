@@ -65,22 +65,26 @@ public sealed class ListPlatformDocumentsEndpoint(IDocumentService documents, IT
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
-            QueryOutcome outcome => Page(collection, digest, outcome.Page, cancellationToken),
+            QueryOutcome outcome => Page(database, collection, digest, outcome.Page, cancellationToken),
         };
     }
 
-    private static IResult Page(string collection, string digest, QueryPage page, CancellationToken cancellationToken)
+    private IResult Page(TenantContext database, string collection, string digest, QueryPage page, CancellationToken cancellationToken)
     {
         List<DocumentBody> items = [.. page.Rows.Select(row => GetPlatformDocumentEndpoint.Redacted(collection, row.Document, cancellationToken))];
-        if (!page.HasMore)
+        string? next = null;
+        if (page.HasMore)
         {
-            return TypedResults.Ok(new DocumentPageBody(items, null));
+            var cursor = QueryParser.CheckCursor(digest, page.Rows[^1]);
+            if (cursor is Validation error)
+            {
+                return ErrorResponse.From(error);
+            }
+
+            next = cursor switch { string value => value, Validation => throw new InvalidOperationException("cursor validation was already handled") };
         }
 
-        return QueryParser.CheckCursor(digest, page.Rows[^1]) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            string next => TypedResults.Ok(new DocumentPageBody(items, next)),
-        };
+        documents.AcceptRead(database, collection, page);
+        return TypedResults.Ok(new DocumentPageBody(items, next));
     }
 }
