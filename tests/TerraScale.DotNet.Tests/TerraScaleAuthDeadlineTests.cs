@@ -86,7 +86,8 @@ public sealed class TerraScaleAuthDeadlineTests
         using var caller = new CancellationTokenSource();
         using var content = new Content((_, _) => Task.CompletedTask, caller.Cancel);
         using var handler = new Handler(_ => Task.FromResult(new HttpResponseMessage(
-            operation == 1 ? HttpStatusCode.Accepted : operation == 0 ? HttpStatusCode.OK : HttpStatusCode.NoContent) { Content = content }));
+            operation == 1 ? HttpStatusCode.Accepted : operation == 0 ? HttpStatusCode.OK : HttpStatusCode.NoContent)
+        { Content = content }));
         using var http = new HttpClient(handler);
         var client = Client(http);
         const string id = "01JA0000000000000000000007";
@@ -131,7 +132,8 @@ public sealed class TerraScaleAuthDeadlineTests
 
     private static TerraScaleAuthClient Client(HttpClient http) => new(http, new TerraScaleAuthClientOptions
     {
-        BaseAddress = new Uri("https://auth.example.test"), InstanceSlug = "terrascale"
+        BaseAddress = new Uri("https://auth.example.test"),
+        InstanceSlug = "terrascale"
     });
 
     private sealed class CancellingConverter(CancellationTokenSource caller, bool malformed) : JsonConverter<int>
