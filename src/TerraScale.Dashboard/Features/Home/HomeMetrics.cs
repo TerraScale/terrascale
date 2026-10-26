@@ -4,9 +4,12 @@ using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.Features.Home;
 
-public sealed record HomeAnalytics(long Requests, long Errors, double? WorstP95Ms, long? StorageBytes, long Operations, long ClientBytes, long ReplicationBytes);
-public sealed record HomeDirection(string FromRegion, string ToRegion, long SentBytes);
-public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions);
+public sealed record HomeAnalytics(long Requests, long Errors, double? WorstP95Ms, long? StorageBytes, long Operations, long ClientBytes);
+public sealed record HomeDirection(string FromRegion, string ToRegion, long WireBytes);
+public sealed record HomeReplication(int Healthy, int Lagging, int Diverged, int Stopped, double? WorstLagMs, long SentBytes, long ReceivedBytes, IReadOnlyList<HomeDirection> Directions)
+{
+    public long WireBytes => Directions.Aggregate(0L, (sum, direction) => checked(sum + direction.WireBytes));
+}
 
 public sealed partial class TerraBaseHomeMeasurements
 {
@@ -31,28 +34,8 @@ public sealed partial class TerraBaseHomeMeasurements
                 return;
             }
 
-            long requests = 0, errors = 0, operations = 0, clients = 0, replication = 0;
-            foreach (var point in batch.Points)
-            {
-                foreach (var count in point.Requests.Values) requests = checked(requests + count);
-                foreach (var count in point.Operations.Values) operations = checked(operations + count);
-                errors = checked(errors + point.Errors);
-                clients = checked(clients + point.ClientSentBytes + point.ClientReceivedBytes);
-                replication = checked(replication + point.ReplicationSentBytes);
-            }
-
-            var latest = batch.Points.Max(point => point.Start);
-            long storage = 0;
-            var storageComplete = true;
-            double? p95 = null;
-            foreach (var point in batch.Points.Where(point => point.Start == latest))
-            {
-                if (point.StorageBytes is { } measuredStorage) storage = checked(storage + measuredStorage);
-                else storageComplete = false;
-                if (point.P95Ms is { } measuredP95) p95 = Math.Max(p95 ?? 0, measuredP95);
-            }
-
-            result.Analytics = new(requests, errors, p95, storageComplete ? storage : null, operations, clients, replication);
+            var totals = AnalyticsService.Build(selection, batch.Points).Totals;
+            result.Analytics = new(totals.Requests, totals.Errors, totals.LatestP95Ms, totals.StorageBytes, totals.Operations, totals.ClientBytes);
             result.RequestPoints = batch.Points.GroupBy(point => point.Start).OrderBy(group => group.Key).Select(group =>
             {
                 var counters = new SortedDictionary<string, long>(StringComparer.Ordinal);
@@ -91,7 +74,7 @@ public sealed partial class TerraBaseHomeMeasurements
                 .OrderBy(group => group.Key.FromRegion, StringComparer.Ordinal)
                 .ThenBy(group => group.Key.ToRegion, StringComparer.Ordinal)
                 .Select(group => new HomeDirection(group.Key.FromRegion, group.Key.ToRegion,
-                    group.Aggregate(0L, (total, pair) => checked(total + pair.SentBytes))))
+                    group.Aggregate(0L, (total, pair) => checked(total + pair.WireBytes))))
                 .ToArray();
             result.Replication = new(
                 CountStatus(report.Regions, "healthy"),

@@ -37,6 +37,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             if (batch.State == AnalyticsSourceState.NotMetered)
                 return new(shell, selection, null, [], Empty: "TerraBase has no analytics for this project or database yet. They start with its first database.");
             if (batch.Points.Count == 0) return new(shell, selection, null, []);
+            selection = selection with { ObservedRegions = batch.Points.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
             var (totals, charts) = Build(selection, batch.Points);
             return new(shell, selection, totals, charts);
         }
@@ -56,14 +57,14 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         var requests = new SortedDictionary<string, long[]>(StringComparer.Ordinal);
         var operations = new SortedDictionary<string, long[]>(StringComparer.Ordinal);
         var latencies = new SortedDictionary<string, AnalyticsSeries>(StringComparer.Ordinal);
-        var errors = new long[starts.Length]; var storage = new long[starts.Length]; var pointCounts = new int[starts.Length]; var storageSamples = new int[starts.Length]; var storageMissing = Enumerable.Repeat(true, starts.Length).ToArray(); var sent = new long[starts.Length]; var received = new long[starts.Length]; var replicationSent = new long[starts.Length]; var replicationReceived = new long[starts.Length];
+        var errors = new long[starts.Length]; var storage = new long[starts.Length]; var storageSamples = new int[starts.Length]; var storageMissing = Enumerable.Repeat(true, starts.Length).ToArray(); var sent = new long[starts.Length]; var received = new long[starts.Length]; var replicationSent = new long[starts.Length]; var replicationReceived = new long[starts.Length];
         long requestTotal = 0, operationTotal = 0, errorTotal = 0, clientTotal = 0, replicationSentTotal = 0, replicationReceivedTotal = 0;
         var p95ByBucket = new double?[starts.Length];
         var regions = new Dictionary<string, (long Requests, int Bucket, double? LatestP95Ms)>(StringComparer.Ordinal);
+        var identities = points.Select(point => (point.DatabaseId, point.Region)).Distinct().Count();
         foreach (var point in points)
         {
             var index = indices[point.Start.ToUniversalTime()];
-            pointCounts[index] = checked(pointCounts[index] + 1);
             AddCounters(requests, point.Requests, index, ref requestTotal);
             AddCounters(operations, point.Operations, index, ref operationTotal);
             errors[index] = checked(errors[index] + Nonnegative(point.Errors)); errorTotal = checked(errorTotal + point.Errors);
@@ -79,6 +80,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             replicationSentTotal = checked(replicationSentTotal + point.ReplicationSentBytes);
             replicationReceivedTotal = checked(replicationReceivedTotal + point.ReplicationReceivedBytes);
             var group = selection.Context.Project!.Databases.GetValueOrDefault(point.DatabaseId)?.Name ?? point.DatabaseId;
+            if (selection.Context.Project.Databases.Values.Count(database => database.Name == group) > 1) group += " (" + point.DatabaseId + ")";
             if (point.Region.Length > 0) group += " / " + point.Region;
             foreach (var percentile in new[] { (Name: "p50", Value: point.P50Ms), (Name: "p95", Value: point.P95Ms), (Name: "p99", Value: point.P99Ms) })
             {
@@ -102,7 +104,8 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         }
         var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, Regions.Country(item.Key), item.Value.Requests, item.Value.LatestP95Ms))
             .OrderBy(row => Regions.Rank(row.Code)).ThenBy(row => row.Code, StringComparer.Ordinal).ToArray();
-        for (var index = 0; index < starts.Length; index++) storageMissing[index] = pointCounts[index] == 0 || storageSamples[index] != pointCounts[index];
+        // A partial set of database-region gauges is not a project storage total.
+        for (var index = 0; index < starts.Length; index++) storageMissing[index] = storageSamples[index] != identities;
         var charts = new List<AnalyticsChart>();
         Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
         Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());

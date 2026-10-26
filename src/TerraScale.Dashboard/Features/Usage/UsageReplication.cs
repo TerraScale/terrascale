@@ -10,10 +10,16 @@ namespace TerraScale.Dashboard.Features.Usage;
 public sealed record UsageReplica(string DatabaseId, string DatabaseName, string Region, string Status,
     long ReplicatedOps, double? LagMs, bool? Divergence, double? ConvergenceMs, DateTimeOffset? LastApplied);
 public sealed record UsageReplicationPair(string DatabaseId, string DatabaseName, string FromRegion, string ToRegion,
-    long SentBytes, long ReceivedBytes);
+    long SentBytes, long ReceivedBytes)
+{
+    public long WireBytes { get; init; } = ReceivedBytes > 0 ? ReceivedBytes : SentBytes;
+}
 public sealed record UsageReplication(IReadOnlyList<UsageReplica> Regions, IReadOnlyList<UsageReplicationPair> Pairs,
     long Operations = 0, long SentBytes = 0, long ReceivedBytes = 0, double? WorstLagMs = null,
-    string Error = "", string Empty = "No replication observations are available for this project.");
+    string Error = "", string Empty = "No replication observations are available for this project.")
+{
+    public long WireBytes => Pairs.Aggregate(0L, (sum, pair) => checked(sum + pair.WireBytes));
+}
 
 public interface IUsageReplication
 {
@@ -91,7 +97,7 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
         if (rows.ValueKind != JsonValueKind.Array) throw new JsonException("Replication items must be an array.");
 
         var health = new List<UsageReplica>();
-        var pairTotals = new Dictionary<(string DatabaseId, string From, string To), (long Sent, long Received)>();
+        var pairTotals = new Dictionary<(string DatabaseId, string From, string To, string Kind), (long Sent, long Received)>();
         long operations = 0, sentBytes = 0, receivedBytes = 0;
         double? worstLag = null;
         var seen = new HashSet<(string DatabaseId, string Region)>();
@@ -123,7 +129,7 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
             {
                 var producerSource = RequiredString(meter, "sourceRegion");
                 var producerDestination = RequiredString(meter, "destinationRegion");
-                _ = RequiredString(meter, "kind");
+                var kind = RequiredString(meter, "kind");
                 if (producerSource == producerDestination || !ValidRegion(producerSource, regionCatalog) || !ValidRegion(producerDestination, regionCatalog))
                     throw new JsonException("Replication bandwidth includes an invalid region pair.");
                 var source = DisplayRegion(producerSource, regionCatalog);
@@ -133,16 +139,20 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
                 var received = Nonnegative(meter.GetProperty("bytesReceived"));
                 sentBytes = checked(sentBytes + sent);
                 receivedBytes = checked(receivedBytes + received);
-                var key = (databaseId, source, destination);
+                var key = (databaseId, source, destination, kind);
                 var prior = pairTotals.GetValueOrDefault(key);
                 pairTotals[key] = (checked(prior.Sent + sent), checked(prior.Received + received));
             }
         }
 
-        var pairs = pairTotals.OrderBy(item => item.Key.DatabaseId, StringComparer.Ordinal)
-            .ThenBy(item => item.Key.From, StringComparer.Ordinal).ThenBy(item => item.Key.To, StringComparer.Ordinal)
-            .Select(item => new UsageReplicationPair(item.Key.DatabaseId, project.Databases[item.Key.DatabaseId].Name,
-                item.Key.From, item.Key.To, item.Value.Sent, item.Value.Received)).ToArray();
+        // Both endpoints can observe the same transfer. Prefer received bytes, else sent, per directed pair AND kind
+        // before combining kinds/databases. Never add sent + received as wire traffic (also supports receiver-only producers).
+        var pairs = pairTotals.GroupBy(item => (item.Key.DatabaseId, item.Key.From, item.Key.To))
+            .Select(group => new UsageReplicationPair(group.Key.DatabaseId, project.Databases[group.Key.DatabaseId].Name,
+                group.Key.From, group.Key.To, group.Sum(item => item.Value.Sent), group.Sum(item => item.Value.Received))
+            { WireBytes = group.Sum(item => item.Value.Received > 0 ? item.Value.Received : item.Value.Sent) })
+            .OrderBy(item => item.DatabaseId, StringComparer.Ordinal)
+            .ThenBy(item => item.FromRegion, StringComparer.Ordinal).ThenBy(item => item.ToRegion, StringComparer.Ordinal).ToArray();
         return new(health, pairs, operations, sentBytes, receivedBytes, worstLag);
     }
 
