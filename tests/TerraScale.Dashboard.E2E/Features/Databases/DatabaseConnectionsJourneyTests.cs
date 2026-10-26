@@ -32,7 +32,7 @@ public sealed class DatabaseConnectionsJourneyTests(DashboardRootFixture fixture
 
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var browserContext = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var browserContext = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await browserContext.NewPageAsync();
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
@@ -99,7 +99,7 @@ public sealed class DatabaseConnectionsJourneyTests(DashboardRootFixture fixture
         using var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sfo" } });
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var page = await browser.NewPageAsync();
+        var page = await browser.NewPageAsync(new() { IgnoreHTTPSErrors = true });
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
         var posts = 0;

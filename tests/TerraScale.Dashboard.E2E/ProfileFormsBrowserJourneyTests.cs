@@ -15,7 +15,7 @@ public sealed class ProfileFormsBrowserJourneyTests(DashboardE2EFixture fixture)
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, fixture.Origin, returnTo: "/profile");
         var form = page.Locator(language ? "#profile-language form" : "#profile-details form");

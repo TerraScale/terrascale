@@ -70,7 +70,7 @@ public sealed class ReadinessJourneyTests(DashboardRootFixture fixture)
     }
 
     private static HttpClient Client(WebApplication app) =>
-        new() { BaseAddress = new Uri(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
+        new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate }) { BaseAddress = new Uri(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
 
     private static async Task<(HttpStatusCode Status, JsonElement Body)> GetAsync(HttpClient client, string path)
     {

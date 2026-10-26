@@ -16,7 +16,7 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
         using var process = Start("true", port);
         try
         {
-            using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
+            using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
             { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
             var ready = await ReadyAsync(client, process);
             await Assert.That(ready.GetProperty("status").GetString()).IsEqualTo("ok");

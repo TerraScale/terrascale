@@ -47,7 +47,7 @@ public static class HttpJourney
         else
         {
             var provider = AuthProviders[client.BaseAddress!.GetLeftPart(UriPartial.Authority)];
-            using var hosted = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
+            using var hosted = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(provider, location.PathAndQuery + "&" + account));
             request.Headers.Host = location.Authority;
             answered = await hosted.SendAsync(request);

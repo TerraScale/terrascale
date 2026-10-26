@@ -35,7 +35,7 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         organization.Projects.Add(second, new() { Id = second, OrganizationId = organization.Id, Name = "Second" });
         await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1");
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -129,7 +129,7 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         environment.Workspace.Organizations.Add(business.Id, business);
         await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1");
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -157,12 +157,12 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         await app.StartAsync();
         var origin = new Uri(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
         var cookies = new CookieContainer();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies }) { BaseAddress = origin };
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies }) { BaseAddress = origin };
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true });
         await context.AddCookiesAsync(cookies.GetCookies(origin).Cast<System.Net.Cookie>().Select(cookie => new Microsoft.Playwright.Cookie
         { Name = cookie.Name, Value = cookie.Value, Url = origin.ToString() }));
         var tabA = await context.NewPageAsync();

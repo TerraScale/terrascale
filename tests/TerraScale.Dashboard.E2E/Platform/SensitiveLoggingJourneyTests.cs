@@ -54,7 +54,7 @@ public sealed class SensitiveLoggingJourneyTests(DashboardRootFixture fixture)
             throw new InvalidOperationException("https://probe.invalid/?token=" + secret);
         });
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         foreach (var fail in new[] { false, true })
         {

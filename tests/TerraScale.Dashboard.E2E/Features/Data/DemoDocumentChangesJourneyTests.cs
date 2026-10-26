@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
@@ -14,15 +13,11 @@ public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        using var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        var origin = new Uri($"http://127.0.0.1:{port}/");
-        await using var app = environment.CreateTestHost(fixture.Root, port, origin.ToString().TrimEnd('/'), PublicDemo.Configure);
+        await using var app = environment.CreateTestHost(fixture.Root, 0, "https://127.0.0.1", PublicDemo.Configure);
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new CookieContainer() }) { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
-        using var anonymous = new HttpClient { BaseAddress = origin };
+        var origin = new Uri(app.Urls.Single());
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() }) { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
+        using var anonymous = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate }) { BaseAddress = origin };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await HttpJourney.LoginAsync(client);
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");

@@ -43,7 +43,7 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
         var results = new List<Dictionary<string, object>>();
 
         string? database;
-        await using (var inventory = await browser.NewContextAsync())
+        await using (var inventory = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true }))
         {
             var page = await inventory.NewPageAsync();
             await LoginAsync(page);
@@ -79,6 +79,7 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
         {
             await using var context = await browser.NewContextAsync(new()
             {
+                IgnoreHTTPSErrors = true,
                 ViewportSize = profile == "mobile" ? new() { Width = 390, Height = 844 } : new() { Width = 1440, Height = 900 }
             });
             var page = await context.NewPageAsync();

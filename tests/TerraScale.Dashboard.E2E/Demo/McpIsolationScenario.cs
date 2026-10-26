@@ -22,7 +22,7 @@ internal sealed class McpIsolationScenario : IAsyncDisposable
         try
         {
             await scenario.app.StartAsync();
-            scenario.Client = new(new HttpClientHandler { AllowAutoRedirect = false })
+            scenario.Client = new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
             {
                 BaseAddress = new(scenario.app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)),
                 Timeout = TimeSpan.FromSeconds(30)

@@ -118,7 +118,7 @@ public sealed class ServiceSloJourneyTests(DashboardRootFixture fixture)
         await Assert.That(actual).IsEqualTo(expected);
     }
 
-    private static HttpClient Client(WebApplication app) => new(new HttpClientHandler { AllowAutoRedirect = false })
+    private static HttpClient Client(WebApplication app) => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
     { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(10) };
 
     private sealed class FailingMeasurements : IHomeMeasurements

@@ -155,12 +155,12 @@ public sealed class ReviewRoundFourCapacityJourneyTests
                 // One sign-in serves every replica: they share the session store and keys, cookies ignore the port,
                 // and the form token is the double-submit cookie, so setup stays three light requests at any replica count.
                 var cookies = new CookieContainer();
-                var clients = scenario.hosts.Select(host => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies })
+                var clients = scenario.hosts.Select(host => new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies })
                 { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = RequestBudget }).ToArray();
                 using (var login = await HttpJourney.LoginAsync(clients[0])) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 var csrf = await HttpJourney.CsrfAsync(clients[0]);
                 scenario.clients.AddRange(clients.Select(client => (client, csrf)));
-                scenario.pausable.AddRange(clients.Select(client => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies })
+                scenario.pausable.AddRange(clients.Select(client => new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies })
                 { BaseAddress = client.BaseAddress, Timeout = Timeout.InfiniteTimeSpan }));
                 using var me = JsonDocument.Parse(await scenario.clients[0].Client.GetStringAsync("/api/v1/auth/me"));
                 scenario.organizationId = me.RootElement.GetProperty("organizationId").GetString()!;

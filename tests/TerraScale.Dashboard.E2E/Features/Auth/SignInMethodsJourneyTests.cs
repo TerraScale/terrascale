@@ -115,7 +115,7 @@ public sealed class SignInMethodsJourneyTests
             await scenario.app.StartAsync();
             return scenario;
         }
-        public HttpClient Client() => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        public HttpClient Client() => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         public async ValueTask DisposeAsync() { await app.StopAsync(); await app.DisposeAsync(); Wire.Dispose(); }
     }

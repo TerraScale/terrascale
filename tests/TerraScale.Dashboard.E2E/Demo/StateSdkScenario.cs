@@ -77,7 +77,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
     private HttpClient Client(Uri origin, CookieContainer? cookies = null)
     {
         cookies ??= new();
-        var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies })
+        var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies })
         { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
         cookieJars[client] = cookies;
         return client;
@@ -250,7 +250,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
 
     private sealed class StateTransport(Uri origin, IHttpClientFactory fallback, StateSdkScenario owner) : HttpMessageHandler
     {
-        private readonly HttpClient local = new(new HttpClientHandler { AllowAutoRedirect = false });
+        private readonly HttpClient local = new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false });
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;

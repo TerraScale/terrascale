@@ -246,7 +246,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
 
     private async Task<IBrowserContext> BrowserContextAsync(IBrowser browser, CookieContainer cookies, int width, int height)
     {
-        var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         await context.AddCookiesAsync(cookies.GetCookies(fixture.Origin).Cast<System.Net.Cookie>().Select(cookie => new Microsoft.Playwright.Cookie
         { Name = cookie.Name, Value = cookie.Value, Url = fixture.Origin.ToString() }));
         return context;

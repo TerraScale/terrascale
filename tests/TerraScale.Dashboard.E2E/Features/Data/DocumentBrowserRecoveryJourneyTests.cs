@@ -166,7 +166,7 @@ public sealed class DocumentBrowserRecoveryJourneyTests(DashboardRootFixture fix
         await Assert.That(response.StatusCode).IsEqualTo(rejectedDraft ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true });
         var page = await context.NewPageAsync();
         if (fallback) await page.RouteAsync("**/js/**", route => new Uri(route.Request.Url).AbsolutePath.Contains("code-editor", StringComparison.Ordinal)
             ? route.AbortAsync() : route.ContinueAsync());

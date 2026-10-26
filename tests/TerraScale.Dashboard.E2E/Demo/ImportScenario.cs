@@ -37,7 +37,7 @@ public sealed class ImportScenario : IAsyncDisposable
     }
 
     // A request with Expect: 100-continue sends no body byte until the dashboard reads the body or answers first.
-    public HttpClient CreateClient(bool replica = false) => new(new SocketsHttpHandler { AllowAutoRedirect = false, CookieContainer = new CookieContainer(), Expect100ContinueTimeout = TimeSpan.FromSeconds(30) })
+    public HttpClient CreateClient(bool replica = false) => new(new SocketsHttpHandler { SslOptions = new() { RemoteCertificateValidationCallback = (_, certificate, _, errors) => TestHttps.Valid(certificate, errors) }, AllowAutoRedirect = false, CookieContainer = new CookieContainer(), Expect100ContinueTimeout = TimeSpan.FromSeconds(30) })
     { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
 
     private static Uri Address(WebApplication application) => new(application.Services.GetRequiredService<IServer>()

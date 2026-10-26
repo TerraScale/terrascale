@@ -96,6 +96,8 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
 
         async Task<(IBrowserContext Context, IPage Page)> NewContextAsync(BrowserNewContextOptions? options = null)
         {
+            options ??= new();
+            options.IgnoreHTTPSErrors = true;
             var context = await browser.NewContextAsync(options);
             var page = await context.NewPageAsync();
             page.SetDefaultTimeout(15000);

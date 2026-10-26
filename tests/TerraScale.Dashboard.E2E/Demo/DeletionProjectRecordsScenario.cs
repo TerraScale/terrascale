@@ -45,7 +45,7 @@ internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
         try
         {
             await scenario.app.StartAsync();
-            scenario.Client = new() { BaseAddress = new(scenario.app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
+            scenario.Client = new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate }) { BaseAddress = new(scenario.app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
             return scenario;
         }
         catch { await scenario.app.DisposeAsync(); throw; }

@@ -41,7 +41,7 @@ public sealed class OciProductionJourneyTests(DashboardRootFixture fixture)
         using var process = Start(port, $"http://127.0.0.1:{terraBasePort}", peerSecret);
         try
         {
-            using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
+            using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false }) { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
             var log = new System.Text.StringBuilder();
             process.OutputDataReceived += (_, line) => { lock (log) log.AppendLine(line.Data); };
             process.ErrorDataReceived += (_, line) => { lock (log) log.AppendLine(line.Data); };

@@ -59,6 +59,7 @@ public sealed class ReferenceScenario : IAsyncDisposable
 
     public HttpClient CreateClient(bool replica = false) => new(new HttpClientHandler
     {
+        ServerCertificateCustomValidationCallback = TestHttps.Validate,
         AllowAutoRedirect = false,
         CookieContainer = new CookieContainer()
     })

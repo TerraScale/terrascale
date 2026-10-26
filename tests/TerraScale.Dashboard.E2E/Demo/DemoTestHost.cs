@@ -14,6 +14,7 @@ public static class DemoTestHost
     {
         var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, origin, builder =>
         {
+            TestHttps.Configure(builder);
             var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestTerraBasePlans(fallback, environment.Databases,
                 TerraScale.Dashboard.Platform.Persistence.TerraBaseDashboardState.Origin(builder.Environment))));

@@ -23,7 +23,7 @@ public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardRootFixtu
 
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var outsideOrigins = new ConcurrentQueue<string>();
         await context.RouteAsync("**/*", async route =>
         {

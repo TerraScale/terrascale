@@ -29,7 +29,7 @@ public sealed class RequestIdentityJourneyTests(DashboardRootFixture fixture)
         app.MapGet("/api/request-identity", () => Results.Problem("Safe validation failure.", statusCode: 422));
         app.MapGet("/api/request-timeout", (Func<IResult>)(() => throw new TimeoutException("https://private.test/?token=secret")));
         await app.StartAsync();
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
         {

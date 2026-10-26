@@ -14,7 +14,7 @@ public sealed class AuthenticationCopyBrowserJourneyTests(DashboardRootFixture f
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true });
         // Simulate clipboard outcomes without relying on OS permissions or the system clipboard.
         await context.AddInitScriptAsync("""
             globalThis.copyMode = 'success';

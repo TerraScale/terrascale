@@ -95,7 +95,7 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
         return client;
     }
 
-    public HttpClient Client() => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+    public HttpClient Client() => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
     { BaseAddress = new(App.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
 
     public Task<TerraBaseDocument?> GetAsync(string collection, string id) => State.GetAsync(collection, id, default);

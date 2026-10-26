@@ -39,6 +39,7 @@ public sealed class DashboardE2EFixture : IAsyncInitializer, IAsyncDisposable
 
     public HttpClient CreateClient(bool replica = false) => new(new HttpClientHandler
     {
+        ServerCertificateCustomValidationCallback = TestHttps.Validate,
         AllowAutoRedirect = false,
         CookieContainer = new CookieContainer()
     })

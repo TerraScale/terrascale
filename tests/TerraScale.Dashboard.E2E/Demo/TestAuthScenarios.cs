@@ -80,6 +80,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
 
     private static HttpClient Client(Uri origin) => new(new HttpClientHandler
     {
+        ServerCertificateCustomValidationCallback = TestHttps.Validate,
         AllowAutoRedirect = false,
         CookieContainer = new CookieContainer()
     })
@@ -194,7 +195,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         public HttpClient CreateClient(string name) => new(transport, disposeHandler: false);
     }
 
-    private sealed class ProducerTransport(Uri localOrigin, InternalBillingProducer billing, TestAuthApiKeys apiKeys) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
+    private sealed class ProducerTransport(Uri localOrigin, InternalBillingProducer billing, TestAuthApiKeys apiKeys) : DelegatingHandler(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
     {
         private HttpMessageInvoker? stripe;
         private TestStripeTransport? stripeHandler;

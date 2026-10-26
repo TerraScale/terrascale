@@ -19,7 +19,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         var origin = fixture.Origin.ToString().TrimEnd('/');
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var owner = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 1440, Height = 900 } });
+        await using var owner = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 1440, Height = 900 } });
         var page = await owner.NewPageAsync();
         page.SetDefaultTimeout(20000);
         IBrowserContext? guest = null;
@@ -143,7 +143,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await Assert.That((await SelectedAsync()).GetProperty("id").GetString()).IsEqualTo(businessId);
             checks.Add("native two-organization checkout completion restores only its bound original organization, preserves the other plan/project, safely replays and rejects replaced callbacks");
 
-            guest = await browser.NewContextAsync(new() { ViewportSize = new() { Width = 390, Height = 844 } });
+            guest = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = 390, Height = 844 } });
             var guestPage = await guest.NewPageAsync();
             guestPage.SetDefaultTimeout(20000);
             guestPage.PageError += (_, error) => errors.Enqueue(error);

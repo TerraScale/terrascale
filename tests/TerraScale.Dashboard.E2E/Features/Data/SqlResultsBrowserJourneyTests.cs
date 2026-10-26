@@ -39,7 +39,7 @@ public sealed class SqlResultsBrowserJourneyTests(DashboardE2EFixture fixture)
         var id = await PagePaymentAudit.Oct13.DatabaseDataAccess.DatabaseDataAccessJourneyTests.CreateDatabaseAsync(client, "sql-export");
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { Permissions = ["clipboard-read", "clipboard-write"] });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, Permissions = ["clipboard-read", "clipboard-write"] });
         if (blockMonaco) await context.RouteAsync("**/js/monaco.*", route => route.AbortAsync());
         var page = await context.NewPageAsync();
         var editorFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

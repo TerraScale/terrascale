@@ -18,7 +18,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         // Datastar aborts each finished SSE fetch and Chromium can drop that body, so assert the body Playwright fetched for the browser.
         var bodies = new ConcurrentDictionary<IRequest, string>();

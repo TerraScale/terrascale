@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -127,7 +128,7 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
     {
         Skip.When(!chunked && excess > 64 * 1024 && DateTimeOffset.UtcNow < new DateTimeOffset(2026, 10, 24, 1, 48, 0, TimeSpan.Zero),
             "Quarantine #112: owner MarioGK; fix rejected-upload transport by 2026-10-24T01:48:00Z; requires five dev-host repeats.");
-        using var client = new HttpClient(new HttpClientHandler { MaxConnectionsPerServer = 1 })
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, MaxConnectionsPerServer = 1 })
         { BaseAddress = fixture.Origin, Timeout = TimeSpan.FromSeconds(30) };
         var body = new string('x', (1 << 20) + excess);
         foreach (var path in WebhookPaths)
@@ -152,7 +153,8 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
         // Raw HTTP pins the order HttpClient races: 413 arrives, then the sender finishes its upload.
         using var tcp = new TcpClient();
         await tcp.ConnectAsync(fixture.Origin.Host, fixture.Origin.Port);
-        var stream = tcp.GetStream();
+        using var stream = new SslStream(tcp.GetStream(), false, (_, certificate, _, errors) => TestHttps.Valid(certificate, errors));
+        await stream.AuthenticateAsClientAsync(fixture.Origin.Host);
         const int length = (1 << 20) + 1;
         await stream.WriteAsync(Encoding.ASCII.GetBytes(
             $"POST {WebhookPaths[0]} HTTP/1.1\r\nHost: {fixture.Origin.Authority}\r\nContent-Type: application/json\r\nStripe-Signature: t=1,v1=forged\r\nContent-Length: {length}\r\n\r\n"));
@@ -164,7 +166,7 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
             .Because("The rejected upload is drained within the bounded allowance instead of resetting the sender.");
     }
 
-    private static async Task<string> ReadResponseHeadAsync(NetworkStream stream)
+    private static async Task<string> ReadResponseHeadAsync(Stream stream)
     {
         var head = new StringBuilder();
         var one = new byte[1];

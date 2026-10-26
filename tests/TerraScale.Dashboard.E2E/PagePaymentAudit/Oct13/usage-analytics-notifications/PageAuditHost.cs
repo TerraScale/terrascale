@@ -38,7 +38,7 @@ public sealed class PageAuditHost : IAsyncDisposable
     }
 
     public HttpClient CreateClient(bool replica = false) => new(new HttpClientHandler
-    { AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
+    { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new CookieContainer() })
     { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
 
     private WebApplication Create(string root)

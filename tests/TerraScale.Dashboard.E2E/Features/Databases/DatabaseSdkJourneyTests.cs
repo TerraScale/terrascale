@@ -448,7 +448,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         if (request.Content is not null && http.Request.ContentType is { } type) request.Content.Headers.TryAddWithoutValidation("Content-Type", type);
         request.Headers.Host = http.Request.Host.Value;
         request.Headers.Add(Forwarded, "1");
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false });
         using var response = await client.SendAsync(request, http.RequestAborted);
         foreach (var header in response.Headers.Where(header => header.Key.StartsWith("X-TerraBase-", StringComparison.OrdinalIgnoreCase)))
             http.Response.Headers[header.Key] = header.Value.ToArray();
@@ -462,7 +462,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             "The dashboard neither writes nor reads a stored data credential");
 
     // Only the physical destination changes for the local HTTP producer; project/document IDs, routes, headers and bodies remain SDK-owned.
-    private sealed class CustomerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
+    private sealed class CustomerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false })
     {
         public int Requests;
         public HttpStatusCode LastStatus;
