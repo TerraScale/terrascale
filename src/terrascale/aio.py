@@ -129,6 +129,7 @@ class AsyncTerraScale:
         Regions are names such as ``"gru"``. Omitting ``replica_regions`` uses
         all current serving regions; ``home_region`` alone is not single-region
         placement. Pass ``all_regions=True`` to include future regions too.
+        An explicit ``replica_regions=[]`` is rejected with HTTP 400 on create.
         """
         return await self._send(_spec.create_database(self.project, name, home_region, replica_regions, all_regions))
 
@@ -151,15 +152,20 @@ class AsyncDatabase:
 
     async def update(self, *, home_region: str | None = None, replica_regions: Sequence[str] | None = None,
                all_regions: bool | None = None) -> models.Database:
-        """Change placement while retaining at least two distinct serving regions.
+        """Change region placement. Writable databases require at least two regions.
 
-        An empty replica list cannot request single-region placement.
+        ``replica_regions=[]`` is accepted only for immediate deletion teardown,
+        not a supported single-region database. Document writes during teardown
+        fail with HTTP 409 ``placement_needs_two_regions``.
         ``all_regions=True`` includes current and future serving regions.
         """
         return await self._c._send(_spec.update_database(*self._p, home_region, replica_regions, all_regions))
 
     async def delete(self) -> None:
-        """Delete the database."""
+        """Delete the database immediately after ``update(replica_regions=[])``.
+
+        Otherwise the server returns HTTP 409 ``database_replicated``.
+        """
         await self._c._send(_spec.delete_database(*self._p))
 
     async def branch(self, name: str) -> models.Database:
