@@ -71,9 +71,13 @@ internal sealed class SqlWorkspaceState
             }
             var markers = await wire.ListAsync(DatabaseWorkspaceCleanup.Collection, default);
             var after = (await wire.GetAsync(AccountService.OrganizationsCollection, scope.OrganizationId, default))!.Document.GetRawText();
-            return Results.Json(new { count = markers.Count, unchanged = before == after,
+            return Results.Json(new
+            {
+                count = markers.Count,
+                unchanged = before == after,
                 bounded = markers.All(row => row.Document.EnumerateObject().Count() == 3 && System.Text.Encoding.UTF8.GetByteCount(row.Document.GetRawText()) < 160),
-                scoped = markers.All(row => DatabaseWorkspaceCleanup.Read(row) is var value && value.OrganizationId == scope.OrganizationId && value.ProjectId == scope.ProjectId) });
+                scoped = markers.All(row => DatabaseWorkspaceCleanup.Read(row) is var value && value.OrganizationId == scope.OrganizationId && value.ProjectId == scope.ProjectId)
+            });
         });
         app.MapPost("/__test/sql-replay", async () =>
         {
