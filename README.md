@@ -96,7 +96,11 @@ each `terrascale.Group` has `key` (one value per path), `count`, and `sum`/`avg`
 `sort`, `project`, `cursor` or `count`.
 
 **Regions**: `create_database("eu", home_region="fra", replica_regions=["gru"])`,
-`db.update(all_regions=True)`. Remove replica regions before `delete()`.
+`db.update(all_regions=True)`. Databases require at least two distinct serving
+regions: the home region plus at least one replica region. On creation, omitting
+`replica_regions` uses all current serving regions, even if `home_region` is set.
+`all_regions=True` also follows future serving regions. An empty replica list
+cannot request single-region placement.
 
 **TTL** deletes documents whose member holds a past RFC 3339 UTC time, in an
 hourly sweep; expired documents stay readable until then.
