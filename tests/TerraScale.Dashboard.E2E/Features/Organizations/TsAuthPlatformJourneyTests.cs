@@ -989,6 +989,14 @@ public sealed partial class TsAuthPlatformJourneyTests
         public Task StoreAsync(OrganizationRecord org) => state!.PutAsync(AccountService.OrganizationsCollection, org.Id,
             JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, default);
         public async Task<string?> VersionAsync(string org) => (await state!.GetAsync(AccountService.OrganizationsCollection, org, default))?.Version;
+        public async Task AccountAsync(string user, Action<AccountRecord> change)
+        {
+            var key = AccountService.AccountStorageKey(user);
+            var stored = (await state!.GetAsync(AccountService.AccountsCollection, key, default))!;
+            var account = stored.Document.Deserialize<AccountRecord>()!;
+            change(account);
+            await state.PutAsync(AccountService.AccountsCollection, key, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(stored.Version), default);
+        }
         public Task FenceAsync(string org) => AccountService.FenceOrganizationDeletionAsync(state!, org, AccountService.NewId(), default);
         public void SeedDatabase(ManagedDatabase database) => databases!.SeedFixtureDatabase(database);
         public async Task<bool> ErasedAccountAsync(string key) => AccountService.IsDeletionFence((await state!.GetAsync(AccountService.AccountsCollection, key, default))!);

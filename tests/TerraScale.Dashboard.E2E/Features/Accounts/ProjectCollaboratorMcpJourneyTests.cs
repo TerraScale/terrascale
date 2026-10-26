@@ -85,7 +85,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         await McpCall(replica, secret, "select_project", new { projectId = project });
 
         foreach (var name in new[] { "get_organization", "get_billing", "list_plans", "list_invoices", "list_members", "list_invitations", "list_audit_events",
-            "get_overview", "get_usage", "list_notifications", "mark_all_notifications_read", "list_api_keys",
+            "get_usage", "list_api_keys",
             "auth_get_overview", "auth_list_users", "auth_list_sessions", "auth_list_clients" })
             await McpDenied(replica, secret, name, new { organizationId = org, projectId = project });
         var mutations = new (string Name, object Arguments)[]

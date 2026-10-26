@@ -2,7 +2,7 @@
 <div class="ts-notifications-toolbar"><nav class="ts-tabs" aria-label="Notification filter">
     @foreach (var filter in new[] { (Key: "all", Label: "All", Count: Model.Total), (Key: "unread", Label: "Unread", Count: Model.Unread) })
     {
-        var href = filter.Key == "all" ? "/notifications" : "/notifications?status=unread";
+        var href = WorkspaceUrl.For(Model.Shell.Context, filter.Key == "all" ? "/notifications" : "/notifications?status=unread");
         if (Model.Dialog) { <button class="ts-tab" type="button" aria-current="@(Model.Status == filter.Key ? "page" : null)" data-on:click="@("@get('" + href.Replace("/notifications", "/notifications/dialog") + "')")"><span>@filter.Label</span><span class="ts-tab-count">@filter.Count</span></button> }
         else { <a class="ts-tab" href="@href" aria-current="@(Model.Status == filter.Key ? "page" : null)"><span>@filter.Label</span><span class="ts-tab-count">@filter.Count</span></a> }
     }

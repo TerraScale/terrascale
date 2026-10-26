@@ -13,7 +13,8 @@ public sealed class HomeMcpTools(IHttpContextAccessor http, AccountService accou
         [Description("1h, 24h, 7d, or 30d. Defaults to 7d; unrecognized values also use 7d.")] string range = "7d",
         string? organizationId = null, string? projectId = null)
     {
-        var context = await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
+        var context = Scope(organizationId, projectId);
+        context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: context.Role.Length == 0);
         var normalized = range is "1h" or "24h" or "7d" or "30d" ? range : "7d";
         return HomeMcpPresentation.For(context, await measurements.ReadAsync(context, normalized, Cancellation), normalized);
     }

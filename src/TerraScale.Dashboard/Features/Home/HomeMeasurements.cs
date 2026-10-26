@@ -71,6 +71,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
 
     private async Task CredentialsAsync(AccountContext context, HomeMeasurement result, CancellationToken cancellationToken)
     {
+        if (context.Role.Length == 0) { result.CredentialsError = "Organization membership is required to view application credential counts."; return; }
         try { result.ActiveCredentials = (await keys.ListAsync(context, cancellationToken)).Count(key => key.IsActive); }
         catch (Exception error) when (error is AccountAccessException || MeasurementFailure(error, cancellationToken))
         { ServiceSloTelemetry.MarkFailure(error); result.CredentialsError = "Application credentials could not be loaded. Open API keys to retry."; }
@@ -136,7 +137,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
             result.ActivityMeasured = true;
             result.ActivityNote = "Reads and writes metered by TerraBase.";
         }
-        catch (Exception error) when (error is HttpRequestException or IOException or JsonException or OverflowException or FormatException or KeyNotFoundException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or OverflowException or FormatException or KeyNotFoundException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             ServiceSloTelemetry.MarkFailure(error);
             result.ActivityNote = "Metered reads and writes could not be loaded. Try again shortly.";
@@ -148,6 +149,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
         var counts = new SortedDictionary<string, int>();
         foreach (var project in context.Organization?.Projects.Values.AsEnumerable() ?? Enumerable.Empty<ProjectRecord>())
         {
+            if (context.Role.Length == 0 && project.Id != context.Project?.Id) continue;
             if (project.OrganizationId != context.Organization!.Id) continue;
             foreach (var database in project.Databases.Values)
                 foreach (var code in database.Regions.Append(database.Region).Where(value => value.Length > 0).Distinct()) counts[code] = counts.GetValueOrDefault(code) + 1;

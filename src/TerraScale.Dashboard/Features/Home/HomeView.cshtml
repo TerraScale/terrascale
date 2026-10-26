@@ -18,7 +18,7 @@
     }
     else
     {
-        <dl class="ts-stats" aria-label="Workspace metrics">@foreach (var stat in new[] { ("Databases", Model.Databases, Model.Databases == 0 ? "none saved" : "saved project databases", 1), ("Organization members", Model.Members, Model.Members == 1 ? "active organization member" : "active organization members", 3), ("Unread alerts", Model.Shell.Unread, Model.TotalNotifications + " notifications loaded", 5) })
+        <dl class="ts-stats" aria-label="Workspace metrics">@foreach (var stat in new[] { ("Databases", Model.Databases.ToString(), Model.Databases == 0 ? "none saved" : "saved project databases", 1), ("Organization members", Model.Members?.ToString() ?? "Unavailable", Model.Members is null ? "Requires organization membership" : Model.Members == 1 ? "active organization member" : "active organization members", 3), ("Unread alerts", Model.Shell.Unread.ToString(), Model.TotalNotifications + " notifications loaded", 5) })
         { <div class="ts-stat"><dt class="ts-stat-label"><span class="ts-home-kpi-dot" data-hue="@stat.Item4" aria-hidden="true"></span>@stat.Item1</dt><dd class="ts-stat-value">@stat.Item2</dd><dd class="ts-stat-detail">@stat.Item3</dd></div> }</dl>
         <div class="ts-split ts-home-overview"><section class="ts-card" id="home-activity" aria-labelledby="home-activity-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="home-activity-title">Activity</h2><p class="ts-card-description">@Model.Measurement.ActivityNote</p></div><div class="ts-card-actions">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Home.HomeRangeLinks, string>(Model.Range))</div></header><div class="ts-card-body">
         @if (Model.Measurement.Activity.Count > 0)

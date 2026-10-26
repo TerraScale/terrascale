@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace TerraScale.Dashboard.Features.Home;
 
 public sealed record HomeMcpOverview(string OrganizationId, string ProjectId, string ProjectName, int DatabaseCount,
-    int OrganizationMembers, int UnreadNotifications, int TotalNotifications,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? OrganizationMembers, int UnreadNotifications, int TotalNotifications,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? ActiveCredentials,
     HomeMcpActivity Activity, IReadOnlyList<HomeMcpTask> GettingStarted);
 public sealed record HomeMcpActivity(string Range, bool Sample, bool Metered, string Note, IReadOnlyList<long> Reads,
@@ -22,7 +22,7 @@ public static class HomeMcpPresentation
         var project = context.Project ?? throw new AccountAccessException("Project is unavailable.", 404);
         var notifications = context.Account.Notifications.Where(item => item.VisibleTo(context)).ToArray();
         return new(organization.Id, project.Id, project.Name, project.Databases.Count,
-            organization.Members.Values.Count(member => member.Status == "active"),
+            organization.ContainsMember(context.UserId) ? organization.Members.Values.Count(member => member.Status == "active") : null,
             notifications.Count(item => item.Unread), notifications.Length, measurement.ActiveCredentials,
             new(range, false, measurement.ActivityMeasured, measurement.ActivityNote,
                 measurement.Activity.Select(point => point.Reads).ToArray(), measurement.Activity.Select(point => point.Writes).ToArray(),
