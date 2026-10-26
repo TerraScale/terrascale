@@ -48,7 +48,7 @@ func TestJSONAccountAndProjectResults(t *testing.T) {
 			var err error
 			switch command {
 			case "projects":
-				err = listProjects(t.Context(), u, out)
+				err = listProjects(t.Context(), u, "", out)
 			case "projects create":
 				err = createProject(t.Context(), u, jsonAuthID, "app", out)
 			default:

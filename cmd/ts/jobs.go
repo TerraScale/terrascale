@@ -22,6 +22,13 @@ import (
 // only organization, or a new organization of the same name when they have
 // none.
 func createProject(ctx context.Context, u *tsauth.User, org, name string, out io.Writer) error {
+	if org != "" {
+		selected, err := selectOrganization(ctx, u, org)
+		if err != nil {
+			return err
+		}
+		org = selected.ID
+	}
 	var matches []tsauth.Organization
 	for o, err := range pages(func(after string) (*v1.Page[tsauth.Organization], error) {
 		p, err := u.Organizations(ctx, tsauth.PageOptions{Limit: 100, After: after})
@@ -30,7 +37,7 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 		if err != nil {
 			return err
 		}
-		if org == "" || o.Name == org || o.ID == org {
+		if org == "" || o.ID == org {
 			matches = append(matches, o)
 		}
 	}
