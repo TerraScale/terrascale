@@ -34,7 +34,7 @@ public sealed class CopyBenchmark
                 command.CommandText = "INSERT INTO docs VALUES ($id, $body);";
                 command.ReuseStatement = true;
                 command.Parameters.AddWithValue("$id", 0L);
-                command.Parameters.AddWithValue("$body", new Faker().Random.String2(256));
+                command.Parameters.AddWithValue("$body", new Faker { Random = new Randomizer(7) }.Random.String2(256));
                 for (var i = 0; i < count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
