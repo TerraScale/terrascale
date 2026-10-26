@@ -10,6 +10,42 @@ namespace TerraBase.Fast.Documents;
 public sealed class CollectionAccessRulesTests
 {
     private static readonly int[] Vector = [1, 2];
+
+    [Test]
+    public async Task Accepted_project_and_end_user_reads_bill_each_returned_document_once()
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await DeclareAsync(api, OwnerRules());
+        var actor = DocumentApi.NewId();
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { owner = actor, body = new string('x', 10 * 1024) })).Status.ShouldBe(HttpStatusCode.Created);
+        for (var i = 0; i < 3; i++)
+        {
+            (await api.PutAsync(DocumentApi.NewId(), new { owner = actor, body = new string('x', 2049) })).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        // Writes' internal authorization/precondition reads do not count as client reads.
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((0L, 0L));
+        using var user = Reader(api, actor);
+        foreach (var client in new[] { api.Client, user, api.Client, user })
+        {
+            // Repeated project requests exercise both cache fill and cache hit. Explain bypasses that cache.
+            var before = await api.ReadUsageAsync();
+            await Assert.That((await SendAsync(client, HttpMethod.Get, api.Document(id))).Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await api.ReadUsageAsync()).IsEqualTo((before.Units + 3, before.Reads + 1));
+            foreach (var request in new[] { (HttpMethod.Get, api.Documents, (object?)null),
+                (HttpMethod.Post, api.Query, (object?)new { count = true }), (HttpMethod.Post, api.Query, (object?)new { explain = true }) })
+            {
+                before = await api.ReadUsageAsync();
+                var page = await SendAsync(client, request.Item1, request.Item2, request.Item3);
+                await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(page.Ids.Count).IsEqualTo(4);
+                // 3 + 1 + 1 + 1, independently rounded; count/scan/explain are not extra reads.
+                await Assert.That(await api.ReadUsageAsync()).IsEqualTo((before.Units + 6, before.Reads + 1));
+            }
+        }
+    }
+
     [Test]
     public async Task Rules_are_strict_replicated_metadata_preserving_schema_and_ttl()
     {
@@ -66,6 +102,7 @@ public sealed class CollectionAccessRulesTests
         // Populate the ordinary shared caches before an end-user request.
         (await api.GetAsync(id)).Status.ShouldBe(HttpStatusCode.OK);
         (await api.QueryAsync(new { })).Status.ShouldBe(HttpStatusCode.OK);
+        var beforeDenied = await api.ReadUsageAsync();
         using var user = Reader(api, actor);
         foreach (var request in new[] { (HttpMethod.Get, api.Documents), (HttpMethod.Get, api.Document(id)), (HttpMethod.Post, api.Query) })
         {
@@ -83,11 +120,16 @@ public sealed class CollectionAccessRulesTests
         }
         var deniedWrite = await SendAsync(user, HttpMethod.Put, api.Document(id), new { owner = actor });
         await Assert.That(deniedWrite.Code).IsEqualTo("access_denied");
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeDenied);
         await DeclareAsync(api, OwnerRules());
-        var hidden = await DocumentApi.SendAsync(user, HttpMethod.Get, api.Document(id), configure: DocumentApi.IfNoneMatch((await api.GetAsync(id)).Version));
+        var visibleVersion = (await api.GetAsync(id)).Version;
+        var beforeHidden = await api.ReadUsageAsync();
+        var hidden = await DocumentApi.SendAsync(user, HttpMethod.Get, api.Document(id), configure: DocumentApi.IfNoneMatch(visibleVersion));
         await Assert.That(hidden.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(hidden.ETag).IsNull();
         await Assert.That(hidden.Json.GetRawText().Contains("hidden", StringComparison.Ordinal)).IsFalse();
+        await Assert.That((await SendAsync(user, HttpMethod.Get, api.Document(DocumentApi.NewId()))).Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeHidden);
         using var anonymous = api.Management.WithToken(null);
         await Assert.That((await DocumentApi.SendAsync(anonymous, HttpMethod.Get, api.Documents)).Status).IsEqualTo(HttpStatusCode.Unauthorized);
         var otherProject = api.Documents.Replace(api.Tenant.ProjectId, DocumentApi.NewId(), StringComparison.Ordinal);
@@ -156,11 +198,14 @@ public sealed class CollectionAccessRulesTests
         await Assert.That((await SendAsync(wrongCase, HttpMethod.Get, api.Documents)).Ids).IsEmpty();
         var near = await SendAsync(user, HttpMethod.Post, api.Query, new { sort = new[] { new { near = new { path = "/vector", vector = Vector } } } });
         await Assert.That(near.Ids.Count).IsEqualTo(2);
+        // Counts and scans include no hidden-document units; a successful empty page still counts one read.
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((9L, 5L));
         await DeclareAsync(api, rules with { Read = new CollectionAccessPolicy(true, true, []) });
         await Assert.That((await SendAsync(user, HttpMethod.Post, api.Query, continuation)).Code).IsEqualTo("invalid_cursor");
         await Assert.That((await SendAsync(user, HttpMethod.Get, api.Documents)).Ids.Count).IsEqualTo(5);
         await DeclareAsync(api, rules with { Read = new CollectionAccessPolicy(false, false, []) });
         await Assert.That((await SendAsync(user, HttpMethod.Get, api.Documents)).Status).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((14L, 6L));
     }
 
     [Test]

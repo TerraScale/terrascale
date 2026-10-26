@@ -76,6 +76,10 @@ public sealed class ErrorHeadersTests
 
         public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken) => inner.GetAsync(key, cancellationToken);
 
+        public void AcceptRead(DocumentKey key, StoredDocument document) => inner.AcceptRead(key, document);
+
+        public void AcceptRead(TenantContext database, string collection, QueryPage page) => inner.AcceptRead(database, collection, page);
+
         public ValueTask<QueryResult> QueryAsync(TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
             inner.QueryAsync(database, query, countLimit, cancellationToken);
 

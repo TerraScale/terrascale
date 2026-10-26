@@ -47,11 +47,18 @@ public sealed class GetPlatformDocumentEndpoint(IDocumentService documents, ITen
         PlatformExplore.Audit(logger, HttpContext, name!, collection, id);
         return await documents.GetAsync(new DocumentKey(database, collection, id), cancellationToken) switch
         {
-            StoredDocument { Deleted: false } document => TypedResults.Ok(Redacted(collection, document, cancellationToken)),
+            StoredDocument { Deleted: false } document => Accepted(database, collection, document, cancellationToken),
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
             _ => ErrorResponse.From(Missing),
         };
+    }
+
+    private Microsoft.AspNetCore.Http.HttpResults.Ok<DocumentBody> Accepted(TenantContext database, string collection, StoredDocument document, CancellationToken cancellationToken)
+    {
+        var body = Redacted(collection, document, cancellationToken);
+        documents.AcceptRead(new DocumentKey(database, collection, document.Id), document);
+        return TypedResults.Ok(body);
     }
 
     /// <summary>The document's body with every secret-looking field redacted.</summary>

@@ -30,6 +30,7 @@ public sealed class QueryApiTests
         }
 
         const string Json = "application/json";
+        var before = await api.ReadUsageAsync();
         (ApiResponse Response, string Code, string Message)[] cases =
         [
             (await api.QueryAsync(new { explain = 1 }), "invalid_query", "explain is true or false"),
@@ -60,6 +61,7 @@ public sealed class QueryApiTests
         {
             await Assert.That((response.Status, response.Code, response.Message)).IsEqualTo((HttpStatusCode.BadRequest, code, message));
         }
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(before);
     }
 
     [Test]
@@ -73,11 +75,13 @@ public sealed class QueryApiTests
         }
 
         var sort = CursorSortPaths.Select(path => new { path }).ToArray();
+        var before = await api.ReadUsageAsync();
         var tooLarge = await api.QueryAsync(new { sort, limit = 1 });
         await Assert.That((tooLarge.Status, tooLarge.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
         await Assert.That(tooLarge.Json.GetProperty("error").GetProperty("message").GetString()).IsEqualTo("encoded cursors are at most 1 MiB");
         var incomingTooLarge = await api.QueryAsync(new { cursor = new string('a', (1024 * 1024) + 1) });
         await Assert.That((incomingTooLarge.Status, incomingTooLarge.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_cursor"));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(before);
     }
 
     [Test]
@@ -101,8 +105,10 @@ public sealed class QueryApiTests
         await Assert.That(idNext.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)idNext.Status}, error {idNext.Code}: {idNext.Message}");
         await Assert.That(string.Join(",", idFirst.Ids.Concat(idNext.Ids))).IsEqualTo(Ids["A"] + "," + Ids["B"]);
 
+        var beforeRejected = await api.ReadUsageAsync();
         var rejected = await api.QueryAsync(new { sort, limit = 1 });
         await Assert.That((rejected.Status, rejected.Code)).IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index"));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeRejected);
         // Worst-case escaping still produces a continuation accepted by the next request.
         foreach (var id in new[] { Ids["A"], Ids["B"] })
         {
@@ -123,9 +129,11 @@ public sealed class QueryApiTests
         {
             or = new object[] { new { exists = "/s" }, new { eq = new object[] { "/unused", new string('x', 15 * 1024 * 1024 / 4) } } },
         };
+        var beforeContinuation = await api.ReadUsageAsync();
         var tooLargeToResume = await api.QueryAsync(new { filter, sort, limit = 1 });
         await Assert.That((tooLargeToResume.Status, tooLargeToResume.Code, tooLargeToResume.Message))
             .IsEqualTo((HttpStatusCode.BadRequest, "sort_requires_index", "the query and cursor exceed the continuation request budget"));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo(beforeContinuation);
     }
 
     [Test]

@@ -95,9 +95,20 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
             ETags.Set(HttpContext, version);
         }
 
-        return notModified ? TypedResults.StatusCode(StatusCodes.Status304NotModified)
-            : document is { Deleted: false } ? TypedResults.Ok(Body(key.Collection, document, cancellationToken: cancellationToken))
-            : ErrorResponse.From(Missing);
+        // A 304 returns no logical object; errors and tombstones likewise accept no read charge.
+        if (notModified)
+        {
+            return TypedResults.StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        if (document is not { Deleted: false })
+        {
+            return ErrorResponse.From(Missing);
+        }
+
+        var body = Body(key.Collection, document, cancellationToken: cancellationToken);
+        documents.AcceptRead(key, document);
+        return TypedResults.Ok(body);
     }
 
     private static readonly NotFound Missing = new("the document does not exist", "not_found");

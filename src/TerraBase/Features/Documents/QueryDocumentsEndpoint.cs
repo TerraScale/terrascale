@@ -100,23 +100,28 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
-            QueryOutcome outcome => Page(collection, body, query, outcome.Page, outcome.Count, Stopwatch.GetElapsedTime(started), cancellationToken),
+            QueryOutcome outcome => Page(database, collection, body, query, outcome.Page, outcome.Count, Stopwatch.GetElapsedTime(started), cancellationToken),
         };
     }
 
-    private static IResult Page(
-        string collection, byte[] body, ParsedQuery query, QueryPage page, (long Count, bool Complete)? count, TimeSpan elapsed, CancellationToken cancellationToken)
+    private IResult Page(
+        TenantContext database, string collection, byte[] body, ParsedQuery query, QueryPage page, (long Count, bool Complete)? count, TimeSpan elapsed, CancellationToken cancellationToken)
     {
-        if (!page.HasMore)
+        string? next = null;
+        if (page.HasMore)
         {
-            return TypedResults.Ok(Body(collection, query, page, count, next: null, cancellationToken) with { Explain = Explain(query, page.Plan, elapsed) });
+            var cursor = QueryParser.CheckCursor(query.Digest, page.Rows[^1], body);
+            if (cursor is Validation error)
+            {
+                return ErrorResponse.From(error);
+            }
+
+            next = cursor switch { string value => value, Validation => throw new UnreachableException() };
         }
 
-        return QueryParser.CheckCursor(query.Digest, page.Rows[^1], body) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            string next => TypedResults.Ok(Body(collection, query, page, count, next, cancellationToken) with { Explain = Explain(query, page.Plan, elapsed) }),
-        };
+        var response = Body(collection, query, page, count, next, cancellationToken) with { Explain = Explain(query, page.Plan, elapsed) };
+        documents.AcceptRead(database, collection, page);
+        return TypedResults.Ok(response);
     }
 
     private static DocumentPageBody Body(

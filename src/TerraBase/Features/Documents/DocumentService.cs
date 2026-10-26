@@ -169,20 +169,22 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         hit.Value = !fromStorage;
         if (document is not null)
         {
-            usage.RecordRead(key.Database, OperationUnits.Of(document.Json.Length));
-            stats.CollectionRead(key.Database, key.Collection);
             return document;
         }
 
-        var result = missed ?? new NeverWritten();
-        if (result is NeverWritten)
-        {
-            // Not-found reads bill no unit.
-            usage.RecordRead(key.Database, 0);
-            stats.CollectionRead(key.Database, key.Collection);
-        }
+        return missed ?? new NeverWritten();
+    }
 
-        return result;
+    public void AcceptRead(DocumentKey key, StoredDocument document)
+    {
+        usage.RecordRead(key.Database, OperationUnits.Of(document.Json.Length));
+        stats.CollectionRead(key.Database, key.Collection);
+    }
+
+    public void AcceptRead(TenantContext database, string collection, QueryPage page)
+    {
+        usage.RecordRead(database, page.Rows.Sum(row => OperationUnits.Of(row.Document.Json.Length)));
+        stats.CollectionRead(database, collection);
     }
 
     public ValueTask<StoredDocument?> GetSystemAsync(string collection, string id, CancellationToken cancellationToken)
@@ -294,8 +296,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 return failure;
             }
 
-            usage.RecordRead(database, result.Page.Rows.Sum(row => OperationUnits.Of(row.Document.Json.Length)));
-            stats.CollectionRead(database, query.Collection);
             return new QueryOutcome(result.Page, result.Count);
         }
         finally

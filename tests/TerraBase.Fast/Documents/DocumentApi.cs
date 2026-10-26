@@ -179,6 +179,14 @@ internal sealed class DocumentApi : IAsyncDisposable
     public Task<ApiResponse> QueryAsync(object query, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Post, Query, query, cancellationToken: cancellationToken);
 
+    public async Task<(long Units, long Reads)> ReadUsageAsync()
+    {
+        using var owner = Management.As(Tenant.User);
+        var usage = await owner.GetFromJsonAsync<JsonElement>(ManagementApi.Uri(
+            $"/v1/management/organizations/{Tenant.OrganizationId}/projects/{Tenant.ProjectId}/usage"));
+        return (usage.GetProperty("month").GetProperty("readUnits").GetInt64(), usage.GetProperty("reads").GetInt64());
+    }
+
     public Task<ApiResponse> TransactAsync(params object[] ops) => TransactAsync(ops, CancellationToken.None);
 
     public Task<ApiResponse> TransactAsync(object[] ops, CancellationToken cancellationToken) =>
