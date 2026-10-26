@@ -48,6 +48,7 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
 
 public sealed record DataGridColumn(string Name, bool Numeric, bool Root)
 {
+    public bool Sortable => !Root && Name.Length is > 0 and <= 128 && !Name.Contains('.', StringComparison.Ordinal);
     public string Label => !Root && Name.Equals("id", StringComparison.OrdinalIgnoreCase) ? "payload." + Name : Name;
 }
 public sealed record QueryDeleteModel(DataPage Page, SavedQuery Query);
