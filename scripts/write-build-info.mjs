@@ -8,5 +8,5 @@ const revision = execFileSync('git', ['rev-parse', 'HEAD'], {
 
 await writeFile(
   new URL('../build/build-info.json', import.meta.url),
-  `${JSON.stringify({ revision, deploymentSample: 1 })}\n`,
+  `${JSON.stringify({ revision, deploymentSample: 2 })}\n`,
 )
