@@ -241,7 +241,10 @@ internal sealed class SqlAffinityResolver
                     columns = [];
                     _budget.Add(columns, definition.Columns.Select(column => new Column(column.Name, column.Affinity == SqlAffinity.Blob ? null : column.Affinity)));
                     // Internal UPDATE/DELETE reads expose the document key alongside declared columns.
-                    if (Same(table.Value, _keyed ?? "")) _budget.Add(columns, [new Column("_id", SqlAffinity.Text)]);
+                    if (Same(table.Value, _keyed ?? ""))
+                    {
+                        _budget.Add(columns, [new Column("_id", SqlAffinity.Text)]);
+                    }
                     _tableColumns.Add(table.Value, columns);
                 }
             }
