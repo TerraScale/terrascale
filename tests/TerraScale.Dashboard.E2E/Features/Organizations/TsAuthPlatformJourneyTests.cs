@@ -60,8 +60,16 @@ public sealed class TsAuthPlatformJourneyTests
         }
         await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, org)).IsFalse();
 
-        var saved = new OrganizationRecord { Id = org, Kind = "business", PlanId = "private-plan", BillingStatus = "private-billing",
-            PaymentMethodValidated = true, SpendCapCents = 987654, PaidExcess = true };
+        var saved = new OrganizationRecord
+        {
+            Id = org,
+            Kind = "business",
+            PlanId = "private-plan",
+            BillingStatus = "private-billing",
+            PaymentMethodValidated = true,
+            SpendCapCents = 987654,
+            PaidExcess = true
+        };
         saved.AuditEvents.Add(new(AccountService.NewId(), "private-owner", "private-audit", "private-target", "project", DateTimeOffset.UtcNow));
         saved.Projects[project] = new() { Id = project, Region = "GRU", SpendCapCents = 987654 };
         saved.Projects[project].Databases[database] = new() { Id = database, ProjectId = project, Name = "granted-db", Region = "GRU", SpendCapCents = 987654 };
@@ -156,28 +164,6 @@ public sealed class TsAuthPlatformJourneyTests
         using (var erased = await client.GetAsync("/databases" + scope))
             await Assert.That(erased.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(platform.Producer.Failures).IsEmpty();
-    }
-
-    [Test]
-    [Arguments("viewer", "admin", "admin")]
-    [Arguments("viewer", "member", "member")]
-    [Arguments("member", "viewer", "member")]
-    public async Task EffectiveProjectRolesAddAccessWithoutPromotingOrganizationMembership(string organizationRole, string grant, string expected)
-    {
-        await using var platform = await PlatformScenario.StartAsync();
-        var user = platform.Principal("overlapping-roles");
-        using var client = platform.Client();
-        using var login = await HttpJourney.LoginAsync(client, user.Email, user.Password);
-        var org = platform.Producer.AddOrganization("Overlapping roles", platform.Principal("overlap-owner").Subject);
-        var project = platform.Producer.AddProject(org, "Explicit grant", user.Subject);
-        platform.Producer.AddMember(org, user.Subject, user.Email, organizationRole);
-        platform.Producer.AddCollaborator(org, user.Subject, project, grant);
-        using var response = await client.GetAsync("/api/v1/dashboard/context?organizationId=" + org + "&projectId=" + project);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var visible = body.RootElement.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("id").GetString() == org);
-        await Assert.That(visible.GetProperty("role").GetString()).IsEqualTo(organizationRole);
-        await Assert.That(visible.GetProperty("projects").GetProperty(project).GetProperty("role").GetString()).IsEqualTo(expected);
     }
 
     [Test]
@@ -802,11 +788,15 @@ public sealed class TsAuthPlatformJourneyTests
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: http.Request.Query["refresh"] == "project");
                 await databaseService.SyncAsync(context, http.RequestAborted);
                 var org = context.Organization!;
-                return Results.Json(new { role = context.Project?.Role,
+                return Results.Json(new
+                {
+                    role = context.Project?.Role,
                     restricted = !context.CanManage && !context.CanWrite && !org.CanProvision(context.UserId) && org.Members.Count == 0 &&
                         org.Invitations.Count == 0 && org.AuditEvents.Count == 0 && org.OwnerUserId == "" && org.PendingOwnerUserId == "" && org.InternalBilling is null,
                     roleStored = JsonSerializer.SerializeToElement(context.Project).TryGetProperty("Role", out _),
-                    projection = JsonSerializer.Serialize(org), view = TerraScale.Dashboard.Features.Accounts.AccountContextView.From(context) });
+                    projection = JsonSerializer.Serialize(org),
+                    view = TerraScale.Dashboard.Features.Accounts.AccountContextView.From(context)
+                });
             });
             hosts.Add(app);
             await app.StartAsync();

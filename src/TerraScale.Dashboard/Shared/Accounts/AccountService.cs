@@ -212,9 +212,18 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             {
                 if (org.Status != "active" || org.Archived || !org.MfaRequired && org.Projects.Count == 0) return null;
                 // Request-only container: no organization settings, identities, billing or audit authority escape.
-                return new OrganizationRecord { Id = org.Id, Name = org.Name, Slug = org.Slug, CreatedAt = org.CreatedAt,
-                    Kind = "", PlanId = "", BillingStatus = "", MfaRequired = org.MfaRequired,
-                    Projects = org.Projects.ToDictionary(item => item.Key, item => CollaboratorProject(item.Value)) };
+                return new OrganizationRecord
+                {
+                    Id = org.Id,
+                    Name = org.Name,
+                    Slug = org.Slug,
+                    CreatedAt = org.CreatedAt,
+                    Kind = "",
+                    PlanId = "",
+                    BillingStatus = "",
+                    MfaRequired = org.MfaRequired,
+                    Projects = org.Projects.ToDictionary(item => item.Key, item => CollaboratorProject(item.Value))
+                };
             }
             await plans.PublishAsync(org, cancellationToken);
             if (platformOrg)
@@ -320,13 +329,30 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
 
     private static ProjectRecord CollaboratorProject(ProjectRecord project) => new()
     {
-        Id = project.Id, OrganizationId = project.OrganizationId, Name = project.Name, Slug = project.Slug,
-        Role = project.Role, CreatedAt = project.CreatedAt, Region = project.Region, BackupRegion = project.BackupRegion,
-        Regions = project.Regions, Status = project.Status, IsDefault = project.IsDefault,
+        Id = project.Id,
+        OrganizationId = project.OrganizationId,
+        Name = project.Name,
+        Slug = project.Slug,
+        Role = project.Role,
+        CreatedAt = project.CreatedAt,
+        Region = project.Region,
+        BackupRegion = project.BackupRegion,
+        Regions = project.Regions,
+        Status = project.Status,
+        IsDefault = project.IsDefault,
         Databases = project.Databases.Where(item => TerraScaleIds.IsValid(item.Key) && item.Key == item.Value.Id && item.Value.ProjectId == project.Id)
-            .ToDictionary(item => item.Key, item => new DatabaseRecord { Id = item.Value.Id, ProjectId = project.Id,
-                Name = item.Value.Name, Region = item.Value.Region, Regions = item.Value.Regions, Endpoint = item.Value.Endpoint,
-                Status = item.Value.Status, AllRegions = item.Value.AllRegions, CreatedAt = item.Value.CreatedAt })
+            .ToDictionary(item => item.Key, item => new DatabaseRecord
+            {
+                Id = item.Value.Id,
+                ProjectId = project.Id,
+                Name = item.Value.Name,
+                Region = item.Value.Region,
+                Regions = item.Value.Regions,
+                Endpoint = item.Value.Endpoint,
+                Status = item.Value.Status,
+                AllRegions = item.Value.AllRegions,
+                CreatedAt = item.Value.CreatedAt
+            })
     };
 
     // Members, the owner and a pending ownership transfer as ts-auth holds them now. Stored
