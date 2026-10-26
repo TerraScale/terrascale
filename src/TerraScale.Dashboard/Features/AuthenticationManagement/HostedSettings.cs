@@ -23,7 +23,18 @@ public static partial class AuthenticationConsole
                 throw new AccountAccessException("Each footer link needs a label of 1 to 24 characters and an HTTPS URL: Label | URL.", 422);
             return new TerraScaleAuthProjectFooterLink(pair[0], pair[1]);
         }).ToArray();
-        return basic with { TitleSize = titleSize, DefaultTheme = mode, BackgroundColor = OptionalColor(form["background_color"]), TextColor = OptionalColor(form["text_color"]), FooterLinks = footer };
+        var message = form["email_message"].ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
+        if (message.Length > 500 || message.Any(character => char.IsControl(character) && character != '\n'))
+            throw new AccountAccessException("Use a plain text email message of up to 500 characters, with only newlines as control characters.", 422);
+        return basic with
+        {
+            TitleSize = titleSize,
+            DefaultTheme = mode,
+            BackgroundColor = OptionalColor(form["background_color"]),
+            TextColor = OptionalColor(form["text_color"]),
+            FooterLinks = footer,
+            EmailMessage = message.Length == 0 ? null : message
+        };
     }
 
     public static TerraScaleAuthProjectConfiguration Configuration(string? redirects, string? lifetime)

@@ -13,6 +13,7 @@ public interface ITsAuthProjects
     Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken);
     Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken);
+    Task<TerraScaleAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken);
     Task<TerraScaleAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken);
     Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken);
@@ -46,6 +47,9 @@ public sealed partial class TsAuthGateway : ITsAuthProjects
         ProjectAsync(() => disabled
             ? Client().Projects.DisableUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken)
             : Client().Projects.EnableUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken));
+
+    public Task<TerraScaleAuthUserExportPage> ExportUsersAsync(SessionRecord session, string projectId, string? after, CancellationToken cancellationToken) =>
+        ProjectAsync(() => Client().Projects.ExportUsersAsync(Bearer(session), Id(projectId), 100, after, cancellationToken));
 
     public Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken) =>
         ProjectAsync(async () => { await Client().Projects.DeleteUserAsync(Bearer(session), Id(projectId), Id(userId), cancellationToken); return true; });

@@ -27,11 +27,14 @@ public sealed class HostedBrandingBrowserJourneyTests(DashboardRootFixture fixtu
         await Shot("01-branding-before");
         var savedName = await page.Locator("#auth-brand-name").InputValueAsync();
         await page.Locator("#auth-brand-name").FillAsync("Unsaved draft");
+        await page.Locator("#auth-brand-email-message").FillAsync("Unsaved email message");
         await page.Locator("#auth-branding-form button[type=reset]").ClickAsync();
         await Assert.That(await page.Locator("#auth-brand-name").InputValueAsync()).IsEqualTo(savedName);
+        await Assert.That(await page.Locator("#auth-brand-email-message").InputValueAsync()).IsEqualTo("");
         await page.Locator("[data-brand-defaults]").ClickAsync();
         await Assert.That(await page.Locator("#auth-brand-title-size").InputValueAsync()).IsEqualTo("24");
         await page.Locator("#auth-brand-name").FillAsync("Preview application");
+        await page.Locator("#auth-brand-email-message").FillAsync("Welcome to the application.\nYour team");
         await page.Locator("#auth-brand-mode").SelectOptionAsync("light");
         await page.Locator("#auth-brand-title-size").FillAsync("32");
         await page.Locator("#auth-brand-background_color").FillAsync("#ffffff");
@@ -60,6 +63,7 @@ public sealed class HostedBrandingBrowserJourneyTests(DashboardRootFixture fixtu
         await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/auth/branding" && new Uri(url).Query.Contains("saved=1", StringComparison.Ordinal));
         await Assert.That(await page.Locator("#auth-brand-name").InputValueAsync()).IsEqualTo("Preview application");
         await Assert.That(await preview.GetAttributeAsync("data-theme")).IsEqualTo("light");
+        await Assert.That(await page.Locator("#auth-brand-email-message").InputValueAsync()).IsEqualTo("Welcome to the application.\nYour team");
         await Assert.That(await preview.Locator("[data-brand-footer] a").GetAttributeAsync("href")).IsEqualTo("https://example.com/privacy");
         await Assert.That(await page.EvaluateAsync<bool>("() => document.documentElement.scrollWidth <= innerWidth")).IsTrue();
         await Shot("05-branding-saved");

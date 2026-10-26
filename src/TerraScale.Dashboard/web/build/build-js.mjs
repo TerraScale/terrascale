@@ -205,6 +205,7 @@ async function build() {
       'document-changes': resolve(source, 'document-changes.js'),
       'import-upload': resolve(source, 'import-upload.js'),
       'auth-branding': resolve(source, 'auth-branding.js'),
+      'auth-directory-export': resolve(source, 'auth-directory-export.js'),
       'file-storage': resolve(source, 'file-storage.js'),
     },
     entryNames: '[name]',
