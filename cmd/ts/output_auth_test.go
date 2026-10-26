@@ -78,7 +78,7 @@ func TestJSONKeySecretOnlyOnCreate(t *testing.T) {
 			t.Parallel()
 			u := jsonAuthUser(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				key := tsauth.APIKey{ID: jsonAuthID, OrganizationID: jsonAuthID, ProjectID: jsonAuthID, CreatedBy: jsonAuthID, Name: "ci"}
+				key := tsauth.APIKey{ID: jsonAuthID, OrganizationID: jsonAuthID, ProjectID: jsonAuthID, CreatedBy: jsonAuthID, Name: "ci", Scopes: []string{tsauth.ScopeDocumentsRead}}
 				switch r.Method {
 				case http.MethodPost:
 					json.NewEncoder(w).Encode(tsauth.CreatedAPIKey{APIKey: key, Key: "one-time-fixture-secret"})

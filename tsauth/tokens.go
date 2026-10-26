@@ -374,6 +374,8 @@ func requestToken(ctx context.Context, hc *http.Client, endpoint string, form ur
 // answers are *Error. A client with a secret authenticates with HTTP Basic
 // (client_secret_basic).
 func oauthPost(ctx context.Context, hc *http.Client, endpoint string, form url.Values, client, secret string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
@@ -388,9 +390,12 @@ func oauthPost(ctx context.Context, hc *http.Client, endpoint string, form url.V
 		return nil, fmt.Errorf("tsauth: POST %s: %w", req.URL.Path, err)
 	}
 	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	body, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
 	if err != nil {
 		return nil, fmt.Errorf("tsauth: read %s response: %w", req.URL.Path, err)
+	}
+	if len(body) > 64<<10 {
+		return nil, &ResponseContractError{}
 	}
 	if res.StatusCode != http.StatusOK {
 		e := &Error{Status: res.StatusCode}
