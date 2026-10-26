@@ -45,7 +45,12 @@ public readonly union GetBackupPolicyResult(BackupPolicy, Unavailable);
 public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden, Unavailable);
 
 /// <summary>The database a backup was restored into, or why it was not restored; a taken name is a conflict.</summary>
-public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
+public readonly union RestoreBackupResult(ManagedDatabase, BackupElsewhere, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
+
+/// <summary>A recovery request that must execute in the named region.</summary>
+/// <param name="Region">The region holding the recovery source.</param>
+/// <param name="Database">The source database's actual placement.</param>
+public sealed record BackupElsewhere(string Region, ManagedDatabase Database);
 
 /// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService

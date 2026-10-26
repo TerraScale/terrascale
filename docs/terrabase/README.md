@@ -5,6 +5,7 @@ Current configuration paths are implementation limitations, not production activ
 
 Hosting: [OCI and ts-orch](../oci.md); node discovery: [TerraBase on ts-orch](ts-orch.md).
 Local processes: [TerraBase local host](local-host.md).
+Recovery: [Copy placement and snapshot routing](recovery-copy-placement.md).
 
 TerraBase is a leaderless, multi-region document database focused on fast and
 efficient synchronization and replication. This repository is the C#/.NET 11

@@ -13,6 +13,39 @@ namespace TerraBase.Fast.Backup;
 
 public sealed class PointInTimeEntitlementTests
 {
+    private static readonly string[] Fra = ["fra"];
+
+    [Test]
+    public async Task Point_in_time_recovery_preserves_explicit_placement(CancellationToken cancellationToken)
+    {
+        var s3 = new FakeS3();
+        var time = new ManualTime();
+        await using var api = await ManagementApi.StartAsync(settings =>
+        {
+            s3.Configure(settings);
+            settings["region"] = "gru";
+        }, services =>
+        {
+            s3.Route(services);
+            ManualBackupHosting.Configure(services);
+            new OtherRegions("fra", "sjc").Register(services);
+        }, time);
+        var organization = await api.CreateOrganizationAsync("Recovery placement");
+        var project = await api.CreateProjectAsync(organization, "Copies");
+        var client = api.Client;
+        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+        var created = await JsonAsync(client.PostAsJsonAsync(Uri(databases),
+            new { name = "main", replicaRegions = Fra }, cancellationToken), HttpStatusCode.Created);
+        await ShipAsync(api, time, TimeSpan.FromSeconds(10), cancellationToken);
+        var route = $"{databases}/{created.GetProperty("id").GetString()}/point-in-time";
+        var window = await JsonAsync(client.GetAsync(Uri(route), cancellationToken));
+        var restored = await JsonAsync(client.PostAsJsonAsync(Uri(route + "/restore"),
+            new { pointInTime = window.GetProperty("latest").GetDateTimeOffset(), name = "copy" }, cancellationToken), HttpStatusCode.Created);
+        await Assert.That(restored.GetProperty("homeRegion").GetString()).IsEqualTo(created.GetProperty("homeRegion").GetString());
+        await Assert.That(restored.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)).IsEquivalentTo(["fra"]);
+        await Assert.That(restored.GetProperty("allRegions").GetBoolean()).IsFalse();
+    }
+
     [Test]
     [Arguments("hobby", 1)]
     [Arguments("starter", 5)]
