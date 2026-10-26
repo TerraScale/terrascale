@@ -129,6 +129,10 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // Bucket documents are a few dozen bytes; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
+    // Most databases one flush transaction saves. Batch 16 (2026-10-26): one transaction for every database's counts held
+    // SYSTEM's writer for up to 4.3 s on gru, and catalog anchors and replication applies queued behind it.
+    internal const int FlushDatabases = 16;
+
     // Best-effort dashboard usage, not billing: counts live only here until a flush saves them, so a crash loses at most
     // those counted since the last successful flush. A failed flush keeps them for the next; a clean shutdown flushes.
     private readonly ConcurrentDictionary<DatabaseOwner, ConcurrentDictionary<UsageKey, OpCounts>> _pending = new();
@@ -329,27 +333,32 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             return;
         }
 
-        var id = EntityIds.New().ToString();
-        int dropped;
-        try
+        // One transaction per chunk of databases, each with its own id: a chunk that throws is in doubt alone, and the
+        // chunks after it stay pending for the next flush.
+        var dropped = 0;
+        foreach (var databases in batch.GroupBy(entry => entry.Key.Database).Chunk(FlushDatabases))
         {
-            var written = await WriteAsync(id, batch, cancellationToken).ConfigureAwait(false);
-            if (written is not int saved)
+            KeyValuePair<UsageKey, OpCounts>[] chunk = [.. databases.SelectMany(entries => entries)];
+            var id = EntityIds.New().ToString();
+            try
             {
-                return;
+                if (await WriteAsync(id, chunk, cancellationToken).ConfigureAwait(false) is not int saved)
+                {
+                    break;
+                }
+
+                dropped += saved;
+            }
+            catch
+            {
+                _inDoubt = (id, chunk);
+                throw;
             }
 
-            dropped = saved;
-        }
-        catch
-        {
-            _inDoubt = (id, batch);
-            throw;
-        }
-
-        foreach (var (key, counts) in batch)
-        {
-            Subtract(key, counts);
+            foreach (var (key, counts) in chunk)
+            {
+                Subtract(key, counts);
+            }
         }
 
         DropEmptied();
