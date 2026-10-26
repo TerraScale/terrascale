@@ -74,7 +74,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 using var refused = new CancellationTokenSource();
                 using var abort = refused.Token.Register(() => connection.Abort(new ConnectionAbortedException("the API key was refused")));
                 // The watch exchanges the key again as its 60-second tokens lapse, like a statement does: an idle session lives on.
-                using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, until: null,
+                using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
                 await ServeAsync(session, input, output, connection.ConnectionClosed).ConfigureAwait(false);
@@ -219,6 +219,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
                 {
                     Key = authorized.Key,
+                    Until = authorized.Until,
                 };
             }
             while (!_sessions.TryAdd(session.ProcessId, session));
@@ -316,7 +317,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
 
         // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md).
-        switch ((await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value)
+        var answer = (await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value;
+        var until = (answer as KeyActive)?.Until;
+        switch (answer)
         {
             case KeyRefused refused:
                 return new PgError("28000", refused.Code + ": " + KeyAuthorityMessages.Refused(refused.Code), Fatal: true);
@@ -334,7 +337,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return organization is string found
             ? await Tenants.FindDatabaseAsync(found, key.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) switch
             {
-                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key),
+                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key, until),
                 Unavailable => new PgError("57P03", "the database is unavailable; retry"),
                 _ => Denied,
             }
@@ -893,7 +896,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return bytes;
     }
 
-    private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null);
+    private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null, DateTimeOffset? Until = null);
 
     // Columns are fixed once described, so later executions send the types the client was told.
     private sealed class Prepared(PgStatement statement, int[] oids)
@@ -928,6 +931,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         /// <summary>The dashboard key's token as the session's watch checks it; null for a <c>tb_</c> key.</summary>
         public KeyToken? Key { get; init; }
+
+        /// <summary>Until when the yes that admitted the session holds: the watch starts from it.</summary>
+        public DateTimeOffset? Until { get; init; }
 
         private readonly Lock _gate = new();
         private CancellationTokenSource? _running;

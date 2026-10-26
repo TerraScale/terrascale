@@ -49,8 +49,10 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private static readonly JsonWebTokenHandler Tokens = new();
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
 
-    // Keyed by the SHA-256 of the key, never the key itself.
+    // Keyed by the SHA-256 of the key, never the key itself. One exchange per key at a time: the sessions and watches
+    // of one key renew together and share it, instead of exhausting MaxInFlight.
     private readonly ConcurrentDictionary<string, TsAuthKeyGrant> _grants = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<Task<TsAuthKeyResult>>> _exchanging = new(StringComparer.Ordinal);
     private int _inFlight;
 
     /// <summary>Whether <paramref name="secret"/> has the shape of a ts-auth project API key.</summary>
@@ -71,35 +73,49 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return cached;
         }
 
-        var exchanged = await RequestAsync(issuer, secret, cancellationToken).ConfigureAwait(false);
-        switch (exchanged)
+        return await _exchanging.GetOrAdd(cacheKey, _ => new Lazy<Task<TsAuthKeyResult>>(() => ExchangeOnceAsync(cacheKey, issuer, secret)))
+            .Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // Shared by every caller of one key, so no caller's cancellation ends it; the client's timeout bounds it.
+    private async Task<TsAuthKeyResult> ExchangeOnceAsync(string cacheKey, string issuer, string secret)
+    {
+        try
         {
-            case TsAuthKeyGrant grant:
-                if (_grants.Count >= MaxGrants)
-                {
-                    var now = time.GetUtcNow();
-                    foreach (var (key, entry) in _grants)
+            var exchanged = await RequestAsync(issuer, secret, CancellationToken.None).ConfigureAwait(false);
+            switch (exchanged)
+            {
+                case TsAuthKeyGrant grant:
+                    if (_grants.Count >= MaxGrants)
                     {
-                        if (entry.ValidTo <= now)
+                        var now = time.GetUtcNow();
+                        foreach (var (key, entry) in _grants)
                         {
-                            _grants.TryRemove(key, out _);
+                            if (entry.ValidTo <= now)
+                            {
+                                _grants.TryRemove(key, out _);
+                            }
+                        }
+
+                        if (_grants.Count >= MaxGrants)
+                        {
+                            _grants.Clear();
                         }
                     }
 
-                    if (_grants.Count >= MaxGrants)
-                    {
-                        _grants.Clear();
-                    }
-                }
+                    _grants[cacheKey] = grant;
+                    break;
+                case NotFound:
+                    _grants.TryRemove(cacheKey, out _);
+                    break;
+            }
 
-                _grants[cacheKey] = grant;
-                break;
-            case NotFound:
-                _grants.TryRemove(cacheKey, out _);
-                break;
+            return exchanged;
         }
-
-        return exchanged;
+        finally
+        {
+            _exchanging.TryRemove(cacheKey, out _);
+        }
     }
 
     private async ValueTask<TsAuthKeyResult> RequestAsync(string issuer, string secret, CancellationToken cancellationToken)

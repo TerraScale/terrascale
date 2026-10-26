@@ -83,7 +83,14 @@ public sealed class KeyWatch : IDisposable
         _disposed = true;
         if (Interlocked.Exchange(ref _ended, 1) == 0)
         {
-            _stop.Cancel();
+            try
+            {
+                _stop.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The loop ended meanwhile and disposed it: there is nothing left to stop.
+            }
         }
         else
         {
@@ -117,9 +124,9 @@ public sealed class KeyWatch : IDisposable
         {
             return;
         }
-        catch (OperationCanceledException)
+        catch (Exception error) when (error is not OutOfMemoryException)
         {
-            // The last yes ran out first.
+            // The last yes ran out first, or the check failed: either way the key is not verified, so the work ends.
         }
         finally
         {
@@ -275,7 +282,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             var body = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthErrorBody, deadline.Token).ConfigureAwait(false);
             return new KeyRefused(body?.Error?.Code is "key_revoked" or "key_expired" ? body.Error.Code : "invalid_token");
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException or NotSupportedException)
         {
             return new Unavailable("ts-auth key status is unreadable");
         }
