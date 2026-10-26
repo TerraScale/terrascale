@@ -32,22 +32,18 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         var next = 0;
         while (next < groups.Count)
         {
-            // A group never splits; a single group holds at most one transaction's documents.
-            var end = next;
-            for (var deltas = 0; end < groups.Count && (end == next || deltas + groups[end].Deltas.Count <= ChangeGroups.MaxDeltasOf(database)); end++)
-            {
-                deltas += groups[end].Deltas.Count;
-            }
-
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var started = timings.Now;
             progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
             List<(string, string, DocumentState, EntryVersion)>? deferred = null;
             HashSet<(string Collection, string Id)> closureChanges = [];
             List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
-            for (; next < end; next++)
+            // Check between whole groups; deferred admission and closure observation still finish before each commit.
+            for (var deltas = 0; next < groups.Count && ReplicationWriteBatch.CanAdd(deltas, groups[next].Deltas.Count, timings.Elapsed(started)); next++)
             {
+                deltas += groups[next].Deltas.Count;
                 foreach (var delta in groups[next].Deltas)
                 {
                     var at = new EntryVersion(delta.Stamp, origin);
@@ -119,31 +115,41 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         }
 
         var changed = 0;
-        foreach (var chunk in states.Chunk(ChangeGroups.MaxDeltasOf(database)))
+        for (var next = 0; next < states.Count;)
         {
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var started = timings.Now;
             if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
             {
                 return null;
             }
 
-            changed += await RepairPageAsync(transaction, database, chunk, baseline: false, cancellationToken).ConfigureAwait(false);
+            var page = await RepairPageAsync(transaction, database, states, next, started, cancellationToken).ConfigureAwait(false);
 
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            changed += page.Changed;
+            next += page.Consumed;
         }
 
         return changed;
     }
 
-    internal async ValueTask<int> RepairPageAsync(IStorageTransaction transaction, TenantContext database,
-        IReadOnlyList<RepairState> states, bool baseline, CancellationToken cancellationToken)
+    private async ValueTask<(int Changed, int Consumed)> RepairPageAsync(IStorageTransaction transaction, TenantContext database,
+        IReadOnlyList<RepairState> states, int start, long started, CancellationToken cancellationToken)
     {
         var changed = 0;
         List<(string, string, DocumentState, EntryVersion)>? deferred = null;
         HashSet<(string Collection, string Id)> closureChanges = [];
         List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
-        foreach (var state in states.Where(state => state.State.MaxStamp.Value != 0))
+        var next = start;
+        for (; next < states.Count && ReplicationWriteBatch.CanAdd(next - start, 1, timings.Elapsed(started)); next++)
         {
+            var state = states[next];
+            if (state.State.MaxStamp.Value == 0)
+            {
+                continue;
+            }
+
             // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
             var at = new EntryVersion(state.State.MaxStamp, default);
             TrackClosure(state.Collection, state.Id, closureChanges);
@@ -157,16 +163,15 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
             else
             {
-                changed += (baseline ? await transaction.JoinBaselineAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false)
-                    : await transaction.JoinAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false)) ? 1 : 0;
+                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false) ? 1 : 0;
             }
         }
 
-        changed += await JoinAdmittedAsync(transaction, deferred, cancellationToken, baseline).ConfigureAwait(false);
-        changed += await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken, baseline).ConfigureAwait(false);
+        changed += await JoinAdmittedAsync(transaction, deferred, cancellationToken).ConfigureAwait(false);
+        changed += await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken).ConfigureAwait(false);
         await cancellations.ObserveAsync(transaction, closureChanges, cancellationToken).ConfigureAwait(false);
 
-        return changed;
+        return (changed, next - start);
     }
 
     private async ValueTask<int> JoinClosureJobsAsync(IStorageTransaction transaction,
