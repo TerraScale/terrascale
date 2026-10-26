@@ -64,27 +64,9 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     public Task<McpDocumentWrite> DeleteDocument(string databaseId, string collection, string documentId = "", string? version = null, string? organizationId = null, string? projectId = null, string? id = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "delete", McpScope.Alias(documentId, id, "documentId"), default, version);
 
-    [McpServerTool(Name = "get_document_history", Title = "Get document history", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a document's recorded versions (documentId is a ULID), oldest first, including deletions. Requires a producer history contract.")]
-    public Task<McpDocumentHistory> History(string databaseId, string collection, string documentId, string? organizationId = null, string? projectId = null)
-    {
-        ValidateCollection(Scope(organizationId, projectId), databaseId, collection);
-        DataService.ValidDocumentId(documentId);
-        throw new AccountAccessException("The data plane does not expose document history.", 503);
-    }
-
-    [McpServerTool(Name = "get_collection_schema", Title = "Get collection schema", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a collection's schema.")]
+    [McpServerTool(Name = "get_collection_schema", Title = "Get collection schema", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read inferred sampled fields, separate from declared JSON Schema validation. Use get_collection_validation for declared validation.")]
     public async Task<McpCollectionSchema> Schema(string databaseId, string collection, string? organizationId = null, string? projectId = null) =>
         new(collection, await data.SchemaAsync(Scope(organizationId, projectId), databaseId, collection, Cancellation));
-
-    [McpServerTool(Name = "set_collection_schema", Title = "Set collection schema", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Apply a collection schema. Requires an owner or admin role and a producer schema-update contract.")]
-    public Task<McpSchemaApplied> SetSchema(string databaseId, string collection, Dictionary<string, JsonElement> schema, string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        ValidateCollection(context, databaseId, collection);
-        McpScope.DemandManagement(context);
-        if (schema is null) throw new AccountAccessException("Schema must be a JSON object.", 422);
-        throw new AccountAccessException("The data plane does not expose editable collection schemas.", 503);
-    }
 
     [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one read-only SQL statement against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
     public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null) => data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
@@ -117,33 +99,6 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         collection = DataService.ValidCollection(collection);
         await data.CreateIndexFieldAsync(Scope(organizationId, projectId), databaseId, collection, field, Cancellation);
         return new(collection, field, "created");
-    }
-
-    [McpServerTool(Name = "list_index_recommendations", Title = "List index recommendations", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List suggested indexes for a database. Requires a producer recommendation contract.")]
-    public Task<McpRecommendations> Recommendations(string databaseId, string collection = "", string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        DatabaseService.Database(context, databaseId);
-        if (collection.Length > 0) DataService.ValidCollection(collection);
-        throw new AccountAccessException("The data plane does not expose index recommendations.", 503);
-    }
-
-    [McpServerTool(Name = "apply_index_recommendation", Title = "Apply index recommendation", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Build the indexes an index recommendation suggests. Requires an owner or admin role and a producer recommendation contract.")]
-    public Task<McpRecommendationApplied> ApplyRecommendation(string recommendationId, string databaseId = "", string collection = "", string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        McpScope.DemandManagement(context);
-        if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
-        if (collection.Length > 0) DataService.ValidCollection(collection);
-        if (recommendationId.Length is 0 or > 128) throw new AccountAccessException("Choose a valid recommendation ID.", 422);
-        throw new AccountAccessException("The data plane does not expose index recommendation application.", 503);
-    }
-
-    [McpServerTool(Name = "get_index_migration", Title = "Get index migration", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show index backfill progress for a collection. Requires a producer migration contract.")]
-    public Task<McpIndexMigration> Migration(string databaseId, string collection, string? organizationId = null, string? projectId = null)
-    {
-        ValidateCollection(Scope(organizationId, projectId), databaseId, collection);
-        throw new AccountAccessException("The data plane does not expose index migration progress.", 503);
     }
 
     [McpServerTool(Name = "list_saved_queries", Title = "List saved queries", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the SQL queries saved in a project.")]
@@ -201,9 +156,6 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         return body;
     }
 
-    private static void ValidateCollection(AccountContext context, string databaseId, string collection)
-    { DatabaseService.Database(context, databaseId); DataService.ValidCollection(collection); }
-
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }
@@ -225,8 +177,6 @@ public sealed record McpDocumentWrite(string Id, string Operation)
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; init; }
 }
-public sealed record McpHistoryVersion(string Revision, bool Deleted, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
-public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
 public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
 public sealed record McpSchemaApplied(string Collection, string Status);
 public sealed record McpSqlRows(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows);
@@ -234,10 +184,5 @@ public sealed record McpSqlResponse(McpSqlRows Result);
 public sealed record McpIndex(string Field, string State);
 public sealed record McpIndexResponse(string Collection, IReadOnlyList<McpIndex> Indexes);
 public sealed record McpIndexCreated(string Collection, string Field, string Status);
-public sealed record McpRecommendation(string Id, string Collection, IReadOnlyList<string> Fields, string Reason, string State);
-public sealed record McpRecommendations(IReadOnlyList<McpRecommendation> Recommendations);
-public sealed record McpRecommendationApplied(string RecommendationId, string DatabaseId, string Collection, string Status);
-public sealed record McpMigration(string State, int Completed, int Total, int Percent, string Watermark);
-public sealed record McpIndexMigration([property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] McpMigration? Migration);
 public sealed record McpSavedQuery(string Id, string Name, string Sql, DateTimeOffset CreatedAt);
 public sealed record McpSavedQueries(IReadOnlyList<McpSavedQuery> Queries, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);

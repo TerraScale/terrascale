@@ -221,3 +221,5 @@ The TUnit journeys `tests/TerraScale.Dashboard.E2E/*McpJourneyTests.cs`
 (account, authentication, billing plan, database, onboarding, organization and
 reporting) call the tools end to end over HTTP. `AuthAdminJourneyTests.cs`
 checks that the `admin_*` tools are not listed or callable.
+
+Declared validation tools and supported document/index discovery are described in [MCP collection validation](features/mcp-declared-schema.md).

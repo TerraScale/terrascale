@@ -37,7 +37,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = new { name = "Dedicated host", version = "1" } }, "/", "mcp.terrascale.tech");
             await Assert.That(rootInitialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
             var rootTools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { }, "/", "mcp.terrascale.tech");
-            await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
+            await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(96);
             foreach (var path in new[] { "/", "/mcp" })
                 foreach (var method in new[] { HttpMethod.Get, HttpMethod.Delete })
                 {
@@ -58,7 +58,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 await Assert.That(tools[destructive].GetProperty("annotations").GetProperty("destructiveHint").GetBoolean()).IsTrue();
             // Invoice reads reach Stripe, unlike tools confined to TerraScale-owned state.
             await Assert.That(tools["list_invoices"].GetProperty("annotations").GetProperty("openWorldHint").GetBoolean()).IsTrue();
-            var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_document_history", "get_collection_schema", "set_collection_schema", "list_indexes", "create_index", "list_index_recommendations", "apply_index_recommendation", "get_index_migration", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
+            var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_collection_schema", "get_collection_validation", "set_collection_schema", "list_indexes", "create_index", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
             await Assert.That(names.All(tools.ContainsKey)).IsTrue();
             await Assert.That(tools["revoke_api_key"].GetProperty("description").GetString()).IsEqualTo("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.");
             var rotationDescription = tools["rotate_api_key"].GetProperty("description").GetString();
@@ -249,10 +249,6 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId });
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 86401 });
             await ErrorAsync(replica, "create_m2m_client", new() { ["name"] = "Unavailable", ["scopes"] = new[] { "database:read" } });
-            await ErrorAsync(replica, "get_document_history", new(reference));
-            await ErrorAsync(replica, "set_collection_schema", new(docFields) { ["schema"] = new { name = "users" } });
-            await ErrorAsync(replica, "list_index_recommendations", new() { ["databaseId"] = databaseId });
-            await ErrorAsync(replica, "get_index_migration", new(docFields));
             using (var authConsole = await replica.GetAsync("/auth/overview"))
             {
                 await Assert.That(authConsole.StatusCode).IsEqualTo(HttpStatusCode.OK);
