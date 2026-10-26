@@ -151,7 +151,7 @@ public sealed class SqlMeteringTests
         await using var api = await DocumentApi.StartAsync();
         await SqlApi.OkAsync(api, Notes);
         await SendOkAsync(api, new { sql = "INSERT INTO notes VALUES (1, ?)", args = new object[] { new string('x', 16 * 1024) } });
-        var before = await UnitsAsync(api);
+        var (beforeRead, beforeWrite) = await UnitsAsync(api);
         var values = string.Join(',', Enumerable.Repeat("(1)", 400));
         var steps = $$$"""
             [{"stmt":{"sql":"SELECT body FROM notes"}},
@@ -177,7 +177,7 @@ public sealed class SqlMeteringTests
             await HranaPipelineTests.PostAsync(api, $$$"""{"baton":"{{{lines[0].GetProperty("baton").GetString()}}}","requests":[{"type":"close"}]}""", version: version);
         }
 
-        await Assert.That(await UnitsAsync(api)).IsEqualTo((before.Read + 4, before.Write + 1));
+        await Assert.That(await UnitsAsync(api)).IsEqualTo((beforeRead + 4, beforeWrite + 1));
         await Assert.That((await SqlApi.OkAsync(api, "SELECT id FROM notes WHERE id = 2")).Single().GetProperty("rows").GetArrayLength()).IsEqualTo(1);
     }
 
@@ -245,7 +245,11 @@ public sealed class SqlMeteringTests
         var counts = await api.Server.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(await api.TenantOfAsync(),
             new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1), CancellationToken.None);
         var lifetime = counts is UsageCounts usage ? usage.Lifetime : throw new InvalidOperationException("usage unavailable");
-        long Count(string kind) => lifetime.Meters?.Values.Where(meter => meter.Dimension.Meter == "ops" && meter.Dimension.Kind == kind).Sum(meter => meter.Count) ?? 0;
+        long Count(string kind)
+        {
+            return lifetime.Meters?.Values.Where(meter => meter.Dimension.Meter == "ops" && meter.Dimension.Kind == kind).Sum(meter => meter.Count) ?? 0;
+        }
+
         return (Count("put"), Count("patch"), Count("delete"));
     }
 }
