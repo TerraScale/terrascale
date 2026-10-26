@@ -256,6 +256,33 @@ public sealed class GroupCommitTests
             "Waited 6 s for a database's writer and took it: a group commit batch (an engine caller) queued behind a write transaction (GroupCommitTests.cs:241), which had held it for 6 s and was between storage calls");
     }
 
+    // Batch 9 (2026-10-26): a hold of 1 to 2.5 s that nothing waited for logged nothing, so its holder stayed unknown.
+    [Test]
+    public async Task A_writer_held_a_second_or_more_logs_its_holder_and_call_site_with_nothing_waiting()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var logs = new CapturedLogs();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+        {
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
+            services.AddSingleton<ILoggerProvider>(logs);
+        });
+        var store = await StoreAsync(api);
+
+        await using (var brief = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            clock.Advance(TursoDatabaseStore.LongWriterHold / 2);
+        }
+
+        await using (var held = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            clock.Advance(TursoDatabaseStore.LongWriterHold + TimeSpan.FromSeconds(0.5));
+        }
+
+        await Assert.That(logs.Messages).Contains("A database's writer was held 1.5 s by a write transaction (GroupCommitTests.cs:277)");
+        await Assert.That(logs.Messages).DoesNotContain("A database's writer was held 0.5 s by a write transaction (GroupCommitTests.cs:272)");
+    }
+
     [Test]
     public async Task A_rolled_back_write_keeps_what_an_earlier_write_of_its_batch_wrote()
     {

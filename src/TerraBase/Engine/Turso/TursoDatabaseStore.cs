@@ -210,6 +210,9 @@ internal sealed partial class TursoDatabaseStore(
     /// <summary>A wait for the writer this long or longer logs who held it (<see cref="AcquireWriterAsync"/>).</summary>
     internal static readonly TimeSpan SlowWriterWait = TimeSpan.FromSeconds(5);
 
+    /// <summary>A hold this long or longer logs its holder and where it began, whether or not anything waited for it.</summary>
+    internal static readonly TimeSpan LongWriterHold = TimeSpan.FromSeconds(1);
+
     // What holds _writer and since when (a TimeProvider timestamp), set by each holder once it took it. Read without the
     // gate, for the warning only.
     private string? _writerHolder;
@@ -606,13 +609,36 @@ internal sealed partial class TursoDatabaseStore(
         }
         finally
         {
+            var held = TimeSpan.Zero;
+            var holder = _writerHolder;
+            var holderAt = CallSite(_writerFile, _writerLine);
             if (_holdStarted is var started and not 0)
             {
                 _holdStarted = 0;
-                WriterHeld?.Record(Time.GetElapsedTime(started).TotalSeconds, new KeyValuePair<string, object?>("holder", _writerHolder));
+                held = Time.GetElapsedTime(started);
+                WriterHeld?.Record(held.TotalSeconds, new KeyValuePair<string, object?>("holder", holder));
             }
 
             _writer.Release();
+            if (held >= LongWriterHold)
+            {
+                LogLongHold(held, holder, holderAt);
+            }
+        }
+    }
+
+    // Batch 9 (2026-10-26): a durable write held gru's writer for 1 to 2.5 s with nothing waiting, so no slow-writer line
+    // named it. Logged after the release: the log cannot delay or keep the writer.
+    private void LogLongHold(TimeSpan held, string? holder, string holderAt)
+    {
+        try
+        {
+            // Kinds and code locations only: no database or tenant names in the log.
+            logger?.ZLogWarning($"A database's writer was held {Math.Round(held.TotalSeconds, 1):@Held} s by {holder ?? "nothing recorded":@Holder} ({holderAt:@HolderAt})");
+        }
+        catch (Exception)
+        {
+            // A failing logger must not fail the release of a writer that is already free.
         }
     }
 
