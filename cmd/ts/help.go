@@ -8,6 +8,7 @@ import (
 )
 
 var commandSyntax = map[string]string{
+	"billing":    "billing",
 	"auth login": "auth login", "auth logout": "auth logout", "whoami": "whoami",
 	"orgs": "orgs", "projects": "projects", "projects create": "projects create <name>",
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",

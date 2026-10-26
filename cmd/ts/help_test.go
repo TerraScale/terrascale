@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -47,6 +48,24 @@ func TestParserErrorsKeepReasonsWithoutValues(t *testing.T) {
 		err := parserError(errors.New(message))
 		if !errors.Is(err, errUsage) || strings.Contains(err.Error(), "private") || !strings.Contains(err.Error(), "ts help") {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestBillingAndScopedKeyOptionsStayOffline(t *testing.T) {
+	t.Parallel()
+	var out, prompt bytes.Buffer
+	if err := runWithInput(context.Background(), []string{"billing", "--json"}, &out, strings.NewReader(""), &prompt, false); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "{\"url\":\"https://dash.terrascale.tech/billing\"}\n" || prompt.Len() != 0 {
+		t.Fatalf("billing output = %q, prompt = %q", out.String(), prompt.String())
+	}
+	for _, option := range []string{"-expires", "-allow-cidr"} {
+		out.Reset()
+		err := runWithInput(context.Background(), []string{"--json", option, "", "billing"}, &out, strings.NewReader(""), &prompt, false)
+		if exitStatus(err) != 2 || !json.Valid(out.Bytes()) || strings.Contains(out.String(), "https://dash.") {
+			t.Fatalf("%s outside keys create = %v, %q", option, err, out.String())
 		}
 	}
 }

@@ -47,7 +47,7 @@ func TestPagesFollowsNextAndStopsOnError(t *testing.T) {
 
 func TestRunRejectsUnknownCommandsOffline(t *testing.T) {
 	// Operand counts are checked before sign-in, so none of these reaches the network.
-	for _, args := range [][]string{nil, {"auth"}, {"db"}, {"-nope"}, {"version", "extra"}, {"--version", "extra"},
+	for _, args := range [][]string{{"auth"}, {"db"}, {"-nope"}, {"version", "extra"}, {"--version", "extra"},
 		{"db", "list", "extra"}, {"db", "create"}, {"doc", "put", "db", "col"}, {"doc", "put", "db", "col", "id", "{}", "x"},
 		{"keys", "create"}, {"whoami", "x"}, {"frob"}, {"-project", "p"}, {"db", "regions", "app"},
 		{"backup", "restore", "app", "id"}, {"projects", "create"}, {"usage", "a", "b"}, {"completion"},
@@ -75,13 +75,22 @@ func TestVersionOffline(t *testing.T) {
 }
 
 func TestHelpOffline(t *testing.T) {
-	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {"db", "--help"}, {"-project", "p", "doc", "put", "-help"}} {
+	for _, args := range [][]string{nil, {"help"}, {"-h"}, {"--help"}} {
 		var out bytes.Buffer
 		if err := run(t.Context(), args, &out); err != nil {
 			t.Fatalf("run(%q) = %v", args, err)
 		}
 		if out.String() != usage {
 			t.Fatalf("run(%q) printed %q", args, out.String())
+		}
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{{[]string{"db", "--help"}, "ts db create <database>"}, {[]string{"-project", "p", "doc", "put", "-help"}, "ts doc put"}} {
+		var out bytes.Buffer
+		if err := run(t.Context(), tc.args, &out); err != nil || !strings.Contains(out.String(), tc.want) || strings.Contains(out.String(), "migrate up") {
+			t.Fatalf("scoped help(%q) = %q, %v", tc.args, out.String(), err)
 		}
 	}
 }
