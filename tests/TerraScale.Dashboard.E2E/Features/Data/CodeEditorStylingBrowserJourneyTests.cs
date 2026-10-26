@@ -131,6 +131,14 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
                 .IsTrue().Because(name + ": Monaco's core stylesheet must be admitted by CSP.");
             await Assert.That(await page.Locator(host + " .monaco-editor .overflow-guard").EvaluateAsync<string>("el => getComputedStyle(el).position"))
                 .IsEqualTo("relative").Because(name + ": Monaco's core CSS must apply to the editor.");
+            // automaticLayout observes the newly opened dialog on the next frame.
+            await page.WaitForFunctionAsync("""
+                host => {
+                    const surface = document.querySelector(host + ' .ts-code-editor-surface').getBoundingClientRect();
+                    const editor = document.querySelector(host + ' .monaco-editor').getBoundingClientRect();
+                    return surface.width > 0 && surface.height > 0 && Math.abs(editor.width - surface.width) < 2 && Math.abs(editor.height - surface.height) < 2;
+                }
+                """, host);
             var surface = await page.Locator(host + " .ts-code-editor-surface").BoundingBoxAsync();
             await Assert.That(surface is { Width: > 0, Height: > 0 }).IsTrue().Because(name + ": the editor must have a size once its dialog is shown.");
             var editor = await page.Locator(host + " .monaco-editor").BoundingBoxAsync();
