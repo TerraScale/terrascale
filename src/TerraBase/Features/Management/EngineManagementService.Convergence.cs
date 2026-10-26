@@ -13,6 +13,10 @@ internal sealed partial class EngineManagementService
     private const int MaxDatabaseName = 63;
     private const string ConflictActor = "system";
 
+    // Where the rotating stale-name pass resumes: one page of one project's name index per pass.
+    private string? _namesProject;
+    private string? _namesAfter;
+
     internal async ValueTask ConvergeAsync(CancellationToken cancellationToken)
     {
         if (!catalogGate.Value.IsOpen)
@@ -74,8 +78,18 @@ internal sealed partial class EngineManagementService
             after = page.Documents[^1].Id;
         }
 
+        string? firstProject = null, nextProject = null;
+        var resumable = false;
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
+            var project = database.ProjectId!;
+            firstProject = firstProject is null || string.CompareOrdinal(project, firstProject) < 0 ? project : firstProject;
+            if (string.CompareOrdinal(project, _namesProject) > 0 && (nextProject is null || string.CompareOrdinal(project, nextProject) < 0))
+            {
+                nextProject = project;
+            }
+
+            resumable |= project == _namesProject;
             try
             {
                 await ConvergeDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
@@ -84,6 +98,14 @@ internal sealed partial class EngineManagementService
             {
                 logger.ZLogWarning(error, $"Applying the catalog to database {database.DatabaseId:@Database} failed; the next pass tries again");
             }
+        }
+
+        // Never a scan of a project's whole index per database: one bounded page per pass, rotating across the projects held here.
+        var resume = resumable && _namesAfter is not null;
+        if ((resume ? _namesProject : nextProject ?? firstProject) is { } names)
+        {
+            _namesAfter = await DropStaleNameEntriesAsync(names, resume ? _namesAfter : null, cancellationToken).ConfigureAwait(false);
+            _namesProject = names;
         }
     }
 
@@ -243,6 +265,53 @@ internal sealed partial class EngineManagementService
 
             return true;
         }, static _ => false, cancellationToken).ConfigureAwait(false);
+
+    // Drops the stale entries of one page of the project's name index after `after`, rereading each in the write. Answers
+    // where the next page starts, or null after the last. Writes nothing when the page holds no stale entry.
+    private async ValueTask<string?> DropStaleNameEntriesAsync(string projectId, string? after, CancellationToken cancellationToken)
+    {
+        var (stale, next) = await ReadAsync<(List<string> Stale, string? Next)>(async transaction =>
+        {
+            var page = await transaction.ListAsync(DatabaseNames(projectId), after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            List<string> stale = [];
+            foreach (var entry in page.Documents)
+            {
+                if (await IsStaleNameAsync(transaction, projectId, entry.Id, EntityPayload.Read(entry, Id), cancellationToken).ConfigureAwait(false))
+                {
+                    stale.Add(entry.Id);
+                }
+            }
+
+            return (stale, page.HasMore ? page.Documents[^1].Id : null);
+        }, static _ => ([], null), cancellationToken).ConfigureAwait(false);
+        if (stale.Count > 0)
+        {
+            _ = await WriteAsync<bool>(async transaction =>
+            {
+                foreach (var name in stale)
+                {
+                    if (await IsStaleNameAsync(transaction, projectId, name, await GetAsync(transaction, DatabaseNames(projectId), name, Id, cancellationToken).ConfigureAwait(false),
+                        cancellationToken).ConfigureAwait(false))
+                    {
+                        _ = await transaction.DeleteAsync(DatabaseNames(projectId), name, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                return true;
+            }, static _ => false, cancellationToken).ConfigureAwait(false);
+        }
+
+        return next;
+    }
+
+    // An index entry is stale when its database is deleted or purged, or, seen from that database's home only (one writer,
+    // like the loser's move), carries another name. An entry whose database has not replicated here yet stays.
+    private async ValueTask<bool> IsStaleNameAsync(IStorageTransaction transaction, string projectId, string name, string? named, CancellationToken cancellationToken) =>
+        named is not null
+        && (await GetAsync(transaction, Databases(projectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } holder
+            ? holder.Name != name && holder.Home(options.Region) == options.Region
+            : await DatabasePurge.IsDeletedAsync(transaction, named, cancellationToken).ConfigureAwait(false)
+                || await transaction.GetVersionAsync(Databases(projectId), named, cancellationToken).ConfigureAwait(false) is { Deleted: true });
 
     private async ValueTask DropLocalAsync(TenantContext database, CancellationToken cancellationToken)
     {

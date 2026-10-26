@@ -86,6 +86,7 @@ Target replication design (Turso + CDC + lattices across gru and sjc, with its s
 [`multi-region-replication.md`](multi-region-replication.md). It replaces the replication described below.
 
 Two regions accepting one database name keep both databases: [database name conflicts](database-name-conflicts.md).
+Renaming a database, and what concurrent cross-region renames converge to: [database rename](database-rename.md).
 
 Replication setup, certificates, limits and metrics: [`docs/terrabase/replication.md`](replication.md).
 `GET /replication` on the internal listener reports outbound per-peer

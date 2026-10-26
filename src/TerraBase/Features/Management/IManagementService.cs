@@ -214,6 +214,14 @@ public interface IManagementService
         bool allRegions = false);
 
     /// <summary>
+    /// Renames a database whose home is this region, keeping its id, data, placement and keys
+    /// (docs/terrabase/database-rename.md): <see cref="ManagementErrors.NameTaken"/> when this region knows another holder of
+    /// <paramref name="name"/>, <see cref="ManagementErrors.WrongRegion"/> in any other region. The caller validated the name.
+    /// </summary>
+    ValueTask<SetDatabaseRegionsResult> RenameDatabaseAsync(
+        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
     /// The database named <paramref name="name"/> in a project of an organization, as this region records it, placed here or
     /// not, without a membership check: what a region outside its placement answers with.
     /// </summary>
