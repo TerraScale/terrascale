@@ -50,6 +50,12 @@ internal static class SqlRead
     /// </summary>
     public static (string Sql, List<string?> Names) Number(string sql)
     {
+        // SqlParserCS 0.6.5 uses U+FFFF as EOF and can discard the remaining input during tokenization.
+        if (sql.Contains(char.MaxValue))
+        {
+            throw new FormatException("U+FFFF is not supported in SQL text");
+        }
+
         var tokens = new Tokenizer().Tokenize(sql, new SQLiteDialect());
         var names = new List<string?>();
         var numbers = new Dictionary<string, int>(StringComparer.Ordinal);

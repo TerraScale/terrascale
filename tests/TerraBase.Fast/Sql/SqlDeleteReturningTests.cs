@@ -93,12 +93,20 @@ public sealed class SqlDeleteReturningTests
     [Arguments("DELETE FROM t AS d RETURNING * END; SELECT 1")]
     [Arguments("DELETE FROM t RETURNING *; SELECT 1 END; SELECT 2;")]
     [Arguments("SELECT 1 END; SELECT 2")]
+    [Arguments("DELETE FROM t RETURNING *\uFFFF END; SELECT 1")]
+    [Arguments("DELETE FROM t WHERE v = '\uFFFF' RETURNING *")]
+    [Arguments("DELETE FROM t RETURNING * /* \uFFFF */; SELECT 1")]
     public async Task Invalid_returning_does_not_commit_any_statement_in_the_http_batch(string sql)
     {
         await using var api = await DocumentApi.StartAsync();
         await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", "INSERT INTO t VALUES (1, 'one')");
         var refused = await SqlApi.ExecuteAsync(api, "INSERT INTO t VALUES (2, 'two')", sql);
         await Assert.That(SqlApi.Error(refused)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error", "SQLITE_ERROR", 1));
+        if (sql.Contains(char.MaxValue))
+        {
+            await Assert.That(refused.Message).IsEqualTo("U+FFFF is not supported in SQL text");
+        }
+
         var rows = (await SqlApi.OkAsync(api, "SELECT * FROM t"))[0];
         await Assert.That(rows.GetProperty("rows").GetRawText()).IsEqualTo("""[[1,"one"]]""");
     }

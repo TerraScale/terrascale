@@ -21,6 +21,12 @@ public sealed class HranaDeleteReturningTests
     [Arguments("v3", "DELETE FROM t RETURNING *; SELECT 1 END; SELECT 2;")]
     [Arguments("v2", "SELECT 1 END; SELECT 2")]
     [Arguments("v3", "SELECT 1 END; SELECT 2")]
+    [Arguments("v2", "DELETE FROM t RETURNING *\uFFFF END; SELECT 1")]
+    [Arguments("v3", "DELETE FROM t RETURNING *\uFFFF END; SELECT 1")]
+    [Arguments("v2", "DELETE FROM t WHERE v = '\uFFFF' RETURNING *")]
+    [Arguments("v3", "DELETE FROM t WHERE v = '\uFFFF' RETURNING *")]
+    [Arguments("v2", "DELETE FROM t RETURNING * /* \uFFFF */; SELECT 1")]
+    [Arguments("v3", "DELETE FROM t RETURNING * /* \uFFFF */; SELECT 1")]
     public async Task Malformed_returning_tails_are_refused_without_deleting_or_executing_a_script_prefix(string version, string sql)
     {
         await using var api = await DocumentApi.StartAsync();
@@ -42,6 +48,11 @@ public sealed class HranaDeleteReturningTests
         foreach (var index in new[] { 0, 2, 4 })
         {
             await Assert.That(result.Json.GetProperty("results")[index].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_ERROR");
+            if (sql.Contains(char.MaxValue))
+            {
+                await Assert.That(result.Json.GetProperty("results")[index].GetProperty("error").GetProperty("message").GetString())
+                    .IsEqualTo("U+FFFF is not supported in SQL text");
+            }
         }
 
         foreach (var index in new[] { 1, 3, 5 })
