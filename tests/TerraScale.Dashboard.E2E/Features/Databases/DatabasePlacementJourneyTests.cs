@@ -99,7 +99,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         {
             await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther)
                 .Because(await FailureEvidenceAsync(changed));
-            await Assert.That(changed.Headers.Location?.OriginalString).IsEqualTo(path + "/replication#placement");
+            await Assert.That(changed.Headers.Location?.OriginalString).IsEqualTo(path + "/replication?placement=saved#placement");
         }
         await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
         using (var credentials = await replica.GetAsync("/api-keys"))

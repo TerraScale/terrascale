@@ -14,7 +14,8 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public int Ready => All.Count(database => database.Status == "ready");
     public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
     public int Failed => All.Count(database => database.Status == "failed");
-    public IReadOnlyList<string> Regions => All.SelectMany(DatabaseService.Regions).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Shared.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
+    public IReadOnlyList<string> Serving(DatabaseRecord database) => DatabaseService.ServingRegions(database, Choices);
+    public IReadOnlyList<string> Regions => All.SelectMany(Serving).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Shared.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
     public IReadOnlyList<string> Selected => Selection ?? Choices.Select(region => region.Code).ToArray();
     public string? HomeSelection { get; init; }
     public bool AllRegions { get; init; }
@@ -100,19 +101,24 @@ public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseLis
     }
 }
 
+public sealed record DatabasePlacementDraft(IReadOnlyList<string> Regions, bool AllRegions);
+
 public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
     IReadOnlyList<CollectionStats> Contents, string Error = "", string RegionsError = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
     bool ContentsAvailable = false, TerraScale.Dashboard.Features.Usage.UsageReplication? Measurements = null, string Range = "24h", DatabaseActivity? Activity = null)
 {
+    // A rejected form keeps its draft without changing the saved placement shown elsewhere.
+    public DatabasePlacementDraft? PlacementDraft { get; init; }
+    public IReadOnlyList<string> SelectedRegions => PlacementDraft?.Regions ?? Serving;
+    public bool SelectedAllRegions => PlacementDraft?.AllRegions ?? Database.AllRegions;
+    public bool PlacementSaved { get; init; }
     // Each activity card keeps its own range; changing one keeps the others as they are.
     public string RangePath(string key, string range) => DatabaseService.Path(Database.Id) + "?" +
         string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
     // An all-regions database serves every region in TerraBase's catalog (Choices); its record names only the home.
-    public IReadOnlyList<string> Serving => Database.AllRegions
-        ? [.. DatabaseService.Regions(Database).Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)]
-        : DatabaseService.Regions(Database);
+    public IReadOnlyList<string> Serving => DatabaseService.ServingRegions(Database, Choices);
     public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
         : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
     public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
@@ -134,12 +140,6 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
             return labels;
         }
     }
-    public string Replication => Serving switch
-    {
-        { Count: 0 } => "Not reported",
-        { Count: 1 } regions => "Single region · " + regions[0].ToUpperInvariant() + " only",
-        var regions => "Replicated across " + string.Join(", ", regions).ToUpperInvariant()
-    };
 }
 
 // One activity card with its own range; Plot is null when Message says why there is no chart.

@@ -39,7 +39,7 @@ public static class DatabaseEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             await databases.SyncAsync(context, http.RequestAborted);
-            return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
+            return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).Select(DatabaseOutput).ToArray() ?? []);
         });
         foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
         {
@@ -51,6 +51,7 @@ public static class DatabaseEndpoints
                     if (context is null) return AccountEndpoints.LoginRedirect(http);
                     // The delete dialog moved to the danger tab; keep old overview links working.
                     if (section == "overview" && http.Request.Query["delete"] == "1") return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
+                    await databases.SyncAsync(context, http.RequestAborted);
                     return await DetailPageAsync(http, context, databaseId, section, backend, databases);
                 });
         }
@@ -73,7 +74,7 @@ public static class DatabaseEndpoints
                     regions = index < 0 ? [home, .. regions] : [home, .. regions[..index], .. regions[(index + 1)..]];
                 }
                 var database = await databases.CreateAsync(context, form["name"].ToString(), regions, form["allRegions"] == "true", http.RequestAborted);
-                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(database, statusCode: 201);
+                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
             {
@@ -96,18 +97,19 @@ public static class DatabaseEndpoints
                         if (action == "branch")
                         {
                             var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted);
-                            return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(branch, statusCode: 201);
+                            return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
                         }
                         if (action == "regions")
                             await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), form["allRegions"] == "true", http.RequestAborted);
                         else
                             await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                        return WantsHtml(http) ? HttpRedirects.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id, "replication") + "#placement") : Results.NoContent();
+                        return WantsHtml(http) ? HttpRedirects.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id, "replication") + "?placement=saved#placement") : Results.NoContent();
                     }
                     catch (Exception error) when (KnownFailure(error))
                     {
                         if (!WantsHtml(http) || Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
-                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error));
+                        var draft = action == "regions" ? new DatabasePlacementDraft(form["region"].Select(value => value ?? "").ToArray(), form["allRegions"] == "true") : null;
+                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error), draft);
                     }
                 });
         }
@@ -119,6 +121,24 @@ public static class DatabaseEndpoints
             http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));
         return endpoints;
     }
+
+    // Keep the storage revision private; database responses retain their existing fields.
+    private static object DatabaseOutput(DatabaseRecord database) => new
+    {
+        database.Id,
+        database.ProjectId,
+        database.Name,
+        database.Region,
+        database.Regions,
+        database.AllRegions,
+        database.Endpoint,
+        database.Status,
+        database.SpendCapCents,
+        database.OperationLimits,
+        database.BackupRetentionDays,
+        database.BranchedFrom,
+        database.CreatedAt
+    };
 
     internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
         string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200, string? homeRegion = null, bool allRegions = false)
@@ -179,7 +199,7 @@ public static class DatabaseEndpoints
         return result;
     }
 
-    internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200)
+    internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, DatabasePlacementDraft? placementDraft = null)
     {
         DatabaseRecord database;
         try { database = DatabaseService.Database(context, id); }
@@ -230,7 +250,11 @@ public static class DatabaseEndpoints
         var activity = activityRead is null ? null : await activityRead;
         // The backups section shows the same page error, which the counts read above may have just set.
         var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
-        var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity));
+        var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity)
+        {
+            PlacementDraft = placementDraft,
+            PlacementSaved = tab == "replication" && error.Length == 0 && placementDraft is null && http.Request.Query["placement"] == "saved"
+        });
         result.StatusCode = status;
         return result;
     }

@@ -45,8 +45,8 @@ public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
         var known = await PageAsync(client);
         await Assert.That(Counts(known)).IsEquivalentTo(new[] { "0", "0" });
         var placement = await PageAsync(client, "/replication");
-        await Assert.That(placement).Contains("gru · São Paulo is the home region and stays selected.");
-        await Assert.That(placement).Contains("Replicated across GRU, SFO");
+        await Assert.That(placement).Contains("gru · São Paulo is the home region and stays selected. With All regions cleared, keep at least two regions.");
+        await Assert.That(placement).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, sfo · San Francisco</dd>");
         var home = Regex.Match(placement, "<input[^>]+type=\"checkbox\"[^>]+value=\"GRU\"[^>]*>").Value;
         await Assert.That(home).Contains("required");
         await Assert.That(home.Contains("disabled", StringComparison.Ordinal)).IsFalse();
