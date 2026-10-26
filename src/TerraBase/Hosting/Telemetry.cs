@@ -109,6 +109,7 @@ public static class Telemetry
                         or "terrabase_pressure_sample_window_seconds" or "terrabase_pressure_untracked_tenant_requests"
                         or "terrabase_pressure_info"
                         or "terrabase.memory.reserved" or "terrabase.stats.databases"
+                        or "terrabase.catalog.anchor.timeouts"
                         or "terrabase.storage.admitted" or "terrabase.storage.running"
                         or "terrabase.storage.rejected" or "terrabase.storage.unknown_files"
                         or "terrabase.document_cache.bytes" or "terrabase.document_cache.entries"
