@@ -108,7 +108,8 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
     /// <summary>
     /// Consumes an unused TOTP step or recovery code and completes <paramref name="challenged"/> in one transaction: of any
-    /// number of attempts on one challenge, across replicas, at most one commits, and a refused one spends no proof.
+    /// number of attempts on one challenge against the same regional store, at most one commits. Concurrent regional
+    /// winners reconcile through the completion lineage; this is not global linearizability. A refused commit spends no proof.
     /// </summary>
     public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
     {

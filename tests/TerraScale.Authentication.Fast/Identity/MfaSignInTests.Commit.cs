@@ -34,8 +34,10 @@ public sealed partial class MfaSignInTests
             await Assert.That(OidcHarness.SessionCookie(first)).IsNotNull();
         }
 
-        // Another unused recovery code or a valid TOTP step, on this or another replica, cannot reopen it.
-        foreach (var (client, code) in new[] { (oidc.Client, codes[1]), (replica.Client, Code(secret, clock)) })
+        // A newly started auth instance sees the durable completion too.
+        await using var restarted = await oidc.StartReplicaAsync(clock: clock);
+        // Another unused recovery code or TOTP step cannot reopen it on any of these instances.
+        foreach (var (client, code) in new[] { (oidc.Client, codes[1]), (replica.Client, Code(secret, clock)), (restarted.Client, codes[2]) })
         {
             using var again = await oidc.PostFormAsync(MfaPath, new() { ["challenge"] = challenge, ["code"] = code }, client: client);
             await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
