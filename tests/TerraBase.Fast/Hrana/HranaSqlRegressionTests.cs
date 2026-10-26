@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using TerraBase.Fast.Documents;
+using TerraBase.Fast.Sql;
 using TerraBase.Testing;
 using static TerraBase.Fast.Hrana.HranaPipelineTests;
 
@@ -8,6 +9,33 @@ namespace TerraBase.Fast.Hrana;
 
 public sealed class HranaSqlRegressionTests
 {
+    [Test]
+    public async Task Replaying_cached_reads_keeps_each_parameters_original_value_and_affinity()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE t (n INTEGER, s TEXT)", "INSERT INTO t VALUES (1, '01'), (2, '02')");
+        const string sql = "SELECT :x, typeof(:x) FROM t WHERE n = :x AND s = :x";
+        var opened = await PostAsync(api, $$$"""
+            {"requests":[{"type":"execute","stmt":{"sql":"BEGIN"}},
+             {"type":"execute","stmt":{"sql":"{{{sql}}}","named_args":[{"name":"x","value":{"type":"text","value":"01"}}]}},
+             {"type":"execute","stmt":{"sql":"{{{sql}}}","named_args":[{"name":"x","value":{"type":"text","value":"02"}}]}}]}
+            """);
+        await Assert.That(Types(opened.Json)).IsEqualTo("ok:execute,ok:execute,ok:execute");
+        foreach (var i in new[] { 1, 2 })
+        {
+            var row = Response(opened.Json, i).GetProperty("result").GetProperty("rows")[0];
+            await Assert.That(row[0].GetProperty("value").GetString()).IsEqualTo(i == 1 ? "01" : "02");
+            await Assert.That(row[1].GetProperty("value").GetString()).IsEqualTo("text");
+        }
+
+        var baton = opened.Json.GetProperty("baton").GetString();
+        var committed = await PostAsync(api, $$$"""
+            {"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql":"COMMIT"}},{"type":"close"}]}
+            """);
+        // COMMIT first replays both differently bound reads and checks their result hashes.
+        await Assert.That(Types(committed.Json)).IsEqualTo("ok:execute,ok:close");
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
