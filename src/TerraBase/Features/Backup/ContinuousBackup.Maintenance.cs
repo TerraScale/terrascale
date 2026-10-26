@@ -337,17 +337,17 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            var (restored, reached) = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
+            var restored = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
                 .ConfigureAwait(false);
             try
             {
-                if (reached != stored.Position)
+                if (restored.Position != stored.Position)
                 {
                     error = "the backup ends before the snapshot it is checked against";
                 }
                 else
                 {
-                    var rebuilt = await _engine.ChecksumAsync(restored, cancellationToken).ConfigureAwait(false);
+                    var rebuilt = await _engine.ChecksumAsync(restored.Path, cancellationToken).ConfigureAwait(false);
                     if (!live.AsSpan().SequenceEqual(rebuilt))
                     {
                         error = "the restored database differs from the live one";
@@ -356,7 +356,7 @@ internal sealed partial class ContinuousBackup
             }
             finally
             {
-                BackupReader.Delete(restored);
+                restored.Dispose();
             }
         }
         catch (Exception failure) when (!cancellationToken.IsCancellationRequested)

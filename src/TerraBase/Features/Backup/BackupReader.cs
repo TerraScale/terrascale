@@ -9,10 +9,13 @@ namespace TerraBase.Features.Backup;
 /// Reads a file's backup back: lists its snapshots, and rebuilds the file in scratch space from a snapshot rolled forward
 /// through its generation's segments. Restores and restore drills both go through here.
 /// </summary>
-internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options, BackupReadObservation? observation = null)
+internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options, IDiskBudget disk, BackupReadObservation? observation = null)
 {
     // Segments downloading at once.
     private const int Prefetch = 8;
+    // More than a day's one-second segments, with a separate bound on retained object-name memory.
+    private const int MaxSizingSegments = 131_072;
+    private const long MaxSizingKeyBytes = 32L << 20;
     private readonly string _scratch = ContinuousBackup.Scratch(options);
 
     /// <summary>Every snapshot of <paramref name="file"/> (a <see cref="BackupLayout.File"/> directory), oldest first.</summary>
@@ -30,11 +33,11 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     /// <summary>
     /// Rebuilds <paramref name="file"/> in a new scratch file: <paramref name="snapshot"/> rolled forward through the segments
     /// read by <paramref name="at"/> and, when <paramref name="until"/> is set, starting before that log position. Returns
-    /// the file, which the caller deletes with <see cref="Delete"/>, and the log position it reached.
+    /// an owned file and the log position it reached; disposal deletes scratch before releasing admission.
     /// </summary>
     /// <exception cref="BackupHistoryIncompleteException">A segment or object is missing.</exception>
     /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
-    public Task<(string Path, long Position)> BuildAsync(
+    public Task<RestoredBackup> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, CancellationToken cancellationToken) =>
         BuildAsync(file, scope, snapshot, at, until, next: null, cancellationToken);
 
@@ -50,7 +53,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     /// </exception>
     /// <exception cref="RestorePointUnprovenException">The time cannot be placed between two transactions.</exception>
     /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
-    public async Task<(string Path, long Position)> BuildAsync(
+    public async Task<RestoredBackup> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, CancellationToken cancellationToken)
     {
         if (until is null && file == BackupLayout.File(null) && !PointInTimeRestore.Covers(snapshot.At, at))
@@ -60,12 +63,110 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             throw new BackupHistoryIncompleteException("the system database's backup proves only its snapshot times");
         }
 
-        Directory.CreateDirectory(_scratch);
+        // Decode before creating scratch: stored LZ4 sizes do not bound decoded bytes. Freeze the inventory so
+        // later segments cannot allocate outside this claim, including candidates used only to prove the restore time.
+        var snapshotBytes = await DecodedBytesAsync(snapshot.Key, scope, cancellationToken).ConfigureAwait(false);
+        var bytes = snapshotBytes;
+        List<SegmentKey> inventory = [];
+        Dictionary<string, Task<BackupLogSummary>> sizes = [with(StringComparer.Ordinal)];
+        using var sizingStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var pending = new Queue<(SegmentKey Segment, Task<BackupLogSummary> Size)>(Prefetch);
+        long keyBytes = 0;
+        long creates = 0;
+        var expected = snapshot.Position;
+        var proving = false;
+        var proven = false;
+        var lastAt = snapshot.At;
+        long? endMark = null;
+
+        async Task<bool> AcceptAsync()
+        {
+            var (segment, size) = pending.Dequeue();
+            var summary = await SizedAsync(size).ConfigureAwait(false);
+            inventory.Add(segment);
+            sizes.Add(segment.Key, size);
+            bytes = checked(bytes + summary.Bytes);
+            creates = checked(creates + summary.Creates);
+            expected = checked(expected + summary.Bytes);
+            (lastAt, endMark) = (segment.At, summary.EndMark);
+            return proving && (summary.Boundary || next?.Position == expected);
+        }
+
+        try
+        {
+            await foreach (var item in store.ListAsync(BackupLayout.Segments(file, snapshot.Generation),
+                BackupLayout.SegmentsBefore(file, snapshot.Generation, snapshot.Position), sizingStop.Token).ConfigureAwait(false))
+            {
+                if (BackupLayout.ParseSegment(item.Key) is not { } segment)
+                {
+                    continue;
+                }
+
+                if (segment.Start >= until)
+                {
+                    break;
+                }
+
+                if (!proving && segment.At > at)
+                {
+                    // Finish the ordinary replay range before deciding whether it already proves this time.
+                    while (pending.Count > 0)
+                    {
+                        _ = await AcceptAsync().ConfigureAwait(false);
+                    }
+
+                    if (until is not null || PointInTimeRestore.Covers(snapshot.At, at) || next?.Position == expected
+                        || PointInTimeRestore.Covers(lastAt, at) && endMark >= at.ToUnixTimeMilliseconds())
+                    {
+                        break;
+                    }
+
+                    proving = true;
+                }
+
+                keyBytes = checked(keyBytes + segment.Key.Length * sizeof(char));
+                if (inventory.Count + pending.Count == MaxSizingSegments || keyBytes > MaxSizingKeyBytes)
+                {
+                    throw new BackupInventoryLimitException();
+                }
+
+                pending.Enqueue((segment, SummarizeAsync(segment.Key, scope, at, sizingStop.Token)));
+                if (pending.Count == Prefetch && await AcceptAsync().ConfigureAwait(false))
+                {
+                    proven = true;
+                    break;
+                }
+            }
+
+            while (!proven && pending.Count > 0)
+            {
+                proven = await AcceptAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            try
+            {
+                await sizingStop.CancelAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                foreach (var (_, size) in pending)
+                {
+                    await ((Task)size).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                }
+            }
+        }
+
+        // Every Create may add an index over four fields, each as large as the data. Charge that full-data estimate
+        // per Create, including creates later dropped; WorkspaceBytes also allows DB/WAL/native sorting and import.
+        // This is conservative admission, not a filesystem quota against concurrent growth or native amplification.
+        var claim = disk.Reserve(DiskBudget.WorkspaceBytes(checked(bytes * (1 + 4 * creates))));
         var restored = Path.Combine(_scratch, EntityIds.New().ToString() + ".db");
         try
         {
-            await using (var bundle = new FileStream(restored + ".snapshot", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
-                FileOptions.Asynchronous | FileOptions.DeleteOnClose))
+            Directory.CreateDirectory(_scratch);
+            await using (var bundle = new BackupScratchStream(restored + ".snapshot", null, snapshotBytes))
             {
                 await DownloadAsync(snapshot.Key, scope, bundle, cancellationToken).ConfigureAwait(false);
                 bundle.Position = 0;
@@ -73,7 +174,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             }
 
             var reached = new StrongBox<long>(snapshot.Position);
-            var segments = SegmentsAsync(file, scope, snapshot, at, until, next, reached, cancellationToken);
+            var segments = SegmentsAsync(scope, snapshot, at, until, next, reached, inventory, sizes, cancellationToken);
             using var replay = observation?.Enter(BackupReadObservation.Phase.Replay);
             if (observation is not null)
             {
@@ -86,11 +187,12 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                 throw new InvalidDataException("the restored database fails its integrity check");
             }
 
-            return (restored, reached.Value);
+            return new RestoredBackup(restored, reached.Value, claim);
         }
         catch
         {
             Delete(restored);
+            claim.Dispose();
             throw;
         }
     }
@@ -168,7 +270,8 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     // up to a transaction committed at or after it, a read mark at or after it, or exactly where the generation's next
     // snapshot is. A segment's own time is when its read finished, so it proves nothing about commits during the read.
     private async IAsyncEnumerable<Stream> SegmentsAsync(
-        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, StrongBox<long> reached,
+        string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, StrongBox<long> reached, IReadOnlyList<SegmentKey> inventory,
+        Dictionary<string, Task<BackupLogSummary>> sizes,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -176,11 +279,10 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         var expected = snapshot.Position;
         SegmentKey? boundary = null;
         var marked = false;
-        var listing = store.ListAsync(BackupLayout.Segments(file, snapshot.Generation),
-            BackupLayout.SegmentsBefore(file, snapshot.Generation, snapshot.Position), cancellationToken).GetAsyncEnumerator(cancellationToken);
+        using var listing = inventory.GetEnumerator();
         try
         {
-            while (await NextAsync(listing).ConfigureAwait(false) is { } segment)
+            while (Next(listing) is { } segment)
             {
                 if (segment.At > at || segment.Start >= until)
                 {
@@ -188,7 +290,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                     break;
                 }
 
-                inFlight.Enqueue((segment, DownloadSegmentAsync(segment.Key, scope, stop.Token)));
+                inFlight.Enqueue((segment, DownloadSegmentAsync(segment.Key, scope, stop.Token, sizes[segment.Key])));
                 if (inFlight.Count == Prefetch)
                 {
                     var (frames, after) = await TakeAsync(inFlight, expected).ConfigureAwait(false);
@@ -227,7 +329,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             }
 
             long? previous = null;
-            for (var segment = boundary; next?.Position != expected; segment = await NextAsync(listing).ConfigureAwait(false))
+            for (var segment = boundary; next?.Position != expected; segment = Next(listing))
             {
                 if (segment?.Start != expected)
                 {
@@ -236,7 +338,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                         : "the backup of this database is missing a log segment");
                 }
 
-                var frames = await DownloadSegmentAsync(segment.Key, scope, stop.Token).ConfigureAwait(false);
+                var frames = await DownloadSegmentAsync(segment.Key, scope, stop.Token, sizes[segment.Key]).ConfigureAwait(false);
                 LogCut cut;
                 try
                 {
@@ -280,23 +382,10 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                     _ = download.Exception;
                 }
             }
-
-            await listing.DisposeAsync().ConfigureAwait(false);
         }
     }
 
-    private static async Task<SegmentKey?> NextAsync(IAsyncEnumerator<StoredObject> listing)
-    {
-        while (await listing.MoveNextAsync().ConfigureAwait(false))
-        {
-            if (BackupLayout.ParseSegment(listing.Current.Key) is { } segment)
-            {
-                return segment;
-            }
-        }
-
-        return null;
-    }
+    private static SegmentKey? Next(IEnumerator<SegmentKey> listing) => listing.MoveNext() ? listing.Current : null;
 
     private static async Task<(Stream Log, long Expected)> TakeAsync(Queue<(SegmentKey Segment, Task<FileStream> Log)> inFlight, long expected)
     {
@@ -311,12 +400,16 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         return (frames, expected + frames.Length);
     }
 
-    private async Task<FileStream> DownloadSegmentAsync(string key, string scope, CancellationToken cancellationToken)
+    private async Task<FileStream> DownloadSegmentAsync(string key, string scope, CancellationToken cancellationToken, Task<BackupLogSummary>? preflight = null)
     {
-        var frames = new FileStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
-            FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        var bytes = preflight is null
+            ? await DecodedBytesAsync(key, scope, cancellationToken).ConfigureAwait(false)
+            : (await preflight.ConfigureAwait(false)).Bytes;
+        var claim = preflight is null ? disk.Reserve(bytes) : null;
+        BackupScratchStream? frames = null;
         try
         {
+            frames = new BackupScratchStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), claim, bytes);
             // A record cut short fails the replay; the sealed object's last-chunk flag already catches a truncated download.
             await DownloadAsync(key, scope, frames, cancellationToken).ConfigureAwait(false);
             frames.Position = 0;
@@ -324,9 +417,44 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
         catch
         {
-            await frames.DisposeAsync().ConfigureAwait(false);
+            if (frames is not null)
+            {
+                await frames.DisposeAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                claim?.Dispose();
+            }
+
             throw;
         }
+    }
+
+    private static async Task<BackupLogSummary> SizedAsync(Task<BackupLogSummary> size)
+    {
+        try
+        {
+            return await size.ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not (OperationCanceledException or DiskCapacityException or OverflowException))
+        {
+            // A later proof candidate may be unnecessary. Its original task surfaces failure only if replay reaches it.
+            return default;
+        }
+    }
+
+    private async Task<BackupLogSummary> SummarizeAsync(string key, string scope, DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        using var summary = new BackupLogSummaryStream(at);
+        await DownloadAsync(key, scope, summary, cancellationToken).ConfigureAwait(false);
+        return summary.Complete();
+    }
+
+    private async Task<long> DecodedBytesAsync(string key, string scope, CancellationToken cancellationToken)
+    {
+        using var count = new BackupCountingStream();
+        await DownloadAsync(key, scope, count, cancellationToken).ConfigureAwait(false);
+        return count.Length;
     }
 
     // A stream the store drops mid-object is read again from the start, up to three attempts.
@@ -335,6 +463,11 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         for (var attempt = 1; ; attempt++)
         {
             output.SetLength(0);
+            if (output.CanSeek)
+            {
+                output.Position = 0;
+            }
+
             bool found;
             try
             {
@@ -343,7 +476,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                         cancellationToken).ConfigureAwait(false)
                     : await ReadObservedAsync(key, scope, output, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception error) when (attempt < 3 && error is not OperationCanceledException)
+            catch (Exception error) when (attempt < 3 && error is not (OperationCanceledException or DiskCapacityException))
             {
                 await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken).ConfigureAwait(false);
                 continue;
@@ -385,3 +518,86 @@ internal sealed class BackupHistoryIncompleteException(string message) : Excepti
 /// <summary>A backup holds a file's history around the requested time but cannot place the time between two transactions.</summary>
 /// <param name="message">Why: a transaction within the time's second, one without recorded times, or times that go back.</param>
 internal sealed class RestorePointUnprovenException(string message) : Exception(message);
+
+/// <summary>A restored database owns its scratch and admission through import or checksum.</summary>
+internal sealed class RestoredBackup(string path, long position, IDisposable claim) : IDisposable
+{
+    public string Path { get; } = path;
+    public long Position { get; } = position;
+    public void Dispose()
+    {
+        BackupReader.Delete(Path);
+        claim.Dispose();
+    }
+}
+
+/// <summary>A delete-on-close scratch file releases admission only after its handle closes.</summary>
+internal sealed class BackupScratchStream(string path, IDisposable? claim, long limit = long.MaxValue)
+    : FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose)
+{
+    private readonly List<IDisposable> _claims = claim is null ? [] : [claim];
+    public long Limit { get; set; } = limit;
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+        buffer.Length > Limit - Position
+            ? throw new InvalidDataException("backup scratch exceeds its preflight size")
+            : base.WriteAsync(buffer, cancellationToken);
+
+    public void TakeClaims(List<IDisposable> claims)
+    {
+        _claims.AddRange(claims);
+        claims.Clear();
+    }
+
+    private void ReleaseClaims()
+    {
+        foreach (var owned in _claims)
+        {
+            owned.Dispose();
+        }
+
+        _claims.Clear();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing)
+        {
+            ReleaseClaims();
+        }
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync().ConfigureAwait(false);
+        ReleaseClaims();
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>Authenticates and measures decoded objects without allocating scratch.</summary>
+internal class BackupCountingStream : Stream
+{
+    private long _length;
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => _length;
+    public override long Position { get => _length; set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => _length = value;
+    public override void Write(byte[] buffer, int offset, int count) => _length = checked(_length + count);
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _length = checked(_length + buffer.Length);
+        return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>A restore's sizing inventory cannot fit its fixed metadata allowance.</summary>
+internal sealed class BackupInventoryLimitException() : IOException(
+    "Backup sizing exceeds 131072 segments or 32 MiB of object names. Restore from a newer snapshot or contact support for backup recovery.");

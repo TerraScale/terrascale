@@ -126,6 +126,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         var options = new TerraBaseOptions { DataDirectory = dataDirectory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
         var services = new ServiceCollection();
         services.AddTerraBaseEngine(options);
+        services.AddSingleton<INativeTemporaryStorage, TestNativeTemporaryStorage>();
         services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using var provider = services.BuildServiceProvider();
         _ = provider.GetRequiredService<IStorageEngine>();
@@ -629,6 +630,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             builder.ConfigureTestServices(values =>
             {
+                values.Replace(ServiceDescriptor.Singleton<INativeTemporaryStorage, TestNativeTemporaryStorage>());
                 // Storage and backup fakes are independent; storage restarts retain this process's test-only master.
                 values.Replace(ServiceDescriptor.KeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey));
 

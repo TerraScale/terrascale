@@ -490,8 +490,13 @@ public sealed class PointInTimeHistoryTests
         await Assert.That(async () => await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At.AddHours(1), until: null, next, cancellationToken))
             .Throws<BackupHistoryIncompleteException>();
 
-        var (restored, _) = await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At, until: null, next, cancellationToken);
-        BackupReader.Delete(restored);
+        var restored = await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At, until: null, next, cancellationToken);
+        using (restored)
+        {
+            await Assert.That(System.IO.File.Exists(restored.Path)).IsTrue();
+        }
+
+        await Assert.That(System.IO.File.Exists(restored.Path)).IsFalse();
     }
 
     private static string Within(DateTimeOffset second) => string.Create(CultureInfo.InvariantCulture,

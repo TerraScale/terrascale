@@ -29,6 +29,7 @@ namespace TerraBase.Engine.Turso;
 /// <remarks>Every Turso call runs on one <see cref="TursoIoPool"/> shared by all databases.</remarks>
 internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 {
+    internal IDiskBudget Disk { get; }
     private const string FileExtension = ".db";
 
     // A readiness probe still on the disk after this long means a stalled volume: not ready.
@@ -459,17 +460,21 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
     /// <param name="masterKey">The master key delivered by OCI Vault, wrapping every database data key.</param>
     /// <param name="replicaOwner">Trusted node identity; defaults to the host name for direct construction.</param>
+    /// <param name="nativeTemporaryStorage">Process-wide native temporary storage, initialized while owning the data lock.</param>
+    /// <param name="diskBudget">Shared bulk disk admission for this node.</param>
     public TursoStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<TursoStorageEngine> logger,
         IMasterKey masterKey,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
         Action<TursoDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
-        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null)
+        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null,
+        INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {
         ArgumentNullException.ThrowIfNull(masterKey);
         Encryption = new DatabaseKeys(masterKey);
         _dataDirectory = dataDirectory;
+        Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented document, feed and shape SELECT executions, by path (point, query, feed, shape, shape_body).");
@@ -490,6 +495,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _ownership = Own(dataDirectory);
         try
         {
+            nativeTemporaryStorage?.Initialize();
             CheckIntentJournal();
             DeleteRewriteScratch();
             ReplicaId = ReplicaIdentityFile.Start(dataDirectory, replicaOwner ?? Environment.MachineName);
@@ -1485,6 +1491,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             throw new InvalidOperationException($"database '{key.Database}' already exists");
         }
 
+        using var disk = Disk.Reserve(DiskBudget.WorkspaceBytes(DiskBudget.FileBytes(source.FilePath)));
         ThrowIfCopyRefused(source);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         ExceptionDispatchInfo? copyError = null;

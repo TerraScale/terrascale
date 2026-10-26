@@ -186,7 +186,8 @@ public sealed class BackupKeySaturationTests
             // One system key + one snapshot key + 65,534 unique peer keys fill the actual 65,536-entry restore
             // cache. No clock advance or other project-key lookup intervenes before the cold target is requested.
             await Assert.That(Volatile.Read(ref keyGets)).IsEqualTo(primingKeys + 1);
-            await Assert.That(Volatile.Read(ref primingObjectGets)).IsEqualTo(primingKeys);
+            // Each WAL object is sized, then downloaded again for replay; key-cache lookups remain unchanged.
+            await Assert.That(Volatile.Read(ref primingObjectGets)).IsEqualTo(2 * primingKeys);
             await Assert.That(snapshotRequests.Gets).IsEqualTo(1);
             await Assert.That(snapshotRequests.Unwraps).IsEqualTo(1);
             await Assert.That(targetRequests.Gets).IsEqualTo(0);
@@ -197,8 +198,8 @@ public sealed class BackupKeySaturationTests
                 // A newer generation's real-database fixture snapshot avoids replaying the priming chain.
                 await RestoreAsync($"saturated-{round}", targetAt);
                 await Assert.That(allTargetObjectsStarted.Task.IsCompletedSuccessfully).IsTrue();
-                await Assert.That(Volatile.Read(ref targetObjectGets)).IsEqualTo(concurrentSegments * (round + 1));
-                await Assert.That(Volatile.Read(ref primingObjectGets)).IsEqualTo(primingKeys);
+                await Assert.That(Volatile.Read(ref targetObjectGets)).IsEqualTo(2 * concurrentSegments * (round + 1));
+                await Assert.That(Volatile.Read(ref primingObjectGets)).IsEqualTo(2 * primingKeys);
                 await Assert.That(targetRequests.Gets).IsEqualTo(1);
                 await Assert.That(targetRequests.Unwraps).IsEqualTo(1);
                 await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);

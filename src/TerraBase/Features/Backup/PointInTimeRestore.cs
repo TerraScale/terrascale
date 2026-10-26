@@ -284,15 +284,19 @@ internal sealed class PointInTimeRestore(
             return HistoryIncomplete();
         }
 
-        string restored;
+        RestoredBackup restored;
         try
         {
-            (restored, _) = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, snapshots.Next, cancellationToken)
+            restored = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, snapshots.Next, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (BackupHistoryIncompleteException)
         {
             return HistoryIncomplete();
+        }
+        catch (BackupInventoryLimitException error)
+        {
+            return new Unavailable(error.Message, "backup_inventory_limit");
         }
         catch (RestorePointUnprovenException error)
         {
@@ -305,12 +309,12 @@ internal sealed class PointInTimeRestore(
 
         try
         {
-            await engine.ImportDatabaseAsync(target, restored, cancellationToken).ConfigureAwait(false);
+            await engine.ImportDatabaseAsync(target, restored.Path, cancellationToken).ConfigureAwait(false);
             return new Done();
         }
         finally
         {
-            BackupReader.Delete(restored);
+            restored.Dispose();
         }
     }
 

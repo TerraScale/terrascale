@@ -20,7 +20,7 @@ public sealed class UploadImportSourceEndpoint(IImportJobs jobs, ITenantDirector
         Put(ImportRoute.Path + "/source");
         Name("uploadImportSource");
         Summary("Uploads one part of the import's source");
-        Description("Raw bytes (application/octet-stream, Content-Length 1 to 4194304) at query offset = source.receivedBytes. Parts arrive in order; a part that ends at or before receivedBytes is a replay (200, unchanged); any other offset answers 409 offset_mismatch. The part that completes sourceBytes moves the job to analyzing, which checks the SHA-256 first. 503 capacity when this node has no staging room now." + ImportRoute.Reference);
+        Description("Raw bytes (application/octet-stream, Content-Length 1 to 4194304) at query offset = source.receivedBytes. Parts arrive in order; a part that ends at or before receivedBytes is a replay (200, unchanged); any other offset answers 409 offset_mismatch. The part that completes sourceBytes moves the job to analyzing, which checks the SHA-256 first. 503 capacity when staging quotas are full; 503 disk_capacity when the shared data-volume workspace cannot be reserved." + ImportRoute.Reference);
         Tags(ImportRoute.Tag);
         Metadata(new RequestBodyMetadata(typeof(byte[]), MediaType));
         Produces<ImportJobBody>();
