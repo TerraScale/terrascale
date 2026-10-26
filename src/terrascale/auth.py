@@ -126,7 +126,10 @@ class APIKeyTokenSource:
             if cached:
                 return cached
             started = time.monotonic()
-            response = self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+            try:
+                response = self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+            except (httpx.TransportError, httpx.DecodingError) as exc:
+                raise TokenError(0, "token_transport_error", "token exchange failed") from exc
             return self._x.accept(response, started)
 
     def invalidate(self, token: str) -> None:
@@ -158,7 +161,10 @@ class AsyncAPIKeyTokenSource:
             if cached:
                 return cached
             started = time.monotonic()
-            response = await self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+            try:
+                response = await self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+            except (httpx.TransportError, httpx.DecodingError) as exc:
+                raise TokenError(0, "token_transport_error", "token exchange failed") from exc
             return self._x.accept(response, started)
 
     def invalidate(self, token: str) -> None:

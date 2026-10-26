@@ -14,7 +14,7 @@ from . import _spec, models
 from ._spec import Call, TransactionBuilder
 from ._version import __version__
 from .auth import APIKeyTokenSource
-from .errors import APIError, CommitUncertainError, TerraScaleError, error_for, response_request_id
+from .errors import APIError, CommitUncertainError, InvalidResponseError, TerraScaleError, error_for
 from .ids import validate_id
 
 __all__ = ["TerraScale", "Database", "Collection", "Transaction"]
@@ -101,17 +101,19 @@ class TerraScale:
             try:
                 response = self._http.request(call.method, url, params=call.params or None, headers=headers,
                                               content=content)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
                 if not call.replay_safe:
                     raise CommitUncertainError(0, "commit_uncertain", "transport failure; the write may have committed") from exc
+                if isinstance(exc, httpx.DecodingError):
+                    raise InvalidResponseError(0, "invalid_response", "invalid response encoding") from exc
                 if attempt >= self._max_attempts:
                     raise TerraScaleError(f"{call.method} failed: {type(exc).__name__}") from exc
                 time.sleep(_spec.backoff(attempt, None))
                 continue
-            if response.status_code < 300:
-                return _parse_response(call, response)
-            err = _error(response)
+            if 200 <= response.status_code < 300:
+                return call.decode(response)
+            err = _error(response, mutation=not call.replay_safe)
             if response.status_code == 401 and self._source is not None and not refreshed:
                 # An expired or revoked token was never processed: refresh once.
                 self._source.invalidate(token)
@@ -140,22 +142,12 @@ class TerraScale:
         return self._send(_spec.create_database(self.project, name, home_region, replica_regions, all_regions))
 
 
-def _parse_response(call: Call, response: httpx.Response) -> Any:
-    try:
-        return call.parse(response)
-    except (ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError):
-        # Parser exceptions can contain response values. Keep only safe context;
-        # a malformed write response does not make the request safe to replay.
-        raise APIError(response.status_code, "invalid_response", "could not decode the API response",
-                       request_id=response_request_id(response.headers)) from None
-
-
-def _error(response: httpx.Response) -> APIError:
+def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:
     try:
         body = response.json()
     except ValueError:
         body = None
-    return error_for(response.status_code, body, response.headers)
+    return error_for(response.status_code, body, response.headers, mutation=mutation)
 
 
 class Database:
@@ -233,14 +225,14 @@ class Transaction(TransactionBuilder):
         self.result: models.TransactionResult | None = None
 
     def commit(self) -> models.TransactionResult:
-        self.result = self._db._c._send(_spec.transaction(*self._db._p, self.ops))
+        self.result = self._db._c._send(self._prepare(*self._db._p))
         return self.result
 
     def __enter__(self) -> Transaction:
         return self
 
     def __exit__(self, exc_type: object, *_: object) -> None:
-        if exc_type is None:
+        if exc_type is None and not self._consumed:
             self.commit()
 
 

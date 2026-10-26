@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ids import validate_id
+
 __all__ = [
     "Document",
     "WriteResult",
@@ -19,6 +21,14 @@ __all__ = [
     "SQLStatementResult",
     "TransactionResult",
 ]
+
+
+def _commit_metadata(body: dict[str, Any]) -> None:
+    offset, durability = body["offset"], body["durability"]
+    if not isinstance(offset, (str, int)) or not str(offset).isascii() or not str(offset).isdecimal():
+        raise ValueError("invalid commit offset")
+    if not isinstance(durability, str) or not durability:
+        raise ValueError("invalid commit durability")
 
 
 @dataclass(frozen=True)
@@ -60,11 +70,14 @@ class WriteResult:
 
     @classmethod
     def from_json(cls, body: dict[str, Any], created: bool = False) -> WriteResult:
+        _commit_metadata(body)
+        if not isinstance(body["version"], str) or not body["version"]:
+            raise ValueError("invalid write version")
         return cls(
-            id=body["id"],
+            id=validate_id(body["id"]),
             version=body["version"],
-            offset=str(body.get("offset", "")),
-            durability=body.get("durability", ""),
+            offset=str(body["offset"]),
+            durability=body["durability"],
             document=body.get("document"),
             created=created,
         )
@@ -230,8 +243,9 @@ class TransactionResult:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> TransactionResult:
+        _commit_metadata(body)
         return cls(
-            offset=str(body.get("offset", "")),
-            durability=body.get("durability", ""),
-            results=list(body.get("results") or []),
+            offset=str(body["offset"]),
+            durability=body["durability"],
+            results=list(body["results"]),
         )
