@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations;
 // Collaborator listing and read boundaries follow terrascale 1d823d8534fc PlatformDirectory.
 // Project invitation lookup/acceptance follows local terrascale a095400a1 InvitationEndpoints/Invitations
 // and TerraScale.DotNet 0.0.12's Named, InvitationLookup and AcceptedInvitation DTOs.
-public sealed class TsAuthPlatformJourneyTests
+public sealed partial class TsAuthPlatformJourneyTests
 {
     [Test]
     [Arguments("viewer")]
@@ -147,8 +147,8 @@ public sealed class TsAuthPlatformJourneyTests
                 new() { ["_csrf"] = csrf, ["name"] = "Unchanged", ["email"] = "invite@example.test", ["role"] = "member", ["region"] = "GRU" }))
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         using (var write = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections" + scope,
-            new() { ["_csrf"] = csrf, ["databaseId"] = database, ["collection"] = "denied" }))
-            await Assert.That(write.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            new() { ["_csrf"] = csrf, ["databaseId"] = database, ["name"] = "granted-items" }))
+            await Assert.That(write.StatusCode).IsEqualTo(role == "viewer" ? HttpStatusCode.Forbidden : HttpStatusCode.Created);
         foreach (var resource in new[] { "members", "ownership-transfer", "invitations", "audit-events" })
             await Assert.That(platform.Producer.Count("GET", "/v1/terrascale/organizations/" + org + "/" + resource, user.Subject)).IsEqualTo(0);
         await Assert.That(platform.Producer.Mutations(org, user.Subject)).IsEqualTo(0);
@@ -926,20 +926,20 @@ public sealed class TsAuthPlatformJourneyTests
         private Uri origin = null!;
         private Uri replica = null!;
 
-        public static async Task<PlatformScenario> StartAsync()
+        public static async Task<PlatformScenario> StartAsync(Action<WebApplicationBuilder>? configure = null, Action<WebApplication>? map = null)
         {
             var scenario = new PlatformScenario();
             try
             {
                 await scenario.environment.InitializeAsync();
-                scenario.origin = await scenario.HostAsync("http://127.0.0.1");
-                scenario.replica = await scenario.HostAsync(scenario.origin.ToString().TrimEnd('/'));
+                scenario.origin = await scenario.HostAsync("http://127.0.0.1", configure, map);
+                scenario.replica = await scenario.HostAsync(scenario.origin.ToString().TrimEnd('/'), configure, map);
                 return scenario;
             }
             catch { await scenario.DisposeAsync(); throw; }
         }
 
-        private async Task<Uri> HostAsync(string publicOrigin)
+        private async Task<Uri> HostAsync(string publicOrigin, Action<WebApplicationBuilder>? configure, Action<WebApplication>? map)
         {
             var app = environment.CreateTestHost(Root, 0, publicOrigin, builder =>
             {
@@ -951,6 +951,7 @@ public sealed class TsAuthPlatformJourneyTests
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(Producer, fallback)));
                 // The production transport, not the in-memory platform used by other journeys.
                 builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform, TsAuthGateway>());
+                configure?.Invoke(builder);
             });
             app.MapGet("/__test/project-context", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databaseService) =>
             {
@@ -970,6 +971,7 @@ public sealed class TsAuthPlatformJourneyTests
                     view = TerraScale.Dashboard.Features.Accounts.AccountContextView.From(context)
                 });
             });
+            map?.Invoke(app);
             hosts.Add(app);
             await app.StartAsync();
             return new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));

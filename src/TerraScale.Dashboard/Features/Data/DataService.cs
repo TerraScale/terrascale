@@ -78,7 +78,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
 
     public async Task CreateCollectionAsync(AccountContext context, string databaseId, string collection, CancellationToken cancellationToken)
     {
-        if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
+        context = await databases.CurrentAsync(context, cancellationToken);
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         if (!CollectionPattern().IsMatch(collection)) throw new AccountAccessException("Collection names start with a lowercase letter and use up to 63 lowercase letters, digits, hyphens, and underscores.", 422);
         var database = DatabaseService.Database(context, databaseId);
         await documents.CreateCollectionAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Name, collection, cancellationToken);
@@ -86,7 +87,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
 
     public async Task<TerraBaseWriteResult> WriteAsync(AccountContext context, string databaseId, string collection, string operation, string id, string body, string version, CancellationToken cancellationToken)
     {
-        if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
+        context = await databases.CurrentAsync(context, cancellationToken);
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         var database = DatabaseService.Database(context, databaseId);
         collection = ValidCollection(collection);
         if (operation is not ("create" or "replace" or "patch" or "delete") || operation != "create" && id.Length == 0)
@@ -135,6 +137,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
 
     public async Task DropCollectionAsync(AccountContext context, string databaseId, string collection, string confirmation, CancellationToken cancellationToken)
     {
+        context = await databases.CurrentAsync(context, cancellationToken);
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         var database = DatabaseService.Database(context, databaseId);
         collection = ValidCollection(collection);
         if (confirmation != collection) throw new AccountAccessException("Type the collection name to confirm deletion.", 422);
@@ -153,12 +157,13 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
     // need the same write access as document writes, and callers that promise read-only (MCP) refuse them outright.
     public async Task<DatabaseSqlResult> SqlAsync(AccountContext context, string databaseId, string statement, bool allowWrites, CancellationToken cancellationToken)
     {
+        context = await databases.CurrentAsync(context, cancellationToken);
         var database = DatabaseService.Database(context, databaseId);
         statement = statement.Trim();
         if (SqlValidation.Diagnostics(statement).FirstOrDefault(item => item.Severity == "error") is { } problem) throw new AccountAccessException(problem.Message, 422);
         var write = !SqlValidation.IsRead(statement);
         if (write && !allowWrites) throw new AccountAccessException("Only read-only statements (SELECT, WITH, EXPLAIN, VALUES, introspection PRAGMA) run here.", 422);
-        if (write && !context.CanWrite) throw new AccountAccessException("Write access is required to change data or schema. Your role can run read-only statements.");
+        if (write && !context.CanWriteProjectData) throw new AccountAccessException("Write access is required to change data or schema. Your role can run read-only statements.");
         return await backend.SqlAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, statement, write, cancellationToken);
     }
 
@@ -184,6 +189,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
 
     private async Task CreateIndexFieldsAsync(AccountContext context, string databaseId, string collection, IReadOnlyList<string> paths, CancellationToken cancellationToken)
     {
+        context = await databases.CurrentAsync(context, cancellationToken);
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         var database = DatabaseService.Database(context, databaseId);
         if (paths.Count is 0 or > 4 || paths.Any(path => path.Length is 0 or > 128 || path.Any(char.IsControl))) throw new AccountAccessException("Choose one to four distinct dotted field paths.", 422);
@@ -201,6 +207,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
 
     public async Task DropIndexAsync(AccountContext context, string databaseId, string name, CancellationToken cancellationToken)
     {
+        context = await databases.CurrentAsync(context, cancellationToken);
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         var database = DatabaseService.Database(context, databaseId);
         if (name.Length is 0 or > 128 || name.Any(char.IsControl)) throw new AccountAccessException("Choose an index.", 422);
