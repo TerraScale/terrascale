@@ -31,6 +31,20 @@ See [API-key authentication](docs/api-key-auth.md) for error and refresh behavio
 Project requests use the public origin automatically. Customer credentials determine
 project, database and operation access; an endpoint does not grant authorization.
 
+Writable databases require at least two distinct serving regions: a home region
+and at least one replica. On creation, omitting `DatabasePlacement::replica_regions`
+uses all current serving regions, even when `home_region` is set.
+`all_regions: Some(true)` also follows future serving regions. Creating with an
+explicit empty replica list returns HTTP 400.
+
+For deletion, call `Database::delete_database` directly in the database's home
+region, without a preceding placement update. Deletion covers every replica,
+including all-regions placement. HTTP 204 confirms logical deletion and local
+cleanup; remote erasure is retried durably and may complete later.
+Updating to an empty replica list can temporarily disable document writes with
+HTTP 409 `placement_needs_two_regions`; it does not provide supported
+single-region placement.
+
 ### Relational SQL
 
 `Database::sql()` runs parameterized SQL on `POST /v1/projects/{project}/databases/{database}/sql/execute`

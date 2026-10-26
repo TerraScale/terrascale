@@ -16,9 +16,13 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement supplied when creating or updating a database. `all_regions`
-/// asks for a full copy in every serving region, including regions added later;
-/// the server rejects it combined with `replica_regions` on create.
+/// Placement supplied when creating or updating a database. Writable databases require
+/// at least two distinct serving regions: the home region and at least one replica.
+/// On create, omitting `replica_regions` uses all current serving regions;
+/// setting only `home_region` does not request single-region placement.
+/// An explicit empty replica list on create is rejected with HTTP 400.
+/// `all_regions: Some(true)` also follows regions added later; the server rejects
+/// it combined with `replica_regions` on create.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
@@ -96,7 +100,10 @@ impl Database {
             .await
     }
 
-    /// `PATCH D`; an explicit empty replica list removes replicas.
+    /// `PATCH D`; writable databases require at least two distinct serving regions.
+    /// An empty replica list can temporarily disable document writes with HTTP 409
+    /// `placement_needs_two_regions`. It does not provide supported single-region
+    /// placement and is not required before deletion.
     pub async fn update_database(
         &self,
         placement: &DatabasePlacement,
@@ -105,7 +112,10 @@ impl Database {
             .await
     }
 
-    /// `DELETE D`; the server refuses replicated databases with 409.
+    /// `DELETE D` directly in the database's home region, without a placement update.
+    /// Deletion covers every replica, including all-regions placement. HTTP 204
+    /// confirms logical deletion and local cleanup; remote erasure is retried
+    /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {
         check_name("database", self.name())?;
         self.client()

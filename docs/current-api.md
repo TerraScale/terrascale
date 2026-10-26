@@ -35,10 +35,21 @@ caller-selected response types, preserving all producer fields with `serde_json:
 Recommendation selectors use `collection:field`, not entity IDs.
 
 Restore acknowledgements use `RestoredDatabase` without a serving `region`.
+Writable databases require a home region and at least one distinct replica region.
+On create, omitting `replica_regions` uses all current serving regions; selecting
+only a home region does not request single-region placement. An explicit empty
+replica list on create returns HTTP 400.
 `all_regions` (`allRegions`) asks for a full copy in every serving region, including
 later regions; responses default it to `false` when absent. Nullable `home_region`/`replica_regions` preserve unassigned placement;
 `replicas()` derives an empty slice for null replicas. `placement_version` is
 an exact i64. Serving `ProjectDatabaseInfo` responses require `region`.
+
+For deletion, call `delete_database` directly in the database's home region,
+without a preceding placement update. Deletion covers every replica, including
+all-regions placement. HTTP 204 confirms logical deletion and local cleanup;
+remote erasure is retried durably and may complete later. Updating to an empty
+replica list can temporarily disable document writes with HTTP 409
+`placement_needs_two_regions`; it does not provide supported single-region placement.
 
 ## Errors and retries
 
