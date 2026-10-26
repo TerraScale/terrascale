@@ -209,7 +209,7 @@ func completion(shell string, out io.Writer) error {
 		words[k] = slices.Compact(v)
 	}
 	words["completion"] = []string{"bash", "fish", "zsh"}
-	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection"}
+	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement"}
 	var valuePatterns []string
 	flags := "-h -help --help -yes --yes"
 	for _, flag := range valueFlags {
