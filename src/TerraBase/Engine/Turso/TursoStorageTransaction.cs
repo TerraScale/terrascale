@@ -962,6 +962,18 @@ internal sealed partial class TursoStorageTransaction(
 
         Offset();
         var (state, at) = Begin(collection, name);
+        if (collection == DocumentDelta.Collections && _pending.ContainsKey((collection, name)))
+        {
+            // A drop must follow this transaction's row writes, and recreation must follow its drop. Keep that
+            // drop in the final delta too: Changed selects captured entries without changing their merge version.
+            var previous = at.Stamp;
+            at = at with { Stamp = Member.Clock.Tick(previous) };
+            if (state.Clear is { } clear && clear.Changed == previous)
+            {
+                state = new DocumentState(clear with { Changed = at.Stamp }, state.Fields);
+            }
+        }
+
         using var parsed = body is null ? null : JsonDocument.Parse(body, DocumentState.JsonOptions);
         var target = collection == DocumentDelta.Unique ? name
             : collection == DocumentDelta.Indexes && parsed is not null
