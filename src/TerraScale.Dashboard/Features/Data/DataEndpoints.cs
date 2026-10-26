@@ -134,7 +134,7 @@ public static class DataEndpoints
             var route = operation.StartsWith("indexes", StringComparison.Ordinal) ? "/api/v1/dashboard/" + operation : "/api/v1/dashboard/data/" + operation;
             endpoints.MapPost(route, async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
             {
-                if (action is "documents" or "collections" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = action == "documents" ? DocumentFormBytes : BrowseFormBytes;
+                if (action is "documents" or "collections" or "collections/delete" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = action == "documents" ? DocumentFormBytes : BrowseFormBytes;
                 if ((action.StartsWith("sql", StringComparison.Ordinal) || action == "saved-queries") && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit)
                 {
                     // URL encoding can expand each SQL/history byte to three bytes; validation limits decoded SQL.

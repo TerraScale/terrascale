@@ -96,6 +96,13 @@ public sealed class DocumentBrowseCursorJourneyTests(DashboardRootFixture fixtur
                     await Assert.That(collectionRetry["cursor"]).IsEqualTo(context["cursor"]);
                     await Assert.That(collectionRetry["page"]).IsEqualTo("2");
                 }
+                using (var refusedDelete = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections/delete", new(draft) { ["confirmName"] = "wrong" }))
+                {
+                    await Assert.That(refusedDelete.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+                    var retained = Hidden(Regex.Match(WebUtility.HtmlDecode(await refusedDelete.Content.ReadAsStringAsync()), "<dialog id=\"delete-collection\".*?</dialog>", RegexOptions.Singleline).Value);
+                    await Assert.That(retained["cursor"]).IsEqualTo(context["cursor"]);
+                    await Assert.That(retained["page"]).IsEqualTo("2");
+                }
                 draft["document"] = "{\"text\":\"" + new string('d', 1024 * 1024 - 11) + "\"}";
                 failReads = true;
                 using var rejected = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", draft);
