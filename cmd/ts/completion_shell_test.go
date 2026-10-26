@@ -46,13 +46,15 @@ func TestCompletionRealShells(t *testing.T) {
 			if err != nil {
 				t.Fatalf("required shell %s unavailable: %v", shell, err)
 			}
-			db := "branch changes create delete info list regions"
+			db := "branch changes create delete info list regions rename"
 			type probe struct {
 				args []string
 				want string
 			}
 			probes := []probe{
 				{[]string{"db", ""}, db},
+				{[]string{"db", "re"}, "regions rename"},
+				{[]string{"db", "rename", "orders", ""}, ""},
 				{[]string{"-project", "demo", "db", ""}, db},
 				{[]string{"-project", "demo", "d"}, "db doc"},
 				{[]string{"-project", "demo", "completion", ""}, "bash fish zsh"},

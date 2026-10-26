@@ -51,6 +51,7 @@ func TestRunRejectsUnknownCommandsOffline(t *testing.T) {
 		{"db", "list", "extra"}, {"db", "create"}, {"doc", "put", "db", "col"}, {"doc", "put", "db", "col", "id", "{}", "x"},
 		{"keys", "create"}, {"whoami", "x"}, {"frob"}, {"-project", "p"}, {"db", "regions", "app"},
 		{"backup", "restore", "app", "id"}, {"projects", "create"}, {"usage", "a", "b"}, {"completion"},
+		{"db", "rename"}, {"db", "rename", "app"}, {"db", "rename", "app", "new", "extra"},
 		{"index", "create", "app", "col"}, {"index", "create", "app", "col", "a", "b", "c", "d", "e"},
 		{"schema", "set", "app", "col"}, {"ttl", "set", "app", "col"}, {"import", "app", "sqlite"},
 		{"import", "status"}, {"backup", "restore-at", "app", "2026-10-23T00:00:00Z"}, {"db", "changes"},

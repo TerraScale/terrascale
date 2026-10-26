@@ -88,6 +88,8 @@ func TestJSONDatabaseResults(t *testing.T) {
 		{"db info", item, "{", []string{"app"}},
 		{"db create", item, "{", []string{"app"}},
 		{"db branch", item, "{", []string{"app", "copy"}},
+		{"db rename", item, "{", []string{"app", "renamed"}},
+		{"db rename", item, "{", []string{"01M5N9000000000000000000AA", "renamed"}},
 		{"db regions", item, "{", []string{"app", "none"}},
 		{"db delete", item, `{"name":"app","deleted":true}`, []string{"app"}},
 	} {

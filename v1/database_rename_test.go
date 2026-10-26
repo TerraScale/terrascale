@@ -66,7 +66,7 @@ func TestRenameDatabaseContract(t *testing.T) {
 
 func TestRenameDatabaseErrorsAreNotRetried(t *testing.T) {
 	t.Parallel()
-	for _, status := range []int{400, 401, 403, 404, 409, 503} {
+	for _, status := range []int{400, 401, 403, 404, 409, 421, 429, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			t.Parallel()
 			calls := 0
