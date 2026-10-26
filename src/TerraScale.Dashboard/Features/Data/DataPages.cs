@@ -27,13 +27,23 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
         if (Sort.Length > 0) query["sort"] = Sort;
         if (Descending) query["order"] = "desc";
         if (Browse.Page > 1) query["page"] = Browse.Page.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (changes.Any(change => change.Key is "q" or "sort" or "order")) { query.Remove("cursor"); query.Remove("page"); }
         foreach (var change in changes) { if (change.Value.Length == 0) query.Remove(change.Key); else query[change.Key] = change.Value; }
         var path = "/databases/" + Uri.EscapeDataString(Database.Id) + "/documents/" + Uri.EscapeDataString(Collection);
         return path + (query.Count == 0 ? "" : "?" + string.Join('&', query.Select(pair => Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value))));
     }
     public string SortPath(string field) => BrowsePath(("sort", field), ("order", Sort == field && !Descending ? "desc" : ""), ("page", ""));
-    public string Summary => $"{(Browse.Documents.Count == 0 ? 0 : (Browse.Page - 1) * 25 + 1)}–{(Browse.Page - 1) * 25 + Browse.Documents.Count} of {(Browse.More ? "at least " : "")}{Browse.Matched} documents · page {Browse.Page}"
-        + (Browse.More ? (Search.Trim().Length > 0 ? " · partial search: first 1,000 documents" : " · partial results") : $" of {Browse.PageCount}");
+    public string NextPath => BrowsePath(("cursor", ""), ("page", (Browse.Page + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+    public string FirstPath => BrowsePath(("cursor", ""), ("page", ""));
+    public string Summary => Error.Length > 0 ? "Document results unavailable." : Search.Length > 0
+        ? $"{Browse.Documents.Count} matches in {Browse.Scanned} documents checked this scan · " + (Browse.More ? "Partial search. Continue searching the collection." : "End of collection reached.")
+        : $"{Browse.Documents.Count} documents on page {Browse.Page} · " + (Browse.More ? "More documents available." : "End of collection reached.");
+    public string EmptyTitle => Error.Length > 0 ? "Documents could not be loaded." : Search.Length > 0
+        ? Browse.More ? "No matches in this scan." : Browse.Cursor.Length > 0 ? "No more matches." : "No documents match your search."
+        : Browse.Cursor.Length > 0 ? "No more documents." : "This collection has no documents yet.";
+    public string EmptyDetail => Error.Length > 0 ? "Reload this page to try again." : Search.Length > 0
+        ? Browse.More ? "Continue searching to check the next documents in this collection." : "Change or clear your search to browse documents."
+        : "Add a document or open another collection.";
 }
 
 public sealed record DataGridColumn(string Name, bool Numeric, bool Root)

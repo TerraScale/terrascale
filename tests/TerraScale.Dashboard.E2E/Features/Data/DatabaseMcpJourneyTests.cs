@@ -102,14 +102,10 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             var continued = await CallAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["search"] = "CUSTOMER 4", ["after"] = empty.GetProperty("nextCursor").GetString() });
             await Assert.That(continued.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
             await Assert.That(documents.GetProperty("hasMore").GetBoolean()).IsFalse();
-            var browser = await CallAsync(replica, "list_documents", new(docFields) { ["page"] = 2 });
-            await Assert.That(browser.GetProperty("page").GetInt32()).IsEqualTo(2);
-            await Assert.That(browser.GetProperty("pageCount").GetInt32()).IsEqualTo(2);
-            await Assert.That(browser.GetProperty("total").GetInt32()).IsEqualTo(31);
-            await Assert.That(browser.GetProperty("totalIsLowerBound").GetBoolean()).IsFalse();
-            await Assert.That(browser.GetProperty("hasMore").GetBoolean()).IsFalse();
-            await ErrorAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["page"] = 2 });
-            await ErrorAsync(replica, "list_documents", new(docFields) { ["after"] = "3", ["sort"] = "name" });
+            await Assert.That(documents.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+            await Assert.That(documents.GetProperty("limit").GetInt32()).IsEqualTo(100);
+            await ErrorAsync(replica, "list_documents", new(docFields) { ["page"] = 2 });
+            await ErrorAsync(replica, "list_documents", new(docFields) { ["sort"] = "name", ["page"] = 2 });
             await ErrorAsync(replica, "list_documents", new(docFields) { ["limit"] = 101 });
             using (var apiDocuments = await replica.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=users"))
                 await Assert.That((await ReadJsonAsync(apiDocuments)).GetProperty("documents").GetArrayLength()).IsEqualTo(31);

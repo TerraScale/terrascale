@@ -9,6 +9,9 @@ namespace TerraScale.Dashboard.Features.Data;
 
 public static class DataEndpoints
 {
+    // A 1 MiB document plus a 1 MiB cursor, with worst-case URL encoding and form framing.
+    private const int DocumentFormBytes = 3 * 2 * 1024 * 1024 + 16 * 1024;
+    private const int BrowseFormBytes = 3 * 1024 * 1024 + 16 * 1024;
     public static IEndpointRouteBuilder MapDataFeatures(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapDocumentChanges();
@@ -24,9 +27,11 @@ public static class DataEndpoints
                 return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, tab, data, saved);
             });
         }
-        endpoints.MapGet("/databases/{databaseId}/documents/{collection}", async (HttpContext http, string databaseId, string collection, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
+        endpoints.MapMethods("/databases/{databaseId}/documents/{collection}", ["GET", "POST"], async (HttpContext http, string databaseId, string collection, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
         {
+            if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = BrowseFormBytes;
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is not null && HttpMethods.IsPost(http.Request.Method) && (!http.Request.HasFormContentType || !Csrf.Validate(http, await http.Request.ReadFormAsync(http.RequestAborted)))) return Results.BadRequest("Invalid form token.");
             return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
         });
         // The documented NDJSON export: one {"collection","id","document"} object per line. Failures before the first line
@@ -129,7 +134,7 @@ public static class DataEndpoints
             var route = operation.StartsWith("indexes", StringComparison.Ordinal) ? "/api/v1/dashboard/" + operation : "/api/v1/dashboard/data/" + operation;
             endpoints.MapPost(route, async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
             {
-                if (action == "documents" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = 1024 * 1024 + 4096;
+                if (action is "documents" or "collections" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = action == "documents" ? DocumentFormBytes : BrowseFormBytes;
                 if ((action.StartsWith("sql", StringComparison.Ordinal) || action == "saved-queries") && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit)
                 {
                     // URL encoding can expand each SQL/history byte to three bytes; validation limits decoded SQL.
@@ -147,13 +152,15 @@ public static class DataEndpoints
                     if (action == "documents")
                     {
                         var result = await data.WriteAsync(context, id, collection, form["operation"].ToString(), form["id"].ToString(), form["document"].ToString(), form["version"].ToString(), http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DocumentsPath(id, collection, form)) : Results.Json(new { id = result.Id, operation = form["operation"].ToString() });
+                        if (DatabaseEndpoints.WantsHtml(http))
+                            return form["cursor"].ToString().Length > 0 ? Results.Redirect(DocumentsPath(id, collection, form), preserveMethod: true) : HttpRedirects.SeeOther(DocumentsPath(id, collection, form));
+                        return Results.Json(new { id = result.Id, operation = form["operation"].ToString() });
                     }
                     if (action == "collections")
                     {
                         var collectionName = form["name"].ToString().Trim();
                         await data.CreateCollectionAsync(context, id, collectionName, http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DocumentsPath(id, collectionName, form)) : Results.Json(new { collection = collectionName, status = "created" }, statusCode: 201);
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DocumentsPath(id, collectionName, form, true)) : Results.Json(new { collection = collectionName, status = "created" }, statusCode: 201);
                     }
                     if (action == "collections/delete")
                     {
@@ -226,6 +233,9 @@ public static class DataEndpoints
         var sort = BrowseValue("sort");
         var descending = BrowseValue("order") == "desc";
         var layout = BrowseValue("view") == "list" ? "list" : "grid";
+        var page = Math.Clamp(int.TryParse(BrowseValue("page"), out var requestedPage) ? requestedPage : 1, 1, int.MaxValue - 1);
+        var cursor = BrowseValue("cursor");
+        browse = new([], 0, page, page, false, cursor);
         if (collection.Length == 0) collection = http.Request.Query["collection"].ToString();
         try
         {
@@ -242,7 +252,7 @@ public static class DataEndpoints
             {
                 // Counts are an optional producer measurement. Omit unavailable
                 // counts while retaining independently available document rows; both reads run together.
-                var browseRead = data.BrowseAsync(context, id, collection, search, sort, descending, int.TryParse(BrowseValue("page"), out var page) ? page : 1, http.RequestAborted);
+                var browseRead = data.BrowseAsync(context, id, collection, search, sort, descending, page, http.RequestAborted, cursor);
                 try { collectionCounts = await countsRead!; }
                 catch (Exception error) when (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)) { }
                 browse = await browseRead;
@@ -278,10 +288,10 @@ public static class DataEndpoints
         return result;
     }
 
-    private static string DocumentsPath(string id, string collection, IFormCollection form)
+    private static string DocumentsPath(string id, string collection, IFormCollection form, bool restart = false)
     {
         var values = new List<KeyValuePair<string, string?>>();
-        foreach (var key in new[] { "view", "sort", "order", "q", "page" }) if (form[key].ToString().Length > 0) values.Add(new(key, form[key].ToString()));
+        foreach (var key in new[] { "view", "sort", "order", "q", "page" }) if (!(restart && key == "page") && form[key].ToString().Length > 0) values.Add(new(key, form[key].ToString()));
         return "/databases/" + Uri.EscapeDataString(id) + "/documents/" + Uri.EscapeDataString(collection) + QueryString.Create(values);
     }
 

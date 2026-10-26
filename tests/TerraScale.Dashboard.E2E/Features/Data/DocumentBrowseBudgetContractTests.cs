@@ -26,6 +26,7 @@ public sealed class DocumentBrowseBudgetContractTests
             var result = await tools.Documents("database", "items", limit: limit, after: after);
             ids.AddRange(result.Documents.Select(row => row.Id));
             await Assert.That(result.NextCursor).IsEqualTo(documents.LastCursor);
+            await Assert.That(result.Limit).IsEqualTo(limit == 0 ? 100 : limit);
             await Assert.That(result.HasMore).IsEqualTo(result.NextCursor is not null);
             await Assert.That(result.Page is null && result.PageCount is null && result.Total is null && result.TotalIsLowerBound is null).IsTrue();
             after = result.NextCursor ?? "";
@@ -59,108 +60,71 @@ public sealed class DocumentBrowseBudgetContractTests
     }
 
     [Test]
-    [Arguments(31, 1, "", 1, 2, 26, true, true)]
-    [Arguments(31, 2, "", 2, 2, 31, false, false)]
-    [Arguments(31, 1, "other", 1, 2, 31, false, true)]
-    [Arguments(25, 40, "", 1, 1, 25, false, false)]
-    [Arguments(0, 1, "", 1, 1, 0, false, false)]
-    [Arguments(1100, 40, "", 40, 40, 1000, true, true)]
-    [Arguments(1100, 1, "absent", 1, 1, 0, true, true)]
-    public async Task McpBrowserPagesExposeActualPageAndHonestTotals(int count, int requested, string search, int page, int pages, int total, bool lowerBound, bool hasMore)
+    [Arguments(0, "")]
+    [Arguments(1, "")]
+    [Arguments(3, " NEEDLE ")]
+    [Arguments(100, "absent")]
+    public async Task SortedMcpPagesReachTheTailWithBoundedScansAndNoPageCap(int limit, string search)
     {
         using var wire = new Regions();
-        var documents = new Documents(count);
-        var result = await Tools(documents, wire).Documents("database", "items", search: search, sort: "a/b~c", page: requested);
-        await Assert.That(result.Page).IsEqualTo(page);
-        await Assert.That(result.PageCount).IsEqualTo(pages);
-        await Assert.That(result.Total).IsEqualTo(total);
-        await Assert.That(result.TotalIsLowerBound).IsEqualTo(lowerBound);
-        await Assert.That(result.HasMore).IsEqualTo(hasMore);
-        await Assert.That(result.NextCursor).IsNull();
-        await Assert.That(result.Documents.Count).IsEqualTo(Math.Min(25, Math.Max(0, total - (page - 1) * 25)));
+        var documents = new Documents(1100);
+        var tools = Tools(documents, wire);
+        var ids = new List<string>();
+        var after = "";
+        var page = 1;
+        do
+        {
+            var before = documents.Queries.Count;
+            var result = await tools.Documents("database", "items", search: search, sort: "a/b~c", descending: true, page: page++, limit: limit, after: after);
+            ids.AddRange(result.Documents.Select(row => row.Id));
+            await Assert.That(result.Limit).IsEqualTo(limit == 0 ? 25 : limit);
+            await Assert.That(result.Documents.Count <= result.Limit).IsTrue();
+            await Assert.That(result.HasMore).IsEqualTo(result.NextCursor is not null);
+            await Assert.That(result.PageCount is null && result.Total is null && result.TotalIsLowerBound is null).IsTrue();
+            await Assert.That(documents.Queries[before].Cursor).IsEqualTo(after.Length == 0 ? null : after);
+            await Assert.That(documents.Queries.Count - before <= (search.Length == 0 ? 1 : 4)).IsTrue();
+            await Assert.That(documents.Queries.Skip(before).Sum(query => query.Limit ?? 0) <= 100).IsTrue();
+            after = result.NextCursor ?? "";
+        } while (after.Length > 0);
+        var expected = search.Length == 0 ? Enumerable.Range(0, 1100).Select(index => index.ToString("D4")) : search == "absent" ? Array.Empty<string>() : new[] { "0450", "0999", "1050" };
+        await Assert.That(ids.SequenceEqual(expected)).IsTrue();
+        await Assert.That(documents.Queries.All(query => query.Sort![0].Path == "/a~1b~0c" && query.Sort[0].Order == "desc")).IsTrue();
         await Assert.That(documents.ListCalls).IsEqualTo(0);
     }
 
     [Test]
-    [Arguments(-1, "", "", false, 1)]
-    [Arguments(101, "", "", false, 1)]
-    [Arguments(0, "", "", false, 0)]
-    [Arguments(0, "", "", false, 41)]
-    [Arguments(3, "", "name", false, 1)]
-    [Arguments(0, "opaque:100", "name", false, 1)]
-    [Arguments(3, "", "", true, 1)]
-    [Arguments(0, "opaque:100", "", true, 1)]
-    [Arguments(3, "", "", false, 2)]
-    [Arguments(0, "opaque:100", "", false, 2)]
-    public async Task McpRejectsInvalidPagingAndIgnoredArgumentCombinations(int limit, string after, string sort, bool descending, int page)
+    [Arguments(-1, "", "", 1)]
+    [Arguments(101, "", "", 1)]
+    [Arguments(0, "", "", 0)]
+    [Arguments(0, "", "name", int.MaxValue)]
+    [Arguments(0, "", "name", 2)]
+    [Arguments(3, "", "", 2)]
+    [Arguments(0, "opaque:100", "", 2)]
+    [Arguments(0, " ", "", 1)]
+    [Arguments(0, "\n", "name", 1)]
+    public async Task McpRejectsInvalidPagingBeforeProducerReads(int limit, string after, string sort, int page)
     {
         using var wire = new Regions();
         var documents = new Documents(205);
         AccountAccessException? rejected = null;
-        try { await Tools(documents, wire).Documents("database", "items", limit: limit, after: after, sort: sort, descending: descending, page: page); }
+        try { await Tools(documents, wire).Documents("database", "items", limit: limit, after: after, sort: sort, page: page); }
         catch (AccountAccessException error) { rejected = error; }
         await Assert.That(rejected?.StatusCode).IsEqualTo(422);
         await Assert.That(documents.ListCalls + documents.Queries.Count).IsEqualTo(0);
     }
 
     [Test]
-    [Arguments(1, 1, 26, 0)]
-    [Arguments(2, 2, 51, 25)]
-    [Arguments(int.MinValue, 1, 26, 0)]
-    [Arguments(int.MaxValue, 40, 1000, 975)]
-    public async Task BrowseReadsOnlyThroughTheRequestedPageAndOneLookahead(int requested, int page, int budget, int first)
-    {
-        var documents = new Documents(1100);
-        var browse = await BrowseAsync(documents, requested, "  ");
-        await Assert.That(browse.Page).IsEqualTo(page);
-        await Assert.That(browse.Documents.Count).IsEqualTo(25);
-        await Assert.That(browse.Documents[0].Id).IsEqualTo(first.ToString("D4"));
-        await Assert.That(browse.Documents[^1].Id).IsEqualTo((first + 24).ToString("D4"));
-        await Assert.That(documents.Queries.Sum(query => query.Limit ?? 0)).IsEqualTo(budget);
-        await Assert.That(documents.Queries.Count).IsEqualTo((budget + 99) / 100);
-        await Assert.That(documents.Queries[0].Limit).IsEqualTo(Math.Min(100, budget));
-        await Assert.That(documents.Queries.All(query => query.Sort![0].Path == "/a~1b~0c" && query.Sort[0].Order == "desc")).IsTrue();
-        await Assert.That(browse.PageCount).IsEqualTo(Math.Min(40, page + 1));
-        await Assert.That(browse.More).IsTrue();
-        await Assert.That(Summary(browse)).Contains("at least");
-    }
-
-    [Test]
-    [Arguments(70, false, 0)]
-    [Arguments(1100, true, 2)]
-    public async Task TextSearchIncludesLaterDocumentsAndDisclosesTheScanBoundary(int count, bool more, int matches)
-    {
-        var documents = new Documents(count);
-        var browse = await BrowseAsync(documents, int.MaxValue, " NEEDLE ");
-        await Assert.That(browse.Matched).IsEqualTo(matches);
-        await Assert.That(browse.Documents.Select(row => row.Id).SequenceEqual(matches > 0 ? ["0450", "0999"] : Array.Empty<string>())).IsTrue();
-        await Assert.That(documents.Queries.Sum(query => query.Limit ?? 0)).IsEqualTo(count >= 1000 ? 1000 : 100);
-        await Assert.That(documents.Queries.Count).IsEqualTo((Math.Min(count, 1000) + 99) / 100);
-        await Assert.That(browse.More).IsEqualTo(more);
-        await Assert.That(browse.PageCount).IsEqualTo(1);
-        await Assert.That(Summary(browse, "NEEDLE").Contains("partial search", StringComparison.Ordinal)).IsEqualTo(more);
-    }
-
-    [Test]
-    [Arguments(0, 1)]
-    [Arguments(25, 1)]
-    [Arguments(50, 2)]
-    public async Task ExhaustedCollectionsRetainExactTotalsAndClampToTheLastPage(int count, int page)
-    {
-        var browse = await BrowseAsync(new Documents(count), 40, "");
-        await Assert.That(browse.Matched).IsEqualTo(count);
-        await Assert.That(browse.Page).IsEqualTo(page);
-        await Assert.That(browse.PageCount).IsEqualTo(page);
-        await Assert.That(browse.More).IsFalse();
-        await Assert.That(Summary(browse)).Contains($"of {count} documents · page {page} of {page}");
-    }
-
-    private static string Summary(DocumentBrowse browse, string search = "") => new DataPage(null!, null!, "documents", "items", [], browse, search).Summary;
-    private static async Task<DocumentBrowse> BrowseAsync(Documents documents, int page, string search)
+    public async Task BrowserDefaultRetainsTwentyFiveRowsAndTheExactProducerCursor()
     {
         using var wire = new Regions();
+        var documents = new Documents(1100);
         var (service, context) = Service(documents, wire);
-        return await service.BrowseAsync(context, "database", "items", search, "a/b~c", true, page, CancellationToken.None);
+        var browse = await service.BrowseAsync(context, "database", "items", "", "a/b~c", true, 41, CancellationToken.None, "1000");
+        await Assert.That(browse.Documents.Select(row => row.Id).SequenceEqual(Enumerable.Range(1000, 25).Select(index => index.ToString("D4")))).IsTrue();
+        await Assert.That(browse.Cursor).IsEqualTo("1000");
+        await Assert.That(browse.NextCursor).IsEqualTo("1025");
+        await Assert.That(documents.Queries.Single().Limit).IsEqualTo(25);
+        await Assert.That(browse.Scanned).IsEqualTo(25);
     }
 
     private static DataMcpTools Tools(Documents documents, Regions wire)
