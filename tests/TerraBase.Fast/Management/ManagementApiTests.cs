@@ -433,7 +433,7 @@ public sealed class ManagementApiTests
                     HttpStatusCode.ServiceUnavailable, "unavailable", message);
                 var projectPath = $"/v1/management/organizations/{organization}/projects/{EntityIds.New()}";
                 var databasePath = $"/databases/{EntityIds.New()}";
-                foreach (var suffix in new[] { "/api-keys", databasePath + "/backups", databasePath + "/collections", databasePath + "/indexes", "/saved-queries", databasePath + "/usage" })
+                foreach (var suffix in new[] { databasePath + "/backups", databasePath + "/collections", databasePath + "/indexes", "/saved-queries", databasePath + "/usage" })
                 {
                     await ErrorAssert.ErrorAsync(mallory.GetAsync(Uri(projectPath + suffix)), HttpStatusCode.ServiceUnavailable, "unavailable", message);
                 }

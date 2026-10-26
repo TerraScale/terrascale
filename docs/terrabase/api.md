@@ -380,7 +380,6 @@ from OpenAPI. This release neither resets production nor changes existing storag
 | `/v1/management/current-organization` | ts-auth (or the dashboard session) |
 | `…/members…`, `…/leave`, `…/invitations…`, `/v1/management/invitations/{lookup,accept}`, `…/ownership-transfer…` | ts-auth |
 | `…/organizations/{organization}/projects[/{project}]`: create, list, read, rename, delete | ts-auth |
-| `…/projects/{project}/api-keys…`, `POST /admin/api-keys`, `tb_` key validation | ts-auth (API keys are client credentials) |
 | `PUT …/organizations/{organization}/plan` | ts-dashboard (plans, subscriptions, billing) |
 | `…/audit-events`, `…/audit-retention` (organization audit) | ts-auth, with membership |
 | `/v1/management/commits…`, `/v1/management/versions`, `/v1/management/documents/{collection}…` | ts-dashboard stores its own state as ordinary TerraBase documents in its own project |

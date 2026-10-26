@@ -9,7 +9,6 @@ using TerraBase.Features.Health;
 using TerraBase.Features.Import;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Features.Management.Credentials;
 using TerraBase.Features.Management.Indexes;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Logs;
@@ -96,9 +95,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]
 [JsonSerializable(typeof(CreatedInvitation))]
-[JsonSerializable(typeof(CreatedProjectApiKey))]
 [JsonSerializable(typeof(CreateIndexRequest))]
-[JsonSerializable(typeof(CreateProjectApiKeyRequest))]
 [JsonSerializable(typeof(DatabaseBackup))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(DatabaseChangeCursor))]
@@ -170,7 +167,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ManagementPage<Organization>))]
 [JsonSerializable(typeof(ManagementPage<OrganizationMember>))]
 [JsonSerializable(typeof(ManagementPage<Project>))]
-[JsonSerializable(typeof(ManagementPage<ProjectApiKey>))]
 [JsonSerializable(typeof(ManagementPage<SavedQuery>))]
 [JsonSerializable(typeof(ManagementOpRequest))]
 [JsonSerializable(typeof(Membership))]
@@ -200,8 +196,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectClosureRequest))]
 [JsonSerializable(typeof(ProjectClosureStatus))]
 [JsonSerializable(typeof(ProjectBindingRequest))]
-[JsonSerializable(typeof(ProjectApiKey))]
-[JsonSerializable(typeof(ProjectKeyEntry))]
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(ProjectAnalytics))]

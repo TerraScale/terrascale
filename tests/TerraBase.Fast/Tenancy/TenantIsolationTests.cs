@@ -86,7 +86,7 @@ public sealed class TenantIsolationTests
         // Canonical management addresses database names: this name exists only in B's project.
         var bForeign = await CreateDatabaseAsync(b, "foreign");
         var bInvitation = await InviteAsync(b, bDashboard);
-        // And the database tooling of the Management API: a project API key, a saved query, an index, a backup and a recommendation.
+        // And the database tooling of the Management API: a saved query, an index, a backup and a recommendation.
         var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
         var bTooling = await SeedToolingAsync(b, bDashboard, bSecret);
         // Prove EXPLAIN accepts these credentials before testing the same route against another project.
@@ -290,7 +290,6 @@ public sealed class TenantIsolationTests
                 .Replace("{id}", DocumentId, StringComparison.Ordinal)
                 .Replace("{user}", user, StringComparison.Ordinal)
                 .Replace("{invitation}", invitation, StringComparison.Ordinal)
-                .Replace("{key}", tooling.Key, StringComparison.Ordinal)
                 .Replace("{query}", tooling.Query, StringComparison.Ordinal)
                 .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
                 .Replace("{webhook}", DocumentId, StringComparison.Ordinal)
@@ -355,7 +354,7 @@ public sealed class TenantIsolationTests
         return id;
     }
 
-    // The Management API's tooling of a database: a project API key, a saved query, an index on people.name, a backup, and a
+    // The Management API's tooling of a database: a saved query, an index on people.name, a backup, and a
     // recommendation for people.owner from a SQL run.
     private static async Task<Tooling> SeedToolingAsync(Tenant tenant, HttpClient dashboard, string database)
     {
@@ -368,12 +367,11 @@ public sealed class TenantIsolationTests
             return await response.Content.ReadFromJsonAsync<JsonElement>();
         }
 
-        var key = (await PostAsync($"{project}/api-keys", new { name = "ci", scopes = ReadScope })).GetProperty("key").GetProperty("id").GetString()!;
         var query = (await PostAsync($"{project}/saved-queries", new { name = "All", sql = "SELECT * FROM people" })).GetProperty("id").GetString()!;
         var backup = (await PostAsync($"{path}/backups", null)).GetProperty("id").GetString()!;
         var index = (await PostAsync($"{path}/indexes", new { collection = "people", fields = NameField })).GetProperty("name").GetString()!;
         await PostAsync($"{path}/sql", new { sql = "SELECT * FROM people WHERE owner = 'nobody'" });
-        return new Tooling(key, query, backup, index, "people:owner");
+        return new Tooling(query, backup, index, "people:owner");
     }
 
     // A pending invitation; returns its id.
@@ -432,7 +430,7 @@ public sealed class TenantIsolationTests
         {
             organization, $"{organization}/projects", project, $"{project}/databases", $"{organization}/members", $"{organization}/invitations",
             $"{organization}/ownership-transfer", $"{organization}/audit-retention", $"{organization}/audit-events",
-            $"{project}/api-keys", $"{project}/saved-queries", $"{database}/indexes", $"{database}/backups", $"{database}/backup-policy",
+            $"{project}/saved-queries", $"{database}/indexes", $"{database}/backups", $"{database}/backup-policy",
             $"{database}/index-recommendations",
         })
         {
@@ -448,5 +446,5 @@ public sealed class TenantIsolationTests
     }
 
     /// <summary>The ids of a tenant's Management API tooling that routes name.</summary>
-    private sealed record Tooling(string Key, string Query, string Backup, string Index, string Recommendation);
+    private sealed record Tooling(string Query, string Backup, string Index, string Recommendation);
 }

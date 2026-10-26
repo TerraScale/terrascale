@@ -147,7 +147,7 @@ public sealed class ProjectClosureTests
         await Assert.That((await transaction.ListAsync($"projects/{project}/databases", null, 10, 1024 * 1024, CancellationToken.None)).Documents).IsEmpty();
     }
 
-    // Review R1: after this machine's empty receipt, neither a project API key (either route) nor a customer backup
+    // Review R1: after this machine's empty receipt, neither an operator project key nor a customer backup
     // destination with its sealed credentials can land, so acceptance stays true.
     [Test]
     public async Task A_fenced_project_takes_no_api_key_or_backup_destination_and_stays_accepted()
@@ -161,11 +161,6 @@ public sealed class ProjectClosureTests
         await CloseAsync(api.Server.Client, project, closure, organization, HttpStatusCode.OK);
 
         var projectRoute = $"/v1/management/organizations/{organization}/projects/{project}";
-        using (var key = await api.Client.PostAsJsonAsync(ManagementApi.Uri(projectRoute + "/api-keys"), new { name = "late", scopes = ReadScope }))
-        {
-            await Assert.That(key.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        }
-
         // The operator route answers an unknown scope, a fenced project included, with its fixed 400.
         await ErrorAssert.ErrorAsync(api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
             new { name = "late", scopes = ReadScope, organizationId = organization, projectId = project }), HttpStatusCode.BadRequest, "invalid_request",
@@ -255,7 +250,7 @@ public sealed class ProjectClosureTests
         await using (var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.That(await transaction.GetAsync("api_keys", key.GetProperty("id").GetString()!, CancellationToken.None)).IsNull();
-            foreach (var collection in new[] { $"projects/{database.Project}/api_keys", $"projects/{database.Project}/api_key_order", $"projects/{database.Project}/backup_destination" })
+            foreach (var collection in new[] { $"projects/{database.Project}/api_keys", $"projects/{database.Project}/backup_destination" })
             {
                 await Assert.That((await transaction.ListAsync(collection, null, 10, 1024 * 1024, CancellationToken.None)).Documents).IsEmpty().Because(collection);
             }

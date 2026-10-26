@@ -37,9 +37,6 @@ public sealed class ToolingAccessTests
             (HttpMethod.Get, $"{p}/saved-queries/{EntityIds.New()}", null),
             (HttpMethod.Put, $"{p}/saved-queries/{EntityIds.New()}", """{"name":"All","sql":"SELECT * FROM people"}"""),
             (HttpMethod.Delete, $"{p}/saved-queries/{EntityIds.New()}", null),
-            (HttpMethod.Get, $"{p}/api-keys", null),
-            (HttpMethod.Post, $"{p}/api-keys", """{"name":"ci","scopes":["documents:read"]}"""),
-            (HttpMethod.Delete, $"{p}/api-keys/{EntityIds.New()}", null),
         ];
 
         foreach (var (method, path, body) in routes)
