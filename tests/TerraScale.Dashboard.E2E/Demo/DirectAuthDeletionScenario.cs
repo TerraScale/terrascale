@@ -37,6 +37,10 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
     public static string Email(string user) => user.ToLowerInvariant() + "@example.test";
     public string Id() => new TerraScaleIdGenerator().NewId();
 
+    // Compose the real SDK gateway in the host fixture; journeys exercise it through HTTP.
+    public static Task<DirectAuthDeletionScenario> StartReceiptStatusAsync() => StartAsync(configure: builder =>
+        builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(services => services.GetRequiredService<TsAuthGateway>())));
+
     public static async Task<DirectAuthDeletionScenario> StartAsync(bool productionState = false, Action<WebApplicationBuilder>? configure = null)
     {
         var scenario = new DirectAuthDeletionScenario();

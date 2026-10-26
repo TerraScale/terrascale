@@ -3,10 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Playwright;
-using TerraScale.Dashboard.Features.Auth;
 using static Microsoft.Playwright.Assertions;
 using Scenario = TerraScale.Dashboard.E2E.DirectAuthDeletionScenario;
 
@@ -95,8 +92,7 @@ public sealed class AccountDeletionPendingJourneyTests
         await Assert.That((await scenario.State.ListAsync("account_deletions", default)).Count).IsEqualTo(1);
     }
 
-    private static Task<Scenario> StartAsync() => Scenario.StartAsync(configure: builder =>
-        builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(services => services.GetRequiredService<TsAuthGateway>())));
+    private static Task<Scenario> StartAsync() => Scenario.StartReceiptStatusAsync();
 
     private static async Task<string> CsrfAsync(HttpClient client, string path)
     {
