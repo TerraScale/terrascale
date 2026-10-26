@@ -436,7 +436,8 @@ public sealed class TsAuthPlatformJourneyTests
         var preview = await inviteeClient.GetStringAsync("/invitations/" + token);
         await Assert.That(preview.Contains("Join Wire company", StringComparison.Ordinal)).IsTrue();
         csrf = await HttpJourney.CsrfAsync(inviteeClient, "/invitations/" + token);
-        using (var accepted = await HttpJourney.PostFormAsync(inviteeClient, "/invitations/" + token + "/respond", new() { ["_csrf"] = csrf, ["action"] = "accept" }))
+        using (var accepted = await HttpJourney.PostFormAsync(inviteeClient, "/invitations/" + token + "/respond?organizationId=" + AccountService.NewId() + "&projectId=" + AccountService.NewId(),
+            new() { ["_csrf"] = csrf, ["action"] = "accept" }))
         {
             await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(accepted.Headers.Location?.OriginalString).IsEqualTo("/organization?tab=members&invitation=accepted");
