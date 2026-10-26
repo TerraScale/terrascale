@@ -62,12 +62,26 @@ ts --version
 
 ### Shell completion
 
-```sh
+Run the block for your shell. All files go into user-owned directories.
+
+```bash
 mkdir -p ~/.local/share/bash-completion/completions
 ts completion bash > ~/.local/share/bash-completion/completions/ts
-ts completion zsh > "${fpath[1]}/_ts"
+source ~/.local/share/bash-completion/completions/ts
+```
+
+```zsh
+mkdir -p ~/.local/share/terrascale
+ts completion zsh > ~/.local/share/terrascale/completion.zsh
+source ~/.local/share/terrascale/completion.zsh
+```
+
+Add the zsh `source` line to `~/.zshrc` to load it in new sessions.
+
+```fish
 mkdir -p ~/.config/fish/completions
 ts completion fish > ~/.config/fish/completions/ts.fish
+source ~/.config/fish/completions/ts.fish
 ```
 
 ## Start from the CLI
