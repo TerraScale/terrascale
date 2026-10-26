@@ -61,7 +61,8 @@ public static class DatabaseEndpoints
                     if (context is null) return AccountEndpoints.LoginRedirect(http);
                     // The delete dialog moved to the danger tab; keep old overview links working.
                     if (section == "overview" && http.Request.Query["delete"] == "1") return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
-                    await databases.SyncAsync(context, http.RequestAborted);
+                    // Placement refresh belongs to the replication tab; other direct links resolve only their requested ID.
+                    if (section == "replication") await databases.SyncAsync(context, http.RequestAborted);
                     return await DetailPageAsync(http, context, databaseId, section, backend, databases);
                 });
         }
