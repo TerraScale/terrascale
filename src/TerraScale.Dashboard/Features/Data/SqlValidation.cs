@@ -17,7 +17,6 @@ public static partial class SqlValidation
 {
     // Each run is one TerraBase request, and every request is its own transaction.
     private static readonly HashSet<string> Transaction = ["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"];
-    private static readonly HashSet<string> Writes = ["INSERT", "UPDATE", "DELETE", "REPLACE", "UPSERT"];
 
     public static IReadOnlyList<SqlDiagnostic> Diagnostics(string statement)
     {
@@ -32,8 +31,28 @@ public static partial class SqlValidation
     // Reads run with read access only; anything else (writes, DDL) needs write access, and TerraBase enforces the same split.
     public static bool IsRead(string statement)
     {
-        var words = Visible(statement) is { } visible ? WordPattern().Matches(visible).Select(match => match.Value.ToUpperInvariant()).ToArray() : [];
-        return words.FirstOrDefault() is "SELECT" or "VALUES" or "EXPLAIN" || words.FirstOrDefault() == "WITH" && !words.Any(Writes.Contains);
+        if (Visible(statement) is not { } visible) return false;
+        var first = WordPattern().Match(visible).Value.ToUpperInvariant();
+        if (first is "SELECT" or "VALUES" or "EXPLAIN") return true;
+        if (first == "PRAGMA") return ReadPragmaPattern().IsMatch(visible);
+        if (first != "WITH") return false;
+        // CTE column names may be write keywords. Find the command after the CTE bodies instead.
+        var depth = 0;
+        var body = false;
+        foreach (Match token in CteTokenPattern().Matches(visible))
+        {
+            if (token.Value == "(") depth++;
+            else if (token.Value == ")")
+            {
+                if (--depth < 0) return false;
+                if (depth != 0 || !body) continue;
+                var rest = visible[(token.Index + 1)..].TrimStart();
+                if (!rest.StartsWith(',')) return WordPattern().Match(rest).Value.ToUpperInvariant() is "SELECT" or "VALUES";
+                body = false;
+            }
+            else if (depth == 0 && token.Value.Equals("AS", StringComparison.OrdinalIgnoreCase)) body = true;
+        }
+        return false;
     }
 
     public static SqlAnalysis Analyze(string statement)
@@ -89,6 +108,9 @@ public static partial class SqlValidation
         }
         return quote == '\0' ? new string(chars) : null;
     }
+    [GeneratedRegex(@"[A-Za-z_][A-Za-z0-9_]*|[()]", RegexOptions.CultureInvariant)] private static partial Regex CteTokenPattern();
+    // Only known introspection forms qualify; assignments and unknown pragmas still need write access.
+    [GeneratedRegex(@"\A\s*PRAGMA\s+(?:(?:main|temp)\s*\.\s*)?(?:(?:table_info|table_xinfo|index_list|index_info|foreign_key_list)\s*\([^()]*\)|read_uncommitted|foreign_keys)\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)] private static partial Regex ReadPragmaPattern();
     [GeneratedRegex("[A-Za-z_][A-Za-z0-9_]*", RegexOptions.CultureInvariant)] private static partial Regex WordPattern();
     [GeneratedRegex(@"\$[A-Za-z0-9_]+|\?[0-9]*|[:@][A-Za-z_][A-Za-z0-9_]*", RegexOptions.CultureInvariant)] private static partial Regex AnyParameterPattern();
 }

@@ -153,7 +153,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         statement = statement.Trim();
         if (SqlValidation.Diagnostics(statement).FirstOrDefault(item => item.Severity == "error") is { } problem) throw new AccountAccessException(problem.Message, 422);
         var write = !SqlValidation.IsRead(statement);
-        if (write && !allowWrites) throw new AccountAccessException("Only read-only statements (SELECT, WITH, EXPLAIN, VALUES) run here.", 422);
+        if (write && !allowWrites) throw new AccountAccessException("Only read-only statements (SELECT, WITH, EXPLAIN, VALUES, introspection PRAGMA) run here.", 422);
         if (write && !context.CanWrite) throw new AccountAccessException("Write access is required to change data or schema. Your role can run read-only statements.");
         return await backend.SqlAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, statement, write, cancellationToken);
     }

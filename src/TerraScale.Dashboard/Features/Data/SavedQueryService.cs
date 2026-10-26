@@ -15,7 +15,8 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time)
     public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
     {
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
-        return await ListAsync(context, cancellationToken);
+        var queries = await ListAsync(context, cancellationToken);
+        return databaseId.Length == 0 ? queries : queries.Where(query => query.DatabaseId.Length == 0 || query.DatabaseId == databaseId).ToArray();
     }
 
     public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, CancellationToken cancellationToken)
@@ -34,7 +35,7 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time)
         if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > 128) throw new AccountAccessException("Saved query names use 1–128 characters.", 422);
         sql = sql.Trim();
         if (SqlValidation.Diagnostics(sql).FirstOrDefault(item => item.Severity == "error") is { } problem) throw new AccountAccessException(problem.Message, 422);
-        var query = new SavedQuery(Guid.CreateVersion7().ToString(), name, sql, databaseId, time.GetUtcNow());
+        var query = new SavedQuery(AccountService.NewId(), name, sql, databaseId, time.GetUtcNow());
         await UpdateAsync(context, queries => queries.Add(query), cancellationToken);
         return query;
     }

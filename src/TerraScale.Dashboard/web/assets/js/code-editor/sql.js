@@ -8,8 +8,8 @@ const checkDelay = 400;
 const lineBreaks = new Set(['SELECT', 'FROM', 'WHERE', 'ORDER', 'GROUP', 'HAVING', 'LIMIT', 'UNION']);
 
 // Quoted values and names stay whole, and so do dotted field paths,
-// hyphenated collection names (the dialect has no arithmetic) and $1.
-const tokenPattern = /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*'?|"(?:[^"]|"")*"?|`(?:[^`]|``)*`?|\[[^\]]*\]?|[A-Za-z_][A-Za-z0-9_]*(?:[.-][A-Za-z0-9_]+)*\.?|\$\d+|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|<=|>=|!=|<>|\S/g;
+// hyphenated collection names, compound SQL operators and $1.
+const tokenPattern = /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*'?|"(?:[^"]|"")*"?|`(?:[^`]|``)*`?|\[[^\]]*\]?|[A-Za-z_][A-Za-z0-9_]*(?:[.-][A-Za-z0-9_]+)*\.?|\$\d+|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|->>|->|\|\||<<|>>|==|<=|>=|!=|<>|\S/g;
 const tokenize = text => [...text.matchAll(tokenPattern)].map(match => ({ text: match[0], start: match.index, end: match.index + match[0].length }));
 const isName = token => /^[A-Za-z_]/.test(token?.text ?? '');
 const isComment = token => token.text.startsWith('--') || token.text.startsWith('/*');
@@ -338,11 +338,15 @@ function localDiagnostics(context, text) {
 function formatSQL(text, keywords) {
   let out = '';
   let previous = null;
-  for (const { text: token } of tokenize(text)) {
+  let previousEnd = -1;
+  for (const { text: token, start, end } of tokenize(text)) {
     // A collection keeps its line even when it reads as a keyword.
     const upper = previous?.toUpperCase() === 'FROM' ? '' : token.toUpperCase();
     if (previous === null) {
       out = token;
+    } else if (start === previousEnd && !previous.startsWith('--')) {
+      // Keep adjacent lexical fragments together (blob literals, .5, :name, etc.).
+      out += token;
     } else if (previous.startsWith('--') || lineBreaks.has(upper)) {
       // A line comment ends at its line; comments are kept as written.
       out += `\n${token}`;
@@ -354,6 +358,7 @@ function formatSQL(text, keywords) {
       out += ` ${token}`;
     }
     previous = token;
+    previousEnd = end;
   }
   return out;
 }
