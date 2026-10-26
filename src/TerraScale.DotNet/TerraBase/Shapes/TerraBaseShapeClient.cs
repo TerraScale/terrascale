@@ -206,7 +206,7 @@ public sealed partial class TerraBaseShapeClient
     }
 
     private static bool IsRetryable(TerraBaseException error) => ((int?)error.StatusCode, error.ErrorCode) is
-        (429, "shape_busy") or (503, "unavailable") or (503, "shape_too_large");
+        (429, "shape_busy") or (503, "unavailable") or (503, "auth_unavailable") or (503, "shape_too_large");
 
     private async Task<Reply> ReadReplyAsync(TerraBaseConnection.OpenResponse opened)
     {

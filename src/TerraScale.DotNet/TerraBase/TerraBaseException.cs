@@ -32,7 +32,7 @@ public class TerraBaseException : HttpRequestException
     /// <summary>The response's canonical ULID from X-Request-ID; null when absent, invalid or ambiguous.</summary>
     public string? RequestId { get; private set; }
 
-    /// <summary>Server Retry-After when present; no request is automatically retried.</summary>
+    /// <summary>Server Retry-After when present; safe reads may retry auth_unavailable.</summary>
     public TimeSpan? RetryAfter { get; private set; }
 
     /// <summary>Original HTTP response headers, preserved after disposal for caller-owned routing or diagnostics.</summary>
@@ -104,6 +104,8 @@ public class TerraBaseException : HttpRequestException
             400 or 403 or 409 or 413 when code is not null && statement is { } failed && sqliteCode is not null =>
                 new TerraBaseSqlException(status, text, code, failed, sqliteCode),
             400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op),
+            401 when code == "key_revoked" => new TerraBaseKeyRevokedException(status, text, code, op),
+            401 when code == "key_expired" => new TerraBaseKeyExpiredException(status, text, code, op),
             401 => new TerraBaseAuthenticationException(status, text, code, op),
             403 => new TerraBaseForbiddenException(status, text, code, op),
             404 => new TerraBaseNotFoundException(status, text, code, op),
@@ -184,12 +186,26 @@ public sealed class TerraBaseValidationException : TerraBaseException
 }
 
 /// <summary>401: the API key or service credential is missing or unknown.</summary>
-public sealed class TerraBaseAuthenticationException : TerraBaseException
+public class TerraBaseAuthenticationException : TerraBaseException
 {
     internal TerraBaseAuthenticationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
         : base(statusCode, message, errorCode, operationIndex)
     {
     }
+}
+
+/// <summary>401 key_revoked: replace the key; never retry or exchange it again.</summary>
+public sealed class TerraBaseKeyRevokedException : TerraBaseAuthenticationException
+{
+    internal TerraBaseKeyRevokedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
+        : base(statusCode, message, errorCode, operationIndex) { }
+}
+
+/// <summary>401 key_expired: replace the key; never retry or exchange it again.</summary>
+public sealed class TerraBaseKeyExpiredException : TerraBaseAuthenticationException
+{
+    internal TerraBaseKeyExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
+        : base(statusCode, message, errorCode, operationIndex) { }
 }
 
 /// <summary>403: the key lacks a scope, or the acting member's role does not allow the operation.</summary>
