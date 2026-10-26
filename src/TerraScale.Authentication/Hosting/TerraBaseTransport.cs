@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -85,13 +86,21 @@ public static class TerraBaseTransport
             : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
 
     // Credentials, sessions and revocations must survive the loss of one region: every write waits for another region's durable
-    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header.
+    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header. Rate-limit buckets are the
+    // exception: losing one with its region only reopens that window, while waiting for a remote ack on every attempt put a
+    // cross-region round trip (and its conflict retries) on every token request (docs/auth/rate-limit-durability.md).
     private sealed class RemoteDurableHandler : DelegatingHandler
     {
+        private static readonly string RateLimits = $"/collections/{AttemptLimiter.Collection}/";
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             request.Headers.Remove(DurabilityHeader);
-            request.Headers.Add(DurabilityHeader, "remote_durable");
+            if (request.RequestUri?.AbsolutePath.Contains(RateLimits, StringComparison.Ordinal) != true)
+            {
+                request.Headers.Add(DurabilityHeader, "remote_durable");
+            }
+
             return base.SendAsync(request, cancellationToken);
         }
     }
