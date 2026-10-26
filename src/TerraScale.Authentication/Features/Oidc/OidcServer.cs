@@ -340,8 +340,8 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 /// <summary>
 /// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code, device code,
 /// device user code or refresh token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
-/// redemptions one succeeds locally. Replicated winner claims invalidate only losing descendants; the winning branch
-/// remains usable, including when the original credential is replayed.
+/// redemptions one succeeds locally. Replicated winner claims reject unused losing descendants without ending the
+/// winning grant. Replaying a consumed refresh token ends that grant, including when its ancestry lost.
 /// </summary>
 public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthStore store, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
 {
@@ -372,7 +372,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         var token = await tokens.FindByIdAsync(identifier, context.CancellationToken).ConfigureAwait(false);
         if (token is not { Status: Statuses.Valid, Version: not null })
         {
-            context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+            await this.RejectAsync(context, principal, token).ConfigureAwait(false);
             return;
         }
 
@@ -456,7 +456,16 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             return;
         }
 
-        context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+        // Redeemed() mutates our local object before the CAS. Only a fresh stored read can prove another use won.
+        await this.RejectAsync(context, principal, await tokens.FindByIdAsync(identifier, context.CancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    private async ValueTask RejectAsync(ProcessSignInContext context, ClaimsPrincipal principal, OidcToken? token)
+    {
+        var replay = context.EndpointType is OpenIddictServerEndpointType.Token && context.Request.IsRefreshTokenGrantType()
+            && await CredentialLineage.RevokeRefreshReplayAsync(tokens, token, principal, context.Request.ClientId,
+                context.CancellationToken).ConfigureAwait(false);
+        context.Reject(Errors.InvalidGrant, replay ? CredentialLineage.ReplayNotice : CredentialLineage.ConflictNotice);
     }
 
     private static JsonElement Redeemed(OidcToken token, DateTimeOffset now)
