@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
-<section class="ts-card ts-card-flush" id="sql-tables" aria-labelledby="sql-tables-title" data-signals="{catalogLoading: false}" data-attr:aria-busy="$catalogLoading">
+<section class="ts-card ts-card-flush" id="sql-tables" aria-labelledby="sql-tables-title" data-signals="{catalogLoading: false}" aria-busy="false" data-attr:aria-busy="$catalogLoading ? 'true' : 'false'">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-tables-title">SQL tables</h2><p class="ts-card-description">Declared columns, including tables with no rows.</p></div></header>
 <div class="ts-card-body">
 <p class="ts-meta" role="status" aria-live="polite" data-text="$catalogLoading ? 'Loading SQL tables…' : ''"></p>
