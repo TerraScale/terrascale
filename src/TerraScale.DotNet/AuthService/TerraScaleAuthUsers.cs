@@ -390,3 +390,10 @@ public sealed record TerraScaleAuthUserOrganization(
     [property: JsonPropertyName("role")] string Role,
     [property: JsonPropertyName("created_at")] long CreatedAt,
     [property: JsonPropertyName("organization")] TerraScaleAuthOrganization? Organization);
+
+/// <summary>An organization record.</summary>
+public sealed record TerraScaleAuthOrganization(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("slug")] string Slug,
+    [property: JsonPropertyName("created_at")] long CreatedAt);
