@@ -127,6 +127,8 @@ public sealed class CopyPlacementTests
                 organization = await gru.CreateOrganizationAsync("Snapshot routing");
                 project = await gru.CreateProjectAsync(organization, "Copies");
                 var source = await gru.CreateManagedDatabaseAsync(organization, project, "source");
+                using var placed = await gru.Client.PatchAsJsonAsync(ManagementApi.Uri(source.Path), new { replicaRegions = Replicas }, cancellationToken);
+                placed.EnsureSuccessStatusCode();
                 sourceId = source.Id;
                 using var data = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
                 await ManagementApi.CreateCollectionAsync(data, source, "items", cancellationToken);
