@@ -72,6 +72,8 @@ and `mfa_not_enrolled` (409: the owner must enrol before requiring MFA). These d
 retried. Only the fixed code and safe metadata are retained; unknown codes and producer messages remain omitted.
 Their producer revision and source hashes are pinned in `error-codes.json` under `mfa_producer`.
 
+Auth operations retain the original caller cancellation token across headers, body reads and synchronous parsing. Caller cancellation takes precedence over a result or parse failure and throws `OperationCanceledException` with that token. The fixed 30-second SDK deadline instead throws `TimeoutException`; an earlier caller-owned `HttpClient.Timeout` also throws `TimeoutException` with a distinct diagnostic. Neither timeout path adds retries or disposes the caller's client.
+
 Platform bodies: 16 KiB. Token forms and success responses: 1 MiB. Error responses: 64 KiB. One 30-second deadline covers transport/body work and preserves caller cancellation. TerraScaleAuthException exposes HTTP status, safe allowlisted ErrorCode and RetryAfter; unknown codes, producer messages/bodies and serializer details are not retained. Requests do not follow redirects when the documented handler prerequisite is met. The SDK never disposes caller-owned HttpClient. No storage, deployments, credential provisioning or service binaries are part of this contract. API-key metadata has no prefix or last4 field; do not fabricate either for list responses. The complete secret has format `<ULID>_<52 lowercase Crockford characters>` and appears only at creation/rotation.
 
 ## I5 requests
