@@ -53,6 +53,22 @@ public sealed class PlatformDatabaseContractTests
         await Assert.That(customer.RoleFor("user")).IsEqualTo("owner");
     }
 
+    [Test]
+    public async Task ExploreHydrationPreservesAllRegionsPlacement()
+    {
+        using var wire = new Wire();
+        using var http = wire.CreateClient("");
+        var project = new ProjectRecord { Id = "00000000000000000000000002" };
+        var organization = new OrganizationRecord { Id = PlatformDatabases.OrganizationId, Projects = { [project.Id] = project } };
+        await PlatformDatabases.HydrateAsync(organization, http, Scope().Session!, CancellationToken.None);
+        var database = project.Databases[Database];
+        await Assert.That(database.AllRegions).IsTrue();
+        await Assert.That(database.Region).IsEqualTo("gru");
+        var regions = new[] { DatabaseRegion.FromId("gru")!, DatabaseRegion.FromId("fra")!, DatabaseRegion.FromId("sjc")! };
+        await Assert.That(DatabaseService.ServingRegions(database, regions).Select(region => region.ToLowerInvariant())).IsEquivalentTo(new[] { "gru", "fra", "sjc" });
+        await Assert.That(wire.Bearers.Single()).IsEqualTo("user-token");
+    }
+
     private static DatabaseScope Scope() => new("user", "user-token", PlatformDatabases.OrganizationId, "TerraScale", "00000000000000000000000002", "ts-auth")
     { Session = new("user", "Owner", "owner@example.test", "user-token", null, DateTimeOffset.UtcNow.AddMinutes(5)) };
 
@@ -75,7 +91,9 @@ public sealed class PlatformDatabaseContractTests
         {
             Paths.Add(request.RequestUri!.PathAndQuery);
             Bearers.Add(request.Headers.Authorization!.Parameter!);
-            var json = request.RequestUri.AbsolutePath.EndsWith("/collections", StringComparison.Ordinal)
+            var json = request.RequestUri.AbsolutePath == "/v1/platform/databases"
+                ? "{\"items\":[{\"id\":\"00000000000000000000000003\",\"name\":\"ts-auth\",\"homeRegion\":\"gru\",\"replicaRegions\":[],\"allRegions\":true}]}"
+                : request.RequestUri.AbsolutePath.EndsWith("/collections", StringComparison.Ordinal)
                 ? "{\"items\":[{\"name\":\"users\",\"created_at\":\"1700000000000\",\"id\":\"c1\"}],\"next_cursor\":null}"
                 : "{\"items\":[{\"id\":\"u1\",\"version\":\"tbv2-1\",\"state\":\"value\",\"document\":{\"email\":\"a@example.test\",\"passwordHash\":\"[redacted]\"}}],\"next_cursor\":null}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") });
