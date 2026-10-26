@@ -1,0 +1,1 @@
+{"time":"2026-10-26T14:46:25.250443191Z","level":"WARN","msg":"edge route sync failed","service":"ts-orchestrator","node":"ts-sjc-1","process":"single-host","error":"rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial unix /var/lib/ts-orch/control.sock: connect: no such file or directory\""}

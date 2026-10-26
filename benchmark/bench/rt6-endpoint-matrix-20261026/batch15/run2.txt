@@ -1,0 +1,8 @@
+image ghcr.io/terrascale/terrabase@sha256:ce6f96ddbb396a11783912faac779a6de9b5df9cf4eb06ded6e43b3b481e1d8a
+user 01M5WA61BS85VFDSBAMTEJN97D
+FAILED RuntimeError: database rt6-aa6f46d3 not served in gru: 400
+teardown revoke key: 204
+teardown delete database: 204
+teardown delete project: 204
+teardown delete organization: 204
+result: FAIL
