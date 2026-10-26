@@ -58,6 +58,19 @@ internal sealed partial class TursoStorageTransaction
                 }
             }
 
+            if (!store.IsSystem)
+            {
+                // Outside changes may remove bodies too: recount before repairs put them back, counting each once.
+                Command("DELETE FROM _tb_collection_stats;").ExecuteNonQuery();
+                foreach (var name in CollectionNames(cancellationToken))
+                {
+                    Command($"""
+                        INSERT INTO _tb_collection_stats (collection, documents, bytes)
+                        SELECT $collection, count(*), coalesce(sum(octet_length(doc)), 0) FROM {Table(name)};
+                        """, name).ExecuteNonQuery();
+                }
+            }
+
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }

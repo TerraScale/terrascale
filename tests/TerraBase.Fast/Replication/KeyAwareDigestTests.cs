@@ -108,6 +108,8 @@ public sealed class KeyAwareDigestTests
             DocumentState.Bottom.Set(new EntryVersion(new Hlc(1_000 + (ulong)i), Origin), "n", Json(i.ToString(System.Globalization.CultureInfo.InvariantCulture))))).ToArray();
         await gru.SeedAsync(states);
         await sjc.SeedAsync(states);
+        var beforeStats = await sjc.StatsAsync();
+        await Assert.That(beforeStats.Documents).IsEqualTo(8);
         // Digests compared and rounds run before the loss: nothing may depend on a check made only once per copy.
         var before = await sjc.DigestsAsync();
         var beforePeer = await gru.DigestsAsync();
@@ -130,6 +132,7 @@ public sealed class KeyAwareDigestTests
         await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
         await Assert.That(await sjc.StateAsync(lost)).IsEqualTo(expected);
         await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo(Encoding.UTF8.GetString(expected.Materialize() ?? []));
+        await Assert.That(await sjc.StatsAsync()).IsEqualTo(beforeStats).Because("restoring a lost body counts its documents and bytes once");
 
         // Later rounds on both sides find nothing left to repair, and the maintained digests stay those of the rows.
         for (var round = 0; round < 3; round++)
@@ -227,6 +230,12 @@ public sealed class KeyAwareDigestTests
         {
             await using var transaction = await (await OpenAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
             return await transaction.GetAsync(Items, id, CancellationToken.None) is { Deleted: false } document ? Encoding.UTF8.GetString(document.Json.Span) : null;
+        }
+
+        public async Task<CollectionStats> StatsAsync()
+        {
+            await using var read = await (await OpenAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
+            return (await read.ListCollectionStatsAsync(CancellationToken.None)).Single(stats => stats.Name == Items);
         }
 
         // The 16 bytes of one bucket of the database's digests, as anti-entropy compares them.

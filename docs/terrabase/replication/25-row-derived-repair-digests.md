@@ -8,6 +8,8 @@ The existing two-round comparison and bucket repair restore the missing state.
 When the row-derived and maintained digests differ, a writer transaction checks
 again and replaces `_tb_merkle` from the current rows without capturing a client
 change. Subsequent engine writes and repairs continue maintaining that summary.
+The same transaction recounts client collection document and byte totals from
+their remaining bodies, so restoring a lost body counts it once.
 The comparison scans all state hash rows, with a fixed 4096-bucket buffer; it
 does not decode all document bodies or retain all keys in memory.
 
