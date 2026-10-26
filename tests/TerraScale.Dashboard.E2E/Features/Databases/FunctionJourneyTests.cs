@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
@@ -83,7 +84,11 @@ public sealed class FunctionJourneyTests(DashboardRootFixture fixture)
         var http = await PageAsync(path + "?function=hello", HttpStatusCode.OK);
         await Assert.That(http).DoesNotContain("Trigger deliveries");
         await Assert.That(http).Contains("Exchange your project API key for a short-lived access token with <code>documents:read</code>, then send that access token as a Bearer token.");
-        await Assert.That(http).Contains("href=\"https://docs.terrascale.tech/guides/authentication\">Authentication guide</a>");
+        var guide = Regex.Match(http, "<a\\b[^>]*href=\"https://docs.terrascale.tech/guides/authentication\"[^>]*>.*?</a>", RegexOptions.Singleline).Value;
+        await Assert.That(guide).Contains("Authentication guide");
+        await Assert.That(guide).Contains("target=\"_blank\"");
+        await Assert.That(guide).Contains("rel=\"noopener noreferrer\"");
+        await Assert.That(guide).Contains("opens in a new tab");
         await Assert.That(requests).DoesNotContain("GET /functions/hello/deliveries");
         await Assert.That(await PageAsync(path + "?function=gone", HttpStatusCode.NotFound)).Contains("This function does not exist.");
         await Assert.That(await PageAsync(path + "?function=Bad%20Name", HttpStatusCode.NotFound)).Contains("This function does not exist.");
