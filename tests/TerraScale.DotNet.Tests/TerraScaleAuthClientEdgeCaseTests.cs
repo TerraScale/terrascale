@@ -148,17 +148,13 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     }
 
     [Test]
-    public async Task A8_EnvelopeMixUpsFailDecode()
+    public async Task A8_UserEnvelopeRejectsBareArray()
     {
         // Bare array where the users envelope object is expected.
         var bareArray = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, "[" + UserJson("usr_1") + "]")));
         var arrayError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => bareArray.Users.ListAsync());
         await Assert.That(arrayError!.ErrorCode).IsEqualTo("invalid_response");
 
-        // Envelope object where the organizations bare array is expected.
-        var enveloped = CreateClient(new ScriptedHandler(Always(HttpStatusCode.OK, PageJson())));
-        var envelopeError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => enveloped.Organizations.ListAsync());
-        await Assert.That(envelopeError!.ErrorCode).IsEqualTo("invalid_response");
     }
 
     [Test]
@@ -246,20 +242,15 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     }
 
     [Test]
-    public async Task B14_NotFoundVariantsPreserveCode()
+    public async Task B14_UserNotFoundPreservesCode()
     {
         var userClient = CreateClient(new ScriptedHandler(Always(HttpStatusCode.NotFound,
             ErrorEnvelopeJson("user_not_found", "No such user."))));
-        var orgClient = CreateClient(new ScriptedHandler(Always(HttpStatusCode.NotFound,
-            ErrorEnvelopeJson("not_found", "No such resource."))));
 
         var userError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => userClient.Users.GetAsync("usr_x"));
-        var orgError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => orgClient.Organizations.GetAsync("org_x"));
 
         await Assert.That(userError!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(userError.ErrorCode).IsEqualTo("user_not_found");
-        await Assert.That(orgError!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(orgError.ErrorCode).IsEqualTo("not_found");
     }
 
     [Test]

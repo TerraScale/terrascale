@@ -58,7 +58,6 @@ public sealed class TerraScaleAuthClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
-        Organizations = new TerraScaleAuthOrganizationsClient(this);
         Connections = new TerraScaleAuthConnectionsClient(this);
         Directories = new TerraScaleAuthDirectoriesClient(this);
         JwtTemplates = new TerraScaleAuthJwtTemplatesClient(this);
@@ -76,9 +75,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Session revocation.</summary>
     public TerraScaleAuthSessionsClient Sessions { get; }
-
-    /// <summary>Organizations, memberships, invitations, and enrollment domains.</summary>
-    public TerraScaleAuthOrganizationsClient Organizations { get; }
 
     /// <summary>OIDC and SAML enterprise SSO connections.</summary>
     public TerraScaleAuthConnectionsClient Connections { get; }
