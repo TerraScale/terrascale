@@ -9,7 +9,7 @@ namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>
 /// Sends TerraBase requests over a caller-owned <see cref="HttpClient"/> with one bearer secret and a per-request
-/// deadline. TerraBase documents no retryable failure and rejects <c>Idempotency-Key</c>, so every request is sent once.
+/// deadline. Safe reads retry <c>auth_unavailable</c>; mutations are sent once.
 /// </summary>
 internal sealed class TerraBaseConnection
 {
@@ -271,9 +271,22 @@ internal sealed class TerraBaseConnection
             // Null request headers do not suppress HttpClient's inherited defaults.
             if (publicAnonymous && (http.DefaultRequestHeaders.Contains("Authorization") || http.DefaultRequestHeaders.Contains("Cookie")))
                 throw new InvalidOperationException("Anonymous TerraBase requests require an HttpClient without default Authorization or Cookie headers; use a separate credential-free HttpClient with TerraBaseHttp.CreateHandler().");
-            response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
-            if (throwOnError && !response.IsSuccessStatusCode)
-                throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
+            for (var attempt = 0; ; attempt++)
+            {
+                response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+                if (!throwOnError || response.IsSuccessStatusCode) break;
+                var error = await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
+                if (attempt >= 2 || (method != HttpMethod.Get && method != HttpMethod.Head)
+                    || error.StatusCode != HttpStatusCode.ServiceUnavailable || error.ErrorCode != "auth_unavailable")
+                    throw error;
+                var retry = new HttpRequestMessage(method, request.RequestUri) { Version = request.Version, VersionPolicy = request.VersionPolicy };
+                foreach (var header in request.Headers) retry.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                response.Dispose();
+                response = null;
+                request.Dispose();
+                request = retry;
+                await Task.Delay(error.RetryAfter ?? TimeSpan.FromSeconds(1 << attempt), timeProvider, deadline.Token).ConfigureAwait(false);
+            }
             // Stream lifetime belongs to enumeration, not the ordinary JSON request timeout.
             if (streaming) expiry.CancelAfter(Timeout.InfiniteTimeSpan);
             deadline.Token.ThrowIfCancellationRequested();

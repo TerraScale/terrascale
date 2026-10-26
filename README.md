@@ -308,13 +308,17 @@ as their `ifMatch` argument.
 Error statuses throw `TerraBaseException`, an `HttpRequestException` with
 `ErrorCode` and, for transactions, `OperationIndex`. Subclasses name the
 statuses callers act on: `TerraBaseValidationException` (400, 413, 415),
-`TerraBaseAuthenticationException` (401), `TerraBaseForbiddenException` (403),
+`TerraBaseAuthenticationException` (401), including `TerraBaseKeyRevokedException`
+and `TerraBaseKeyExpiredException` (permanent; replace the key), `TerraBaseForbiddenException` (403),
 `TerraBaseNotFoundException` (404), `TerraBaseConflictException` (409),
 `TerraBasePreconditionFailedException` (412) and `TerraBaseUnavailableException`
 (503). A request that passes its `RequestTimeout` throws `TimeoutException`.
 An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellation
-remains `OperationCanceledException`. There are no automatic retries: TerraBase documents no retryable failure and
-rejects `Idempotency-Key`, so each request is sent once. Retry a write only
+remains `OperationCanceledException`. Safe GET/HEAD reads retry `503 auth_unavailable` at most twice, honoring `Retry-After`
+with exponential backoff otherwise, within the request deadline. Authentication errors never retry.
+The SDK does not exchange or cache tokens; caller-owned token providers must drop revoked/expired tokens
+and stop exchanging the refused key. Mutations and all other errors are sent once. TerraBase
+rejects `Idempotency-Key`. Retry a write only
 when its precondition makes the retry safe.
 
 Supplied `HttpClient` handlers **must disable automatic redirects**. Use

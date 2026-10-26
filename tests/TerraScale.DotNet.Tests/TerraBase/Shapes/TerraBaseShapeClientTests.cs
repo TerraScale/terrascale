@@ -327,6 +327,7 @@ public sealed class TerraBaseShapeClientTests
     [Test]
     [Arguments(503, "shape_too_large")]
     [Arguments(503, "unavailable")]
+    [Arguments(503, "auth_unavailable")]
     [Arguments(429, "shape_busy")]
     public async Task DocumentedTransientFailureWaitsRetryAfterAndKeepsStateAndOffset(int status, string code)
     {
@@ -373,6 +374,8 @@ public sealed class TerraBaseShapeClientTests
 
     [Test]
     [Arguments(401, "unauthorized", typeof(TerraBaseAuthenticationException))]
+    [Arguments(401, "key_revoked", typeof(TerraBaseKeyRevokedException))]
+    [Arguments(401, "key_expired", typeof(TerraBaseKeyExpiredException))]
     [Arguments(403, "forbidden", typeof(TerraBaseForbiddenException))]
     [Arguments(400, "invalid_request", typeof(TerraBaseValidationException))]
     [Arguments(404, "unknown_collection", typeof(TerraBaseNotFoundException))]
