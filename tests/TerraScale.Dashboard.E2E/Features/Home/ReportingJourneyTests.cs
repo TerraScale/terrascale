@@ -250,7 +250,9 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await locale.SelectOptionAsync("pt-BR");
             await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/profile/language\"],[action^=\"/api/v1/dashboard/profile/language?\"])", "Save language");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "locale")).IsEqualTo("pt-BR");
-            await Assert.That(await ownerPage.Locator("html").GetAttributeAsync("lang")).IsEqualTo("pt-BR");
+            await Assert.That(await locale.InputValueAsync()).IsEqualTo("pt-BR");
+            await Assert.That(await ownerPage.Locator("html").GetAttributeAsync("lang")).IsEqualTo("en")
+                .Because("the document language describes its rendered English text independently of the saved locale");
             await locale.SelectOptionAsync("en");
             await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/profile/language\"],[action^=\"/api/v1/dashboard/profile/language?\"])", "Save language");
             await flow.ShotAsync(ownerPage, "profile-desktop");
