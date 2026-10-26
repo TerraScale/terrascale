@@ -28,7 +28,6 @@ public sealed class TerraScaleAuthErrorBodyTests
             BaseAddress = new Uri("https://auth.example.test"),
             ApiKey = "auth-test-key",
             InstanceSlug = "test",
-            MaxRetryAttempts = 0
         });
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         await Assert.That(error!.RequestId).IsEqualTo("01JA0000000000000000000001");
@@ -52,7 +51,6 @@ public sealed class TerraScaleAuthErrorBodyTests
             BaseAddress = new Uri("https://auth.example.test"),
             ApiKey = "auth-test-key",
             InstanceSlug = "test",
-            MaxRetryAttempts = 0
         });
         var error = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);

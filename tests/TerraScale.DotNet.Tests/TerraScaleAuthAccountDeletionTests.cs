@@ -165,8 +165,6 @@ public sealed class TerraScaleAuthAccountDeletionTests
         BaseAddress = new Uri("https://auth.example.test"),
         InstanceSlug = "terrascale",
         ApiKey = "fixture-management-key",
-        MaxRetryAttempts = 2,
-        RetryDelay = TimeSpan.Zero
     });
 
     private sealed class CaptureHandler(HttpStatusCode status, bool throwTransportError = false) : HttpMessageHandler

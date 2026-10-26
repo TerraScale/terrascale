@@ -23,8 +23,6 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
 
     private static TerraScaleAuthClient CreateClient(
         HttpMessageHandler handler,
-        int maxRetryAttempts = 0,
-        TimeSpan? retryDelay = null,
         string apiKey = "sk_key_secret",
         string slug = "acme") =>
         new(new HttpClient(handler), new TerraScaleAuthClientOptions
@@ -32,8 +30,6 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
             BaseAddress = new Uri("https://auth.example.test/"),
             ApiKey = apiKey,
             InstanceSlug = slug,
-            MaxRetryAttempts = maxRetryAttempts,
-            RetryDelay = retryDelay ?? TimeSpan.FromMilliseconds(250),
         });
 
     private static TerraScaleAuthClient CreateClient(Uri baseAddress, string apiKey = "sk_key", string slug = "acme")
@@ -266,18 +262,12 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     }
 
     [Test]
-    public async Task B16_RateLimitedRetriesOnlyWhenConfiguredAndExposesRetryAfter()
+    public async Task B16_RateLimitedIsSentOnceAndExposesRetryAfter()
     {
         var rateLimited = ErrorEnvelopeJson("rate_limited", "too many requests");
 
-        var retriedHandler = new ScriptedHandler(Always(HttpStatusCode.TooManyRequests, rateLimited, TimeSpan.Zero));
-        var retried = CreateClient(retriedHandler, maxRetryAttempts: 1);
-        var retriedError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => retried.Users.ListAsync());
-        await Assert.That(retriedError!.ErrorCode).IsEqualTo("rate_limited");
-        await Assert.That(retriedHandler.Attempts).IsEqualTo(2);
-
         var immediateHandler = new ScriptedHandler(Always(HttpStatusCode.TooManyRequests, rateLimited, TimeSpan.FromSeconds(2)));
-        var immediate = CreateClient(immediateHandler, maxRetryAttempts: 0);
+        var immediate = CreateClient(immediateHandler);
         var immediateError = await Assert.ThrowsAsync<TerraScaleAuthException>(() => immediate.Users.ListAsync());
         await Assert.That(immediateHandler.Attempts).IsEqualTo(1);
         await Assert.That(immediateError!.ErrorCode).IsEqualTo("rate_limited");
@@ -551,29 +541,34 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     // D. Retry / deadline / cancellation edges.
 
     [Test]
-    public async Task D35_GetRetriesExhaustedAfterExactlyThreeAttempts()
+    [Arguments(HttpStatusCode.RequestTimeout)]
+    [Arguments(HttpStatusCode.TooManyRequests)]
+    [Arguments(HttpStatusCode.InternalServerError)]
+    [Arguments(HttpStatusCode.BadGateway)]
+    [Arguments(HttpStatusCode.ServiceUnavailable)]
+    [Arguments(HttpStatusCode.GatewayTimeout)]
+    public async Task D35_ReadFailuresAreSentOnce(HttpStatusCode status)
     {
-        var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}"));
-        var client = CreateClient(handler, maxRetryAttempts: 2, retryDelay: TimeSpan.Zero);
+        var handler = new ScriptedHandler(Always(status, "{}"));
+        var client = CreateClient(handler);
 
         var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
-        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(handler.Attempts).IsEqualTo(3);
+        await Assert.That(exception!.StatusCode).IsEqualTo(status);
+        await Assert.That(handler.Attempts).IsEqualTo(1);
     }
 
     [Test]
-    public async Task D36_RetryAfterZeroRetriesImmediately()
+    public async Task D36_RetryAfterZeroDoesNotReplayTheRequest()
     {
         var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}", TimeSpan.Zero));
-        var client = CreateClient(handler, maxRetryAttempts: 1, retryDelay: TimeSpan.FromSeconds(10));
+        var client = CreateClient(handler);
 
         var stopwatch = Stopwatch.StartNew();
         await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
         stopwatch.Stop();
 
-        await Assert.That(handler.Attempts).IsEqualTo(2);
-        // A 10s backoff would run if Retry-After: 0 were ignored.
+        await Assert.That(handler.Attempts).IsEqualTo(1);
         await Assert.That(stopwatch.Elapsed).IsLessThan(TimeSpan.FromSeconds(5));
     }
 
@@ -581,7 +576,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     public async Task D37_Post503NeverRetried()
     {
         var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}"));
-        var client = CreateClient(handler, maxRetryAttempts: 5, retryDelay: TimeSpan.Zero);
+        var client = CreateClient(handler);
 
         var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.CreateAsync(email: "a@b.test"));
 
@@ -601,7 +596,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         })
         {
             var handler = new ScriptedHandler(Always(status, ErrorEnvelopeJson(code, "boom")));
-            var client = CreateClient(handler, maxRetryAttempts: 3, retryDelay: TimeSpan.Zero);
+            var client = CreateClient(handler);
 
             var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
@@ -611,15 +606,15 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     }
 
     [Test]
-    public async Task D39_TransportErrorRetriedOnGetOnly()
+    public async Task D39_TransportErrorsAreSentOnceForReadsAndMutations()
     {
         var readHandler = new ScriptedHandler(ThrowConnectionRefused());
-        var readClient = CreateClient(readHandler, maxRetryAttempts: 1, retryDelay: TimeSpan.Zero);
+        var readClient = CreateClient(readHandler);
         await Assert.ThrowsAsync<HttpRequestException>(() => readClient.Users.ListAsync());
-        await Assert.That(readHandler.Attempts).IsEqualTo(2);
+        await Assert.That(readHandler.Attempts).IsEqualTo(1);
 
         var mutationHandler = new ScriptedHandler(ThrowConnectionRefused());
-        var mutationClient = CreateClient(mutationHandler, maxRetryAttempts: 1, retryDelay: TimeSpan.Zero);
+        var mutationClient = CreateClient(mutationHandler);
         await Assert.ThrowsAsync<HttpRequestException>(() => mutationClient.Users.CreateAsync(email: "a@b.test"));
         await Assert.That(mutationHandler.Attempts).IsEqualTo(1);
     }
@@ -635,17 +630,6 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => client.Users.ListAsync(cancellationToken: cancelled.Token));
         // Cancellation is checked before credentials or the request reach the handler.
         await Assert.That(handler.Attempts).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task D41_CancelDuringRetrySleepThrowsOperationCanceled()
-    {
-        var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}", TimeSpan.FromSeconds(10)));
-        var client = CreateClient(handler, maxRetryAttempts: 1);
-        using var cancelSoon = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-
-        await Assert.ThrowsAsync<OperationCanceledException>(() => client.Users.ListAsync(cancellationToken: cancelSoon.Token));
-        await Assert.That(handler.Attempts).IsEqualTo(1);
     }
 
     [Test]
@@ -666,12 +650,12 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
     }
 
     [Test]
-    public async Task D43_RetryAfterAtTheCapSurfacesWithoutSleeping()
+    [Arguments(30)]
+    [Arguments(120)]
+    public async Task D43_RetryAfterSurfacesWithoutSleeping(int seconds)
     {
-        // A Retry-After equal to the 30s cap could never elapse before the
-        // request deadline fires, so it surfaces after exactly one attempt.
-        var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}", TimeSpan.FromSeconds(30)));
-        var client = CreateClient(handler, maxRetryAttempts: 1, retryDelay: TimeSpan.Zero);
+        var handler = new ScriptedHandler(Always(HttpStatusCode.ServiceUnavailable, "{}", TimeSpan.FromSeconds(seconds)));
+        var client = CreateClient(handler);
 
         var stopwatch = Stopwatch.StartNew();
         var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
@@ -679,7 +663,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
 
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(handler.Attempts).IsEqualTo(1);
-        // A 30s sleep would run if the cap were exclusive.
+        await Assert.That(exception.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(seconds));
         await Assert.That(stopwatch.Elapsed).IsLessThan(TimeSpan.FromSeconds(5));
     }
 
@@ -995,18 +979,15 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
             BaseAddress = new Uri("https://auth.example.test/"),
             ApiKey = "sk_original",
             InstanceSlug = "acme",
-            MaxRetryAttempts = 0,
         };
         var client = new TerraScaleAuthClient(new HttpClient(handler), options);
 
-        options.MaxRetryAttempts = 5;
         options.ApiKey = "sk_mutated";
         options.InstanceSlug = "evil";
 
         await Assert.ThrowsAsync<TerraScaleAuthException>(() => client.Users.ListAsync());
 
-        // The client snapshotted the options at construction: no retries, the
-        // original key, and the original instance slug.
+        // The client snapshotted the original key and instance slug at construction.
         await Assert.That(handler.Attempts).IsEqualTo(1);
         await Assert.That(handler.Authorizations[0]).IsEqualTo("Bearer sk_original");
         await Assert.That(handler.Requests[0]).IsEqualTo("GET /v1/acme/users");

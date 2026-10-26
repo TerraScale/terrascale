@@ -3,13 +3,12 @@ using System.Net;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Configures a <see cref="TerraScaleAuthClient"/> against a ts-auth deployment.
+/// Configures origin, instance and credentials for a <see cref="TerraScaleAuthClient"/>.
+/// Transport deadlines, body bounds and the no-retry policy are fixed by the SDK.
 /// </summary>
 public sealed record TerraScaleAuthClientOptions
 {
-    private const int MaxRetryAttemptsLimit = 8;
     private const int MaxSlugLength = 255;
-    private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// ts-auth public origin, for example <c>https://auth.example.com</c>. There is
@@ -29,19 +28,6 @@ public sealed record TerraScaleAuthClientOptions
     /// instance the <see cref="ApiKey"/> belongs to; the service rejects mismatches.
     /// </summary>
     public string? InstanceSlug { get; set; }
-
-    /// <summary>
-    /// Number of transient retry attempts after the initial request. Only safe
-    /// reads (GET) are retried; ts-auth mutations have no idempotency contract
-    /// and are always sent exactly once. The default is zero and the maximum is eight.
-    /// </summary>
-    public int MaxRetryAttempts { get; set; }
-
-    /// <summary>
-    /// Base delay between retry attempts when the API does not return a Retry-After
-    /// header. The maximum is 30 seconds.
-    /// </summary>
-    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromMilliseconds(250);
 
     /// <inheritdoc />
     public override string ToString() => "TerraScale auth client options";
@@ -64,26 +50,6 @@ public sealed record TerraScaleAuthClientOptions
         if (!string.IsNullOrWhiteSpace(ApiKey))
         {
             ValidateAuthToken(ApiKey!, nameof(ApiKey));
-        }
-
-        if (MaxRetryAttempts < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(MaxRetryAttempts), "Retry attempts must be greater than or equal to zero.");
-        }
-
-        if (MaxRetryAttempts > MaxRetryAttemptsLimit)
-        {
-            throw new ArgumentOutOfRangeException(nameof(MaxRetryAttempts), $"Retry attempts must be less than or equal to {MaxRetryAttemptsLimit}.");
-        }
-
-        if (RetryDelay < TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(RetryDelay), "Retry delay must be greater than or equal to zero.");
-        }
-
-        if (RetryDelay > MaximumRetryDelay)
-        {
-            throw new ArgumentOutOfRangeException(nameof(RetryDelay), $"Retry delay must be less than or equal to {MaximumRetryDelay.TotalSeconds:0} seconds.");
         }
     }
 

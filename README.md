@@ -392,8 +392,8 @@ var organizations = await auth.Platform.ListOrganizationsAsync(signInAccessToken
 
 The auth client calls its `BaseAddress` directly; there is no regional discovery or proxy switch. This does not
 route database requests. `AddTerraScaleAuthClient` supplies dependency-injection registration
-with redirects disabled. Only safe reads can retry; auth mutations are sent
-once. `TerraScaleAuthException` exposes typed status/retry metadata and only
+with redirects disabled. Every auth operation is sent once; retry behavior and body/deadline bounds are fixed by the SDK.
+`TerraScaleAuthException` exposes typed status/retry metadata and only
 known fixed error codes. Messages are fixed safe diagnostics; arbitrary
 producer messages, codes and response bodies are never retained. Options
 formatting omits credentials.

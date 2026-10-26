@@ -175,8 +175,6 @@ public sealed class TerraScaleAuthDeletionOutboxTests
         BaseAddress = new Uri("https://auth.example.test"),
         InstanceSlug = "private-instance",
         ApiKey = "fixture-management",
-        MaxRetryAttempts = 2,
-        RetryDelay = TimeSpan.Zero
     });
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {
