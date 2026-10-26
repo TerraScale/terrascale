@@ -8,7 +8,7 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Dashboard.Features.Data;
 
 [McpServerToolType]
-public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, SavedQueryService saved)
+public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, SavedQueryService saved, AccountService accounts)
 {
     [McpServerTool(Name = "list_collections", Title = "List collections", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the collection names in a database.")]
     public async Task<McpCollectionList> Collections(string databaseId, string? organizationId = null, string? projectId = null) =>
@@ -127,7 +127,8 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
 
     private async Task<McpDocumentWrite> WriteDocumentAsync(AccountContext context, string databaseId, string collection, string operation, string id, JsonElement body, string? version)
     {
-        if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
+        context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: true);
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         if (operation != "create" && version is null)
         {
             var current = await data.GetAsync(context, databaseId, collection, id, Cancellation);
