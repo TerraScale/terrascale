@@ -72,7 +72,6 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             }
             catch (OverflowException) { reads = null; writes = null; storage = null; }
         }
-        storage ??= stored.OrganizationBytes;
         var scope = measured.Scope.State == UsageSourceState.Measured ? measured.Scope.Reading : null;
         if (scope is not null && (scope.ProjectId != context.Project?.Id || scope.DatabaseId != databaseId)) throw new IOException("Selected usage scope is invalid.");
         var selected = controls.Projects.SingleOrDefault(project => project.Id == context.Project?.Id);
@@ -80,7 +79,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
         {
             var reading = measured.Monthly.GetValueOrDefault(project.Id) is { State: UsageSourceState.Measured } observation ? observation.Reading : null;
             if (reading is not null && (reading.ProjectId != project.Id || reading.DatabaseId.Length > 0)) throw new IOException("Project usage scope is invalid.");
-            var bytes = reading?.LogicalBytes ?? stored.Projects.GetValueOrDefault(project.Id)?.Total?.LogicalBytes;
+            var bytes = reading?.LogicalBytes;
             return new UsageToolProject(project.Id, project.Name, project.Region.Length > 0 ? project.Region : "Not configured",
                 project.Databases.Count, bytes, bytes is null,
                 Share(bytes, storage), project.Id == context.Project?.Id);
@@ -120,7 +119,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             ? "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
             : measured.Monthly.Values.Any(value => value.State == UsageSourceState.Unavailable) || complete
                 ? "This month's reads and writes could not be loaded from TerraBase. Try again shortly." : "";
-        var scopeBytes = scope?.LogicalBytes ?? stored.Scope(selection)?.LogicalBytes;
+        var scopeBytes = scope?.LogicalBytes ?? (databaseId.Length > 0 ? stored.Scope(selection)?.LogicalBytes : null);
         return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
             [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations,
                 complete && reads is not null ? measured.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null),

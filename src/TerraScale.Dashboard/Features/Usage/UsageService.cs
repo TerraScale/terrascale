@@ -74,7 +74,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
                 : result.Monthly.Values.Any(value => value.State == UsageSourceState.NotMetered)
                     ? "This month's organization usage is incomplete because TerraBase doesn't report every project's monthly usage."
                     : "This month's reads and writes could not be loaded from TerraBase. Try again shortly.";
-        var organizationStorage = complete ? logical : stored?.OrganizationBytes;
+        long? organizationStorage = complete ? logical : null; // Collection fallback excludes files.
         var units = complete ? result.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
         var allowances = new[] {
             Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
@@ -97,10 +97,9 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
         var projects = controls.Projects.Select(project =>
         {
             var reading = result.Monthly.GetValueOrDefault(project.Id) is { State: UsageSourceState.Measured } observation ? observation.Reading : null;
-            var fact = stored?.Projects.GetValueOrDefault(project.Id)?.Total;
-            var bytes = reading?.LogicalBytes ?? fact?.LogicalBytes;
+            var bytes = reading?.LogicalBytes;
             return new UsageProjectRow(project, reading, project.Id == selection.Context.Project?.Id,
-                bytes is not null && organizationStorage is not null ? Share(bytes.Value, organizationStorage.Value) : null, fact);
+                bytes is not null && organizationStorage is not null ? Share(bytes.Value, organizationStorage.Value) : null);
         }).ToArray();
         var scopedDatabases = scope?.Items ?? [];
         var selectedProject = controls.Projects.FirstOrDefault(project => project.Id == selection.Context.Project?.Id);
@@ -110,13 +109,13 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             stored?.Projects.GetValueOrDefault(selection.Context.Project!.Id)?.Databases.GetValueOrDefault(database.Id))).ToArray();
         var knownDatabaseTotal = UsageStorageSnapshot.SumCounters(databaseRows.Select(database => database.LogicalBytes));
         databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? Share(bytes, total) : null }).ToArray();
-        var history = scope is not null ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, scope.Series.Select(point => point.Start).ToArray(),
+        var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, scope.Series.Select(point => point.Start).ToArray(),
             [new("Reads", scope.Series.Select(point => point.Reads).ToArray()), new("Writes", scope.Series.Select(point => point.Writes).ToArray())]) : null;
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
             result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError,
             "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.", organizationStorage is not null, await replicationRead)
         {
-            StoredScope = stored?.Scope(selection),
+            StoredScope = selection.DatabaseId.Length > 0 ? stored?.Scope(selection) : null,
             InternalBill = selection.Context.Organization!.InternalBilling is not null
             ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
         };
