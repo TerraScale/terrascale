@@ -1,6 +1,9 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.OperationChart>
 @using TerraScale.Dashboard.Shared.Charts
-<svg class="ts-chart" viewBox="0 0 720 180" role="group" aria-label="@Model.Label" data-init="el.querySelectorAll('.ts-chart-column').forEach((column, i, all) => column.setAttribute('tabindex', i === all.length - 1 ? '0' : '-1'))" data-on:keydown="evt.target.matches('.ts-chart-column') &amp;&amp; ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(evt.key) &amp;&amp; (evt.preventDefault(), [{ArrowLeft: evt.target.previousElementSibling, ArrowRight: evt.target.nextElementSibling, Home: el.querySelector('.ts-chart-column'), End: el.querySelector('.ts-chart-column:last-of-type')}[evt.key]?.closest('.ts-chart-column')].filter(Boolean).forEach(next => (evt.target.setAttribute('tabindex', '-1'), next.setAttribute('tabindex', '0'), next.focus())))">
+<svg class="ts-chart" viewBox="0 0 720 180" role="group" aria-label="@Model.Label" data-init="@TerraScale.Dashboard.Features.Analytics.ChartInteraction.Initialize"
+ data-on:focusin="el.chartFocus(evt)" data-on:focusout="el.chartBlur()"
+ data-on:pointermove="el.chartPointer(evt)" data-on:pointerdown="el.chartPointer(evt)" data-on:pointerleave="el.chartLeave()"
+ data-on:resize__window="el.chartResize()" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.chartDismiss()" data-on:keydown="el.chartKey(evt)">
     @for (var index = 0; index < Model.Grid.Count; index++)
     { var item = Model.Grid[index]; <line class="ts-chart-grid @(index == Model.Grid.Count - 1 ? "ts-chart-baseline" : "")" x1="48" y1="@item.Y" x2="708" y2="@item.Y"></line>@if (item.Label.Length > 0) { <g><text class="ts-chart-axis" x="38" y="@item.Y" dy="0.32em" text-anchor="end">@item.Label</text></g> } }
     @foreach (var tick in Model.Ticks) { <g><text class="ts-chart-axis" x="@tick.X" y="172" text-anchor="@tick.Anchor">@tick.Label</text></g> }
@@ -10,4 +13,5 @@
         var left = double.Parse(column.TipX, System.Globalization.CultureInfo.InvariantCulture); var width = double.Parse(column.TipWidth, System.Globalization.CultureInfo.InvariantCulture);
         <g class="ts-chart-column" tabindex="0" role="img" aria-label="@column.Header: @Model.Name @column.Value"><rect class="ts-chart-hit" x="@column.Left" y="14" width="@column.Width" height="134"></rect><line class="ts-chart-guide" x1="@column.X" y1="14" x2="@column.X" y2="148"></line><circle class="ts-chart-dot ts-chart-series-1" cx="@column.X" cy="@column.Y" stroke-dasharray="" r="4"></circle><g class="ts-chart-tip" aria-hidden="true"><rect class="ts-chart-tip-box" x="@column.TipX" y="14.0" width="@column.TipWidth" height="46.0" rx="6"></rect><text class="ts-chart-tip-label" x="@ChartGeometry.Coordinate(left + 10)" y="28.5" dy="0.35em">@column.Header</text><line class="ts-chart-tip-swatch ts-chart-series-1" x1="@ChartGeometry.Coordinate(left + 10)" x2="@ChartGeometry.Coordinate(left + 34)" y1="45.5" y2="45.5" stroke-dasharray=""></line><text class="ts-chart-tip-name" x="@ChartGeometry.Coordinate(left + 42)" y="45.5" dy="0.35em">@Model.Name</text><text class="ts-chart-tip-value" x="@ChartGeometry.Coordinate(left + width - 10)" y="45.5" dy="0.35em" text-anchor="end">@column.Value</text></g></g>
     }
+<g class="ts-chart-overlay" aria-hidden="true"></g>
 </svg>

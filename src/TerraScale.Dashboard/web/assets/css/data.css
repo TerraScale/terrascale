@@ -288,19 +288,27 @@ code:not(pre code) {
 .ts-chart-area { fill: var(--ts-chart-1); fill-opacity: 0.18; }
 
 /* Hover columns: a guide line, dots per value, and a tooltip, revealed on
-   hover and keyboard focus. The focused column tints its band instead of
-   drawing an outline around the hidden tooltip. */
+   hover and keyboard focus. Draw focus on the hit band so hidden tooltip
+   bounds never become part of the focus indicator. */
 .ts-chart-column {
   outline: none;
 }
 
 .ts-chart-hit {
   fill: transparent;
+  pointer-events: fill;
   transition: fill var(--ts-fast) var(--ts-ease);
 }
 
 .ts-chart-column:focus-visible .ts-chart-hit {
   fill: var(--ts-accent-soft);
+  stroke: var(--ts-focus);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+@media (forced-colors: active) {
+  .ts-chart-column:focus-visible .ts-chart-hit { stroke: Highlight; }
 }
 
 .ts-chart-guide {
@@ -321,14 +329,26 @@ code:not(pre code) {
 .ts-chart-dot.ts-cat-3 { stroke: var(--ts-cat-3); }
 .ts-chart-dot.ts-chart-marker { opacity: 1; }
 
-.ts-chart-column:is(:hover, :focus-visible) :is(.ts-chart-guide, .ts-chart-dot, .ts-chart-tip),
-.ts-chart-column:last-of-type .ts-chart-dot {
+.ts-chart-column.ts-chart-active :is(.ts-chart-guide, .ts-chart-dot),
+.ts-chart-column[data-chart-latest] .ts-chart-dot {
   opacity: 1;
 }
 
-/* Line tooltip, drawn in SVG by charts.lineTip. */
+.ts-chart-overlay.is-active .ts-chart-tip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* One final layer keeps the displayed tip above every chronological hit band. */
+.ts-chart-overlay { pointer-events: none; }
+.ts-chart-tip-bridge { fill: transparent; pointer-events: none; }
+.ts-chart-overlay.is-active .ts-chart-tip-bridge { pointer-events: all; }
+
+/* Source tips remain hidden; only the final layer's clone is displayed. */
 .ts-chart-tip {
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   transition: opacity var(--ts-fast) var(--ts-ease);
 }

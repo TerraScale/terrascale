@@ -30,17 +30,18 @@ public sealed record HomeRequestChart(string Label, string Area, IReadOnlyList<C
         }).ToArray();
         var paths = names.Select((name, index) => new RequestPath(name, names.Length == 1 ? "ts-chart-series-1" : "ts-cat-" + (index % 3 + 1), index < 3 ? "" : 3 * (index / 3 + 1) + " 5",
             ChartGeometry.Smooth(points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name)))).ToArray()))).ToArray();
-        var stepSize = Math.Max(1, (points.Count + 59) / 60);
-        var columnWidth = 660d * stepSize / Math.Max(1, points.Count - 1);
+        var columnWidth = 660d / Math.Max(1, points.Count - 1);
         var columns = new List<RequestColumn>();
-        for (var index = stepSize / 2; index < points.Count; index += stepSize)
+        for (var index = 0; index < points.Count; index++)
         {
             var header = points[index].Start.UtcDateTime.ToString("MMM d HH:mm 'UTC'", CultureInfo.InvariantCulture);
             var rows = paths.Select((path, i) => new RequestTipRow(path.Name, points[index].Requests.GetValueOrDefault(path.Name).ToString("N0", CultureInfo.InvariantCulture), path.Class, path.Dash, C(14 + 6 + 17 * (i + 1.5)))).ToArray();
             var width = Math.Max(header.Length * 6.8, 32 + (rows.Max(row => row.Name.EnumerateRunes().Count()) + rows.Max(row => row.Value.Length)) * 6.8 + 16) + 20;
             var left = X(index) + 10 + width > 708 ? Math.Max(0, X(index) - 10 - width) : X(index) + 10;
             var dots = paths.Select(path => new RequestDot(C(X(index)), C(Y(points[index].Requests.GetValueOrDefault(path.Name))), path.Class, path.Dash)).ToArray();
-            columns.Add(new(C(X(index)), C(Math.Max(48, X(index) - columnWidth / 2)), C(Math.Min(708, X(index) + columnWidth / 2) - Math.Max(48, X(index) - columnWidth / 2)), header + ": " + string.Join(", ", rows.Select(row => row.Name + " " + row.Value)), header, C(left), C(width), C(12 + (rows.Length + 1) * 17), dots, rows));
+            var bandLeft = Math.Round(index == 0 ? 48 : X(index) - columnWidth / 2, 1);
+            var bandRight = Math.Round(index == points.Count - 1 ? 708 : X(index) + columnWidth / 2, 1);
+            columns.Add(new(C(X(index)), C(bandLeft), C(bandRight - bandLeft), header + ": " + string.Join(", ", rows.Select(row => row.Name + " " + row.Value)), header, C(left), C(width), C(12 + (rows.Length + 1) * 17), dots, rows));
         }
         return new(label, paths.Length == 1 ? paths[0].Path + " L 708,168 L 48,168 Z" : "", grid, ticks, paths, columns);
     }

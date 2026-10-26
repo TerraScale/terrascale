@@ -38,17 +38,18 @@ public sealed record OperationChart(string Label, string Path, string Area, IRea
             return new ChartTick(Coordinate(coordinates[index].X), tick, step == 0 ? "start" : step == 4 ? "end" : "middle");
         }).ToArray();
         var path = Smooth(coordinates);
-        var stepSize = Math.Max(1, (points.Count + 59) / 60);
-        var columnWidth = 660d * stepSize / Math.Max(1, points.Count - 1);
+        var columnWidth = 660d / Math.Max(1, points.Count - 1);
         var columns = new List<ChartColumn>();
-        for (var index = stepSize / 2; index < points.Count; index += stepSize)
+        for (var index = 0; index < points.Count; index++)
         {
             var x = coordinates[index].X;
-            var header = page.Measurement.ActivityLabels.Count > index ? page.Measurement.ActivityLabels[index] : points[index].Start.UtcDateTime.ToString(page.Range == "30d" ? "MMM d" : "MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture);
+            var header = page.Measurement.ActivityLabels.Count > index ? page.Measurement.ActivityLabels[index] : points[index].Start.UtcDateTime.ToString("MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture);
             var value = values[index].ToString("N0", CultureInfo.InvariantCulture);
             var width = Math.Max(header.Length * 6.8, 32 + (page.Measurement.ActivityLabel.Length + value.Length) * 6.8 + 16) + 20;
             var left = x + 10 + width > 708 ? Math.Max(0, x - 10 - width) : x + 10;
-            columns.Add(new(Coordinate(x), Coordinate(coordinates[index].Y), Coordinate(Math.Max(48, x - columnWidth / 2)), Coordinate(Math.Min(708, x + columnWidth / 2) - Math.Max(48, x - columnWidth / 2)), header, value, Coordinate(left), Coordinate(width)));
+            var bandLeft = Math.Round(index == 0 ? 48 : x - columnWidth / 2, 1);
+            var bandRight = Math.Round(index == points.Count - 1 ? 708 : x + columnWidth / 2, 1);
+            columns.Add(new(Coordinate(x), Coordinate(coordinates[index].Y), Coordinate(bandLeft), Coordinate(bandRight - bandLeft), header, value, Coordinate(left), Coordinate(width)));
         }
         return new(label, path, path + " L 708,148 L 48,148 Z", grid, ticks, columns, page.Measurement.ActivityLabel);
     }
