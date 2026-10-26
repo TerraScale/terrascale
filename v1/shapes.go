@@ -204,7 +204,7 @@ func (c *Client) shapeGET(ctx context.Context, path []string, query url.Values, 
 		if resp.status == http.StatusOK || resp.status == http.StatusTemporaryRedirect {
 			return resp, target, nil
 		}
-		if resp.status == http.StatusUnauthorized && !refreshed && c.invalidateToken(token) {
+		if resp.status == http.StatusUnauthorized && c.invalidateToken(token, parseAPIError(resp.status, resp.header, resp.body), refreshed) {
 			refreshed = true
 			continue
 		}

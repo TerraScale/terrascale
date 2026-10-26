@@ -179,6 +179,7 @@ type TokenSource struct {
 	token     string
 	refreshAt time.Time
 	flight    *flight
+	terminal  error
 }
 
 type flight struct {
@@ -204,13 +205,18 @@ func noRedirects(hc *http.Client) *http.Client {
 	return &copied
 }
 
-// Token returns a valid access token. A request that fails is not cached:
-// the next call requests again.
+// Token returns a valid access token. Permanent key refusals are retained;
+// transient failures are not cached, so the next call requests again.
 func (s *TokenSource) Token(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	s.mu.Lock()
+	if s.terminal != nil {
+		err := s.terminal
+		s.mu.Unlock()
+		return "", err
+	}
 	if s.token != "" && s.now().Before(s.refreshAt) {
 		token := s.token
 		s.mu.Unlock()
@@ -262,6 +268,13 @@ func (s *TokenSource) run(ctx context.Context, f *flight) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var refused *Error
+	if errors.As(err, &refused) && refused.Code == "invalid_client" {
+		s.terminal = err
+	}
+	if s.terminal != nil {
+		err = s.terminal
+	}
 	if err == nil && s.flight == f && ctx.Err() == nil {
 		s.token, s.refreshAt = res.AccessToken, start.Add(lifetime-min(time.Minute, lifetime/2))
 		f.token = res.AccessToken
@@ -281,6 +294,15 @@ func (s *TokenSource) Invalidate(token string) {
 	if s.token == token {
 		s.token = ""
 	}
+}
+
+// Reject drops a permanently refused key token and prevents future exchanges.
+// A new key requires a new source. In-flight exchanges cannot repopulate it.
+func (s *TokenSource) Reject(_ string, refusal error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.token = ""
+	s.terminal = refusal
 }
 
 // Error is a token endpoint error (RFC 6749 section 5.2), such as 401

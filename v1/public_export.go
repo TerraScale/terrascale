@@ -84,7 +84,7 @@ func (d *Database) Export(ctx context.Context, options ExportOptions) iter.Seq2[
 					data = data[:d.c.maxResponse]
 					readErr = errors.Join(readErr, errors.New("terrabase: export error response exceeds limit"))
 				}
-				if res.StatusCode == http.StatusUnauthorized && readErr == nil && !refreshed && d.c.invalidateToken(token) {
+				if res.StatusCode == http.StatusUnauthorized && readErr == nil && d.c.invalidateToken(token, parseAPIError(res.StatusCode, res.Header, data), refreshed) {
 					continue
 				}
 				apiErr := parseAPIError(res.StatusCode, res.Header, data)

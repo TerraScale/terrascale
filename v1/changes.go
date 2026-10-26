@@ -107,7 +107,7 @@ func (d *Database) Changes(ctx context.Context, options ChangesOptions) iter.Seq
 			if res.StatusCode != http.StatusOK {
 				data, readErr := io.ReadAll(io.LimitReader(res.Body, d.c.maxResponse+1))
 				res.Body.Close()
-				if res.StatusCode == http.StatusUnauthorized && readErr == nil && int64(len(data)) <= d.c.maxResponse && !refreshed && d.c.invalidateToken(token) {
+				if res.StatusCode == http.StatusUnauthorized && readErr == nil && int64(len(data)) <= d.c.maxResponse && d.c.invalidateToken(token, parseAPIError(res.StatusCode, res.Header, data), refreshed) {
 					refreshed = true
 					continue
 				}

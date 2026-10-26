@@ -26,7 +26,10 @@ const (
 	ErrInvalidPatch         ErrorCode = "invalid_patch"
 	ErrSortRequiresIndex    ErrorCode = "sort_requires_index"
 	ErrAssertRequiresIndex  ErrorCode = "assert_requires_index"
-	ErrInvalidKey           ErrorCode = "invalid_key" // 401: a missing or wrong API key or service credential
+	ErrInvalidKey           ErrorCode = "invalid_key"      // 401: a missing or wrong API key or service credential
+	ErrKeyRevoked           ErrorCode = "key_revoked"      // 401: permanent; replace the key
+	ErrKeyExpired           ErrorCode = "key_expired"      // 401: permanent; replace the key
+	ErrAuthUnavailable      ErrorCode = "auth_unavailable" // 503: retry with backoff
 	ErrForbiddenScope       ErrorCode = "forbidden_scope"
 	ErrNotFound             ErrorCode = "not_found"
 	ErrUnknownDatabase      ErrorCode = "unknown_database"

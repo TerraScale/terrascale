@@ -188,7 +188,7 @@ func TestInvalidate(t *testing.T) {
 	}
 }
 
-func TestTokenEndpointErrorsAreNotCached(t *testing.T) {
+func TestInvalidClientIsTerminalButTransientErrorsAreNotCached(t *testing.T) {
 	var status atomic.Int64
 	status.Store(http.StatusUnauthorized)
 	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
@@ -214,6 +214,13 @@ func TestTokenEndpointErrorsAreNotCached(t *testing.T) {
 		t.Fatalf("401: %v", err)
 	}
 	status.Store(http.StatusTooManyRequests)
+	if _, err = s.Token(t.Context()); !errors.As(err, &e) || e.Code != "invalid_client" || srv.hits.Load() != 1 {
+		t.Fatalf("terminal key refusal: %v, %d requests", err, srv.hits.Load())
+	}
+	s, err = NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.Token(t.Context()); !errors.As(err, &e) || e.Code != "rate_limited" || e.RetryAfter != 7*time.Second {
 		t.Fatalf("429: %v", err)
 	}
