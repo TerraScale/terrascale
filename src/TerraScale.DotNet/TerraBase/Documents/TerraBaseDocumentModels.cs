@@ -218,7 +218,7 @@ public sealed record TerraBaseSort(string? Path, string? Order = null)
 
     /// <summary>
     /// Nearest documents first, by ascending distance from <paramref name="vector"/> to the numeric array at <paramref name="path"/>
-    /// (brute force). It must be the only sort key; the query returns one page of at most 100 documents, without a cursor, and
+    /// (approximate when a matching vector index is active). It must be the only sort key; the query returns one page of at most 1000 documents, without a cursor, and
     /// each item's <see cref="TerraBaseDocument.Distance"/>. Only documents whose member is a numeric array of the same length match.
     /// </summary>
     /// <param name="path">JSON Pointer of the embedding member.</param>
@@ -249,7 +249,7 @@ public sealed record TerraBaseSort(string? Path, string? Order = null)
     /// <summary>
     /// Nearest points first, by ascending haversine meters from (<paramref name="lat"/>, <paramref name="lon"/>) to the
     /// <c>{"lat","lon"}</c> object at <paramref name="path"/>. Like <see cref="Near"/>, it must be the only sort key; the query
-    /// returns one page of at most 100 documents, without a cursor, with each item's <see cref="TerraBaseDocument.Distance"/>
+    /// returns one page of at most 1000 documents, without a cursor, with each item's <see cref="TerraBaseDocument.Distance"/>
     /// in meters. Documents without a numeric point are skipped.
     /// </summary>
     /// <param name="path">JSON Pointer of the point member.</param>

@@ -75,7 +75,7 @@ public sealed class TerraBaseTtlAndNearTests
         await Assert.That(() => TerraBaseSort.Near("/embedding", [])).Throws<ArgumentException>();
         await Assert.That(() => TerraBaseSort.Near("/embedding", [1f], "dot")).Throws<ArgumentException>();
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("items", new() { Sort = [near, new("/title")] }));
-        await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("items", new() { Sort = [near], Limit = 101 }));
+        await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("items", new() { Sort = [near], Limit = 1001 }));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("items", new() { Sort = [near], Cursor = "c" }));
     }
 }

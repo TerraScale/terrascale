@@ -140,7 +140,7 @@ public sealed class TerraBaseAggregateAndGeoTests
         await Assert.That(() => TerraBaseFilter.WithinBox("/loc", 0, 0, 1, 181)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => TerraBaseSort.NearPoint("/loc", double.NaN, 0)).Throws<ArgumentOutOfRangeException>();
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("places", new() { Sort = [near, new("/name")] }));
-        await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("places", new() { Sort = [near], Limit = 101 }));
+        await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("places", new() { Sort = [near], Limit = 1001 }));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("orders", new() { Aggregate = aggregate, Sort = [new("/amount")] }));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("orders", new() { Aggregate = aggregate, Project = ["/amount"] }));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("orders", new() { Aggregate = aggregate, Cursor = "c" }));

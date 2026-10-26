@@ -17,15 +17,18 @@ public sealed record TerraBaseSqlResult(int Matched, bool Truncated, IReadOnlyLi
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Rows);
 }
 
-/// <summary>A secondary index built before the create response.</summary>
+/// <summary>A secondary index; vector indexes may build existing documents in the background.</summary>
 /// <param name="Name">Index name, unique per database.</param>
 /// <param name="Collection">Collection name.</param>
 /// <param name="Fields">Key fields in order.</param>
-/// <param name="State">active in the pinned producer.</param>
+/// <param name="State"><c>active</c>, or <c>building</c> while a vector index adds existing documents.</param>
 public sealed record TerraBaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State) : IJsonOnDeserialized
 {
-    /// <summary>Index kind (btree or text); null when an older producer omits it. Future kinds pass through.</summary>
+    /// <summary>Index kind (btree, text or vector); null when an older producer omits it. Future kinds pass through.</summary>
     public string? Kind { get; init; }
+
+    /// <summary>Vector length for a vector index; absent for other kinds.</summary>
+    public int? Dimensions { get; init; }
 
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Fields);
 }
@@ -38,7 +41,14 @@ public sealed record TerraBaseIndexList(IReadOnlyList<TerraBaseIndex> Items) : I
 }
 
 internal sealed record TerraBaseSqlRequest(string Sql);
-internal sealed record TerraBaseCreateIndexRequest(string Collection, IReadOnlyList<string> Fields, string? Name, string? Kind);
+
+/// <summary>An index to create; vector indexes require one field and dimensions 1 to 4096.</summary>
+/// <param name="Collection">Collection name.</param>
+/// <param name="Fields">1 to 4 distinct dotted member paths; exactly one for vector indexes.</param>
+/// <param name="Name">Optional name, derived by the producer when omitted.</param>
+/// <param name="Kind"><c>btree</c> (default), <c>text</c> or <c>vector</c>.</param>
+/// <param name="Dimensions">Vector length, 1 to 4096, for vector indexes only.</param>
+public sealed record TerraBaseCreateIndexRequest(string Collection, IReadOnlyList<string> Fields, string? Name = null, string? Kind = null, int? Dimensions = null);
 
 public sealed partial class TerraBaseDatabase
 {
@@ -65,18 +75,25 @@ public sealed partial class TerraBaseDatabase
 
     /// <summary>Builds an index with 1–4 distinct dotted field paths; name is optional. Requires databases:write; sent once.</summary>
     public Task<TerraBaseIndex> CreateIndexAsync(string collection, IReadOnlyList<string> fields, string? name = null, CancellationToken cancellationToken = default) =>
-        CreateIndexCoreAsync(collection, fields, name, kind: null, cancellationToken);
+        CreateIndexAsync(new TerraBaseCreateIndexRequest(collection, fields, name), cancellationToken);
 
     /// <summary>Builds a btree or text index with 1–4 distinct dotted field paths. Null kind uses the producer's btree default. Requires databases:write; sent once.</summary>
     public Task<TerraBaseIndex> CreateIndexAsync(string collection, string? kind, IReadOnlyList<string> fields, string? name = null, CancellationToken cancellationToken = default) =>
-        CreateIndexCoreAsync(collection, fields, name, kind, cancellationToken);
+        CreateIndexAsync(new TerraBaseCreateIndexRequest(collection, fields, name, kind), cancellationToken);
 
-    private async Task<TerraBaseIndex> CreateIndexCoreAsync(string collection, IReadOnlyList<string> fields, string? name, string? kind, CancellationToken cancellationToken)
+    /// <summary>Creates a btree, text or vector index. Vector builds may return state building. Requires databases:write; sent once.</summary>
+    public async Task<TerraBaseIndex> CreateIndexAsync(TerraBaseCreateIndexRequest request, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(collection);
-        ArgumentNullException.ThrowIfNull(fields);
-        if (kind is not (null or "btree" or "text")) throw new ArgumentException("kind must be btree or text.", nameof(kind));
-        return (await connection.SendAsync(HttpMethod.Post, path + "/indexes", TerraBaseConnection.Json(new TerraBaseCreateIndexRequest(collection, fields, name, kind), Json.TerraBaseCreateIndexRequest),
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrEmpty(request.Collection);
+        ArgumentNullException.ThrowIfNull(request.Fields);
+        if (request.Kind is not (null or "btree" or "text" or "vector")) throw new ArgumentException("kind must be btree, text or vector.", nameof(request));
+        if (request.Kind == "vector" ? request.Fields.Count != 1 || request.Dimensions is not (>= 1 and <= 4096) : request.Dimensions is not null)
+        {
+            throw new ArgumentException("A vector index has one field and dimensions 1 to 4096; other kinds take no dimensions.", nameof(request));
+        }
+
+        return (await connection.SendAsync(HttpMethod.Post, path + "/indexes", TerraBaseConnection.Json(request, Json.TerraBaseCreateIndexRequest),
             Json.TerraBaseIndex, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 

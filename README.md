@@ -187,7 +187,7 @@ atomically.
 
 `TerraBaseSort.Near(path, vector, metric)` orders a query by vector distance
 (`cosine`, the default, or `l2`). It must be the only sort key; the query
-returns one page of at most 100 documents, each with `Distance`.
+returns one page of at most 1000 documents, each with `Distance`.
 `SetCollectionTtlAsync`, `GetCollectionTtlAsync` and `ClearCollectionTtlAsync`
 manage a collection's expiry member: documents whose member holds a past
 RFC 3339 UTC time are deleted within about an hour and stay readable until then.
@@ -198,10 +198,22 @@ TerraBaseDocumentPage nearest = await database.QueryAsync("items",
     new TerraBaseQuery { Sort = [TerraBaseSort.Near("/embedding", embedding)], Limit = 10 }, cancellationToken);
 ```
 
+Vector indexes take one dotted field path and dimensions from 1 to 4096:
+
+```csharp
+TerraBaseIndex vectorIndex = await database.CreateIndexAsync(
+    new TerraBaseCreateIndexRequest("items", ["embedding"], Kind: "vector", Dimensions: 768),
+    cancellationToken);
+```
+
+Creation may return `vectorIndex.State == "building"` while existing documents are indexed.
+`ListIndexesAsync` reports when it becomes `active`; near queries scan until then.
+A matching active vector index makes near results approximate.
+
 Points are `{"lat": …, "lon": …}` objects (WGS 84 degrees). `TerraBaseFilter.WithinRadius(path, lat, lon, meters)`
 and `TerraBaseFilter.WithinBox(path, south, west, north, east)` build `within` filter nodes (a box with `west > east`
 crosses the antimeridian); they nest under `and`, `or` and `not`. `TerraBaseSort.NearPoint(path, lat, lon)` orders
-by haversine meters, nearest first, with the same one-key, one-page (at most 100) rules as the vector `Near`;
+by haversine meters, nearest first, with the same one-key, one-page (at most 1000) rules as the vector `Near`;
 `Distance` then holds meters. `TerraBaseQuery.Aggregate` groups matches instead of returning documents: up to 4
 `GroupBy` paths and up to 16 `Sum`, `Avg`, `Min` and `Max` paths, without sort, project, cursor or count. The page's
 `Groups` hold each `Key`, `Count` and per-path summaries (numbers only; `null` without numbers, sums `0`), and
