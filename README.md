@@ -50,6 +50,10 @@ Customer tenant/project scope and authorized access credentials remain required.
 The examples describe SDK boundaries; deployed issuer trust still requires
 qualification. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
 
+`Client.ListRegions(ctx)` reads the anonymous [serving-region catalog](contracts/regions.md)
+for database placement. It sends one request, accepts future valid region IDs, and
+adds no routing, cache or background discovery. No credentials are required.
+
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
 Package `v1` follows the implemented C# API. A database is addressed by its
