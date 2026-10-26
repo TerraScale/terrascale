@@ -1279,32 +1279,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		return importDocuments(ctx, db.Collection(args[1]), os.Stdin, out)
 	case "keys list":
-		items := []tsauth.APIKey{}
-		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		if !jsonMode(out) {
-			fmt.Fprintln(w, "NAME\tID\tDATABASE\tSCOPES\tEXPIRES\tALLOWED CIDRS")
-		}
-		for k, err := range pages(func(after string) (*v1.Page[tsauth.APIKey], error) {
-			p, err := s.user.APIKeys(ctx, s.org, s.project, tsauth.PageOptions{Limit: 100, After: after})
-			return (*v1.Page[tsauth.APIKey])(p), err
-		}) {
-			if err != nil {
-				return err
-			}
-			if jsonMode(out) {
-				items = append(items, k)
-				continue
-			}
-			expires := "never"
-			if k.ExpiresAt != nil {
-				expires = k.ExpiresAt.Format(time.RFC3339)
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", k.Name, k.ID, cmp.Or(k.Database, "*"), strings.Join(k.Scopes, ","), expires, cmp.Or(strings.Join(k.AllowedCIDRs, ","), "*"))
-		}
-		if jsonMode(out) {
-			return emitJSON(out, items)
-		}
-		return w.Flush()
+		return listKeyMetadata(ctx, s, out)
 	case "keys revoke":
 		if err := s.user.RevokeAPIKey(ctx, s.org, s.project, args[0]); err != nil {
 			return keyOperationError(err)
