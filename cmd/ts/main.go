@@ -58,9 +58,13 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           fra) besides the home region, or
                                           remove every replica
   backup list | create <db>               list or take a database's backups
+  backup policy <db>                      read the snapshot schedule and retention
+  backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
+  backup window <db> [platform|customer]  inspect the proven restore interval
+  backup plan <db> <time> [platform|customer] preview restore metadata
   backup restore <db> <backup id> <new db> restore a backup into a new database
-  backup restore-at <db> <time> <new db>  restore the database as of an RFC 3339
-                                          time into a new database
+  backup restore-at <db> <time> <new db> [platform|customer]
+                                          restore an RFC3339 instant (default platform)
   export <db>                             stream all live documents (NDJSON);
                                           excludes relational tables and metadata
   db changes <db> [<collection>...]       print committed changes as JSON lines
@@ -155,7 +159,11 @@ var commands = map[string][]int{
 	"completion":        {1},
 	"db changes":        {1, 2, 3, 4, 5},
 	"export":            {1},
-	"backup restore-at": {3},
+	"backup restore-at": {3, 4},
+	"backup policy":     {1},
+	"backup policy-set": {3},
+	"backup window":     {1, 2},
+	"backup plan":       {2, 3},
 	"schema get":        {2},
 	"schema set":        {3},
 	"schema delete":     {2},
@@ -294,6 +302,11 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if keyOptionsSet && name != "keys create" {
 		return fmt.Errorf("key expiry and network options are only accepted for keys create: %w", errUsage)
+	}
+	if strings.HasPrefix(name, "backup ") {
+		if err := validateBackupSettings(name, operands[1:]); err != nil {
+			return err
+		}
 	}
 	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
 		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
@@ -880,20 +893,8 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		fmt.Fprintf(out, "Restored %s into %s (%s)\n", args[1], m.Name, m.ID)
 		return nil
-	case "backup restore-at":
-		at, err := time.Parse(time.RFC3339, args[1])
-		if err != nil {
-			return fmt.Errorf("time %q is not RFC 3339, such as 2026-10-23T12:00:00Z", args[1])
-		}
-		m, err := db.RestorePointInTime(ctx, v1.PointInTimeRequest{PointInTime: at, Name: args[2]})
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, m)
-		}
-		fmt.Fprintf(out, "Restored %s as of %s into %s (%s)\n", args[0], at.Format(time.RFC3339), m.Name, m.ID)
-		return nil
+	case "backup policy", "backup policy-set", "backup window", "backup plan", "backup restore-at":
+		return backupSettings(ctx, db, name, args[1:], out)
 	case "export":
 		return exportDatabase(ctx, db, out)
 	case "db changes":
