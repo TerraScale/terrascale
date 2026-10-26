@@ -1,10 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Platform;
@@ -42,7 +39,7 @@ public sealed class TableMenuJourneyTests
         app.MapGet("/datastar.js", () => Results.File(Path.Combine(source, "web/assets/js/vendor/datastar.js"), "text/javascript"));
         app.MapGet("/", (HttpContext http) => { http.Response.Headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'nonce-fixture'; style-src 'self'; object-src 'none'"; return Results.Content(html, "text/html"); });
         await app.StartAsync();
-        var origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        var origin = app.Urls.Single();
         using var playwright = await Playwright.CreateAsync();
         foreach (var engine in new[] { playwright.Chromium, playwright.Firefox, playwright.Webkit })
         {
