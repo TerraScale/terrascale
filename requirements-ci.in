@@ -1,6 +1,5 @@
-# Runtime/dev requirements come from pyproject.toml; include the release backend
-# and every tool executed by CI/publication in the same resolved graph.
-hatchling
+# Runtime/dev/build requirements come from pyproject.toml via compile-ci-lock.sh;
+# include every other tool executed by CI/publication in the same graph.
 pip
 pip-audit
 twine

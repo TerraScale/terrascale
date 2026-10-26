@@ -6,8 +6,12 @@ ranges and minimum Python 3.10 remain in `pyproject.toml`. The lock targets Linu
 and Python 3.10, the common compatible graph for the existing 3.10–3.13 CI matrix.
 Every matrix entry installs this same graph from wheels with hash verification.
 
-CI checks the lock against its inputs and runs pip-audit once, in the existing
-Python 3.12 test job. Publication repeats both checks before building. The audit
+`scripts/compile-ci-lock.sh` extracts every `build-system.requires` entry from
+`pyproject.toml` into the resolver inputs, alongside runtime/dev requirements and
+`requirements-ci.in`. The backend requirement has no duplicate declaration.
+CI checks the lock against these same inputs and runs pip-audit once, in the
+existing Python 3.12 test job. A missing or incompatible locked backend fails the
+input check before the audit or build. Publication repeats both checks before building. The audit
 fails on findings at **every severity**, dependency collection failures and feed
 errors. Its HTTP cache honors feed freshness; uv's package cache is also reused.
 There are no ignored advisories. Dependabot proposes pip and Action updates;
@@ -28,11 +32,7 @@ Revisit it when the project's Python minimum changes or an upstream fix supports
 To update the lock, use uv 0.13.5 and run:
 
 ```sh
-uv pip compile pyproject.toml requirements-ci.in --extra dev \
-  --python-version 3.10 --python-platform x86_64-unknown-linux-gnu \
-  --no-build --generate-hashes --no-annotate --upgrade \
-  --custom-compile-command 'See docs/dependencies.md' \
-  --output-file requirements-ci.txt
+bash scripts/compile-ci-lock.sh --upgrade --output-file requirements-ci.txt
 uv pip sync --require-hashes --only-binary :all: requirements-ci.txt
 bash scripts/check-ci-lock.sh
 pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt
