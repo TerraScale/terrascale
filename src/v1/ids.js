@@ -1,5 +1,5 @@
 // Identifiers for the TerraBase v1 Documents API.
-import { requireId } from "../ids.js";
+import { isValidId, requireId } from "../ids.js";
 
 const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
 // Version tokens are opaque (tbv1-<32 hex>, tbv2-...): only RFC 9110 opaque-tag characters, safe to quote in If-Match.
@@ -18,8 +18,15 @@ export function requireName(kind, name) {
   return name;
 }
 
+/** A database route selector is an immutable ULID or current name.
+ * @param {unknown} selector @returns {string}
+ */
+export function requireDatabaseSelector(selector) {
+  return isValidId(selector) ? requireId(selector) : requireName("database", selector);
+}
+
 /**
- * The catalog project ID is a canonical ULID; database and collection routes use names.
+ * The catalog project ID is a canonical ULID; database selectors accept IDs or names; collection routes use names.
  * @param {unknown} project
  * @returns {import("../ids.js").EntityId}
  */

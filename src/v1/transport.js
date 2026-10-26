@@ -1,7 +1,7 @@
 // Internal typed transport for the TerraBase v1 client. It is not exported
 // from any package entrypoint: callers reach it only through named operations.
 import { parseV1Error } from "./errors.js";
-import { requireName, requireProject } from "./ids.js";
+import { requireDatabaseSelector, requireProject } from "./ids.js";
 import { parseExactJson } from "./json.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 /**
@@ -228,7 +228,9 @@ export class V1Transport {
    */
   async url(operation, params, signal) {
     signal?.throwIfAborted();
-    const database = v1Route(operation).pathTemplate.includes("{database}") ? requireName("database", params.database) : undefined;
+    const database = v1Route(operation).pathTemplate.includes("{database}")
+      ? requireDatabaseSelector(params.database)
+      : undefined;
     const session = database ?? "";
     let base = this.#bases.get(session);
     if (base === undefined) {

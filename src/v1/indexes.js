@@ -1,4 +1,4 @@
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector, requireName } from "./ids.js";
 import { flag, list, numeric, optional, record, text } from "./management-decode.js";
 import { members, mutationOptions } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
@@ -29,7 +29,7 @@ export class V1Indexes {
   /** @type {{database: string}} */
   #params;
   /** @param {V1Transport} transport @param {string} database */
-  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireName("database", database) }; Object.freeze(this); }
+  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireDatabaseSelector(database) }; Object.freeze(this); }
   /** @param {V1CreateIndexRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1Index>} */
   async create(request, options = {}) {
     members(request, ["collection", "fields", "name", "kind"]);

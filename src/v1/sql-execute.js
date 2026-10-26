@@ -1,5 +1,5 @@
 import { array, malformed, object, string } from "./decode.js";
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector } from "./ids.js";
 import { ExactDecimal, stringifyExactJson } from "./json.js";
 /**
  * @import { JsonValue } from "./json.js"
@@ -115,7 +115,7 @@ export async function executeSql(transport, database, statements, options = {}) 
   if (options === null || typeof options !== "object" || Array.isArray(options)) throw new TypeError("SQL request options must be an object.");
   for (const member of Object.keys(options)) if (member !== "signal") throw new TypeError(`Unknown SQL request option ${member}.`);
   const body = stringifyExactJson({ statements: statements.map(encodeStatement) }, "SQL statements");
-  const response = await transport.call("executeSql", { database: requireName("database", database) }, { body, signal: options.signal });
+  const response = await transport.call("executeSql", { database: requireDatabaseSelector(database) }, { body, signal: options.signal });
   const results = array(object(response.value, "SQL execute response").results, "SQL results").map(decodeResult);
   if (results.length !== statements.length) malformed("SQL result count");
   return Object.freeze(results);

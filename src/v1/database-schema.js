@@ -1,4 +1,4 @@
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector, requireName } from "./ids.js";
 import { list, numeric, optional, nullable, record, text, dictionary } from "./management-decode.js";
 import { members, mutationOptions } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
@@ -25,7 +25,7 @@ export class V1DatabaseSchemaClient {
   /** @type {{database: string}} */
   #params;
   /** @param {V1Transport} transport @param {string} database */
-  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireName("database", database) }; Object.freeze(this); }
+  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireDatabaseSelector(database) }; Object.freeze(this); }
   /** @param {V1RequestOptions} [options] @returns {Promise<V1DatabaseSchema>} */
   async list(options = {}) { return collections((await this.#transport.call("getDatabaseSchema", this.#params, { signal: options.signal })).value); }
   /** @param {string} collection @param {V1RequestOptions} [options] @returns {Promise<V1InferredSchema>} */

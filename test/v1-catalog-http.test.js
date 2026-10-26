@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, test } from "vitest";
 import { V1Databases, deleteCollectionSchema, getCollectionSchema, putCollectionSchema } from "../src/v1/catalog.js";
+import { V1Database } from "../src/v1/terrabase-v1.js";
 import { V1Transport } from "../src/v1/transport.js";
 import { ExactDecimal } from "../src/v1/json.js";
 
@@ -77,6 +78,47 @@ describe("public database catalog HTTP contracts", () => {
       expect(request.headers["idempotency-key"]).toBeUndefined();
       if (request.body !== "") expect(request.headers["content-type"]).toBe("application/json");
     }
+  });
+
+  // HTTP fixtures verify the SDK contract, not server-side rename invariants.
+  test("renames by immutable ID and preserves returned identity and placement", async () => {
+    const renamed = { ...database, name: "app_new" };
+    const { transport, databases, requests } = await fixture((request, response) => json(response,
+      request.url.pathname.endsWith("/documents/by-key")
+        ? { id, version: "tbv1-00000000000000000000000000000000", state: "value", document: { kept: true } } : renamed));
+    expect(await databases.rename(id, "app_new")).toEqual(renamed);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: "PATCH", body: '{"name":"app_new"}' });
+    expect(requests[0]?.url.pathname).toBe(`${prefix}/${id}`);
+    expect(requests[0]?.headers.authorization).toBe(`Bearer ${token}`);
+    expect(requests[0]?.headers["content-type"]).toBe("application/json");
+    expect(requests[0]?.headers["idempotency-key"]).toBeUndefined();
+    for (const [databaseId, name] of /** @type {const} */ ([["app", "app_new"], [id, "Bad Name"], [id, ""]]))
+      await expect(databases.rename(databaseId, name)).rejects.toThrow(TypeError);
+    await expect(databases.rename(id, "app_new", /** @type {any} */ ({ idempotencyKey: "unsupported" }))).rejects.toThrow(/Idempotency-Key/u);
+    const reason = new Error("cancel rename");
+    await expect(databases.rename(id, "app_new", { signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
+    expect(await databases.get(id)).toEqual(renamed);
+    expect((await new V1Database(transport, id).collection("orders").get(id)).document).toEqual({ kept: true });
+    expect(requests.slice(1).map(request => [request.method, request.url.pathname])).toEqual([
+      ["GET", `${prefix}/${id}`], ["GET", `${prefix}/${id}/collections/orders/documents/by-key`],
+    ]);
+    for (const selector of ["", "../escape", "Bad Name", `8${id.slice(1)}`, id.toLowerCase()]) {
+      await expect(databases.get(selector)).rejects.toThrow(TypeError);
+      expect(() => new V1Database(transport, selector)).toThrow(TypeError);
+    }
+    await expect(databases.create({ name: id })).rejects.toThrow(TypeError);
+    await expect(databases.rename(id, id)).rejects.toThrow(TypeError);
+    await expect(databases.branch(id, { name: id })).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(3);
+  });
+
+  test.each([[400, "invalid_request"], [401, "unauthorized"], [403, "forbidden_scope"], [404, "not_found"],
+    [409, "name_taken"], [421, "wrong_region"], [503, "storage_unavailable"]])("preserves rename error %i without replaying", async (status, code) => {
+    const { databases, requests } = await fixture((_request, response) =>
+      json(response, { error: { code, message: "Refused" } }, status));
+    await expect(databases.rename(id, "app_new")).rejects.toMatchObject({ status, code });
+    expect(requests).toHaveLength(1);
   });
 
   test("preserves explicit placement and nullable creation inputs without defaulting", async () => {
