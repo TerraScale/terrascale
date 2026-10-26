@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using Microsoft.OpenApi;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
@@ -26,6 +28,17 @@ public sealed class ListDatabaseLogsEndpoint(IManagementService management, IReq
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Metadata(new OpenApiParameter
+        {
+            Name = "status",
+            In = ParameterLocation.Query,
+            Description = "Optional HTTP status class. Omit it to read every status class; duplicate values are rejected.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Enum = [JsonValue.Create("2xx"), JsonValue.Create("3xx"), JsonValue.Create("4xx"), JsonValue.Create("5xx")],
+            },
+        });
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
