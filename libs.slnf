@@ -9,8 +9,7 @@
       "tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj",
       "tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj",
       "benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj",
-      "benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj",
-      "src/TerraScale.CLI/TerraScale.CLI.csproj"
+      "benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj"
     ]
   }
 }
