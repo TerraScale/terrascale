@@ -51,6 +51,7 @@ func main() {
 	poll := flag.Duration("poll", 2*time.Millisecond, "local poll interval")
 	rttSamples := flag.Int("rtt-samples", 21, "TCP connects to the origin for the RTT")
 	load := flag.Int("load", 0, "writers that PUT new documents to the origin back to back while the probes run")
+	loadEvery := flag.Duration("load-every", 0, "with -load, each writer starts a write at most once per this interval (0: back to back), so runs compare at one rate")
 	flag.Parse()
 
 	key, err := os.ReadFile(*keyFile)
@@ -99,7 +100,20 @@ func main() {
 			log.Fatal(err)
 		}
 		writers.Go(func() {
+			var tick <-chan time.Time
+			if *loadEvery > 0 {
+				ticker := time.NewTicker(*loadEvery)
+				defer ticker.Stop()
+				tick = ticker.C
+			}
 			for loadCtx.Err() == nil {
+				if tick != nil {
+					select {
+					case <-tick:
+					case <-loadCtx.Done():
+						return
+					}
+				}
 				r, err := loader.Do(loadCtx, http.MethodPut, replbench.DocPath(*collection, ulid.Make().String()), []byte(`{"load":true}`), "application/json")
 				if err == nil && r.Status/100 == 2 {
 					loaded.Add(1)
