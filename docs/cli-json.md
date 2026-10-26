@@ -9,8 +9,8 @@ for resource lists and NDJSON record/complete/error envelopes for unbounded stre
 See the cli-json-auth, cli-json-streams, cli-json-metadata, cli-json-documents,
 cli-json-functions, cli-json-migrations and cli-json-diff documents for field shapes.
 
-Success is one JSON value followed by a newline: metadata objects, arrays for
-lists (including `[]`), `{name,deleted:true}` for deletion, `{version}` for
+Finite success emits one JSON value followed by a newline: metadata objects, arrays
+for lists (including `[]`), `{name,deleted:true}` for database deletion, `{version}` for
 version and `{commands}` mapping command names to accepted operand counts for help.
 Errors are `{error:{code,message,status?,requestId?}}`; HTTP metadata is included
 when the SDK supplies it. Messages exclude arbitrary response bodies, URLs and
