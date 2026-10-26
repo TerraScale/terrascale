@@ -2,6 +2,8 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 )
 
@@ -19,14 +21,35 @@ func NewProbes(cfg Config) (*Probes, error) {
 	return &Probes{c: c}, nil
 }
 
-// ProbeStatus reports the exact build, region, machine and storage format.
+// ProbeStatus reports the public probe status, service version and region.
+// Each field is required and non-null on the wire; private build metadata is omitted.
 type ProbeStatus struct {
-	Status        string  `json:"status"`
-	Version       string  `json:"version"`
-	Region        string  `json:"region"`
-	StorageFormat string  `json:"storageFormat"`
-	Revision      *string `json:"revision"`
-	Machine       string  `json:"machine"`
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	Region  string `json:"region"`
+}
+
+// UnmarshalJSON validates exact required public fields before replacing the receiver.
+// Unknown fields are ignored for forward compatibility.
+func (p *ProbeStatus) UnmarshalJSON(data []byte) error {
+	invalid := errors.New("terrabase: invalid public probe status response")
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return invalid
+	}
+	var next ProbeStatus
+	for _, field := range []struct {
+		name string
+		out  *string
+	}{{"status", &next.Status}, {"version", &next.Version}, {"region", &next.Region}} {
+		var value *string
+		if json.Unmarshal(fields[field.name], &value) != nil || value == nil {
+			return invalid
+		}
+		*field.out = *value
+	}
+	*p = next
+	return nil
 }
 
 // ReplicationHealth is the anonymous regional lag summary.
@@ -57,7 +80,7 @@ func (p *Probes) status(ctx context.Context, endpoint string) (*ProbeStatus, err
 	var out ProbeStatus
 	resp, err := p.c.call(ctx, request{method: http.MethodGet, path: []string{endpoint}, replaySafe: true}, nil, &out)
 	if err != nil {
-		if resp == nil || resp.status != http.StatusServiceUnavailable || decodeExact(resp.body, &out) != nil || out.Status == "" {
+		if resp == nil || resp.status != http.StatusServiceUnavailable || decodeExact(resp.body, &out) != nil {
 			return nil, err
 		}
 	}
