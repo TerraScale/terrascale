@@ -1,5 +1,6 @@
 {
   "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "cidr_producer": "cidr-provenance.json",
   "dtos": {
     "NameRequest": {
       "sdk_type": "TerraScaleAuthPlatformName",
@@ -165,6 +166,12 @@
           "type": "string",
           "nullable": false,
           "default": null
+        },
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>",
+          "nullable": false,
+          "default": null
         }
       ]
     },
@@ -257,6 +264,12 @@
           "type": "DateTimeOffset?",
           "nullable": true,
           "default": "null"
+        },
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>?",
+          "nullable": true,
+          "default": "null"
         }
       ]
     },
@@ -339,6 +352,12 @@
           "type": "DateTimeOffset?",
           "nullable": true,
           "default": "null"
+        },
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>",
+          "nullable": false,
+          "default": null
         }
       ]
     },
@@ -766,6 +785,17 @@
         {
           "name": "next",
           "type": "string?",
+          "nullable": true,
+          "default": null
+        }
+      ]
+    },
+    "AllowedCidrsRequest": {
+      "sdk_type": "TerraScaleAuthPlatformAllowedCidrs",
+      "fields": [
+        {
+          "name": "allowed_cidrs",
+          "type": "IReadOnlyList<string>?",
           "nullable": true,
           "default": null
         }

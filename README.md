@@ -185,6 +185,22 @@ list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
 `Patch`, `Delete`, `Assert`, `AssertAbsent` and `AssertCount` operations
 atomically.
 
+With a local package built from this source checkout, stream query results as follows:
+
+```csharp
+await foreach (TerraBaseDocument document in database.QueryDocumentsAsync(
+    "users", new TerraBaseQuery { Limit = 100 }, cancellationToken))
+{
+    // Process document.Document in your application.
+}
+```
+
+`QueryPagesAsync` instead yields complete pages with count, aggregate and explain metadata.
+Both preserve the query's initial opaque cursor, follow empty pages with a continuation,
+and fetch only as enumeration advances. Later requests clear `Count`; the original query
+is unchanged. Cancellation stops buffered document delivery; breaking the loop stops
+pagination. Repeated or cyclic continuations throw `InvalidDataException`.
+
 `TerraBaseSort.Near(path, vector, metric)` orders a query by vector distance
 (`cosine`, the default, or `l2`). It must be the only sort key; the query
 returns one page of at most 1000 documents, each with `Distance`.
@@ -372,6 +388,8 @@ once. `TerraScaleAuthException` exposes typed status/retry metadata and only
 known fixed error codes. Messages are fixed safe diagnostics; arbitrary
 producer messages, codes and response bodies are never retained. Options
 formatting omits credentials.
+
+Project and API-key IP allowlists use typed CIDR records and setters; see [CIDR contracts and examples](contracts/auth/cidrs.md).
 
 ## Verification and package distribution
 

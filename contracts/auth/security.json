@@ -54,6 +54,8 @@
       "invitation_expired",
       "invitation_pending",
       "last_owner",
+      "mfa_not_enrolled",
+      "mfa_required",
       "name_taken",
       "not_empty",
       "not_found",

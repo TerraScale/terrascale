@@ -78,6 +78,8 @@
     "last_owner",
     "membership_changed",
     "membership_not_found",
+    "mfa_not_enrolled",
+    "mfa_required",
     "name_taken",
     "no_customer",
     "not_empty",
@@ -157,5 +159,17 @@
     ],
     "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
     "revision": "c1a1d9662662698739750a9af45db979abb2cea7"
+  },
+  "mfa_producer": {
+    "revision": "a3cbf8b1c73d304189a489fa8033d41f3b508de3",
+    "sources_sha256": {
+      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "537ccff7a106269305268d075e733cc076d58c892d512c392c3f71f0a4a99862",
+      "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "847c737c4b614e845d64910d7d2038cd94a75f730da5caabd0b61212749adde3"
+    },
+    "statuses": {
+      "mfa_required": 403,
+      "mfa_not_enrolled": 409
+    },
+    "note": "Organization MFA refusal identities only; producer free text remains omitted and deterministic refusals are not retried."
   }
 }
