@@ -84,7 +84,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         var page = await PageAsync(client, "/databases/" + actualId + "?created=1");
         await Assert.That(page).Contains(name + " is ready</p>");
         await Assert.That(page).Contains("Its home region is ready. Replica progress is shown in Replication.");
-        await Assert.That(await PageAsync(client, "/databases/" + actualId + "/replication")).Contains("Not measured");
+        await Assert.That(await PageAsync(client, "/databases/" + actualId + "/replication")).Contains("<dt>Configured regions</dt><dd>gru · São Paulo, fra · Frankfurt, sfo · San Francisco</dd>");
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = actualId, ["name"] = "users" }))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);

@@ -129,17 +129,6 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
         "danger" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
         _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
     };
-    public IReadOnlyList<string> PlacementLabels
-    {
-        get
-        {
-            var configured = Serving;
-            var labels = configured.Select(DatabasesPage.RegionDisplay).ToList();
-            if (Context.Project?.BackupRegion is { Length: > 0 } backup && !configured.Contains(backup, StringComparer.OrdinalIgnoreCase))
-                labels.Add(DatabasesPage.RegionDisplay(backup) + " · backup region");
-            return labels;
-        }
-    }
 }
 
 // One activity card with its own range; Plot is null when Message says why there is no chart.
