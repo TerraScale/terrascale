@@ -66,6 +66,9 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
             await Assert.That(card.Length).IsGreaterThan(0);
             await Assert.That(card).Contains(published.GetProperty("name").GetString()!);
             await Assert.That(card).Contains("$" + published.GetProperty("priceMonthlyUsd").GetDecimal().ToString("F2", CultureInfo.InvariantCulture));
+            // A yearly plan's headline price is its yearly charge; the monthly figure is only an equivalent.
+            await Assert.That(card).Contains(published.GetProperty("billingInterval").GetString() == "year"
+                ? "$" + published.GetProperty("priceAnnualUsd").GetDecimal().ToString("F2", CultureInfo.InvariantCulture) + "<small>/ year</small>" : "<small>/ month</small>");
             await Assert.That(card).Contains(Number(limits, "storageGb") + " GB-region storage");
             await Assert.That(card).Contains(limits.GetProperty("operationUnitsPerMonth").GetInt64().ToString("N0", CultureInfo.InvariantCulture) + " operation units/month (4 KiB)");
             await Assert.That(card).Contains(Number(limits, "egressGbPerMonth") + " GB client egress/month");
@@ -77,8 +80,11 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
             if (planKey == "free") continue;
             var plan = paid.Single(plan => plan.GetProperty("key").GetString() == planKey);
             await Assert.That(plan.GetProperty("name").GetString()).IsEqualTo(published.GetProperty("name").GetString());
-            await Assert.That(plan.GetProperty("monthlyPriceCents").GetInt64()).IsEqualTo((long)(published.GetProperty("priceMonthlyUsd").GetDecimal() * 100));
-            await Assert.That(plan.GetProperty("annualPriceCents").GetInt64()).IsEqualTo(published.GetProperty("priceAnnualUsd").ValueKind == JsonValueKind.Null ? 0L : (long)(published.GetProperty("priceAnnualUsd").GetDecimal() * 100));
+            var yearly = published.GetProperty("billingInterval").GetString() == "year";
+            var charged = published.GetProperty(yearly ? "priceAnnualUsd" : "priceMonthlyUsd").GetDecimal();
+            await Assert.That(plan.GetProperty("priceCents").GetInt64()).IsEqualTo((long)(charged * 100));
+            await Assert.That(plan.GetProperty("monthlyEquivalentCents").GetInt64()).IsEqualTo((long)(published.GetProperty("priceMonthlyUsd").GetDecimal() * 100));
+            await Assert.That(plan.GetProperty("price").GetString()).IsEqualTo("$" + charged.ToString("F2", CultureInfo.InvariantCulture) + (yearly ? " / year" : " / month"));
             await Assert.That(plan.GetProperty("billingInterval").GetString()).IsEqualTo(published.GetProperty("billingInterval").GetString());
             await Assert.That(plan.GetProperty("monthlyEgressBytes").GetInt64()).IsEqualTo((long)(limits.GetProperty("egressGbPerMonth").GetDecimal() * 1_000_000_000));
             await Assert.That(plan.GetProperty("trialDays").GetInt32()).IsEqualTo(published.GetProperty("trialDays").ValueKind == JsonValueKind.Null ? 0 : published.GetProperty("trialDays").GetInt32());

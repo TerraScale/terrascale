@@ -167,7 +167,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await page.GotoAsync(new Uri(fixture.Origin, Billing + "&interval=annual").ToString());
         await page.GetByRole(AriaRole.Button, new() { Name = "Choose plan", Exact = true }).ClickAsync();
         await page.Locator("#change-billing-plan[open]").WaitForAsync();
-        var annual = (await page.Locator("#change-billing-plan").InnerTextAsync()).Contains("$30.00 billed yearly", StringComparison.Ordinal);
+        var annual = (await page.Locator("#change-billing-plan").InnerTextAsync()).Contains("$30.00 / year · Billed yearly", StringComparison.Ordinal);
         await CaptureAsync(page, $"annual-chooser-{width}");
         await RecordAsync($"annual-chooser-{width}", new { route = Billing + "&interval=annual", width, height, annual });
         await Assert.That(annual).IsTrue().Because("The chooser must show Starter’s yearly charge without offering unapproved billing intervals.");

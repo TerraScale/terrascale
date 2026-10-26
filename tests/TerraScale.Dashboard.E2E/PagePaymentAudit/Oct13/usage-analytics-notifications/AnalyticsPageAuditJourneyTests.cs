@@ -35,7 +35,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         var baseline = await GetPageAsync(client, route);
         await SaveEvidenceAsync("single" + (route.StartsWith("/analytics", StringComparison.Ordinal) ? "-analytics" : "-home"), route, producer, baseline);
         await Assert.That(baseline).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\" title=\"10\">10</dd>");
-        await Assert.That(baseline).Contains("<dt class=\"ts-stat-label\">Storage</dt><dd class=\"ts-stat-value\">4.0 KiB</dd>");
+        await Assert.That(baseline).Contains("<dt class=\"ts-stat-label\">Storage</dt><dd class=\"ts-stat-value\">4.1 kB</dd>");
         producer.Mode = mode;
         var html = await GetPageAsync(client, route);
         await SaveEvidenceAsync(mode + (route.StartsWith("/analytics", StringComparison.Ordinal) ? "-analytics" : "-home"), route, producer, html);
@@ -58,7 +58,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         producer.Mode = "latest-partial";
         var partial = await GetPageAsync(client, "/analytics?range=1h&region=gru");
         await Assert.That(partial).Contains("value=\"GRU\" selected=\"selected\"").Because("Region cards link with lowercase codes.");
-        await Assert.That(partial).Contains("<dt class=\"ts-stat-label\">Storage</dt><dd class=\"ts-stat-value\">4.0 KiB</dd>");
+        await Assert.That(partial).Contains("<dt class=\"ts-stat-label\">Storage</dt><dd class=\"ts-stat-value\">4.1 kB</dd>");
         await Assert.That(partial.Contains("<dd class=\"ts-stat-value\">Not measured</dd>", StringComparison.Ordinal)).IsFalse()
             .Because("An idle, unsampled current minute must not hide the previous minute's storage.");
     }

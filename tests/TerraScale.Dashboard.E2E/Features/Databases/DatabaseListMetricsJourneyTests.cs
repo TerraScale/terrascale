@@ -91,11 +91,11 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
         await Assert.That(measured).Contains("title=\"6 puts, patches and deletes in 7d\"");
         await Assert.That(measured).Contains("<title>Reads trend, 7d</title>");
         await Assert.That(measured.Split("Not reported").Length - 1).IsEqualTo(2).Because("explicit null gauges in the latest bucket stay missing");
-        await Assert.That(measured).DoesNotContain("4.0 KiB").Because("an older storage reading is not current");
+        await Assert.That(measured).DoesNotContain("4.1 kB").Because("an older storage reading is not current");
         await Assert.That(measured).DoesNotContain("2.5 ms").Because("an older p95 is not current");
 
         var current = Row(html, "current-list");
-        await Assert.That(current).Contains(">8.0 KiB</span>");
+        await Assert.That(current).Contains(">8.2 kB</span>");
         await Assert.That(current).Contains(">3.5 ms</span>");
         await Assert.That(current).Contains("title=\"3 reads in 7d\"");
 

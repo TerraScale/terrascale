@@ -46,7 +46,7 @@
                 <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
                     @foreach (var plan in Model.Plans ?? [])
                     {
-                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.Price<span class="ts-meta"> @plan.PriceUnit</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
                     }
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>

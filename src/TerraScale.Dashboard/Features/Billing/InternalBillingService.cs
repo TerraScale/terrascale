@@ -24,7 +24,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         await AdministratorAsync(principal, cancellationToken);
         if (config.OrganizationId.Length == 0 || config.OrganizationId.Trim() != config.OrganizationId ||
             config.BasePlanKey.Trim() != config.BasePlanKey || config.SpendCapCents <= 0 ||
-            config.WriteCentsPerMillion < 0 || config.StorageCentsPerGiBMonth < 0)
+            config.WriteCentsPerMillion < 0 || config.StorageCentsPerGBMonth < 0)
             throw new AccountAccessException("An exact organization ID, paid base plan and positive cap with non-negative rates are required.", 422);
         var basePlan = PlanCatalog.For(config.BasePlanKey);
         if (basePlan.PriceCents <= 0) throw new AccountAccessException("Select an existing paid base plan key.", 422);
@@ -110,7 +110,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         var from = new DateTimeOffset(utc.Year, utc.Month, 1, 0, 0, 0, TimeSpan.Zero);
         var to = now;
         var initial = new InternalBill(false, true, default, default, 0, 0, 0, policy.Plan.PriceCents, 0, 0, 0,
-            organization.SpendCapCents, false, policy.WriteCentsPerMillion, policy.StorageCentsPerGiBMonth);
+            organization.SpendCapCents, false, policy.WriteCentsPerMillion, policy.StorageCentsPerGBMonth);
         var projects = organization.Projects.Values.ToArray();
         if (projects.Length == 0 || measurements.Scope.State == UsageSourceState.NoProducer ||
             projects.Any(project => measurements.Monthly.GetValueOrDefault(project.Id) is not { State: UsageSourceState.Measured, Reading: not null }))
@@ -148,7 +148,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             initial = initial with { PeriodStart = from, PeriodEnd = to, Reads = reads, Writes = writes, LogicalBytes = bytes };
             coherent = true;
             var writeCharge = Charge(BigInteger.Max(0, (BigInteger)writes - policy.Allowances.MonthlyOperations), policy.WriteCentsPerMillion, 1_000_000);
-            var storageCharge = Charge(BigInteger.Max(0, (BigInteger)bytes - policy.Allowances.StorageBytes), policy.StorageCentsPerGiBMonth, 1L << 30);
+            var storageCharge = Charge(BigInteger.Max(0, (BigInteger)bytes - policy.Allowances.StorageBytes), policy.StorageCentsPerGBMonth, 1_000_000_000);
             var total = checked(policy.Plan.PriceCents + checked(writeCharge + storageCharge));
             var reached = organization.SpendCapCents > 0 && total >= organization.SpendCapCents;
             return initial with
@@ -195,7 +195,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             var requestId = ids.NewId();
             var plan = PlanCatalog.For(config.BasePlanKey) with { Id = planId, Key = "internal", Name = "TerraScale Internal" };
             var policy = new InternalBillingPolicy(organization.Id, planId, config.BasePlanKey, requestId, plan,
-                PlanCatalog.Limits(config.BasePlanKey), PlanCatalog.ResourceLimits(config.BasePlanKey), config.WriteCentsPerMillion, config.StorageCentsPerGiBMonth);
+                PlanCatalog.Limits(config.BasePlanKey), PlanCatalog.ResourceLimits(config.BasePlanKey), config.WriteCentsPerMillion, config.StorageCentsPerGBMonth);
             var next = new BillingBinding
             {
                 OrganizationId = organization.Id,
@@ -223,7 +223,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
     private static bool Same(InternalBillingReservation reservation, InternalBillingConfiguration config) =>
         reservation.Policy.OrganizationId == config.OrganizationId && reservation.Policy.BasePlanKey == config.BasePlanKey &&
         reservation.SpendCapCents == config.SpendCapCents && reservation.Policy.WriteCentsPerMillion == config.WriteCentsPerMillion &&
-        reservation.Policy.StorageCentsPerGiBMonth == config.StorageCentsPerGiBMonth;
+        reservation.Policy.StorageCentsPerGBMonth == config.StorageCentsPerGBMonth;
 
     private async Task ClaimSingletonAsync(BillingBinding reservation, CancellationToken cancellationToken)
     {

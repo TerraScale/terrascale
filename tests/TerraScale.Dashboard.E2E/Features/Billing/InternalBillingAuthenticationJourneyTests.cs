@@ -191,7 +191,7 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
 
     internal static string[] CommandArguments(string command, string organization, string email = "user@example.com") => command == "report-internal-billing"
         ? [command, "--org", organization, "--admin-email", email]
-        : [command, "--org", organization, "--admin-email", email, "--base-plan", "pro", "--spend-cap-cents", "840", "--write-cents-per-million", "100", "--storage-cents-per-gib-month", "20"];
+        : [command, "--org", organization, "--admin-email", email, "--base-plan", "pro", "--spend-cap-cents", "840", "--write-cents-per-million", "100", "--storage-cents-per-gb-month", "20"];
 
     // Reads the printed ts-auth verification URL and code, then decides on the stand-in for ts-auth's hosted page.
     internal static async Task<CommandResult> RunApprovedAsync(AuthProviderScenario scenario, HttpClient producer, string[] args,

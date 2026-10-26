@@ -10,12 +10,14 @@ public static class MetricFormat
     public static string Latency(double? value) => value is null ? "Not reported" :
         value.Value.ToString(Math.Abs(value.Value) >= 100 ? "F0" : Math.Abs(value.Value) >= 10 ? "F1" : "F2", CultureInfo.InvariantCulture) + " ms";
 
+    // Decimal units, as the published catalog prices storage and egress in GB.
+    // Promotion uses the rounded value, so 999,999,999 bytes reads "1.0 GB".
     public static string Bytes(long value)
     {
-        if (value < 1024) return value + " B";
-        var amount = value / 1024d;
+        if (value < 1000) return value.ToString(CultureInfo.InvariantCulture) + " B";
+        var amount = value / 1000d;
         var index = 0;
-        while (amount >= 1023.95 && index < 4) { amount /= 1024; index++; }
-        return amount.ToString("F1", CultureInfo.InvariantCulture) + " " + new[] { "KiB", "MiB", "GiB", "TiB", "PiB" }[index];
+        while (amount >= 999.95 && index < 4) { amount /= 1000; index++; }
+        return amount.ToString("F1", CultureInfo.InvariantCulture) + " " + new[] { "kB", "MB", "GB", "TB", "PB" }[index];
     }
 }

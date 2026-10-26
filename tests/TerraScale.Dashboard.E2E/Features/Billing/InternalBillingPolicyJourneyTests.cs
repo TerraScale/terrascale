@@ -111,7 +111,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The report-only cap alert is visible through the native owner inbox");
         using var card = await browser.GetAsync("/organization?tab=billing");
         var html = await card.Content.ReadAsStringAsync();
-        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 20.00", "US$ 104.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GiB-month", "$120.00", CapAlert }
+        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 20.00", "US$ 104.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GB-month", "$120.00", CapAlert }
             .All(value => html.Contains(value, StringComparison.Ordinal)),
             "The native card retains original US$ prices, overage rates and alert text while the organization cap label keeps its source dollar format");
         await scenario.RestartAsync();
@@ -196,7 +196,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var policy = Organization(await ObserveAsync(producer), setup.Organization);
         await CheckAsync(policy.GetProperty("SpendCapCents").GetInt64() == 12000 &&
             policy.GetProperty("InternalBilling").GetProperty("WriteCentsPerMillion").GetInt64() == 100 &&
-            policy.GetProperty("InternalBilling").GetProperty("StorageCentsPerGiBMonth").GetInt64() == 20,
+            policy.GetProperty("InternalBilling").GetProperty("StorageCentsPerGBMonth").GetInt64() == 20,
             "The full production command entry admits original Go hexadecimal, binary, octal, signed and separator syntax into the independently known persisted values");
         await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         await NoStripeAsync(await ObserveAsync(producer));
@@ -932,7 +932,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     }
 
     private static string[] Configure(string organization, string cap = "12000", string writeRate = "100") =>
-        ["configure-internal-billing", "--org", organization, "--admin-email", "user@example.com", "--base-plan", "pro", "--spend-cap-cents", cap, "--write-cents-per-million", writeRate, "--storage-cents-per-gib-month", "20"];
+        ["configure-internal-billing", "--org", organization, "--admin-email", "user@example.com", "--base-plan", "pro", "--spend-cap-cents", cap, "--write-cents-per-million", writeRate, "--storage-cents-per-gb-month", "20"];
     private static string[] Report(string organization) => ["report-internal-billing", "--org", organization, "--admin-email", "user@example.com"];
 
     private static async Task<Command> RunAsync(AuthProviderScenario scenario, string[] args, Func<Task>? beforeDecision = null)
@@ -979,7 +979,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             bill.GetProperty("periodStart").GetDateTimeOffset() == month &&
             bill.GetProperty("periodEnd").GetDateTimeOffset().Offset == TimeSpan.Zero &&
             bill.GetProperty("reads").GetInt64() == 123_456 && bill.GetProperty("writes").GetInt64() == 106_000_000 &&
-            bill.GetProperty("logicalBytes").GetInt64() == 10_000_000_000L + (2L << 30) &&
+            bill.GetProperty("logicalBytes").GetInt64() == 12_000_000_000L &&
             bill.GetProperty("baseCents").GetInt64() == 2000 && bill.GetProperty("writeCents").GetInt64() == 10400 &&
             bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 12440 &&
             bill.GetProperty("spendCapCents").GetInt64() == 12000 && bill.GetProperty("capReached").GetBoolean() && bill.GetProperty("alert").GetString() == CapAlert,
@@ -999,7 +999,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         bill.GetProperty("error").GetString() == InvalidAmount && bill.GetProperty("periodStart").GetDateTimeOffset() == month &&
         bill.GetProperty("periodEnd").GetDateTimeOffset() > bill.GetProperty("periodStart").GetDateTimeOffset() &&
         bill.GetProperty("reads").GetInt64() == 123456 && bill.GetProperty("writes").GetInt64() == 106000000 &&
-        bill.GetProperty("logicalBytes").GetInt64() == 10_000_000_000L + (2L << 30) && bill.GetProperty("baseCents").GetInt64() == 2000 &&
+        bill.GetProperty("logicalBytes").GetInt64() == 12_000_000_000L && bill.GetProperty("baseCents").GetInt64() == 2000 &&
         bill.GetProperty("writeCents").GetInt64() == 0 && bill.GetProperty("storageCents").GetInt64() == 0 && bill.GetProperty("totalCents").GetInt64() == 0 &&
         bill.GetProperty("writeCentsPerMillion").GetInt64() == long.MaxValue && !bill.TryGetProperty("alert", out _),
         "Pricing overflow preserves the actual coherent UTC-month metering and valid configured rate without publishing an amount or cap alert");

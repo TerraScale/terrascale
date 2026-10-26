@@ -244,7 +244,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
         {
             long reads = ordinal == 0 && index == 0 ? 123_456 : 0;
             long writes = usageMode == "overflow" && ordinal < 2 && index == 0 ? long.MaxValue : ordinal == 0 && index == 0 ? 106_000_000 : 0;
-            long bytes = ordinal == 0 && index == 0 ? 10_000_000_000L + (2L << 30) : 0;
+            long bytes = ordinal == 0 && index == 0 ? 12_000_000_000L : 0;
             return new
             {
                 databaseId = database.Id,

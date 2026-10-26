@@ -9,9 +9,13 @@ public sealed record BillingPlan(string Id, string Key, string Name, long PriceC
 {
     public string CheckoutInterval => BillingInterval == "year" ? "annual" : "monthly";
     public bool SupportsInterval(string interval) => PriceCents > 0 && (BillingInterval is "month" or "year") && interval == CheckoutInterval;
-    public string BillingDescription => BillingInterval == "year" ? AnnualPrice + " billed yearly" : "Billed monthly";
+    // Yearly plans are sold only by the year; their monthly figure is an equivalent, never an offer.
+    public string BillingDescription => BillingInterval == "year" ? "Billed yearly · " + MonthlyPrice + "/month equivalent" : "Billed monthly";
     public string MonthlyPrice => "$" + (PriceCents / 100m).ToString("F2", CultureInfo.InvariantCulture);
     public string AnnualPrice => "$" + (AnnualPriceCents / 100m).ToString("F2", CultureInfo.InvariantCulture);
+    public long IntervalPriceCents => BillingInterval == "year" ? AnnualPriceCents : PriceCents;
+    public string Price => BillingInterval == "year" ? AnnualPrice : MonthlyPrice;
+    public string PriceUnit => BillingInterval == "year" ? "/ year" : "/ month";
     public string DatabaseAllowance => Resources.Databases.ToString(CultureInfo.InvariantCulture) + (Resources.Databases == 1 ? " database" : " databases");
     public string StorageAllowance => (Allowances.StorageBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage";
     public string EgressAllowance => (Allowances.MonthlyEgressBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month";
@@ -19,10 +23,19 @@ public sealed record BillingPlan(string Id, string Key, string Name, long PriceC
     public string OperationsAllowance => Allowances.MonthlyOperations.ToString("N0", CultureInfo.InvariantCulture) + " " + PlanCatalog.OperationUnitName.ToLowerInvariant() + "s/month (" + (PlanCatalog.OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)";
 }
 
+// MCP field descriptions shared by every tool that lists plan prices.
+public static class PlanPriceText
+{
+    public const string PriceCents = "US cents charged each billing interval: the yearly price for yearly plans, the monthly price for monthly plans.";
+    public const string BillingInterval = "month or year. A plan is sold only at this interval.";
+    public const string MonthlyEquivalentCents = "Monthly price, or the yearly price divided by 12. For comparison only; yearly plans are never sold monthly.";
+    public const string Price = "Price as the dashboard shows it, such as $30.00 / year.";
+}
+
 public sealed record PlanAllowances(long MonthlyOperations, long StorageBytes, long MonthlyEgressBytes = 0);
 public sealed record PlanResourceLimits(int Databases, int Members, int Projects);
 
-public sealed record PlanComparison(string Key, string Name, long PriceCents, string BillingDescription, IReadOnlyList<string> Features);
+public sealed record PlanComparison(string Key, string Name, long PriceCents, string Price, string PriceUnit, string BillingDescription, IReadOnlyList<string> Features);
 
 public static class PlanCatalog
 {
@@ -64,7 +77,9 @@ public static class PlanCatalog
         var selectable = Plans.FirstOrDefault(candidate => candidate.Key == key);
         string Resource(string property, string singular, string plural) => limits.GetProperty(property).ValueKind == JsonValueKind.Null
             ? plural + ": contact sales" : limits.GetProperty(property).GetInt32().ToString(CultureInfo.InvariantCulture) + " " + (limits.GetProperty(property).GetInt32() == 1 ? singular : plural);
-        return new PlanComparison(key, plan.GetProperty("name").GetString()!, checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100)),
+        var cents = checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100));
+        return new PlanComparison(key, plan.GetProperty("name").GetString()!, cents,
+            selectable?.Price ?? "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture), selectable?.PriceUnit ?? "/ month",
             key == "free" ? "No card required" : selectable?.BillingDescription ?? plan.GetProperty("billing").GetString()!,
             Array.AsReadOnly(new[] {
                 limits.GetProperty("storageGb").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage",
