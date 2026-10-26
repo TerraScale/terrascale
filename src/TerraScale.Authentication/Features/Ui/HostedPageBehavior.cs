@@ -61,10 +61,11 @@ internal static class HostedPageBehavior
       (function (index) {
         var digit = document.createElement('input');
         digit.type = 'text'; digit.inputMode = 'numeric'; digit.pattern = '[0-9]'; digit.required = true;
-        digit.maxLength = 6; digit.placeholder = '·'; digit.autocomplete = index === 0 ? 'one-time-code' : 'off';
+        digit.maxLength = 6; digit.placeholder = '·'; digit.autocomplete = index === 0 ? 'one-time-code' : 'on';
+        digit.id = value.id + '-digit' + (index === 0 ? '' : '-' + (index + 1)); digit.name = value.id + '-digit-' + (index + 1);
         digit.setAttribute('aria-label', 'Digit ' + (index + 1));
         if (value.getAttribute('aria-describedby')) digit.setAttribute('aria-describedby', value.getAttribute('aria-describedby'));
-        if (index === 0) { digit.id = value.id + '-digit'; if (label) label.htmlFor = digit.id; }
+        if (index === 0 && label) label.htmlFor = digit.id;
         digit.addEventListener('input', function () {
           if (digit.value.length > 1) fill(index, digit.value);
           else { digit.value = digit.value.replace(/[^0-9]/g, ''); sync(); if (digit.value && index < 5) digits[index + 1].focus(); }

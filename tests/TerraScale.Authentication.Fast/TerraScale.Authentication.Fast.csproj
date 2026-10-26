@@ -33,6 +33,9 @@
     <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
   </ItemGroup>
   <ItemGroup>
+    <!-- axe-core is a pinned test-only JavaScript asset; Deque's .NET adapter transitively requires banned Newtonsoft.Json. -->
+    <Content Include="Accessibility/node_modules/axe-core/axe.min.js" Link="axe.min.js" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Accessibility/node_modules/axe-core/LICENSE" Link="axe-core-LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <!-- Shared harness source; deliberately not a third test project. -->
     <Compile Include="../TerraScale.Authentication.TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
