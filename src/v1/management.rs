@@ -16,10 +16,11 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement supplied when creating or updating a database. Databases require
+/// Placement supplied when creating or updating a database. Writable databases require
 /// at least two distinct serving regions: the home region and at least one replica.
 /// On create, omitting `replica_regions` uses all current serving regions;
 /// setting only `home_region` does not request single-region placement.
+/// An explicit empty replica list on create is rejected with HTTP 400.
 /// `all_regions: Some(true)` also follows regions added later; the server rejects
 /// it combined with `replica_regions` on create.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -99,8 +100,10 @@ impl Database {
             .await
     }
 
-    /// `PATCH D`; placement must retain at least two distinct serving regions.
-    /// An empty replica list cannot request single-region placement.
+    /// `PATCH D`; writable databases require at least two distinct serving regions.
+    /// An empty replica list is accepted only for immediate deletion teardown,
+    /// not a supported single-region database. Document writes during teardown
+    /// fail with HTTP 409 `placement_needs_two_regions`.
     pub async fn update_database(
         &self,
         placement: &DatabasePlacement,
@@ -109,7 +112,8 @@ impl Database {
             .await
     }
 
-    /// `DELETE D`; deletes the database.
+    /// `DELETE D`; first call `update_database` with `replica_regions: Some(vec![])`,
+    /// then delete immediately. Otherwise the server returns HTTP 409 `database_replicated`.
     pub async fn delete_database(&self) -> Result<()> {
         check_name("database", self.name())?;
         self.client()
