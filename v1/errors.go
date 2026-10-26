@@ -56,7 +56,7 @@ const (
 	ErrCopyFaulted        ErrorCode = "copy_faulted"
 	ErrQuotaExceeded      ErrorCode = "quota_exceeded"      // 429
 	ErrRequestTimeout     ErrorCode = "request_timeout"     // 408
-	ErrDatabaseReplicated ErrorCode = "database_replicated" // 409: delete of a database with replica regions
+	ErrDatabaseReplicated ErrorCode = "database_replicated" // Legacy 409 code; current deletion removes every replica directly.
 	ErrIndexExists        ErrorCode = "index_exists"        // 409: an index with the name, or on the same fields of the collection
 	ErrUniqueViolation    ErrorCode = "unique_violation"    // 409: a document write or transaction duplicates a unique key; the whole transaction rolls back
 	// ErrSchemaRequiresEmptyCollection is a 409: unique keys change only while

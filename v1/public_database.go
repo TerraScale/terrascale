@@ -158,9 +158,9 @@ func (d *Database) CreateIn(ctx context.Context, placement Placement) (*ManagedD
 }
 
 // SetRegions replaces the database's replica regions from its home region.
-// A writable database needs at least one replica besides the home. An empty
-// slice is allowed only as transient teardown immediately before Delete;
-// document writes then return 409 placement_needs_two_regions. The home cannot change.
+// A writable database needs at least one replica besides the home. An empty slice
+// can temporarily make document writes return 409 placement_needs_two_regions;
+// it is not required for deletion and does not provide supported single-region placement. The home cannot change.
 func (d *Database) SetRegions(ctx context.Context, regions []string) (*ManagedDatabase, error) {
 	if regions == nil {
 		regions = []string{}

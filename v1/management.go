@@ -559,8 +559,8 @@ func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, nam
 // SetDatabaseRegions replaces a database's replica regions with
 // replicaRegions, the complete new list of region ids; its home region
 // never changes. A writable database needs at least one replica besides the home.
-// An empty list is allowed only as transient teardown immediately before deletion;
-// document writes then return 409 placement_needs_two_regions.
+// An empty list can temporarily make document writes return 409 placement_needs_two_regions;
+// it is not required for deletion and does not provide supported single-region placement.
 func (u *ManagementUser) SetDatabaseRegions(ctx context.Context, org, project, databaseID string, replicaRegions []string) (*ManagedDatabase, error) {
 	body := struct {
 		ReplicaRegions []string `json:"replicaRegions"`
@@ -589,10 +589,11 @@ func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID 
 	return get[ManagedDatabase](ctx, u, databasePath(org, project, databaseID), nil)
 }
 
-// DeleteDatabase deletes a database, by id, and its data; its branches stay.
-// It fails with ErrDatabaseReplicated while the database has replica regions.
-// Call SetDatabaseRegions with an empty list, then delete immediately. That empty
-// update is transient teardown; document writes return 409 placement_needs_two_regions.
+// DeleteDatabase deletes a database, by id, and its data directly in its home
+// region without a preceding placement update. Permanent purge authority removes
+// every replica, including all-regions placement; its branches stay. A 204 response
+// records logical deletion and local cleanup; remote erasure is retried durably,
+// not guaranteed synchronous.
 func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
 	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID), nil, nil, nil)
 }

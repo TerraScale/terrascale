@@ -369,11 +369,13 @@ replaces the replica list (the home never changes).
 in every serving region, including regions that join later
 (`ManagedDatabase.AllRegions`; `ReplicaRegions` is then empty). It cannot be
 combined with `ReplicaRegions`; `SetDatabaseRegions` turns it off.
-Deleting a replicated database returns `ErrDatabaseReplicated`. First call
-`SetDatabaseRegions(..., nil)` (or `Database.SetRegions(ctx, nil)`), then delete
-immediately. This empty-list update is allowed only as transient teardown;
-document writes return 409 `placement_needs_two_regions` until deletion.
-It is not a supported single-region database.
+Delete directly in the database's home region without a preceding placement
+update. Permanent purge authority removes every replica, including all-regions
+placement; branches remain independent. A 204 response records logical deletion
+and local cleanup. Remote erasure is retried durably, so 204 does not guarantee
+synchronous remote erasure. An empty replica-list update can temporarily make
+document writes return 409 `placement_needs_two_regions`; it is not required
+for deletion and does not provide supported single-region placement.
 A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
