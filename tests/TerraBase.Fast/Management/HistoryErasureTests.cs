@@ -383,8 +383,13 @@ public sealed class HistoryErasureTests
             var old = ReplicaId.Of(gru.Node.Region, gru.Node.Member ^ 1U, 0).Value;
             OriginCut[] cuts = erasure == erasures[0] ? [] : [new(old, own.AuthMark)];
             await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(erasure), gru.Name,
-                own with { PreviousReplicas = [old], PreviousAuth = cuts, PreviousSystem = cuts,
-                    RecutReplicas = [.. receipts.Select(receipt => receipt.Replica).Order()] },
+                own with
+                {
+                    PreviousReplicas = [old],
+                    PreviousAuth = cuts,
+                    PreviousSystem = cuts,
+                    RecutReplicas = [.. receipts.Select(receipt => receipt.Replica).Order()],
+                },
                 Hosting.TerraBaseJsonContext.Default.HistoryErasureReceipt, CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
         }

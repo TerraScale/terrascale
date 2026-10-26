@@ -30,8 +30,13 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             return false;
         }
 
-        var file = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.ReadWrite, Share = FileShare.None,
-            Options = FileOptions.Asynchronous | FileOptions.DeleteOnClose | FileOptions.SequentialScan };
+        var file = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.ReadWrite,
+            Share = FileShare.None,
+            Options = FileOptions.Asynchronous | FileOptions.DeleteOnClose | FileOptions.SequentialScan,
+        };
         if (!OperatingSystem.IsWindows())
         {
             file.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
