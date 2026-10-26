@@ -758,7 +758,7 @@ paths:
       operationId: revoke_organization_api_key
       tags: [API keys]
       summary: Revoke an organization API key
-      description: Needs admin. No token is issued for it afterwards; tokens already issued expire within 60 seconds.
+      description: Needs admin. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.
       responses:
         '204': { description: 'Revoked.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -885,7 +885,7 @@ paths:
       operationId: revoke_project_api_key
       tags: [API keys]
       summary: Revoke a project API key
-      description: Needs the project's member role. No token is issued for it afterwards; tokens already issued expire within 60 seconds.
+      description: Needs the project's member role. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.
       responses:
         '204': { description: 'Revoked.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -944,6 +944,36 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/api-keys/self:
+    get:
+      operationId: get_api_key_status
+      tags: [API keys]
+      summary: Check an API key token
+      description: |
+        Whether the API key a bearer access token was issued for still acts: the key exists and is unexpired, the
+        token's key string still works (a rotation's grace included), and its organization and project exist. Read
+        from storage on every call and answered only by the GRU authority (503 elsewhere). TerraBase asks it in every
+        region (docs/terrabase/key-revocation.md). 401 key_revoked, key_expired or invalid_token; 429 rate_limited
+        past 20 checks per second for one key, key string and project.
+      security:
+        - apiKeyToken: []
+      responses:
+        '200':
+          description: The key still acts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key_id]
+                properties:
+                  key_id: { $ref: '#/components/schemas/Ulid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: rate_limited; too many checks for this key token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/audit-events:
     parameters:
@@ -1208,6 +1238,11 @@ components:
         A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer). Organization,
         project, API key and service tokens are refused. The user's authentication epoch must still match;
         primary-only tokens for active MFA accounts are refused. Unavailable or corrupt MFA state fails closed.
+    apiKeyToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: An access token the token endpoint issued for an API key (client credentials), carrying key_id and key_gen.
     clientBasic:
       type: http
       scheme: basic

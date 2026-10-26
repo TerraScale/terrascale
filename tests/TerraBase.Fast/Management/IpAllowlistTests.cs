@@ -85,6 +85,8 @@ public sealed class IpAllowlistTests
         var key = id + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
         api.Issuer.GrantClient(key, () => api.Issuer.Mint(id, token =>
         {
+            token.Claims["key_id"] = id;
+            token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
             token.Claims["project_id"] = database.Project;
             token.Claims["scope"] = "documents:read";
             token.Claims["key_cidrs"] = cidrs;

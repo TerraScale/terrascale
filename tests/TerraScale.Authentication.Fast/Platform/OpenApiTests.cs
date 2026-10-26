@@ -13,7 +13,7 @@ public sealed partial class OpenApiTests
     [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
     public required BrowserFixture Chromium { get; init; }
 
-    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "accountDeletionReceipt", "bearerAuth", "clientBasic", "mailAdmission", "platformUser", "projectApiKey"];
+    private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "accountDeletionReceipt", "apiKeyToken", "bearerAuth", "clientBasic", "mailAdmission", "platformUser", "projectApiKey"];
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 
     [Test]

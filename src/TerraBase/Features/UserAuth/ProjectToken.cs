@@ -8,7 +8,8 @@ namespace TerraBase.Features.UserAuth;
 /// <param name="Scope">Space-separated granted scopes.</param>
 /// <param name="ExpiresAt">The signed token's expiration, without clock skew.</param>
 /// <param name="Allowlists">The IP allowlists the client address must fall in, every one; empty for none.</param>
-public sealed record ProjectToken(string? ProjectId, string? Database, string? Scope, DateTimeOffset ExpiresAt, IReadOnlyList<IPNetwork[]> Allowlists)
+/// <param name="Key">The API key the token was issued for, whose live status is checked on every request; null for other tokens.</param>
+public sealed record ProjectToken(string? ProjectId, string? Database, string? Scope, DateTimeOffset ExpiresAt, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key = null)
 {
     /// <summary>Whether the project and optional database restriction reach this route.</summary>
     public bool Reaches(string project, string database) =>

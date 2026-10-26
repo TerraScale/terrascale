@@ -43,6 +43,8 @@ public sealed class TestIssuer : IDisposable
     private readonly Dictionary<(string Token, string Organization, string Project), ProjectAuthority> _projects = [];
     private readonly Dictionary<string, RecoveryAuthority> _recovery = [];
     private readonly Dictionary<string, Func<string>> _clients = [];
+    private readonly Dictionary<string, string?> _clientStatus = [];
+    private int _statusRequests;
     private int _tokenRequests;
     private int _discoveryFetches;
     private int _jwksFetches;
@@ -127,6 +129,20 @@ public sealed class TestIssuer : IDisposable
     /// <summary>Client credentials grants at <c>{Issuer}/oauth/token</c>, granted or not.</summary>
     public int TokenRequests => Volatile.Read(ref _tokenRequests);
 
+    public int StatusRequests => Volatile.Read(ref _statusRequests);
+
+    public bool StatusAvailable { get; set; } = true;
+
+    public static string KeyGeneration(string key) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16];
+
+    public void ExpireClient(string key)
+    {
+        lock (_gate)
+        {
+            _clientStatus[key[..26]] = "key_expired";
+        }
+    }
+
     /// <summary>
     /// Issues <paramref name="mint"/>'s access token for the dashboard API key <paramref name="key"/> (<c>&lt;key id&gt;_&lt;secret&gt;</c>)
     /// through the client credentials grant, as ts-auth does; any other credential gets <c>401</c>.
@@ -136,6 +152,7 @@ public sealed class TestIssuer : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         lock (_gate)
         {
+            _clientStatus[key[..26]] = null;
             _clients["Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(key[..key.IndexOf('_', StringComparison.Ordinal)] + ":" + key))] = mint;
         }
     }
@@ -145,6 +162,7 @@ public sealed class TestIssuer : IDisposable
     {
         lock (_gate)
         {
+            _clientStatus[key[..26]] = "key_revoked";
             _clients.Remove("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(key[..key.IndexOf('_', StringComparison.Ordinal)] + ":" + key)));
         }
     }
@@ -402,6 +420,29 @@ public sealed class TestIssuer : IDisposable
             };
             response.Headers.Location = recovery.Redirect;
             return response;
+        }
+
+        if (uri.AbsoluteUri == "https://auth.test/v1/terrascale/api-keys/self" && method == "GET")
+        {
+            Interlocked.Increment(ref _statusRequests);
+            if (!StatusAvailable)
+            {
+                throw new HttpRequestException("test key status unavailable");
+            }
+
+            var jwt = authorization?.StartsWith("Bearer ", StringComparison.Ordinal) == true ? new JsonWebToken(authorization[7..]) : null;
+            var id = jwt?.TryGetPayloadValue<string>("key_id", out var found) == true ? found : string.Empty;
+            string? refusal;
+            lock (_gate)
+            {
+                refusal = _clientStatus.TryGetValue(id, out var status) ? status : "key_revoked";
+            }
+
+            return new HttpResponseMessage(refusal is null ? HttpStatusCode.OK : HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent((refusal is null ? new JsonObject { ["key_id"] = id }
+                    : new JsonObject { ["error"] = new JsonObject { ["code"] = refusal, ["message"] = "x" } }).ToJsonString(), Encoding.UTF8, "application/json"),
+            };
         }
 
         if (uri.AbsoluteUri == Issuer + "/oauth/token" && method == "POST")

@@ -24,7 +24,8 @@ internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_t
 /// <param name="Scopes">Granted scopes.</param>
 /// <param name="ValidTo">When the access token expires.</param>
 /// <param name="Allowlists">The key's and project's IP allowlists (<see cref="IpAllowlists"/>); empty for none.</param>
-internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists);
+/// <param name="Key">The token as <see cref="IKeyAuthority"/> checks it before every statement.</param>
+internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken Key);
 
 /// <summary>A key's grant, a refused key, or ts-auth is unavailable.</summary>
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
@@ -33,7 +34,7 @@ internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
 /// Accepts a dashboard API key (<c>&lt;key id&gt;_&lt;secret&gt;</c>, a ts-auth client credential) where a client can only send
 /// a password, as on the Postgres wire: exchanges it at ts-auth's token endpoint with the client credentials grant and
 /// validates the access token exactly like a bearer token. A grant is reused until shortly before its token expires and
-/// then exchanged again, so revoking the key stops it within one token lifetime.
+/// then exchanged again; whether its key still acts is <see cref="IKeyAuthority"/>'s answer, asked before every statement.
 /// </summary>
 internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFactory http, IIssuerKeys issuerKeys, IMemoryBudget budget, TimeProvider time)
 {
@@ -42,14 +43,19 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private const int MaxKeyLength = 256;
     private const int MaxGrants = 4096;
 
+    // Distinct keys exchanging at once, validation included (it may wait for ts-auth's signing keys): past it, unavailable.
+    private const int MaxExchanging = 64;
+
     // Exchanged again this long before the token expires, so a statement never runs on a token about to lapse. ts-auth
-    // issues 60-second project tokens: a key exchanges about every 50 seconds and a revoked key stops within a minute.
+    // issues 60-second project tokens: a key exchanges about every 50 seconds.
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(10);
     private static readonly JsonWebTokenHandler Tokens = new();
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
 
-    // Keyed by the SHA-256 of the key, never the key itself.
+    // Keyed by the SHA-256 of the key, never the key itself. One exchange per key at a time: the sessions and watches
+    // of one key renew together and share it, instead of exhausting MaxInFlight.
     private readonly ConcurrentDictionary<string, TsAuthKeyGrant> _grants = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<Task<TsAuthKeyResult>>> _exchanging = new(StringComparer.Ordinal);
     private int _inFlight;
 
     /// <summary>Whether <paramref name="secret"/> has the shape of a ts-auth project API key.</summary>
@@ -70,35 +76,54 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return cached;
         }
 
-        var exchanged = await RequestAsync(issuer, secret, cancellationToken).ConfigureAwait(false);
-        switch (exchanged)
+        if (_exchanging.Count >= MaxExchanging && !_exchanging.ContainsKey(cacheKey))
         {
-            case TsAuthKeyGrant grant:
-                if (_grants.Count >= MaxGrants)
-                {
-                    var now = time.GetUtcNow();
-                    foreach (var (key, entry) in _grants)
+            return Unavailable();
+        }
+
+        return await _exchanging.GetOrAdd(cacheKey, _ => new Lazy<Task<TsAuthKeyResult>>(() => ExchangeOnceAsync(cacheKey, issuer, secret)))
+            .Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // Shared by every caller of one key, so no caller's cancellation ends it; the client's timeout bounds it.
+    private async Task<TsAuthKeyResult> ExchangeOnceAsync(string cacheKey, string issuer, string secret)
+    {
+        try
+        {
+            var exchanged = await RequestAsync(issuer, secret, CancellationToken.None).ConfigureAwait(false);
+            switch (exchanged)
+            {
+                case TsAuthKeyGrant grant:
+                    if (_grants.Count >= MaxGrants)
                     {
-                        if (entry.ValidTo <= now)
+                        var now = time.GetUtcNow();
+                        foreach (var (key, entry) in _grants)
                         {
-                            _grants.TryRemove(key, out _);
+                            if (entry.ValidTo <= now)
+                            {
+                                _grants.TryRemove(key, out _);
+                            }
+                        }
+
+                        if (_grants.Count >= MaxGrants)
+                        {
+                            _grants.Clear();
                         }
                     }
 
-                    if (_grants.Count >= MaxGrants)
-                    {
-                        _grants.Clear();
-                    }
-                }
+                    _grants[cacheKey] = grant;
+                    break;
+                case NotFound:
+                    _grants.TryRemove(cacheKey, out _);
+                    break;
+            }
 
-                _grants[cacheKey] = grant;
-                break;
-            case NotFound:
-                _grants.TryRemove(cacheKey, out _);
-                break;
+            return exchanged;
         }
-
-        return exchanged;
+        finally
+        {
+            _exchanging.TryRemove(cacheKey, out _);
+        }
     }
 
     private async ValueTask<TsAuthKeyResult> RequestAsync(string issuer, string secret, CancellationToken cancellationToken)
@@ -177,7 +202,9 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt
             || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
             || !jwt.TryGetPayloadValue<string>("project_id", out var project) || !EntityIds.IsValid(project)
-            || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
+            || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid)
+            || !jwt.TryGetPayloadValue<string>("key_id", out var keyId) || keyId != subject
+            || !jwt.TryGetPayloadValue<string>("key_gen", out var generation) || !KeyToken.IsGeneration(generation))
         {
             return new NotFound();
         }
@@ -200,7 +227,8 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             }
         }
 
-        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists);
+        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
+            new KeyToken(subject, generation, project, token));
     }
 
     private static Unavailable Unavailable() => new("ts-auth key exchange is unavailable");
