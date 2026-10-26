@@ -1,6 +1,7 @@
 using System.Reflection;
 using SqlParser;
 using SqlParser.Ast;
+using SqlParser.Tokens;
 using Column = TerraBase.Features.Sql.SqlAffinityColumn;
 using Scope = TerraBase.Features.Sql.SqlAffinityScope;
 
@@ -22,12 +23,19 @@ internal sealed class SqlAffinityResolver
     private readonly Dictionary<Select, Scope> _aliasScopes = [with(ReferenceEqualityComparer.Instance)];
     private readonly Dictionary<Expression, List<Scope>> _scopes = [with(ReferenceEqualityComparer.Instance)];
     private readonly HashSet<object> _visited = [with(ReferenceEqualityComparer.Instance)];
+    private readonly HashSet<string> _names = [with(SqlIdentifierComparer.Instance)];
     private int _groups;
+    private int _aliasNumber;
 
     public SqlAffinityResolver(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables)
     {
         _tables = tables;
         _output = Output;
+        foreach (var word in new Tokenizer().Tokenize(query.ToSql(), new SqlDialect()).OfType<Word>())
+        {
+            _budget.Charge(1, word.Value.Length);
+            _names.Add(word.Value);
+        }
         foreach (var cte in query.With?.CteTables ?? [])
         {
             if (_ctes.Count >= MaxCtes)
@@ -60,6 +68,30 @@ internal sealed class SqlAffinityResolver
             : found?.Affinity;
     }
 
+    public bool ConversionIsIdentity(Expression expression, SqlAffinity affinity)
+    {
+        var storage = _scopes.TryGetValue(expression, out var scopes)
+            ? Scope.Lookup(expression, scopes, _output)?.Storage : null;
+        storage ??= SqlGuard.Storage(expression);
+        return affinity == SqlAffinity.Text ? storage == SqlAffinity.Text
+            : storage is SqlAffinity.Numeric;
+    }
+
+    private Expression Qualify(Expression expression)
+    {
+        if (expression is not (Expression.Identifier or Expression.CompoundIdentifier)
+            || !_scopes.TryGetValue(expression, out var scopes)
+            || Scope.Lookup(expression, scopes, _output) is not { Qualifier: { } qualifier } column)
+        {
+            return expression;
+        }
+
+        var qualified = new Expression.CompoundIdentifier([new Ident(qualifier, '"'), new Ident(column.Name, '"')]);
+        _budget.Charge(1);
+        _scopes[qualified] = scopes;
+        return qualified;
+    }
+
     // Reflection is required: the parser's visitor has no SELECT callback and skips derived tables.
     private void Walk(object node, List<Scope> scopes, int depth)
     {
@@ -86,11 +118,15 @@ internal sealed class SqlAffinityResolver
 
         if (node is System.Collections.IList list)
         {
-            foreach (var item in list)
+            for (var i = 0; i < list.Count; i++)
             {
-                if (item is not null)
+                if (list[i] is { } item)
                 {
                     Walk(item, scopes, depth + 1);
+                    if (item is Expression expression)
+                    {
+                        list[i] = Qualify(expression);
+                    }
                 }
             }
 
@@ -115,6 +151,19 @@ internal sealed class SqlAffinityResolver
                 }
 
                 Walk(child, context, depth + 1);
+                if (child is Expression expression && property.CanWrite)
+                {
+                    property.SetValue(node, Qualify(expression));
+                }
+            }
+        }
+
+        if (node is SelectItem.QualifiedWildcard { Name.Values: [var name] } wildcard)
+        {
+            var source = scopes.SelectMany(scope => scope.Sources).FirstOrDefault(source => Same(source.Name, name.Value));
+            if (source.Columns is [var first, ..] && first.Qualifier is { } qualifier)
+            {
+                wildcard.GetType().GetProperty(nameof(wildcard.Name))!.SetValue(wildcard, new ObjectName([new Ident(qualifier, '"')]));
             }
         }
     }
@@ -196,6 +245,26 @@ internal sealed class SqlAffinityResolver
         else if (factor is TableFactor.Derived derived)
         {
             columns = Rename(Output(derived.SubQuery, outer), factor.Alias?.Columns);
+        }
+
+        var rendered = name;
+        if (outer.Any(scope => scope.Sources.Any(source => Same(source.Name, name))))
+        {
+            do
+            {
+                rendered = "__tb_affinity" + (++_aliasNumber).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                _budget.Charge(1, rendered.Length);
+            }
+            while (!_names.Add(rendered));
+            var alias = new TableAlias(new Ident(rendered, '"'), factor.Alias?.Columns);
+            factor.GetType().GetProperty(nameof(factor.Alias))!.SetValue(factor, alias);
+        }
+
+        if (columns is not null)
+        {
+            var qualified = new List<Column>();
+            _budget.Add(qualified, columns.Select(column => column with { Qualifier = rendered.Length > 0 ? rendered : null }));
+            columns = qualified;
         }
 
         _budget.Charge(1);
@@ -300,6 +369,7 @@ internal sealed class SqlAffinityResolver
                 _budget.Add(result, left.Select((column, i) => column with
                 {
                     Ambiguous = column.Ambiguous || right[i].Ambiguous || column.Affinity != right[i].Affinity,
+                    Storage = column.Storage == right[i].Storage ? column.Storage : null,
                 }));
                 break;
             default:
@@ -320,7 +390,7 @@ internal sealed class SqlAffinityResolver
             var columns = item switch
             {
                 SelectItem.Wildcard => scope.Visible,
-                SelectItem.QualifiedWildcard { Name.Values: [var qualifier] } => scope.Sources.FirstOrDefault(source => Same(source.Name, qualifier.Value)).Columns,
+                SelectItem.QualifiedWildcard { Name.Values: [var qualifier] } => scope.Sources.FirstOrDefault(source => Same(source.Name, qualifier.Value) || source.Columns?.Any(column => Same(column.Qualifier ?? "", qualifier.Value)) == true).Columns,
                 SelectItem.ExpressionWithAlias { Expression: var expression, Alias: var alias } => [Project(alias.Value, expression, [scope, .. outer])],
                 SelectItem.UnnamedExpression { Expression: var expression } => [Project(SqlGuard.Unwrap(expression) switch
                 {
@@ -345,7 +415,7 @@ internal sealed class SqlAffinityResolver
     private Column Project(string name, Expression expression, List<Scope> scopes)
     {
         var source = Scope.Lookup(expression, scopes, _output);
-        return new Column(name, source?.Affinity, source?.Ambiguous ?? false);
+        return new Column(name, source?.Affinity, source?.Ambiguous ?? false, Storage: source?.Storage ?? SqlGuard.Storage(expression));
     }
 
     private void UniqueNames(List<Column> result)

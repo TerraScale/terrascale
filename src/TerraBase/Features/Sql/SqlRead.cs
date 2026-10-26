@@ -310,8 +310,8 @@ internal static class SqlRead
             query = new Parser().ParseSql(read.Query.ToSql(), new SqlDialect()) is [Statement.Select { Query: var copy }]
                 ? copy
                 : throw new FormatException("the statement cannot be copied");
-            SqlGuard.Apply(query, tables);
             var affinities = SqlGuard.Affinity(query, tables, parameters.Count);
+            SqlGuard.Apply(query, tables);
             parameters = [.. parameters, .. affinities.Select(binding => Bound(binding.Affinity, parameters[binding.Parameter - 1]))];
             // Defense in depth: the text the engine runs must parse back to the same statement.
             var full = query.ToSql();

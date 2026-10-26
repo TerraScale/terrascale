@@ -4,7 +4,7 @@ using Column = TerraBase.Features.Sql.SqlAffinityColumn;
 
 namespace TerraBase.Features.Sql;
 
-internal readonly record struct SqlAffinityColumn(string Name, SqlAffinity? Affinity, bool Ambiguous = false);
+internal readonly record struct SqlAffinityColumn(string Name, SqlAffinity? Affinity, bool Ambiguous = false, string? Qualifier = null, SqlAffinity? Storage = null);
 internal sealed record SqlAffinityScope(List<(string Name, List<Column>? Columns)> Sources, List<Column>? Visible,
         List<Column>? Aliases = null, bool PreferAliases = false)
 {
@@ -48,7 +48,7 @@ internal sealed record SqlAffinityScope(List<(string Name, List<Column>? Columns
                 return preferred;
             }
 
-            var sources = qualifier is null ? [("", scope.Visible)] : scope.Sources.Where(source => Same(source.Name, qualifier)).ToList();
+            var sources = qualifier is null ? [("", scope.Visible)] : scope.Sources.Where(source => Same(source.Name, qualifier) || source.Columns?.Any(column => Same(column.Qualifier ?? "", qualifier)) == true).ToList();
             if (sources.Any(source => source.Columns is null))
             {
                 throw new FormatException("SQL source column affinity cannot be inferred");
