@@ -6,6 +6,6 @@
     <p class="ts-auth-subtitle">The page you’re looking for has moved, or never existed. Let’s get you back on track.</p>
     <div class="ts-row">
         <a class="ts-btn ts-btn-primary ts-btn-lg" href="/">@Icons.Render("Home")<span>Back to dashboard</span></a>
-        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="https://terrascale.tech/contact">@Icons.Render("Mail")<span>Contact support</span></a>
+        <a class="ts-btn ts-btn-secondary ts-btn-lg" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>@Icons.Render("Mail")<span>Contact support</span>@(ExternalLink.Hint)</a>
     </div>
 </div>

@@ -37,10 +37,10 @@
                         <button class="ts-btn ts-btn-secondary ts-btn-block" type="submit" name="decision" value="deny">Cancel</button>
                     </form>
                 }
-                <p class="ts-meta">See <a class="ts-link" href="https://docs.terrascale.tech/guides/mcp">connecting AI clients</a> for how MCP sign-in works.</p>
+                <p class="ts-meta">See <a class="ts-link" href="https://docs.terrascale.tech/guides/mcp" @(ExternalLink.Attributes)>connecting AI clients@(ExternalLink.Hint)</a> for how MCP sign-in works.</p>
             </div>
         </div>
-        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms">Terms</a><a href="https://docs.terrascale.tech/legal/privacy">Privacy</a><a href="https://status.terrascale.tech">Status</a></footer>
+        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms@(ExternalLink.Hint)</a><a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy@(ExternalLink.Hint)</a><a href="https://status.terrascale.tech" @(ExternalLink.Attributes)>Status@(ExternalLink.Hint)</a></footer>
     </div>
 </main>
 @functions { public DocumentModel LayoutModel => Model.Document; }

@@ -14,10 +14,10 @@
                 </div>
                 <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@Model.Message</p><p class="ts-alert-body">Reference: <code>@Model.Reference</code></p></div>
                 <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-block" href="@Model.RetryUrl">Try again</a></div>
-                <p class="ts-meta">Still failing? Check <a class="ts-link" href="https://status.terrascale.tech">TerraScale status</a>, and quote the reference when you contact us.</p>
+                <p class="ts-meta">Still failing? Check <a class="ts-link" href="https://status.terrascale.tech" @(ExternalLink.Attributes)>TerraScale status@(ExternalLink.Hint)</a>, and quote the reference when you contact us.</p>
             </div>
         </div>
-        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms">Terms</a><a href="https://docs.terrascale.tech/legal/privacy">Privacy</a><a href="https://status.terrascale.tech">Status</a></footer>
+        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms@(ExternalLink.Hint)</a><a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy@(ExternalLink.Hint)</a><a href="https://status.terrascale.tech" @(ExternalLink.Attributes)>Status@(ExternalLink.Hint)</a></footer>
     </div>
 </main>
 @functions { public DocumentModel LayoutModel => Model.Document; }
