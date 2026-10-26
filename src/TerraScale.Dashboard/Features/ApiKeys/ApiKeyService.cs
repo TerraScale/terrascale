@@ -130,7 +130,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         return new(key, result.Key);
     }
 
-    public const string ScopeDescription = "Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over Hrana/libSQL wire, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, and SQL explain/usage/metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
+    public const string ScopeDescription = "Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Hrana/libSQL and Postgres wire protocols, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
 
     public const int MaxPreviousSecretTtl = 86400;
     public const int MaxAllowedCidrs = 32;
