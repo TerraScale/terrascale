@@ -119,6 +119,7 @@ internal sealed class PaymentWebhookAuditState(IDashboardState underlying) : IDa
     public Task CheckReadyAsync(CancellationToken cancellationToken) => underlying.CheckReadyAsync(cancellationToken);
     public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => underlying.GetAsync(collection, id, cancellationToken);
     public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) => underlying.ListAsync(collection, cancellationToken);
+    public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken) => underlying.QueryPageAsync(collection, query, cancellationToken);
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
     {
         if (collection == AccountService.OrganizationsCollection && id == Billing?.OrganizationId && FailNextOrganizationWrite)

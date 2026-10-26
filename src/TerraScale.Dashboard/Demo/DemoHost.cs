@@ -322,6 +322,8 @@ sealed class TestState : IDashboardState
     public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => Task.FromResult(Items.GetValueOrDefault(collection + "/" + id));
     public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<TerraBaseDocument>>(Items.Where(item => item.Key.StartsWith(collection + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray());
+    public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken) =>
+        Task.FromResult(TestStateQuery.Page(Items.Where(item => item.Key.StartsWith(collection + "/", StringComparison.Ordinal)).Select(item => item.Value), query));
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
     {
         if (BeforeWriteAsync is { } before) await before(collection, id);

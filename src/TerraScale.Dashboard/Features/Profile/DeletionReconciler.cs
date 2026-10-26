@@ -29,6 +29,8 @@ public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardSta
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
+        try { await Features.Data.DatabaseWorkspaceCleanup.ReplayAsync(state, cancellationToken); }
+        catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
         // Replay does not depend on producer availability or delivery of an already ACKed proof.
         try
         {
@@ -85,6 +87,7 @@ public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardSta
             case "organization":
                 var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
                 await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
+                await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["OrganizationId"] = proof.SubjectId }, cancellationToken);
                 var projects = new HashSet<string>(entry.ProjectIds, StringComparer.Ordinal);
                 if (await state.GetAsync(AccountService.OrganizationsCollection, proof.SubjectId, cancellationToken) is { } existing && !AccountService.IsDeletionFence(existing))
                 {

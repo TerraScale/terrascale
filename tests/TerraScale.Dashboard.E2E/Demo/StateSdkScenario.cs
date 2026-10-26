@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.E2E;
 // An external, test-only HTTP producer for the production state adapter and
 // unmodified official Documents SDK. The producer-seeded platform database is
 // fixture-owned; this does not qualify OCI Vault secret delivery or a live deployment.
-public sealed class StateSdkScenario : IAsyncDisposable
+public sealed partial class StateSdkScenario : IAsyncDisposable
 {
     private readonly string root;
     private readonly DemoEnvironment environment = new();
@@ -106,7 +106,12 @@ public sealed class StateSdkScenario : IAsyncDisposable
         return await StartHostsAsync();
     }
 
-    private WebApplication Host() => environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
+    private WebApplication Host()
+    {
+        var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
+        MapSqlCleanupRoutes(app);
+        return app;
+    }
 
     internal void ConfigureState(WebApplicationBuilder builder, Func<IHttpClientFactory, IHttpClientFactory>? decorate = null)
     {
@@ -238,7 +243,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         }
     }
 
-    private sealed class StateProducer
+    private sealed partial class StateProducer
     {
         public const string Project = "00000000000000000000000005";
         private readonly object gate = new();
@@ -314,6 +319,8 @@ public sealed class StateSdkScenario : IAsyncDisposable
                     lock (gate) return collections.TryGetValue(parts[6], out var collection)
                         ? Results.Json(CollectionBody(parts[6], collection)) : Error(404, "unknown_collection");
                 }
+                if (parts.Length == 8 && parts[7] == "query" && http.Request.Method == "POST") return await QueryAsync(parts[6], http);
+                if (parts.Length == 8 && parts[7] == "documents" && parts[6] == "dashboard_sql_workspaces") Interlocked.Increment(ref sqlWorkspaceLists);
                 if (parts.Length == 8 && parts[7] == "documents" && http.Request.Method == "GET")
                     lock (gate) return collections.TryGetValue(parts[6], out var listed)
                         ? Results.Json(new
@@ -347,6 +354,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                         return Results.Json(new { id, version = existing.Version, state = "value", document = existing.Value });
                     }
                     Require(http.Request.Method is "PUT" or "DELETE", "Only production state point read/write/delete operations are admitted.");
+                    if (http.Request.Method == "DELETE" && parts[6] == "dashboard_sql_workspaces" && Mode == "sql-delete-unavailable") return Error(503, "unavailable");
                     var absent = http.Request.Headers.IfNoneMatch == "*";
                     var match = http.Request.Headers.IfMatch.ToString();
                     Require(absent != (match.Length > 0), "Every state mutation requires exactly one producer precondition.");
@@ -426,6 +434,8 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 pausedWrites,
                 privateRequests,
                 redirectTargetRequests,
+                cleanupQueries = cleanupQueries.ToArray(),
+                sqlWorkspaceLists,
                 failures = failures.ToArray(),
                 organizationPlans = organizationPlans.ToDictionary(),
                 collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
