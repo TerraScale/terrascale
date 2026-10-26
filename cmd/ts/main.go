@@ -263,7 +263,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs"}, name) {
+	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke"}, name) {
 		return errors.New("structured output is not implemented for this command yet")
 	}
 	var collectionSet, yesSet, scopeSet bool
@@ -323,7 +323,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	switch name {
 	case "auth login":
-		return login(ctx, device, out)
+		return login(ctx, device, out, prompt)
 	case "auth logout":
 		return logout(ctx, device, out)
 	}
@@ -404,6 +404,9 @@ func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io
 	if err != nil {
 		return err
 	}
+	if jsonMode(out) {
+		return emitJSON(out, k) // This explicit create command reveals the secret once.
+	}
 	expires := "never"
 	if k.APIKey.ExpiresAt != nil {
 		expires = k.APIKey.ExpiresAt.Format(time.RFC3339)
@@ -417,18 +420,29 @@ func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io
 	return nil
 }
 
-func login(ctx context.Context, d *tsauth.Device, out io.Writer) error {
+func login(ctx context.Context, d *tsauth.Device, out, prompt io.Writer) error {
 	a, err := d.Start(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Open %s\nand confirm the code %s\n", a.VerificationURIComplete, a.UserCode)
+	progress := out
+	if jsonMode(out) {
+		progress = prompt
+	}
+	if _, err := fmt.Fprintf(progress, "Open %s\nand confirm the code %s\n", a.VerificationURIComplete, a.UserCode); err != nil {
+		return err
+	}
 	t, err := d.Wait(ctx, a)
 	if err != nil {
 		return err
 	}
 	if err := save(t); err != nil {
 		return err
+	}
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			SignedIn bool `json:"signedIn"`
+		}{true})
 	}
 	fmt.Fprintln(out, "Signed in.")
 	return nil
@@ -447,6 +461,11 @@ func logout(ctx context.Context, d *tsauth.Device, out io.Writer) error {
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			SignedIn bool `json:"signedIn"`
+		}{false})
 	}
 	fmt.Fprintln(out, "Signed out.")
 	return nil
@@ -502,13 +521,23 @@ func projects(ctx context.Context, u *tsauth.User) iter.Seq2[tsauth.Project, err
 }
 
 func listProjects(ctx context.Context, u *tsauth.User, out io.Writer) error {
+	items := []tsauth.Project{}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tID\tORGANIZATION\tROLE")
+	if !jsonMode(out) {
+		fmt.Fprintln(w, "NAME\tID\tORGANIZATION\tROLE")
+	}
 	for p, err := range projects(ctx, u) {
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			items = append(items, p)
+			continue
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.ID, p.OrganizationID, p.Role)
+	}
+	if jsonMode(out) {
+		return emitJSON(out, items)
 	}
 	return w.Flush()
 }
@@ -524,6 +553,9 @@ func whoami(ctx context.Context, u *tsauth.User, token string, out io.Writer) er
 		Email string `json:"email"`
 	}
 	decodeClaims(token, &claims)
+	if jsonMode(out) {
+		return emitJSON(out, claims)
+	}
 	_, err := fmt.Fprintln(out, cmp.Or(claims.Email, claims.Sub, "signed in"))
 	return err
 }
@@ -959,8 +991,11 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		return importDocuments(ctx, db.Collection(args[1]), os.Stdin, out)
 	case "keys list":
+		items := []tsauth.APIKey{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tID\tDATABASE\tSCOPES\tEXPIRES")
+		if !jsonMode(out) {
+			fmt.Fprintln(w, "NAME\tID\tDATABASE\tSCOPES\tEXPIRES")
+		}
 		for k, err := range pages(func(after string) (*v1.Page[tsauth.APIKey], error) {
 			p, err := s.user.APIKeys(ctx, s.org, s.project, tsauth.PageOptions{Limit: 100, After: after})
 			return (*v1.Page[tsauth.APIKey])(p), err
@@ -968,16 +1003,29 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			if err != nil {
 				return err
 			}
+			if jsonMode(out) {
+				items = append(items, k)
+				continue
+			}
 			expires := "never"
 			if k.ExpiresAt != nil {
 				expires = k.ExpiresAt.Format(time.RFC3339)
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", k.Name, k.ID, cmp.Or(k.Database, "*"), strings.Join(k.Scopes, ","), expires)
 		}
+		if jsonMode(out) {
+			return emitJSON(out, items)
+		}
 		return w.Flush()
 	case "keys revoke":
 		if err := s.user.RevokeAPIKey(ctx, s.org, s.project, args[0]); err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				ID      string `json:"id"`
+				Revoked bool   `json:"revoked"`
+			}{args[0], true})
 		}
 		fmt.Fprintf(out, "Revoked %s\n", args[0])
 		return nil

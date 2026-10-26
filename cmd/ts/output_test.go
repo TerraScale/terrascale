@@ -27,7 +27,6 @@ func TestJSONOfflineContract(t *testing.T) {
 		{[]string{"--json", "--unknown"}, 2},
 		{[]string{"db", "create", "--json"}, 2},
 		{[]string{"--json=invalid", "version"}, 2},
-		{[]string{"whoami", "--json"}, 1},              // Not implemented in this slice; never emits prose.
 		{[]string{"db", "delete", "app", "--json"}, 1}, // Consent precedes authentication.
 	} {
 		var out bytes.Buffer
