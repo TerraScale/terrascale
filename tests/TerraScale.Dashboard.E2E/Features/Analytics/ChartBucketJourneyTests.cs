@@ -185,7 +185,8 @@ public sealed class ChartBucketJourneyTests
 
     private static (AnalyticsLinePlot, HomeRequestChart, OperationChart) Charts(string range, DateTimeOffset[] starts, long[] values)
     {
-        var measurement = new HomeMeasurement {
+        var measurement = new HomeMeasurement
+        {
             Activity = starts.Select((s, i) => new ActivityPoint(s, values[i], 0)).ToArray(),
             RequestPoints = starts.Select((s, i) => new HomeRequestPoint(s, new Dictionary<string, long> { ["Read"] = values[i] })).ToArray()
         };
