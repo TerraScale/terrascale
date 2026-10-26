@@ -42,6 +42,7 @@ public static class DashboardApplication
             WebRootPath = "web/static"
         });
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
+        builder.Services.AddSafeHttpLogging();
         builder.Services.AddSingleton<AssetUrls>();
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = problem =>
             problem.ProblemDetails.Extensions["requestId"] = problem.HttpContext.TraceIdentifier);

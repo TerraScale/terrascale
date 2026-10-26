@@ -76,6 +76,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
 
     public HttpClient CreateClient(bool replica = false) => Client(replica ? ReplicaOrigin : Origin);
     public HttpClient CreateProviderClient() => Client(ProviderOrigin);
+    public Task WaitForUserInfoAsync() => provider.UserInfoPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     private static HttpClient Client(Uri origin) => new(new HttpClientHandler
     {
@@ -264,6 +265,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private TaskCompletionSource? refreshGate;
         private int refreshesBeforePause;
         private TaskCompletionSource? userInfoGate;
+        public TaskCompletionSource UserInfoPaused { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int pauseNextUserInfo;
         private int userinfoPauses;
         private int descendantIssuerGrants;
@@ -375,12 +377,13 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             {
                 Interlocked.Increment(ref userinfoRequests);
                 if (fault == "userinfo-outage") return OAuthError("temporarily_unavailable", 503);
-                if (!Bearer(http, out var grant)) return OAuthError("invalid_token", 401);
                 if (Interlocked.Exchange(ref pauseNextUserInfo, 0) == 1 && userInfoGate is { } gate)
                 {
                     Interlocked.Increment(ref userinfoPauses);
+                    UserInfoPaused.TrySetResult();
                     await gate.Task.WaitAsync(http.RequestAborted);
                 }
+                if (!Bearer(http, out var grant)) return OAuthError("invalid_token", 401);
                 // The current public contract exposes no name or platform role.
                 return Results.Json(new
                 {
@@ -730,6 +733,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     break;
                 case "release-refresh": ReleaseRefresh(); break;
                 case "pause-next-userinfo":
+                    UserInfoPaused = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     userInfoGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     Interlocked.Exchange(ref pauseNextUserInfo, 1);
                     break;

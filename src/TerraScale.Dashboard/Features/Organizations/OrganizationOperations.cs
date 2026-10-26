@@ -126,7 +126,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         {
             try { await sessions.RevokeUserAsync(userId, cancellationToken); }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException)
-            { logger.LogWarning(error, "Revoke dashboard sessions after committed member removal for {UserId}", userId); }
+            { logger.LogWarning("Revoke dashboard sessions after committed member removal for {UserId} ({ErrorType})", userId, error.GetType().Name); }
         }
     }
 

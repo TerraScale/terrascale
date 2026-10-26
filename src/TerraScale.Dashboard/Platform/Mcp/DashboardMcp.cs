@@ -76,13 +76,13 @@ public static class DashboardMcp
                                               error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     if (DatabaseResults.Status(error) >= 500 || DatabaseResults.Status(error) == 408) ServiceSloTelemetry.MarkBad(http);
-                    Log(request.Services).LogWarning(error, "MCP tool {Tool} failed upstream with {Status}", request.Params?.Name, DatabaseResults.Status(error));
+                    Log(request.Services).LogWarning("MCP tool {Tool} failed upstream with {Status} ({ErrorType})", LoggedTool(request.Params?.Name), DatabaseResults.Status(error), error.GetType().Name);
                     return Failure(DatabaseResults.Message(error));
                 }
                 catch (Stripe.StripeException error)
                 {
                     ServiceSloTelemetry.MarkBad(http);
-                    Log(request.Services).LogWarning(error, "MCP tool {Tool} failed at the billing provider", request.Params?.Name);
+                    Log(request.Services).LogWarning("MCP tool {Tool} failed at the billing provider ({ErrorType})", LoggedTool(request.Params?.Name), error.GetType().Name);
                     return Failure("The billing provider could not complete the request. Return to billing to reconcile before trying again.");
                 }
                 catch (McpProtocolException error) when (error.ErrorCode is McpErrorCode.InvalidParams or McpErrorCode.MethodNotFound or McpErrorCode.ParseError) { throw; }
@@ -95,6 +95,8 @@ public static class DashboardMcp
 
     private static ILogger Log(IServiceProvider? services) =>
         services?.GetService<ILoggerFactory>()?.CreateLogger("TerraScale.Dashboard.Mcp") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
+    private static string LoggedTool(string? name) => CachedTools.Value.Any(tool => tool.ProtocolTool.Name == name) ? name! : "[unknown]";
 
     public static void MapDashboardMcp(this WebApplication app)
     {
