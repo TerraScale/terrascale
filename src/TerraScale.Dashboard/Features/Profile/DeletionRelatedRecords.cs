@@ -13,6 +13,7 @@ public sealed class DeletionRelatedRecords(IDashboardState state, DashboardSessi
 {
     public async Task CleanAccountAsync(string subject, CancellationToken cancellationToken)
     {
+        await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["UserId"] = subject }, cancellationToken);
         foreach (var document in await state.ListAsync(McpOAuth.CodeCollection, cancellationToken))
         {
             if (document.State != "value") throw new IOException("Pending MCP authorization has a causal conflict.");
@@ -34,6 +35,7 @@ public sealed class DeletionRelatedRecords(IDashboardState state, DashboardSessi
         }
         await DropAsync<BillingChangeReceipt>(StripeBilling.ChangesCollection, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
         await DropAsync<AllowanceNotificationState>(AllowanceNotifications.Collection, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
+        await Features.Data.DatabaseWorkspaceCleanup.EraseMarkersAsync(state, organizationId, null, cancellationToken);
         await CleanNotificationsAsync(organizationId, null, cancellationToken);
     }
 

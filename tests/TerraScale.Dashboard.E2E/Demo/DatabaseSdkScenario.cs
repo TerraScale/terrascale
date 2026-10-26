@@ -285,6 +285,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             if (collection == Credentials) encrypted.Enqueue(document.GetRawText());
         }
         public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct) => inner.ListAsync(collection, ct);
+        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct) => inner.QueryPageAsync(collection, query, ct);
         public Task DeleteAsync(string collection, string id, string version, CancellationToken ct) => inner.DeleteAsync(collection, id, version, ct);
         private string? CanonicalProjectId(string organizationId, string name)
         {

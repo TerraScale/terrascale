@@ -83,6 +83,9 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
         return documents;
     }
 
+    public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken) =>
+        Database().QueryAsync(collection, query, cancellationToken);
+
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken) =>
         await Database().PutDocumentAsync(collection, DocumentId(collection, id), document, precondition, cancellationToken);
 

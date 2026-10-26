@@ -108,6 +108,7 @@ internal sealed class AccountEnrollmentScenario : IAsyncDisposable
         public Task CheckReadyAsync(CancellationToken ct) => inner.CheckReadyAsync(ct);
         public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken ct) => inner.GetAsync(collection, id, ct);
         public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct) => inner.ListAsync(collection, ct);
+        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct) => inner.QueryPageAsync(collection, query, ct);
         public Task DeleteAsync(string collection, string id, string version, CancellationToken ct) => inner.DeleteAsync(collection, id, version, ct);
         public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken ct)
         {

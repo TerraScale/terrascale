@@ -170,6 +170,7 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
         public Task CheckReadyAsync(CancellationToken token) => inner.CheckReadyAsync(token);
         public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken token) => inner.GetAsync(collection, id, token);
         public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken token) => inner.ListAsync(collection, token);
+        public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken token) => inner.QueryPageAsync(collection, query, token);
         public Task DeleteAsync(string collection, string id, string version, CancellationToken token) => inner.DeleteAsync(collection, id, version, token);
         public Task DeleteListedAsync(string collection, TerraBaseDocument document, CancellationToken token) => inner.DeleteListedAsync(collection, document, token);
         public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken token)

@@ -24,6 +24,8 @@ public static class DashboardStateSchema
         "dashboard_mcp_oauth_clients",
         "dashboard_mcp_oauth_codes",
         "dashboard_saved_queries",
+        "dashboard_sql_workspaces",
+        "dashboard_sql_database_deletions",
         "dashboard_billing",
         "dashboard_internal_billing",
         "dashboard_stripe_customers",
