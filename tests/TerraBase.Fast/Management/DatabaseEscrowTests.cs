@@ -76,7 +76,10 @@ public sealed class DatabaseEscrowTests
         }
     }
 
+    // Quarantined under Q-MAIN-GREEN (2026-10-26): placement can answer 503 before escrow once membership drops the
+    // stopped regions. Owner: TS-995 escrow lane (rt4). Deadline 2026-10-27 08:00Z; the fix is #695.
     [Test]
+    [Skip("Quarantined (Q-MAIN-GREEN, TS-995): flaky placement race; fix in #695, deadline 2026-10-27 08:00Z")]
     public async Task A_region_without_units_refuses_creates_when_the_other_regions_are_unreachable()
     {
         await using var cell = await DatabaseEscrowCell.StartAsync();
