@@ -331,20 +331,30 @@ public sealed class LeaveOrganizationEndpoint(PlatformDirectory platform, Platfo
 }
 
 /// <summary><c>DELETE /v1/terrascale/account</c>.</summary>
-public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuthentication authentication, StepUpProofs proofs) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
     {
         Delete("/v1/terrascale/account");
-        this.Document("delete_account", "Delete your account", "Once logical deletion completes (204), revokes auth access and frees the caller's email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects and databases, including replicas in every region. TerraBase permanently fences each project and purges its data before accepting active-copy erasure; the account waits for every catalog holder. Backup erasure remains durable background work under the database deletion deadlines. Shared organizations are left. 202 while a project closure is pending: the account stays until it finishes in the background, and new sign-ins are temporarily refused until completion or cancellation; cancellation restores sign-in without changing credentials. The background worker resumes without another submit. Optional X-TerraScale-Deletion-Receipt: a canonical 32-byte random base64url capability, retained for 15 days to read status after tokens stop working. Reuse it only for this closure generation; 409 deletion_refused otherwise. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
+        this.Document("delete_account", "Delete your account", "Requires a fresh delete_account/ts-auth X-TerraScale-Step-Up-Proof, or the exact preauthorized receipt plus X-TerraScale-Deletion-Authorization for continuation. A timely initial proof consumption with a receipt returns its authorization secret in that response header; persist privately for retries. Once logical deletion completes (204), revokes auth access and frees the caller's email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects and databases, including replicas in every region. TerraBase permanently fences each project and purges its data before accepting active-copy erasure; the account waits for every catalog holder. Backup erasure remains durable background work under the database deletion deadlines. Shared organizations are left. 202 while a project closure is pending: the account stays until it finishes in the background, and new sign-ins are temporarily refused until completion or cancellation; cancellation restores sign-in without changing credentials. The background worker resumes without another submit. Optional X-TerraScale-Deletion-Receipt: a canonical 32-byte random base64url capability, retained for 15 days to read status after tokens stop working. Reuse it only for this closure generation; 409 deletion_refused otherwise. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
         Produces(StatusCodes.Status202Accepted);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
     }
 
     /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        await accounts.DeleteAsync(caller, cancellationToken, DeletionReceiptHeader.Read(this.HttpContext.Request)) ? Results.NoContent() : Results.Accepted();
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        var receipt = DeletionReceiptHeader.Read(this.HttpContext.Request);
+        var consumed = await proofs.DeleteAsync(caller, this.HttpContext.Request, receipt, cancellationToken);
+        if (consumed.OperationGrant is { } grant)
+        {
+            this.HttpContext.Response.Headers[StepUpProofs.DeletionAuthorizationHeader] = grant;
+        }
+
+        return await accounts.DeleteAsync(consumed.Caller, cancellationToken, receipt) ? Results.NoContent() : Results.Accepted();
+    }
 }
 
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/projects</c>.</summary>

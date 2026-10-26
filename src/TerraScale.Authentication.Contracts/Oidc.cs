@@ -24,6 +24,9 @@ public sealed class OidcApplication
     /// <summary>The hashed client secret.</summary>
     public string? ClientSecret { get; set; }
 
+    /// <summary>Platform fresh-primary winners for a user-issued client secret; system clients have no user owner.</summary>
+    public IReadOnlyList<CredentialBinding> SecretBindings { get; set; } = [];
+
     /// <summary><c>confidential</c> or <c>public</c>.</summary>
     public string? ClientType { get; set; }
 
