@@ -19,3 +19,16 @@ changed old-cut evidence or a new epoch retries immediately. The bounded in-memo
 never counts as coverage. The existing epoch-stalled alert remains, with `epoch_no_progress` error counts.
 Imported prefix proofs preserve peer liveness timestamps, so they do not revive retired epochs and pin stable progress.
 There is no API, receipt, persistent storage-format or erasure-proof change.
+
+The receiver captures its in-memory collection generation before reception and rechecks it with the incarnation under
+the writer. Any committed collection, refill forget or floor inheritance during staging invalidates the attempt before
+baseline replay. The generation also catches tombstones collected below an unchanged, previously inherited floor.
+The snapshot RPC starts on enumeration, after the receiver captures that generation and admits its staging memory.
+Rollbacks may cause conservative retries, but never authorize publication. Restart/replacement cannot reuse an in-flight
+store, so the generation needs no on-disk field.
+
+An import has a ten-minute overall deadline and a five-second replay deadline, both linked to the caller's cancellation.
+Expiry before commit rolls back all joins, collected absence and prefix proofs. Native statements cancel between storage
+calls; the deadline cannot preempt an individual running native statement or undo a commit already completed.
+`terrabase.replication.snapshot_import` records receive, staging and apply seconds with a bounded `phase` label.
+Apply includes writer acquisition and transaction cleanup; it is an upper bound on the writer hold for that attempt.

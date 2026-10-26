@@ -1,21 +1,32 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
 
 /// <summary>A whole pinned source snapshot becomes one durable receiver transaction; incomplete streams roll back.</summary>
 internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, StorageChangeGroupSink sink, StampingStorageEngine stamps,
-    IMemoryBudget memory, TerraBaseOptions options) : IReplicaSnapshotImporter
+    IMemoryBudget memory, TerraBaseOptions options, IMeterFactory meters) : IReplicaSnapshotImporter
 {
+    internal static readonly TimeSpan ImportTimeout = TimeSpan.FromMinutes(10);
+    internal static readonly TimeSpan ReplayTimeout = TimeSpan.FromSeconds(5);
+    private readonly Histogram<double> _timing = meters.Create(Telemetry.MeterName)
+        .CreateHistogram<double>("terrabase.replication.snapshot_import", "s", "Snapshot receive, staging and atomic replay time.");
+
     public async Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
         IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
     {
+        using var deadline = new CancellationTokenSource(ImportTimeout, engine.HostTime);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        cancellationToken = budget.Token;
         // One decoded/encoded page at a time, including the network enumerator's buffers. The private spool is bounded
         // separately and never survives disposal. No transaction is opened until the terminal frame AND clean EOF arrive.
         using var admission = memory.TryReserve(MemoryLane.Replication, 16L * ReplicationProtocol.MaxApplicationBytes, tenant: null);
@@ -31,6 +42,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             return false;
         }
 
+        var collected = store.CollectionGeneration;
         var file = new FileStreamOptions
         {
             Mode = FileMode.CreateNew,
@@ -56,20 +68,24 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         }
 
         staged.Position = 0;
+        using var replayDeadline = new CancellationTokenSource(ReplayTimeout, engine.HostTime);
+        using var replay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, replayDeadline.Token);
+        var started = Stopwatch.GetTimestamp();
         stamps.InvalidateAll();
         try
         {
-            return await ImportHeldAsync(store, database, incarnation, ReadStagedAsync(staged, database, incarnation, terminal, cancellationToken),
-                origins, cancellationToken).ConfigureAwait(false);
+            return await ImportHeldAsync(store, database, incarnation, ReadStagedAsync(staged, database, incarnation, terminal, replay.Token),
+                origins, collected, replay.Token).ConfigureAwait(false);
         }
         finally
         {
+            _timing.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, new KeyValuePair<string, object?>("phase", "apply"));
             // Imported states and forgotten tombstones bypass the public transaction wrapper.
             stamps.InvalidateAll();
         }
     }
 
-    private static async Task<ReplicaSnapshotPage?> StageAsync(FileStream staged, TenantContext database, Ulid incarnation,
+    private async Task<ReplicaSnapshotPage?> StageAsync(FileStream staged, TenantContext database, Ulid incarnation,
         IAsyncEnumerable<ReplicaSnapshotPage> pages, CancellationToken cancellationToken)
     {
         int[] buckets = [.. Enumerable.Range(0, 4096)];
@@ -78,36 +94,72 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         ReplicaSnapshotPage? terminal = null;
         var count = 0;
         var header = new byte[sizeof(int)];
-        await foreach (var page in pages.WithCancellation(cancellationToken).ConfigureAwait(false))
+        var receive = TimeSpan.Zero;
+        var staging = TimeSpan.Zero;
+        await using var enumerator = pages.GetAsyncEnumerator(cancellationToken);
+        try
         {
-            if (++count > 65_536 || terminal is not null || floor is { } previous && previous != page.CollectedBefore
-                || page.Applied is not null && (page.States.Count != 0 || page.Applied.Count > 1024))
+            while (true)
             {
-                throw new InvalidDataException("inconsistent or oversized snapshot");
-            }
+                var received = Stopwatch.GetTimestamp();
+                bool more;
+                try
+                {
+                    more = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    receive += Stopwatch.GetElapsedTime(received);
+                }
 
-            floor = page.CollectedBefore;
-            TursoStorageTransaction.ValidateRefillPage(database, buckets, after, page.States);
-            if (page.Applied is not null)
-            {
-                terminal = new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc>(page.Applied), page.CollectedBefore);
-                continue;
-            }
+                if (!more)
+                {
+                    break;
+                }
 
-            var bytes = AntiEntropy.Encode(page.States, incarnation).ToByteArray();
-            if (bytes.Length > ReplicationProtocol.MaxMessageBytes || staged.Position + header.Length + bytes.Length > 1024L * 1024 * 1024)
-            {
-                return null;
-            }
+                var page = enumerator.Current;
+                var started = Stopwatch.GetTimestamp();
+                try
+                {
+                    if (++count > 65_536 || terminal is not null || floor is { } previous && previous != page.CollectedBefore
+                        || page.Applied is not null && (page.States.Count != 0 || page.Applied.Count > 1024))
+                    {
+                        throw new InvalidDataException("inconsistent or oversized snapshot");
+                    }
 
-            BinaryPrimitives.WriteInt32LittleEndian(header, bytes.Length);
-            await staged.WriteAsync(header, cancellationToken).ConfigureAwait(false);
-            await staged.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-            if (page.States.Count > 0)
-            {
-                var last = page.States[^1];
-                after = new BucketCursor(TursoStorageTransaction.Bucket(last.Collection, last.Id), last.Collection, last.Id);
+                    floor = page.CollectedBefore;
+                    TursoStorageTransaction.ValidateRefillPage(database, buckets, after, page.States);
+                    if (page.Applied is not null)
+                    {
+                        terminal = new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc>(page.Applied), page.CollectedBefore);
+                        continue;
+                    }
+
+                    var bytes = AntiEntropy.Encode(page.States, incarnation).ToByteArray();
+                    if (bytes.Length > ReplicationProtocol.MaxMessageBytes || staged.Position + header.Length + bytes.Length > 1024L * 1024 * 1024)
+                    {
+                        return null;
+                    }
+
+                    BinaryPrimitives.WriteInt32LittleEndian(header, bytes.Length);
+                    await staged.WriteAsync(header, cancellationToken).ConfigureAwait(false);
+                    await staged.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                    if (page.States.Count > 0)
+                    {
+                        var last = page.States[^1];
+                        after = new BucketCursor(TursoStorageTransaction.Bucket(last.Collection, last.Id), last.Collection, last.Id);
+                    }
+                }
+                finally
+                {
+                    staging += Stopwatch.GetElapsedTime(started);
+                }
             }
+        }
+        finally
+        {
+            _timing.Record(receive.TotalSeconds, new KeyValuePair<string, object?>("phase", "receive"));
+            _timing.Record(staging.TotalSeconds, new KeyValuePair<string, object?>("phase", "stage"));
         }
 
         return terminal;
@@ -130,10 +182,10 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
     }
 
     private async Task<bool> ImportHeldAsync(TursoDatabaseStore store, TenantContext database, Ulid incarnation,
-        IAsyncEnumerable<ReplicaSnapshotPage> pages, IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+        IAsyncEnumerable<ReplicaSnapshotPage> pages, IReadOnlySet<ulong> origins, long collected, CancellationToken cancellationToken)
     {
         await using var transaction = (TursoStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-        if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
+        if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation || store.CollectionGeneration != collected)
         {
             return false;
         }
@@ -172,6 +224,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             }
 
             _ = await sink.RepairPageAsync(transaction, database, page.States, baseline: true, cancellationToken).ConfigureAwait(false);
+            engine.Checkpoint("replication.snapshot.page", database);
             if (page.States.Count > 0)
             {
                 var last = page.States[^1];

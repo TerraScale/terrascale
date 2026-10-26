@@ -68,6 +68,7 @@ public sealed class WriterHoldTests
         await using var final = await store.BeginTransactionAsync(write: false, token);
         await Assert.That(await final.GetAsync("writer_hold_probe", id, token) is not null).IsEqualTo(interruption == 0);
         await Assert.That((await final.GetAppliedAsync(token)).ContainsKey(origin)).IsEqualTo(interruption == 0);
+        await Assert.That(await final.GetAsync("writer_hold_probe", "anchor", token)).IsNotNull();
         await Assert.That(holds.Longest).IsLessThan(1);
         if (interruption == 0)
         {

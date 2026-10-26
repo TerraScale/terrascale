@@ -256,6 +256,12 @@ internal sealed partial class TursoDatabaseStore(
 
     internal TimeProvider Time => time ?? TimeProvider.System;
 
+    // Invalidates baselines staged while another committed transaction discarded deletion evidence. Unlike the floor,
+    // this also changes when a newly received old tombstone is collected below an already inherited floor.
+    private long _collectionGeneration;
+    internal long CollectionGeneration => Volatile.Read(ref _collectionGeneration);
+    internal void Collected() => Interlocked.Increment(ref _collectionGeneration);
+
     internal static readonly TimeSpan DefaultQueryBudget = TimeSpan.FromSeconds(TerraBaseOptions.DefaultQueryBudgetSeconds);
 
     /// <summary>Turso execution time one query may spend on <see cref="Time"/> before it is refused.</summary>

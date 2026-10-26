@@ -26,12 +26,13 @@ internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IRepli
 
         // Deliberately read every state, even if digests match. Coverage comes from one native read snapshot and its
         // terminal vector, never from equality of independently sampled XOR roots.
-        using var call = client.ReadSnapshot(new DigestRequest { Database = ChangeGroups.Wire(database, source) },
-            deadline: DateTime.UtcNow.AddMinutes(10), cancellationToken: cancellationToken);
         return await importer.ImportAsync(database, local.Incarnation, Pages(cancellationToken), origins, cancellationToken).ConfigureAwait(false);
 
         async IAsyncEnumerable<ReplicaSnapshotPage> Pages([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
         {
+            // Let the importer capture the destination's collection generation before the source pins its snapshot.
+            using var call = client.ReadSnapshot(new DigestRequest { Database = ChangeGroups.Wire(database, source) },
+                deadline: DateTime.UtcNow.AddMinutes(10), cancellationToken: token);
             var complete = false;
             while (await call.ResponseStream.MoveNext(token).ConfigureAwait(false))
             {
