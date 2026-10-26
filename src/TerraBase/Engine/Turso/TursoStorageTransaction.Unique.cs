@@ -202,7 +202,8 @@ internal sealed partial class TursoStorageTransaction
         Command("DELETE FROM _tb_unique_keys WHERE collection = $collection;", collection).ExecuteNonQuery();
         Command("DELETE FROM _tb_unique_conflicts WHERE collection = $collection;", collection).ExecuteNonQuery();
         Command("DELETE FROM _tb_unique_invalid WHERE collection = $collection;", collection).ExecuteNonQuery();
-        if (local && Command(UniqueDefinitions, collection).ExecuteScalar() is not null)
+        // The system catalog has no client _unique collection or declared client constraints.
+        if (local && !store.IsSystem && Command(UniqueDefinitions, collection).ExecuteScalar() is not null)
         {
             WriteMetadata(DocumentDelta.Unique, collection, null);
         }
