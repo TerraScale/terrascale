@@ -13,6 +13,8 @@ export {
   TerraBaseV1Error,
   V1PreconditionFailedError,
   V1InvalidKeyError,
+  V1KeyRevokedError,
+  V1KeyExpiredError,
   V1ForbiddenScopeError,
   V1NotFoundError,
   SqlError,

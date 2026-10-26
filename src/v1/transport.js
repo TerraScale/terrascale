@@ -417,16 +417,35 @@ export class V1Transport {
     } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
     if (options.signal !== undefined) init.signal = options.signal;
     options.signal?.throwIfAborted();
-    /** @type {Response} */
-    let response;
-    try { response = await this.#fetch(url, init); }
-    catch (error) { options.signal?.throwIfAborted(); throw new RequestTransportError(error); }
-    if (options.signal?.aborted) {
-      void response.body?.cancel().catch(() => undefined);
-      options.signal.throwIfAborted();
+    for (let attempt = 0; ; attempt++) {
+      /** @type {Response} */
+      let response;
+      try { response = await this.#fetch(url, init); }
+      catch (error) { options.signal?.throwIfAborted(); throw new RequestTransportError(error); }
+      if (options.signal?.aborted) {
+        void response.body?.cancel().catch(() => undefined);
+        options.signal.throwIfAborted();
+      }
+      if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
+      if (!route.successStatuses.includes(response.status)) {
+        const error = await this.error(response, options.signal);
+        if (route.method !== "GET" || attempt >= 2 || error.status !== 503 || error.code !== "auth_unavailable") throw error;
+        const delay = Math.max(250 * 2 ** attempt, (error.retryAfter ?? 0) * 1000);
+        if (delay > 30_000) throw error;
+        await waitForAuthority(delay, options.signal);
+        continue;
+      }
+      return response;
     }
-    if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
-    if (!route.successStatuses.includes(response.status)) throw await this.error(response, options.signal);
-    return response;
   }
+}
+
+/** @param {number} milliseconds @param {AbortSignal | undefined} signal @returns {Promise<void>} */
+function waitForAuthority(milliseconds, signal) {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, milliseconds);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
