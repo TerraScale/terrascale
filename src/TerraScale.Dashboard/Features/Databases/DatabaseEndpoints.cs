@@ -62,12 +62,22 @@ public static class DatabaseEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try
             {
-                var database = await databases.CreateAsync(context, form["name"].ToString(), form["region"].Select(value => value ?? ""), form["allRegions"] == "true", http.RequestAborted);
+                var regions = form["region"].Select(value => value ?? "").ToArray();
+                if (form.ContainsKey("homeRegion"))
+                {
+                    var home = form["homeRegion"].ToString().Trim();
+                    if (home.Length == 0) throw new AccountAccessException("Choose a home region.", 422);
+                    if (form["allRegions"] != "true") DatabaseService.RequireReplicas(regions);
+                    var index = Array.FindIndex(regions, region => region.Equals(home, StringComparison.OrdinalIgnoreCase));
+                    if (index < 0 && form["allRegions"] != "true") throw new AccountAccessException(DatabaseService.HomePlacementMessage, 422);
+                    regions = index < 0 ? [home, .. regions] : [home, .. regions[..index], .. regions[(index + 1)..]];
+                }
+                var database = await databases.CreateAsync(context, form["name"].ToString(), regions, form["allRegions"] == "true", http.RequestAborted);
                 return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(database, statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
             {
-                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), regions: form["region"].Select(value => value ?? "").ToArray(), status: Status(error)) : Failure(error);
+                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), regions: form["region"].Select(value => value ?? "").ToArray(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, allRegions: form["allRegions"] == "true") : Failure(error);
             }
         });
         foreach (var operation in new[] { "branch", "regions", "delete" })
@@ -111,7 +121,7 @@ public static class DatabaseEndpoints
     }
 
     internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
-        string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200)
+        string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200, string? homeRegion = null, bool allRegions = false)
     {
         await databases.SyncAsync(context, http.RequestAborted);
         // Regions, each database's collection counts and the project metrics are independent reads; they run together.
@@ -164,7 +174,7 @@ public static class DatabaseEndpoints
         var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
         var metrics = await metricsRead;
-        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range });
+        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range, HomeSelection = homeRegion, AllRegions = allRegions });
         result.StatusCode = status;
         return result;
     }

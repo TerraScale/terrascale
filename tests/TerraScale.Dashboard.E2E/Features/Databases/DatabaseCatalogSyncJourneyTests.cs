@@ -41,7 +41,13 @@ public sealed class DatabaseCatalogSyncJourneyTests(DashboardRootFixture fixture
     [Test]
     public async Task DeletingAnAllRegionsDatabaseSucceedsWhenTerraBaseAnswersCommittedChangesWith503OrHasAlreadyDeletedIt()
     {
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+        var placementPatches = 0;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        {
+            if (http.Request.Method == "PATCH" && http.Request.Path.StartsWithSegments("/v1/projects"))
+                Interlocked.Increment(ref placementPatches);
+            return Task.FromResult<Microsoft.AspNetCore.Http.IResult?>(null);
+        });
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();
         var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
@@ -50,11 +56,12 @@ public sealed class DatabaseCatalogSyncJourneyTests(DashboardRootFixture fixture
 
         var everywhere = await CallAsync(client, secret, organizationId, projectId, "create_database", new() { ["name"] = "everywhere", ["allRegions"] = true });
         var everywhereId = everywhere.GetProperty("id").GetString()!;
-        // The placement write answers 503 twice and the delete once, each after committing; the delete's retry finds it gone.
-        await Control(producer, new { command = "anchor-unavailable", patch = 2, delete = 1 });
+        // The delete answers 503 after committing; its retry finds it gone without rewriting placement.
+        await Control(producer, new { command = "anchor-unavailable", patch = 0, delete = 1 });
         var deleted = await CallAsync(client, secret, organizationId, projectId, "delete_database", new() { ["databaseId"] = everywhereId, ["confirmName"] = "everywhere" });
         await Assert.That(deleted.GetProperty("deleted").GetBoolean()).IsTrue();
         await Assert.That(await RemoteAsync(producer, "everywhere")).IsFalse();
+        await Assert.That(Volatile.Read(ref placementPatches)).IsEqualTo(0).Because("Deleting a replicated database sends DELETE directly, without a placement PATCH.");
 
         // A record whose database TerraBase already deleted is removed by the delete, which reports success.
         var stale = await CallAsync(client, secret, organizationId, projectId, "create_database", new() { ["name"] = "stale", ["allRegions"] = true });

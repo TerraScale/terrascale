@@ -13,10 +13,12 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
     public async Task NativePlacementKeepsItsCanonicalHomeAndScopesReportedReplication()
     {
         var report = "";
+        var placementWrites = 0;
         var projectId = "";
         var databaseId = "";
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
+            if (http.Request.Method == "PATCH" && http.Request.Path.Value!.Contains("/databases/", StringComparison.Ordinal)) Interlocked.Increment(ref placementWrites);
             if (http.Request.Method != "GET" || databaseId.Length == 0 || !http.Request.Path.Value!.StartsWith("/v1/projects/", StringComparison.Ordinal) ||
                 !http.Request.Path.Value.EndsWith("/replication", StringComparison.Ordinal))
                 return Task.FromResult<IResult?>(null);
@@ -87,6 +89,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
         }
+        await Assert.That(Volatile.Read(ref placementWrites)).IsEqualTo(0);
         // Later GRU answers instead. The SFO home is outside the catalog now and must stay selected and addressable.
         await Control(new { command = "api-region", value = "gru" });
         var moved = Regex.Match(await PageAsync(client, "/replication"), "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
@@ -131,13 +134,13 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         await Assert.That(unknown.Contains("111 B", StringComparison.Ordinal)).IsFalse();
         Volatile.Write(ref report, "");
         using (var removed = await ChangeRegionsAsync(["SFO"]))
-            await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await Assert.That(await RegionsAsync()).IsEqualTo("SFO");
+            await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
         using (var revoked = await producer.PostAsJsonAsync("/__test/control", new { command = "role", value = "member", organizationId }))
             await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         using (var refused = await ChangeRegionsAsync(["SFO", "GRU"]))
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(await RegionsAsync()).IsEqualTo("SFO");
+        await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
         var memberDanger = await PageAsync(client, "/danger?delete=1");
         await Assert.That(memberDanger).Contains("Only organization members who can manage databases can delete this database.");
         await Assert.That(memberDanger.Contains("id=\"delete-database\"", StringComparison.Ordinal)).IsFalse();

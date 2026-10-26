@@ -6,6 +6,14 @@ namespace TerraScale.Dashboard.Shared.Databases;
 
 public sealed partial class DatabaseService(AccountService accounts, IDatabaseBackend backend)
 {
+    public const string MinimumRegionsMessage = "Choose at least two regions, or select All regions to include current and future regions.";
+    public const string HomePlacementMessage = "Select the home region in placement, or choose a home region from the selected regions.";
+    public static void RequireReplicas(IEnumerable<string> regions)
+    {
+        if (regions.Where(code => !string.IsNullOrWhiteSpace(code)).Select(code => code.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() < 2)
+            throw new AccountAccessException(MinimumRegionsMessage, 422);
+    }
+
     public static DatabaseScope Scope(AccountContext context) => new(context.UserId, context.Session.AccessToken,
         context.Organization?.Id ?? throw new AccountAccessException("Select an organization.", 404), context.Organization.Name,
         context.Project?.Id ?? throw new AccountAccessException("Select a project.", 404), context.Project.Name)
@@ -158,7 +166,9 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         var scope = Scope(context);
         var home = await HomeAsync(context, database, cancellationToken);
-        var placement = (await PlacementAsync(AllRegionsPlacement(regions, allRegions, home.Code), cancellationToken, Regions(database))).ToList();
+        var selected = regions.ToArray();
+        if (!allRegions) RequireReplicas(selected);
+        var placement = (await PlacementAsync(AllRegionsPlacement(selected, allRegions, home.Code), cancellationToken, Regions(database))).ToList();
         if (!placement.Remove(home)) throw new AccountAccessException("The home region must stay selected.", 422);
         placement.Insert(0, home);
         var remote = await backend.SetRegionsAsync(scope, home, id, placement, allRegions, cancellationToken);
@@ -251,9 +261,12 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     public static string ValidName(string name)
     {
         name = name.Trim();
-        if (!NamePattern().IsMatch(name)) throw new AccountAccessException("Database names use 1–63 lowercase letters, digits, and inner hyphens.", 422);
+        if (!NamePattern().IsMatch(name)) throw new AccountAccessException(NameHint, 422);
         return name;
     }
+
+    public const string NameInputPattern = @"(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?";
+    public const string NameHint = "Database names must start with a lowercase letter and use 1–63 lowercase letters, digits, and inner hyphens. Reserved names: con, prn, aux, nul, com0–com9, lpt0–lpt9.";
 
     public static string PreviewName(string name) => name[..Math.Min(name.Length, 48)].TrimEnd('-') + "-preview-branch";
     public static string Path(string id, string tab = "overview", string collection = "") => "/databases/" + Uri.EscapeDataString(id) + (tab == "overview" ? "" : "/" + tab) + (collection.Length == 0 ? "" : "?collection=" + Uri.EscapeDataString(collection));
@@ -303,6 +316,6 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     private static bool SameReplicas(IReadOnlyList<DatabaseRegion> left, IReadOnlyList<DatabaseRegion> right) =>
         left.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal)
             .SequenceEqual(right.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal), StringComparer.Ordinal);
-    [GeneratedRegex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\A" + NameInputPattern + @"\z", RegexOptions.CultureInvariant)]
     private static partial Regex NamePattern();
 }

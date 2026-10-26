@@ -55,11 +55,12 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
             unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
     }
 
-    [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. Requires an owner or admin role and a plan with database capacity. allRegions copies it to every serving region, including regions that join later; it excludes replica regions, so pass at most the home region with it.")]
+    [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. Requires an owner or admin role and a plan with database capacity. Without replica regions, the API uses every currently serving region; explicit placement needs at least two regions including home. allRegions also follows future regions; it excludes replica regions, so pass at most the home region with it.")]
     public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);
         DatabaseService.Scope(context);
+        if (regions is not null && !allRegions) DatabaseService.RequireReplicas(regions);
         var placement = regions is { Length: > 0 } ? regions : [string.IsNullOrEmpty(region) ? context.Project!.Region : region];
         return DatabaseOutput(await databases.CreateAsync(context, name, placement, allRegions, Cancellation));
     }
@@ -68,7 +69,7 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
     public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null) =>
         DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation));
 
-    [McpServerTool(Name = "set_database_regions", Title = "Set database regions", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Choose where a database lives: its home region alone, with replica regions that replicate it, or allRegions to copy it to every serving region, including regions that join later. allRegions excludes replica regions; choosing regions turns it off. The home region never changes. Requires an owner or admin role.")]
+    [McpServerTool(Name = "set_database_regions", Title = "Set database regions", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Choose at least two regions including its home, or allRegions to copy it to every serving region, including regions that join later. Selecting every current region alone does not follow future regions. allRegions excludes replica regions; choosing regions turns it off. The home region never changes. Requires an owner or admin role.")]
     public async Task<McpDatabase> SetRegions(string databaseId, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);
