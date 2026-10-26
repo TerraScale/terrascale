@@ -320,6 +320,13 @@ so `errors.Is(err, v1.ErrSQLConflict)` also matches. Other failures stay
 the existing `UsageOptions`. Counts are best-effort dashboard observations,
 not billing evidence.
 
+### Database request observations
+
+`db.RequestLogs(ctx, "2xx")` reads recent authorized request observations; pass `""`
+for all status classes. The typed response preserves `DatabaseID`, `Items`, `Truncated`,
+`RecordingLimited` and nullable `RequestID`. The server returns at most 100 observations
+from the last 24 hours; recording is best effort. See the [pinned contract](contracts/request-logs.md).
+
 ### Database changes
 
 `Database.Changes(ctx, ChangesOptions{Cursor: "now", Collections: []string{"users"}})`
