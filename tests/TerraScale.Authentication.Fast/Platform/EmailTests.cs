@@ -13,7 +13,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Tests;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Platform;
 
@@ -46,15 +45,21 @@ public sealed class EmailTests
     }
 
     [Test]
-    public async Task Production_without_cloudflare_settings_warns_at_startup()
+    [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
+    public async Task Production_without_cloudflare_settings_warns_at_startup(TerraBaseFixture fixture)
     {
         var logs = new EmailLogs();
-        // Production needs storage; an unreachable TerraBase client is enough for a startup warning.
-        await using var server = await StartAsync(logs, cloudflare: null, settings: values =>
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        // Production background workers need a reachable, provisioned database through shutdown.
+        await using var server = await AuthTestServer.StartAsync(settings: values =>
         {
-            values.Remove("environment");
-            values["terrabase-url"] = "http://127.0.0.1:9/";
-        }, storage: true);
+            values["environment"] = "Production";
+            values["terrabase-url"] = fixture.Server.InternalAddress.GetLeftPart(UriPartial.Authority);
+        }, services: services =>
+        {
+            fixture.UseStorage(services, tenant);
+            services.AddSingleton<ILoggerProvider>(logs);
+        });
 
         await Assert.That(logs.Text).Contains("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");
     }
@@ -214,10 +219,9 @@ public sealed class EmailTests
         await AssertNoMessageDataAsync(logs.Text);
     }
 
-    private static Task<AuthTestServer> StartAsync(ILoggerProvider logs, FakeCloudflare? cloudflare, Action<Dictionary<string, string>>? settings = null, bool storage = false) => AuthTestServer.StartAsync(
+    private static Task<AuthTestServer> StartAsync(ILoggerProvider logs, FakeCloudflare? cloudflare) => AuthTestServer.StartAsync(
         settings: values =>
         {
-            settings?.Invoke(values);
             if (cloudflare is not null)
             {
                 values["cloudflare-account-id"] = AccountId;
@@ -227,12 +231,6 @@ public sealed class EmailTests
         services: collection =>
         {
             collection.AddSingleton<ILoggerProvider>(logs);
-            if (storage)
-            {
-                collection.AddSingleton(new TerraBaseDocumentsClient(new HttpClient(), new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://127.0.0.1:9/") })
-                    .Database(App.StorageProject, App.StorageDatabase));
-            }
-
             if (cloudflare is not null)
             {
                 // Redirect only this client to the test-owned loopback provider.
