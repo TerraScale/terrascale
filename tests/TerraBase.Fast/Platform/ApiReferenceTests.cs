@@ -90,6 +90,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/backups TsAuth(databases:write) createBackup Backups
         POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore TsAuth(databases:write) restoreBackup Backups
         POST /v1/projects/{project}/databases/{database}/branches TsAuth(databases:write) branchDatabase Databases
+        POST /v1/projects/{project}/databases/{database}/branches/if-id/{expectedId} TsAuth(databases:write) branchDatabaseIfId Databases
         POST /v1/projects/{project}/databases/{database}/collections TsAuth(documents:write) createCollection Collections
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:write) createDocument Documents
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/query TsAuth(documents:read) queryDocuments Queries
@@ -353,7 +354,7 @@ public sealed class ApiReferenceTests
                 await Assert.That(operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString()).Contains("invalid_query");
             }
 
-            if (operation.GetProperty("operationId").GetString() is "createDatabase" or "branchDatabase" or "restoreBackup"
+            if (operation.GetProperty("operationId").GetString() is "createDatabase" or "branchDatabase" or "branchDatabaseIfId" or "restoreBackup"
                 or "createBackup" or "createSavedQuery" or "createCollection" or "createDocument")
             {
                 var success = responses.First(status => status.Name.StartsWith('2')).Value;
