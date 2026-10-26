@@ -83,8 +83,12 @@ public sealed class DatabaseEscrowTests
         await cell.CountEverywhereAsync(0);
         await cell.StopAsync(0);
         await cell.StopAsync(2);
-        // Every region, so that placement accepts sjc alone whether or not membership has dropped gru and fra yet.
-        using var refused = await cell.Regions[1].Client.PostAsJsonAsync(ManagementApi.Uri(cell.Databases), new { name = "partitioned", allRegions = true });
+        var peers = cell.Regions[1].Server.Services.GetRequiredService<IEscrowPeers>();
+        await TerraBaseTestServer.EventuallyAsync(async token => (await peers.RegionsAsync(token)).Count == 0,
+            timeout: TimeSpan.FromSeconds(30));
+        // AllRegions remains valid after peer discovery expires, so this reaches the allowance check.
+        using var refused = await cell.Regions[1].Client.PostAsJsonAsync(ManagementApi.Uri(cell.Databases),
+            new { name = "partitioned", allRegions = true });
         await Assert.That((await cell.ListAsync(1)).Length).IsEqualTo(0);
         await ErrorAssert.ErrorAsync(refused, HttpStatusCode.Conflict, "database_limit",
             "the rest of the organization's database allowance is held in regions this region cannot reach now; retry shortly");

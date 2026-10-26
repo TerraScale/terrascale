@@ -14,7 +14,7 @@ public sealed record WireAnswer(int Status, ArraySegment<byte> Payload, byte Ope
     public string Code => Status >= 400 ? Encoding.ASCII.GetString(Payload.Slice(1, Payload[0])) : "";
 
     /// <summary>The ETag of a get or put answer.</summary>
-    public string ETag => Operation == 2 ? Encoding.ASCII.GetString(Payload.Slice(2, Payload[1])) : Encoding.ASCII.GetString(Payload.Slice(1, Payload[0]));
+    public string ETag => Operation is 2 or 3 ? Encoding.ASCII.GetString(Payload.Slice(2, Payload[1])) : Encoding.ASCII.GetString(Payload.Slice(1, Payload[0]));
 
     /// <summary>The JSON document of a get answer.</summary>
     public string Json => Encoding.UTF8.GetString(Payload[(1 + Payload[0])..]);
@@ -77,6 +77,10 @@ public sealed class WireClient : IAsyncDisposable
     /// <summary>A put, answered locally durable or, with <paramref name="remoteDurable"/>, after another region's acknowledgement.</summary>
     public Task<WireAnswer> PutAsync(string collection, string id, string json, bool remoteDurable = false) =>
         SendAsync(2, [.. Address(collection, id), remoteDurable ? (byte)1 : (byte)0, .. Encoding.UTF8.GetBytes(json)]);
+
+    /// <summary>Deletes a document, with the same durability byte and answer as a put.</summary>
+    public Task<WireAnswer> DeleteAsync(string collection, string id, bool remoteDurable = false) =>
+        SendAsync(3, [.. Address(collection, id), remoteDurable ? (byte)1 : (byte)0]);
 
     /// <summary>Sends any frame; an answer that never comes fails when the connection closes.</summary>
     public Task<WireAnswer> SendAsync(byte operation, byte[] body)

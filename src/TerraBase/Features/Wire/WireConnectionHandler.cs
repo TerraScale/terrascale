@@ -30,7 +30,7 @@ namespace TerraBase.Features.Wire;
 internal sealed class WireConnectionHandler(IServiceProvider services)
 {
     public const byte Version = 1;
-    public const byte Hello = 0, Get = 1, Put = 2;
+    public const byte Hello = 0, Get = 1, Put = 2, Delete = 3;
 
     /// <summary>Requests one connection runs at once; the next frame is read when one answers.</summary>
     public const int MaxInFlight = 128;
@@ -349,12 +349,12 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             }
 
             tenant = grant.Database;
-            if (frame.Op is not (Get or Put))
+            if (frame.Op is not (Get or Put or Delete))
             {
                 return answer = Error(frame.Id, new Validation("unknown operation", "unknown_operation"));
             }
 
-            if (frame.Op == Put && !grant.Key.Scopes.Contains(ApiKeyScopes.DocumentsWrite))
+            if (frame.Op is Put or Delete && !grant.Key.Scopes.Contains(ApiKeyScopes.DocumentsWrite))
             {
                 return answer = Error(frame.Id, new Forbidden("the API key lacks documents:write", "forbidden_scope"));
             }
@@ -393,13 +393,13 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             {
                 var elapsed = Stopwatch.GetElapsedTime(started);
                 var status = BinaryPrimitives.ReadUInt16LittleEndian(answer.AsSpan(8));
-                services.GetRequiredService<IUsageMeter>().RecordRequest(tenant, frame.Op switch { Get => "GET", Put => "PUT", _ => "OTHER" }, status, elapsed, frame.Body.Length, answer.Length - 10);
+                services.GetRequiredService<IUsageMeter>().RecordRequest(tenant, frame.Op switch { Get => "GET", Put => "PUT", Delete => "DELETE", _ => "OTHER" }, status, elapsed, frame.Body.Length, answer.Length - 10);
                 services.GetRequiredService<IPressureSignals>().Record(TerraBaseListener.Client, elapsed, tenant.OrganizationId, tenant.Plan);
             }
         }
     }
 
-    // Body: u8 collection length, the collection, the document's 26-character ULID, then (put only) u8 durability and the JSON document.
+    // Body: u8 collection length, collection, 26-character ULID, then for writes u8 durability and (put only) JSON.
     private async ValueTask<byte[]> DocumentAsync(TenantContext tenant, Frame frame, CancellationToken cancellationToken)
     {
         var body = frame.Body;
@@ -447,18 +447,24 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
         // After the id: u8 durability, as the HTTP API's TB-Durability (0 local_durable, 1 remote_durable), then the document.
         if (body.Length < 1 + length + 27 || body[1 + length + 26] > 1)
         {
-            return Error(frame.Id, new Validation($"a put carries its durability: 0 {WriteResult.LocalDurable} or 1 {WriteResult.RemoteDurable}"));
+            return Error(frame.Id, new Validation($"a write carries its durability: 0 {WriteResult.LocalDurable} or 1 {WriteResult.RemoteDurable}"));
         }
 
         var waitForRemote = body[1 + length + 26] == 1;
         var json = body.AsMemory(1 + length + 27).ToArray();
-        if (!RequestJson.IsText(json))
+        if (frame.Op == Delete && json.Length != 0)
+        {
+            return Error(frame.Id, new Validation("a delete carries no document", "invalid_frame"));
+        }
+
+        if (frame.Op == Put && !RequestJson.IsText(json))
         {
             return Error(frame.Id, new Validation(RequestJson.TextRule));
         }
 
         var none = new Precondition(null, IfMatchAny: false, IfNoneMatch: false);
-        return await documents.WriteConfirmedAsync(tenant, [new PutOperation(collection, id, json, none)], indexErrors: false, waitForRemote, cancellationToken)
+        DocumentOperation operation = frame.Op == Delete ? new DeleteOperation(collection, id, none) : new PutOperation(collection, id, json, none);
+        return await documents.WriteConfirmedAsync(tenant, [operation], indexErrors: false, waitForRemote, cancellationToken)
             .ConfigureAwait(false) switch
         {
             DocumentRejected rejected => Error(frame.Id, rejected.Error),
