@@ -34,6 +34,10 @@ admission remains after all ordinary joins of that transaction, so authority in
 the same group/transaction is visible; earlier committed authority also remains
 visible. Repair keeps the same ordering, checks the incarnation under each
 writer, and uses origin 0 without advancing any stream's applied cut.
+The shared `RepairPageAsync` also serves atomic snapshot replay: that caller
+still processes every state of its page in the import's single transaction,
+preserving rollback and the terminal applied/absence proof. Ordinary repair
+supplies a bounded iterator to the same join/admission path.
 
 `RebuildLedger.RepairRebuildAsync` had the same count-only chunking hazard and
 uses the same bounds. Each chunk retains its under-writer rebuild/incarnation

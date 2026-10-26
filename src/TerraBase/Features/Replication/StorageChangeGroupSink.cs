@@ -115,7 +115,8 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         }
 
         var changed = 0;
-        for (var next = 0; next < states.Count;)
+        var next = 0;
+        while (next < states.Count)
         {
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
             var started = timings.Now;
@@ -124,32 +125,33 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                 return null;
             }
 
-            var page = await RepairPageAsync(transaction, database, states, next, started, cancellationToken).ConfigureAwait(false);
+            changed += await RepairPageAsync(transaction, database, Page(), baseline: false, cancellationToken).ConfigureAwait(false);
 
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            changed += page.Changed;
-            next += page.Consumed;
+
+            // The shared join/admission path also serves atomic snapshot replay; bound only this repair's input.
+            IEnumerable<RepairState> Page()
+            {
+                var start = next;
+                while (next < states.Count && ReplicationWriteBatch.CanAdd(next - start, 1, timings.Elapsed(started)))
+                {
+                    yield return states[next++];
+                }
+            }
         }
 
         return changed;
     }
 
-    private async ValueTask<(int Changed, int Consumed)> RepairPageAsync(IStorageTransaction transaction, TenantContext database,
-        IReadOnlyList<RepairState> states, int start, long started, CancellationToken cancellationToken)
+    internal async ValueTask<int> RepairPageAsync(IStorageTransaction transaction, TenantContext database,
+        IEnumerable<RepairState> states, bool baseline, CancellationToken cancellationToken)
     {
         var changed = 0;
         List<(string, string, DocumentState, EntryVersion)>? deferred = null;
         HashSet<(string Collection, string Id)> closureChanges = [];
         List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
-        var next = start;
-        for (; next < states.Count && ReplicationWriteBatch.CanAdd(next - start, 1, timings.Elapsed(started)); next++)
+        foreach (var state in states.Where(state => state.State.MaxStamp.Value != 0))
         {
-            var state = states[next];
-            if (state.State.MaxStamp.Value == 0)
-            {
-                continue;
-            }
-
             // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
             var at = new EntryVersion(state.State.MaxStamp, default);
             TrackClosure(state.Collection, state.Id, closureChanges);
@@ -163,15 +165,16 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
             else
             {
-                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false) ? 1 : 0;
+                changed += (baseline ? await transaction.JoinBaselineAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false)
+                    : await transaction.JoinAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false)) ? 1 : 0;
             }
         }
 
-        changed += await JoinAdmittedAsync(transaction, deferred, cancellationToken).ConfigureAwait(false);
-        changed += await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken).ConfigureAwait(false);
+        changed += await JoinAdmittedAsync(transaction, deferred, cancellationToken, baseline).ConfigureAwait(false);
+        changed += await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken, baseline).ConfigureAwait(false);
         await cancellations.ObserveAsync(transaction, closureChanges, cancellationToken).ConfigureAwait(false);
 
-        return (changed, next - start);
+        return changed;
     }
 
     private async ValueTask<int> JoinClosureJobsAsync(IStorageTransaction transaction,
