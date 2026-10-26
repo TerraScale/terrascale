@@ -85,6 +85,10 @@
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks", "operation": "createChangeWebhook", "contract": "change-webhooks.md"},
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks", "operation": "listChangeWebhooks", "contract": "change-webhooks.md"},
     {"method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}", "operation": "deleteChangeWebhook", "contract": "change-webhooks.md"},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries", "operation": "listChangeWebhookDeliveries", "contract": "change-webhooks.md"}
+    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries", "operation": "listChangeWebhookDeliveries", "contract": "change-webhooks.md"},
+    {"operation": "listFunctions", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions", "contract": "functions.json"},
+    {"operation": "deployFunction", "method": "PUT", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
+    {"operation": "getFunction", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
+    {"operation": "deleteFunction", "method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"}
   ]
 }
