@@ -74,5 +74,12 @@
       "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
     },
     "scope": "Legacy instance organization operations and exclusive DTOs only; TerraScaleAuthOrganization remains for the separate legacy user membership result. Supported Platform/Projects organizations, members and invitations are preserved."
+  },
+  "instance_federation_directory_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Retires only legacy instance Connections/Directories. Current organization SSO and project providers/directory export remain distinct and unchanged."
   }
 }
