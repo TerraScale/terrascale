@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Playwright;
 
@@ -44,7 +45,10 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
 
         await NavigateAsync(database + "/documents/orders");
         // Every token the theme reads must exist; a missing one silently inherits the body ink colour.
-        foreach (var token in new[] { "--ts-surface", "--ts-ink-3", "--ts-link", "--ts-syn-keyword", "--ts-syn-string", "--ts-syn-number", "--ts-syn-comment", "--ts-syn-fn", "--ts-syn-punct", "--ts-shadow" })
+        foreach (var token in new[] {
+            "--ts-ink", "--ts-ink-2", "--ts-ink-3", "--ts-surface", "--ts-surface-2", "--ts-surface-3",
+            "--ts-line", "--ts-line-strong", "--ts-accent", "--ts-link", "--ts-shadow", "--ts-danger", "--ts-warning", "--ts-info",
+            "--ts-chart-2", "--ts-cat-3", "--ts-syn-keyword", "--ts-syn-string", "--ts-syn-number", "--ts-syn-comment", "--ts-syn-fn", "--ts-syn-punct" })
         {
             await Assert.That(await page.EvaluateAsync<string>("name => getComputedStyle(document.documentElement).getPropertyValue(name).trim()", token))
                 .IsNotEmpty().Because(token + " must be defined in tokens.css for the editor theme.");
@@ -79,7 +83,7 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
         await AssertEditorStyledAsync("#sql-editor ts-code-editor", "sql");
 
         // Each syntax token takes its --ts-syn-* colour, and the four roles stay visually distinct.
-        var colors = await page.Locator("#sql-editor ts-code-editor").EvaluateAsync<Dictionary<string, string?>>("""
+        var colors = await page.Locator("#sql-editor ts-code-editor").EvaluateAsync<JsonElement>("""
             host => {
                 const leaves = [...host.querySelectorAll('.view-line span')].filter(span => span.childElementCount === 0);
                 const colorOf = match => { const span = leaves.find(span => match(span.textContent.replace(/ /g, ' ').trim())); return span ? getComputedStyle(span).color : null; };
@@ -91,11 +95,10 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
                 };
             }
             """);
-        await Assert.That(colors["keyword"]).IsEqualTo(await ResolveAsync("--ts-syn-keyword"));
-        await Assert.That(colors["string"]).IsEqualTo(await ResolveAsync("--ts-syn-string"));
-        await Assert.That(colors["number"]).IsEqualTo(await ResolveAsync("--ts-syn-number"));
-        await Assert.That(colors["comment"]).IsEqualTo(await ResolveAsync("--ts-syn-comment"));
-        await Assert.That(colors.Values.Distinct().Count()).IsEqualTo(4).Because("Keyword, string, number and comment colours must differ: " + string.Join(", ", colors.Select(pair => pair.Key + "=" + pair.Value)));
+        foreach (var role in new[] { "keyword", "string", "number", "comment" })
+            await Assert.That(colors.GetProperty(role).GetString()).IsEqualTo(await ResolveAsync("--ts-syn-" + role));
+        await Assert.That(colors.EnumerateObject().Select(property => property.Value.GetString()).Distinct().Count()).IsEqualTo(4)
+            .Because("Keyword, string, number and comment colours must differ: " + colors);
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Save query", Exact = true }).ClickAsync();
         await Assert.That(await page.Locator("dialog#save-query").EvaluateAsync<bool>("dialog => dialog.open")).IsTrue();
@@ -124,7 +127,7 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
         {
             await page.Locator(host + "[data-ready]").WaitForAsync(new() { Timeout = 15000 });
             // A data-ready host proves nothing about styling: Monaco's stylesheet must be injected and applied.
-            await Assert.That(await page.EvaluateAsync<bool>("() => document.getElementById('monaco-editor-core-css')?.sheet?.cssRules.length > 1000"))
+            await Assert.That(await page.EvaluateAsync<bool>("() => [...(document.getElementById('monaco-editor-core-css')?.sheet?.cssRules ?? [])].some(rule => rule.selectorText?.includes('.monaco-editor .overflow-guard'))"))
                 .IsTrue().Because(name + ": Monaco's core stylesheet must be admitted by CSP.");
             await Assert.That(await page.Locator(host + " .monaco-editor .overflow-guard").EvaluateAsync<string>("el => getComputedStyle(el).position"))
                 .IsEqualTo("relative").Because(name + ": Monaco's core CSS must apply to the editor.");

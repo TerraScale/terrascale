@@ -104,6 +104,7 @@ jobs:
           name: dashboard-flow-evidence-${{ github.sha }}
           path: |
             test-results/dotnet/directory-export-browser/
+            test-results/dotnet/code-editor-styling/
             test-results/dotnet/hosted-auth-v3/
             docs/reviews/2026-10-13/onboarding-projects/test-results/pr-head/browser/*.png
             docs/reviews/2026-10-13/onboarding-projects/test-results/pr-head/browser/*-project-flow.webm
