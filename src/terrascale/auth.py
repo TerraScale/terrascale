@@ -19,7 +19,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from .errors import TokenError, parse_retry_after
+from .errors import TokenError, parse_retry_after, response_request_id
 from .ids import validate_id
 
 __all__ = ["DEFAULT_ISSUER", "SCOPES", "APIKeyTokenSource", "AsyncAPIKeyTokenSource"]
@@ -80,17 +80,19 @@ class _Exchange:
                 str(body.get("error") or ""),
                 str(body.get("error_description") or ""),
                 parse_retry_after(response.headers.get("retry-after")),
+                request_id=response_request_id(response.headers),
             )
         try:
             body = response.json()
             token = body["access_token"]
             lifetime = float(body["expires_in"])
             ok = isinstance(token, str) and token and str(body.get("token_type", "")).lower() == "bearer"
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, OverflowError):
             ok = False
         if not ok or lifetime <= 0:
             # The body may hold credentials: never include it.
-            raise TokenError(response.status_code, "invalid_token_response", "not a Bearer access_token with expires_in")
+            raise TokenError(response.status_code, "invalid_token_response", "not a Bearer access_token with expires_in",
+                             request_id=response_request_id(response.headers))
         self.token = token
         # Refresh a minute early (or at half-life for short tokens); the
         # lifetime counts from before the request.

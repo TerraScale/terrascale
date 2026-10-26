@@ -329,8 +329,9 @@ def test_mutation_transport_error_is_commit_uncertain(fake: Fake) -> None:
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     client = TerraScale(API_KEY, project=PROJECT, base_url=BASE, issuer=ISSUER, http_client=http)
-    with pytest.raises(CommitUncertainError):
+    with pytest.raises(CommitUncertainError) as caught:
         client.database("main").collection("c").create({"a": 1})
+    assert caught.value.request_id is None
 
 
 def test_error_mapping() -> None:

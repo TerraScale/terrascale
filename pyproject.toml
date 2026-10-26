@@ -55,4 +55,4 @@ ignore = ["B008"]
 python_version = "3.10"
 strict = true
 warn_return_any = false
-files = ["src/terrascale"]
+files = ["src/terrascale", "tests/typing/request_id.py"]

@@ -14,7 +14,7 @@ from . import _spec, models
 from ._spec import Call, TransactionBuilder
 from ._version import __version__
 from .auth import APIKeyTokenSource
-from .errors import APIError, CommitUncertainError, TerraScaleError, error_for
+from .errors import APIError, CommitUncertainError, TerraScaleError, error_for, response_request_id
 from .ids import validate_id
 
 __all__ = ["TerraScale", "Database", "Collection", "Transaction"]
@@ -110,7 +110,7 @@ class TerraScale:
                 time.sleep(_spec.backoff(attempt, None))
                 continue
             if response.status_code < 300:
-                return call.parse(response)
+                return _parse_response(call, response)
             err = _error(response)
             if response.status_code == 401 and self._source is not None and not refreshed:
                 # An expired or revoked token was never processed: refresh once.
@@ -138,6 +138,16 @@ class TerraScale:
         """Create a database. Regions are names such as ``"gru"``; omit them
         for the default placement, or pass ``all_regions=True``."""
         return self._send(_spec.create_database(self.project, name, home_region, replica_regions, all_regions))
+
+
+def _parse_response(call: Call, response: httpx.Response) -> Any:
+    try:
+        return call.parse(response)
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError):
+        # Parser exceptions can contain response values. Keep only safe context;
+        # a malformed write response does not make the request safe to replay.
+        raise APIError(response.status_code, "invalid_response", "could not decode the API response",
+                       request_id=response_request_id(response.headers)) from None
 
 
 def _error(response: httpx.Response) -> APIError:

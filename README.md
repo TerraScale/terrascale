@@ -102,6 +102,21 @@ subclasses: `InvalidRequestError` (400), `AuthenticationError` (401),
 `UniqueViolationError` (409), `PreconditionFailedError` (412), `RateLimitError`
 (429), `ServiceUnavailableError` (503). A refused API key raises `TokenError`.
 
+`APIError` (including its subclasses) and `TokenError` expose
+`request_id: str | None` for support correlation in both sync and async clients.
+It is the responding request's `X-Request-ID`, accepted only as one canonical
+26-character uppercase ULID (first character `0`–`7`). Missing, malformed or
+repeated IDs give `None`; IDs in response bodies are ignored. The ID is
+diagnostic metadata, never proof of identity, ownership or authorization.
+Existing error strings are unchanged; report `exc.request_id` separately and
+keep credentials, URLs with query values and response bodies out of logs.
+
+A success response that cannot be decoded raises `APIError` with code
+`invalid_response`, its HTTP status and request ID, rather than a raw parser
+exception. Its fixed message omits response contents; the SDK does not retry it.
+Malformed token success responses retain `TokenError` / `invalid_token_response`
+and now carry the request ID too. Transport failures with no response have no ID.
+
 Reads, queries and `if_match` writes are retried on 429 and transient 503s,
 honouring `Retry-After`. Other writes are never replayed: a transport failure on
 a write raises `CommitUncertainError`; re-read before retrying.
