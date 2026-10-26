@@ -12,6 +12,13 @@ Convergence requires at most 1,024 changes, 4 MiB of encoded replay and 250 ms. 
 are checkpointed/fsynced off the writer, followed by a small replay, so the final scratch fsync does not inherit the full
 copy or catch-up history. The top-up after tenant operations become idle may briefly hold their gate while syncing.
 
+Safety timers use `TimeProvider.System` (real elapsed time), independently of the query/domain clock. This includes
+the total deadline, 100 ms pressure sampling, lifecycle/opening waits and the 750 ms final budget. A frozen domain clock
+cannot suspend WAL/CDC protection. Opening has a separate 30 s real-time bound, before claiming rewrite ownership or
+pinning retention. Both operations-gate acquisitions and their active-operation waits share a 10 s real-time bound per
+acquisition, linked to the total token. Purge-fence reads and queued final work also carry their phase's budget token.
+Once native disk work starts it is still awaited through cleanup; connections are never disposed under that work.
+
 The total pre-writer deadline is `min(120 s, 15 s + source bytes / (4 MiB/s))`, including capture setup, lifecycle,
 reader and operations waits. The measured 54 MB baseline completed in 1.1 s; the slower allowance leaves substantial
 margin without pinning WAL/CDC, retention, GC and the frontier indefinitely. Disk workspace is reserved through
@@ -134,3 +141,42 @@ the deliberately armed lifecycle fault escaped through background convergence du
 a scoped fake clock while asserting its crash state, as neighboring interruption tests do; restarts still use real time.
 Production recovery/shutdown code is unchanged. The final 106-test selection passes, including both reported shutdown
 variants. Full Fast is left to CI and full Slow was not run.
+
+
+Round 5 rebases onto main `9081109f5` (#736 and #721). An instrumented unchanged rebase reproduced #736's
+`A_refused_system_rewrite_keeps_the_auth_lineage_and_backs_off` timeout (0 passed / 1 failed, 2 m 01 s).
+The stalled await was the **first** `HoldOperationsAsync`'s `_operationsEnded.Task`, before the lineage bump;
+`_activeOperations` was 1 and native-reader busy count was 0. Owner tracing identified `PrepareCopyAsync`: that copy
+operation was waiting for the lifecycle lock held by the rewrite, which was waiting for its operation to end. A frozen
+query clock disabled the old total deadline and let this lock-order cycle persist. The bounded operations wait now
+refuses, releases lifecycle ownership and lets the copy finish; erasure backs off and retries. The test's assertions and
+frozen clock are unchanged. Review findings 1–4 (converged digest, total/pressure protection, late lineage and measured
+750 ms final cut) remain in place. Regressions freeze the domain clock while exercising both operations waits,
+lifecycle contention, total expiry, pressure sampling and final expiry, then verify cleanup and a subsequent rewrite.
+
+The eight-round fixture uses one 1,025-row captured SQL batch per round, keeping its focus on round exhaustion without
+spending the independent real-time total deadline on thousands of test API calls. The peer-refill regression permits at
+most five Budget-only retries (as the rolling-restart regression already does), logs each refusal, and still requires
+success and all peer, incarnation and document assertions. Other refusal reasons fail immediately.
+
+The staggered-erasure batching regression also drives at most four additional real erasure passes across ten-minute
+windows when its final retirement rewrite is refused. It still requires six successful rewrites for the three erasures,
+counts every attempt and verifies at least ten minutes between every pair of starts for a file. Only Budget/Pressure
+refusals are deducted from the successful-count assertion; other reasons still fail. There are no retries inside the
+recording IHealthyRewrite wrapper, so the real erasure backoff and per-file start limit remain exercised.
+
+Round-5 final validation on main `9081109f5`: Fast/Slow Release builds each had 0 warnings / 0 errors. The requested
+Fast selection passed 189/189 (0 failed, 0 skipped), plus three standalone backoff-test repetitions passed 3/3
+(12.451 s, 12.344 s, 12.349 s); Slow rolling restart passed 1/1. Final Fast total: 192 passed / 0 failed / 0 skipped.
+SYSTEM/tenant sources were 54,013,692 / 54,014,740 bytes, with 96 / 69 concurrent commits retained and writer holds
+of 78 / 40 ms. The final batching run exercised a Pressure refusal and completed through the real retry path.
+The worker verified tree `a76c8ed19354771b42714de8b89ec41f3f6a1f5b`; subsequent changes are documentation-only.
+
+Earlier broad development selections recorded 186 passed / 3 failed, then 188 passed / 1 failed. The first exposed
+round-fixture API overhead reaching the total deadline, a legitimate peer-refill Budget refusal after fsync, and a
+snapshot-import expiry timeout; the second exposed a legitimate retirement Pressure refusal in the strict batching
+fixture. The bounded fixture changes above retain eventual success, original content assertions and every attempted
+start interval. The snapshot-import suite passed 8/8 on unmodified main and its expiry test passed in both subsequent
+broad runs, with no importer/test changes. Its earlier timeout remains unexplained. Both preliminary Slow runs also
+passed 1/1; preliminary focused bounds/backoff tests passed 18/18. The intentionally cut 35-second owner trace is
+diagnostic only. Full Fast remains CI's gate; full Slow was not run.

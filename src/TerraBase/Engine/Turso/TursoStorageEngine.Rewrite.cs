@@ -23,11 +23,21 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
 
     public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
     {
-        // Opened outside the creation lock, which opening takes.
-        var store = (TursoDatabaseStore?)(database is null
-            ? await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)
-            : await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))
-            ?? throw new RewriteRefusedException("the database does not exist");
+        // Opening takes lifecycle ownership and its own admission, before this rewrite pins any state.
+        using var openingDeadline = new CancellationTokenSource(DrainTimeout, TimeProvider.System);
+        using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token, openingDeadline.Token);
+        TursoDatabaseStore store;
+        try
+        {
+            store = (TursoDatabaseStore?)(database is null
+                ? await OpenSystemDatabaseAsync(opening.Token).ConfigureAwait(false)
+                : await OpenDatabaseAsync(database, opening.Token).ConfigureAwait(false))
+                ?? throw new RewriteRefusedException("the database does not exist");
+        }
+        catch (OperationCanceledException error) when (openingDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_stopping.IsCancellationRequested)
+        {
+            throw new RewriteRefusedException("the rewrite could not open the database in time", error, RewriteRefusal.Deadline);
+        }
         var (key, path) = database is null ? ((Organization: SystemName, Project: SystemName, Database: SystemName), LocateSystem()) : Locate(database);
         var step = database ?? SystemCheckpoint;
         Io.Admit();
@@ -38,7 +48,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                 using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
                 cancellationToken = lifetime.Token;
                 using var budget = new RewriteBudget(this, DiskBudget.FileBytes(path), cancellationToken);
-                using var heldBudget = new CancellationTokenSource(Timeout.InfiniteTimeSpan, Time);
+                using var heldBudget = new CancellationTokenSource(Timeout.InfiniteTimeSpan, TimeProvider.System);
                 using var final = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, heldBudget.Token);
                 var ownsRewrite = false;
                 var ownsCreation = false;
@@ -95,7 +105,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
 
                     if (database is not null)
                     {
-                        await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
+                        await ThrowIfPurgeFencedAsync(key.Database, budget.Token).ConfigureAwait(false);
                     }
 
                     lock (_salvageGate)
@@ -133,7 +143,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         {
                             Replace(path, scratch, step, store, final.Token, ref renamed);
                             return true;
-                        }, CancellationToken.None).ConfigureAwait(false);
+                        }, final.Token).ConfigureAwait(false);
                     }
                     catch (Exception error) when (renamed)
                     {

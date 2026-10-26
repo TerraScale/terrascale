@@ -123,7 +123,7 @@ public sealed class HealthyRewriteConcurrentTests
         using var holds = new WriterHoldTests.WriterHolds(server);
         var pinned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         long sourceBytes = 0;
-        store.RewriteSnapshotPinned = () =>
+        store.RewriteSnapshotPinned = _ =>
         {
             sourceBytes = Directory.EnumerateFiles(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(store.FilePath) + "*").Sum(path => new FileInfo(path).Length);
             pinned.TrySetResult();

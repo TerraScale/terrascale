@@ -38,7 +38,20 @@ public sealed class HealthyRewriteRefillTests
         await PutAsync(gru, offline, """{"n":2}""");
         var engine = gru.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var source = await gru.IncarnationAsync();
-        var rewrite = await engine.RewriteAsync(cluster.Database, 0, token);
+        HealthyRewrite rewrite;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                rewrite = await engine.RewriteAsync(cluster.Database, 0, token);
+                break;
+            }
+            catch (RewriteRefusedException error) when (error.Reason == RewriteRefusal.Budget && attempt < 5)
+            {
+                // Budget refusal is retryable; retain eventual success and every peer/content assertion below.
+                Console.WriteLine($"Refill rewrite attempt {attempt} refused: {error.Message}");
+            }
+        }
         await Assert.That(rewrite.SourceIncarnation).IsEqualTo(source);
         await Assert.That(await gru.IncarnationAsync()).IsEqualTo(rewrite.TargetIncarnation);
         // sjc's acknowledgements named the old file's change ids: none counts for the new one.
@@ -76,7 +89,7 @@ public sealed class HealthyRewriteRefillTests
         var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
         var pinned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
-        store.RewriteSnapshotPinned = () =>
+        store.RewriteSnapshotPinned = _ =>
         {
             pinned.TrySetResult();
             release.Wait(token);

@@ -1,11 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using System.Diagnostics;
 using System.Text;
 using System.Threading.Channels;
 using TerraBase.Engine.Turso;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -29,7 +31,7 @@ public sealed class HealthyRewriteBoundsTests
             await write.CreateCollectionAsync(new CollectionInfo("old_collection", 1), token);
         }, token);
         using var release = new ManualResetEventSlim();
-        var pinned = Pause(store, release, token);
+        var pinned = Pause(store, release);
         var rewrite = engine.RewriteAsync(database, 0, token).AsTask();
         try
         {
@@ -64,7 +66,7 @@ public sealed class HealthyRewriteBoundsTests
         var before = store.Incarnation;
         await using var tap = (await engine.OpenTapAsync(null, token))!;
         using var release = new ManualResetEventSlim();
-        var pinned = Pause(store, release, token);
+        var pinned = Pause(store, release);
         var rewrite = engine.RewriteAsync(null, 0, token).AsTask();
         try
         {
@@ -101,12 +103,21 @@ public sealed class HealthyRewriteBoundsTests
         using var holds = new WriterHoldTests.WriterHolds(server);
         using var release = new ManualResetEventSlim();
         using var busy = new ManualResetEventSlim();
-        var pinned = Pause(store, release, token);
+        var pinned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.RewriteSnapshotPinned = copyToken =>
+        {
+            using var cancelled = copyToken.Register(() => stopped.TrySetResult());
+            pinned.TrySetResult();
+            release.Wait(copyToken);
+        };
+        var started = Stopwatch.GetTimestamp();
         var rewrite = engine.RewriteAsync(null, 0, token).AsTask();
+        RewriteRefusedException? error = null;
         List<Task> queued = [];
         try
         {
-            await pinned.WaitAsync(TimeSpan.FromSeconds(30), token);
+            await pinned.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
             if (pressure)
             {
                 for (var i = 0; i < 4; i++)
@@ -115,15 +126,12 @@ public sealed class HealthyRewriteBoundsTests
                     queued.Add(engine.Io.RunAsync(busy.Wait, token));
                 }
                 await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Queued >= 2));
-                for (var i = 0; i < 3; i++)
-                {
-                    clock.Advance(TursoStorageEngine.RewritePressureSample);
-                }
             }
-            else
-            {
-                clock.Advance(TursoStorageEngine.RewriteDeadlineCap);
-            }
+            // Keep the domain clock frozen: safety deadlines and pressure samples must follow real elapsed time.
+            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+            busy.Set(); // Cancellation releases the pin; let the saturated pool run the required cleanup.
+            error = await Assert.ThrowsAsync<RewriteRefusedException>(async () =>
+                await rewrite.WaitAsync(TimeSpan.FromSeconds(30), token));
         }
         finally
         {
@@ -135,12 +143,115 @@ public sealed class HealthyRewriteBoundsTests
                 engine.Io.Release();
             }
         }
-        var error = await Assert.ThrowsAsync<RewriteRefusedException>(async () => await rewrite);
         await Assert.That(error!.Reason).IsEqualTo(pressure ? RewriteRefusal.Pressure : RewriteRefusal.Deadline);
+        await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(30));
         await Assert.That(store.Lineage).IsEqualTo(lineage);
         await Assert.That(holds.Measured("a healthy rewrite")).IsEmpty();
         await CleanAsync(store, before, token);
         store.RewriteSnapshotPinned = null;
+        _ = await engine.RewriteAsync(null, 0, token);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Both_operations_waits_refuse_in_real_time_with_a_frozen_domain_clock(bool secondWait)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var server = await TerraBaseTestServer.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        await engine.CreateDatabaseAsync(database, token);
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;
+        var before = store.Incarnation;
+        var lineage = store.Lineage;
+        var checkpointed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        TursoDatabaseStore.CopyOperation? operation = null;
+        if (secondWait)
+        {
+            store.RewriteStepMeasured = (step, _) =>
+            {
+                if (step == "source_pre_fsync")
+                {
+                    checkpointed.TrySetResult();
+                    release.Wait(token);
+                }
+            };
+        }
+        else
+        {
+            operation = await store.BeginOperationAsync(token);
+        }
+        var started = Stopwatch.GetTimestamp();
+        var rewrite = engine.RewriteAsync(database, 0, token).AsTask();
+        try
+        {
+            if (secondWait)
+            {
+                await checkpointed.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+                operation = await store.BeginOperationAsync(token);
+                release.Set();
+            }
+            var error = await Assert.ThrowsAsync<RewriteRefusedException>(async () =>
+                await rewrite.WaitAsync(TimeSpan.FromSeconds(20), token));
+            await Assert.That(error!.Message).Contains("operations did not end");
+            await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(20));
+            await Assert.That(store.Lineage).IsEqualTo(lineage + (secondWait ? 1 : 0));
+            await CleanAsync(store, before, token);
+        }
+        finally
+        {
+            release.Set();
+            if (operation is not null)
+            {
+                operation.Complete();
+                await operation.DisposeAsync();
+            }
+            store.RewriteStepMeasured = null;
+        }
+        _ = await engine.RewriteAsync(database, 0, token);
+    }
+
+    [Test]
+    public async Task The_lifecycle_wait_refuses_in_real_time_with_a_frozen_domain_clock()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        var locked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services
+            .AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock)
+            .AddSingleton<TerraBase.Hosting.DatabaseLifecycleCheckpoint>((step, creating) =>
+            {
+                if (step == "create.published" && creating.DatabaseId == database.DatabaseId)
+                {
+                    locked.TrySetResult();
+                    release.Wait(token);
+                }
+            }));
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
+        var before = store.Incarnation;
+        var lineage = store.Lineage;
+        var create = engine.CreateDatabaseAsync(database, token).AsTask();
+        try
+        {
+            await locked.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            var error = await Assert.ThrowsAsync<RewriteRefusedException>(async () =>
+                await engine.RewriteAsync(null, 0, token).AsTask().WaitAsync(TimeSpan.FromSeconds(25), token));
+            await Assert.That(error!.Reason).IsEqualTo(RewriteRefusal.Deadline);
+            await Assert.That(store.Lineage).IsEqualTo(lineage);
+            await CleanAsync(store, before, token);
+        }
+        finally
+        {
+            release.Set();
+            _ = await create;
+        }
         _ = await engine.RewriteAsync(null, 0, token);
     }
 
@@ -151,6 +262,12 @@ public sealed class HealthyRewriteBoundsTests
         await using var server = await TerraBaseTestServer.StartAsync();
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var store = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
+        // One captured SQL batch per round avoids spending the total deadline on thousands of test API calls.
+        await WriteAsync(store, async write => _ = await write.LedgerAsync(command =>
+        {
+            using var create = command("CREATE TABLE rewrite_round_probe (id INTEGER PRIMARY KEY, value INTEGER);");
+            return create.ExecuteNonQuery();
+        }, token), token);
         var before = store.Incarnation;
         var lineage = store.Lineage;
         var rounds = Channel.CreateBounded<int>(1);
@@ -167,7 +284,14 @@ public sealed class HealthyRewriteBoundsTests
             await Assert.That(await rounds.Reader.ReadAsync(token)).IsEqualTo(round);
             try
             {
-                await WriteManyAsync(store, token);
+                await WriteAsync(store, async write => _ = await write.LedgerAsync(command =>
+                {
+                    using var insert = command("""
+                        WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 1025)
+                        INSERT INTO rewrite_round_probe (value) SELECT n FROM rows;
+                        """);
+                    return insert.ExecuteNonQuery();
+                }, token), token);
             }
             finally
             {
@@ -202,7 +326,7 @@ public sealed class HealthyRewriteBoundsTests
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (deadline)
         {
-            store.RewriteFinalStarting = () => clock.Advance(TursoStorageEngine.RewriteFinalBudget);
+            store.RewriteFinalStarting = finalToken => release.Wait(finalToken);
         }
         else
         {
@@ -253,7 +377,8 @@ public sealed class HealthyRewriteBoundsTests
         var error = await Assert.ThrowsAsync<RewriteRefusedException>(async () => await rewrite);
         await Assert.That(error!.Reason).IsEqualTo(RewriteRefusal.Budget);
         await Assert.That(error.Message).Contains(deadline ? "time budget" : "budget");
-        store.RewriteBeforeWriter = store.RewriteFinalStarting = null;
+        store.RewriteBeforeWriter = null;
+        store.RewriteFinalStarting = null;
         await CleanAsync(store, before, token);
         _ = await engine.RewriteAsync(null, 0, token);
     }
@@ -268,7 +393,7 @@ public sealed class HealthyRewriteBoundsTests
         await WriteAsync(store, async write => await write.PutAsync("items", EntityIds.New().ToString(), "{}"u8.ToArray(), token), token);
         var tap = (await engine.OpenTapAsync(null, token))!;
         using var release = new ManualResetEventSlim();
-        var pinned = Pause(store, release, token);
+        var pinned = Pause(store, release);
         var rewrite = engine.RewriteAsync(null, 0, token).AsTask();
         try
         {
@@ -366,7 +491,7 @@ public sealed class HealthyRewriteBoundsTests
         var store = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var release = new ManualResetEventSlim();
-        var pinned = Pause(store, release, token);
+        var pinned = Pause(store, release);
         var rewrite = engine.RewriteAsync(null, 0, cancel.Token).AsTask();
         await pinned.WaitAsync(TimeSpan.FromSeconds(30), token);
         var stop = shutdown ? engine.DisposeAsync().AsTask() : Task.CompletedTask;
@@ -384,13 +509,13 @@ public sealed class HealthyRewriteBoundsTests
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Admitted == 0));
     }
 
-    private static Task Pause(TursoDatabaseStore store, ManualResetEventSlim release, CancellationToken token)
+    private static Task Pause(TursoDatabaseStore store, ManualResetEventSlim release)
     {
         var pinned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        store.RewriteSnapshotPinned = () =>
+        store.RewriteSnapshotPinned = copyToken =>
         {
             pinned.TrySetResult();
-            release.Wait(token);
+            release.Wait(copyToken);
         };
         return pinned.Task;
     }

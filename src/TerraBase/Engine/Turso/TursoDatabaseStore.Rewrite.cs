@@ -17,7 +17,7 @@ internal sealed partial class TursoDatabaseStore
     internal int BackupTaps;
     internal Action<int>? RewriteRoundCompleted { get; set; }
     internal Action? RewriteBeforeWriter { get; set; }
-    internal Action? RewriteFinalStarting { get; set; }
+    internal Action<CancellationToken>? RewriteFinalStarting { get; set; }
     // One list drives both replay-digest exclusions and final refreshes.
     private string[] RewriteRefreshTables => IsSystem ? ["_tb_peers", "_tb_rebuild"] : ["_tb_peers"];
 
@@ -65,7 +65,7 @@ internal sealed partial class TursoDatabaseStore
     internal long UncapturedCommits => Volatile.Read(ref _uncapturedCommits);
 
     /// <summary>Runs once the rewrite's read snapshot and replay anchor are pinned; for integration tests.</summary>
-    internal Action? RewriteSnapshotPinned { get; set; }
+    internal Action<CancellationToken>? RewriteSnapshotPinned { get; set; }
 
     /// <summary>Claims this file for one healthy rewrite; false when another one owns it.</summary>
     internal bool TryBeginRewrite()
@@ -202,7 +202,7 @@ internal sealed partial class TursoDatabaseStore
             // The writer is held: no transaction uses its connection.
             if (_writerSession is { } writer)
             {
-                await WriteLane.RunAsync(() => Discard(writer), CancellationToken.None).ConfigureAwait(false);
+                await WriteLane.RunAsync(() => Discard(writer), finalToken).ConfigureAwait(false);
             }
 
             // Rented readers close as they are returned and a backup tap as its owner disposes it; nothing is closed under
@@ -234,22 +234,32 @@ internal sealed partial class TursoDatabaseStore
             {
                 if (Ledger is not null && !IsSystem)
                 {
+                    using var measured = MeasureRewrite("operations_wait");
+                    using var quiet = new CancellationTokenSource(QuietBudget, TimeProvider.System);
+                    using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, quiet.Token);
                     // Operations record write intents for this incarnation: none may span the swap.
-                    while (true)
+                    try
                     {
-                        await _operations.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        if (_activeOperations == 0)
+                        while (true)
                         {
-                            quiesced.Operations = true;
-                            break;
-                        }
+                            await _operations.WaitAsync(wait.Token).ConfigureAwait(false);
+                            if (_activeOperations == 0)
+                            {
+                                quiesced.Operations = true;
+                                break;
+                            }
 
-                        // shortcut: new operations still start while this waits, so a database never idle starves the rewrite
-                        // until its drain deadline; gate new operations if busy databases need rewriting.
-                        var ended = (_operationsEnded ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
-                        _operations.Release();
-                        RewriteWaiting?.Invoke();
-                        await ended.WaitAsync(cancellationToken).ConfigureAwait(false);
+                            // A live operation may need lifecycle ownership or its owner's next scheduled pass to end.
+                            // Neither is guaranteed while this rewrite waits, even when the domain clock is frozen.
+                            var ended = (_operationsEnded ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+                            _operations.Release();
+                            RewriteWaiting?.Invoke();
+                            await ended.WaitAsync(wait.Token).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException error) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    {
+                        throw new RewriteRefusedException("the database's operations did not end before its writer was taken", error);
                     }
                 }
             }
@@ -303,7 +313,7 @@ internal sealed partial class TursoDatabaseStore
                 {
                     if (finalPass)
                     {
-                        RewriteFinalStarting?.Invoke();
+                        RewriteFinalStarting?.Invoke(cancellationToken);
                         if (new FileInfo(FilePath + "-wal") is { Exists: true, Length: > RewriteFinalWalBytes })
                         {
                             throw new RewriteRefusedException("the final rewrite WAL exceeds its byte budget", reason: RewriteRefusal.Budget);
@@ -325,7 +335,7 @@ internal sealed partial class TursoDatabaseStore
                     if (replay is null)
                     {
                         replay = TursoChangeTap.RewriteFrom(this, io, source);
-                        RewriteSnapshotPinned?.Invoke();
+                        RewriteSnapshotPinned?.Invoke(cancellationToken);
                         using (MeasureRewrite("copy"))
                         {
                             TursoCopy.Write(source, targetConnection, cancellationToken);

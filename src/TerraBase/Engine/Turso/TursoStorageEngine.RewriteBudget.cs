@@ -37,9 +37,10 @@ internal sealed partial class TursoStorageEngine
             {
                 _pressure.Cancel();
             }
-            _deadline = new CancellationTokenSource(RewriteDeadline(bytes), engine.Time);
+            // These protect real WAL/CDC pin time and storage pressure, independently of the query/domain clock.
+            _deadline = new CancellationTokenSource(RewriteDeadline(bytes), TimeProvider.System);
             _linked = CancellationTokenSource.CreateLinkedTokenSource(token, _deadline.Token, _pressure.Token);
-            _watch = engine.Time.CreateTimer(_ => Sample(), null, RewritePressureSample, RewritePressureSample);
+            _watch = TimeProvider.System.CreateTimer(_ => Sample(), null, RewritePressureSample, RewritePressureSample);
         }
 
         internal CancellationToken Token => _linked.Token;
