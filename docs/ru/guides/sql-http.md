@@ -32,9 +32,12 @@ Content-Type: application/json
 
 `{project}` is your project ID and `{database}` is the database name. The token is an access token minted from a dashboard API key (see [Authentication](/ru/guides/authentication)): `documents:read` for reads, `documents:write` for writes and `CREATE`/`DROP`.
 
-```sh
-curl -sS --fail-with-body "https://api.terrascale.tech/v1/projects/$TERRASCALE_PROJECT_ID/databases/$TERRASCALE_DATABASE_NAME/sql/execute" \
-  -H "Authorization: Bearer $TERRASCALE_ACCESS_TOKEN" \
+Use Bash with the access token from [Authentication](/ru/guides/authentication). Pass the bearer header through stdin, with shell tracing off:
+
+```bash
+printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN" |
+  curl -sS --fail-with-body "https://api.terrascale.tech/v1/projects/$TERRASCALE_PROJECT_ID/databases/$TERRASCALE_DATABASE_NAME/sql/execute" \
+  -H @- \
   -H 'Content-Type: application/json' \
   -d '{"statements":[
         {"sql":"CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"},
@@ -66,7 +69,7 @@ curl -sS --fail-with-body "https://api.terrascale.tech/v1/projects/$TERRASCALE_P
 
 - `rows` holds one array per row, one value per column: null, a number or a string.
 - `decltype` is the column's declared type, or null for an expression.
-- Integers are JSON numbers. A value beyond ±2^53 can lose precision in JavaScript's `JSON.parse`; read such columns as text (`CAST(x AS TEXT)`) or use a libSQL client.
+- Integers are JSON numbers. Beyond JavaScript's safe-integer range, ordinary `JSON.parse` can lose precision. The TerraScale SDK preserves those digits as `ExactDecimal` (see [JavaScript](#javascript-typescript)); raw JSON consumers can select text with `CAST(x AS TEXT)` instead.
 
 ## Errors
 
@@ -115,7 +118,14 @@ try {
 }
 ```
 
-An integer beyond 2^53 comes back as an `ExactDecimal` that keeps every digit (convert it with `BigInt(String(value))`); pass large integer arguments as `bigint`.
+An integer outside JavaScript's safe-integer range comes back as an `ExactDecimal`, including in `lastInsertRowid`. Pass int64 inputs as `bigint`; convert an integer result with `BigInt(String(value))`, preserving every digit:
+
+```ts
+const [row] = await db.query('SELECT ? AS exact_integer', [9007199254740993n])
+const exact = BigInt(String(row.exact_integer)) // 9007199254740993n
+```
+
+Avoid `Number(value)` for these results. The SQL row generic describes your expected columns; it does not validate or narrow runtime values.
 
 ### Go
 
