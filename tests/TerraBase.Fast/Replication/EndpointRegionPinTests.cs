@@ -43,7 +43,7 @@ public sealed class EndpointRegionPinTests
                 var accepted = regions.Contains(machine.Region) && (pin is null || pin == machine.Region);
                 var target = pin is not null && regions.Contains(pin) ? pin : regions[0];
                 var id = EntityIds.New().ToString();
-                foreach (var endpoint in new[] { "documents", "sql", "hrana" })
+                foreach (var (endpoint, replayed) in new[] { "documents", "sql", "hrana" }.SelectMany(endpoint => new[] { false, true }, (endpoint, replayed) => (endpoint, replayed)))
                 {
                     using var request = new HttpRequestMessage(endpoint == "documents" ? accepted ? HttpMethod.Get : HttpMethod.Put : HttpMethod.Post,
                         ManagementApi.Uri(path + (endpoint == "documents" ? $"/collections/items/documents/by-key?id={id}" : endpoint == "sql" ? "/sql/execute" : "/libsql/v2/pipeline")))
@@ -55,6 +55,10 @@ public sealed class EndpointRegionPinTests
                     if (pin is not null)
                     {
                         request.Headers.Add("X-TerraScale-Region-Pin", pin);
+                    }
+
+                    if (replayed)
+                    {
                         request.Headers.TryAddWithoutValidation("ts-replay-src", "region=fra"); // May suppress replay, never permit serving.
                     }
 
@@ -78,13 +82,14 @@ public sealed class EndpointRegionPinTests
                         await Assert.That(error.GetProperty("regions").EnumerateArray().Select(value => value.GetString())).IsEquivalentTo(regions);
                         await Assert.That(error.GetProperty("host").GetString()).IsEqualTo(RegionGuidance.Host(target));
                         await Assert.That(error.GetProperty("docs").GetString()).IsEqualTo(RegionGuidance.Docs);
-                        await Assert.That(response.Headers.Contains("ts-replay")).IsEqualTo(pin is null);
+                        var replay = replayed ? null : pin is null ? string.Join(',', regions) : regions.Contains(pin) ? pin : null;
+                        await Assert.That(response.Headers.TryGetValues("ts-replay", out var values) ? values.Single() : null).IsEqualTo(replay is null ? null : "region=" + replay);
                     }
                 }
 
                 if (!accepted)
                 {
-                    using var absent = await cell.Gru.Data.GetAsync(ManagementApi.Uri(path + $"/collections/items/documents/by-key?id={id}"));
+                    using var absent = await (regions.Contains(machine.Region) ? data : cell.Gru.Data).GetAsync(ManagementApi.Uri(path + $"/collections/items/documents/by-key?id={id}"));
                     await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
                 }
 
@@ -120,7 +125,16 @@ public sealed class EndpointRegionPinTests
             using var denied = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(path + "/collections/items/documents/by-key?id=" + EntityIds.New()));
             denied.Headers.Add("X-TerraScale-Region-Pin", "iad");
             using var refusal = await restricted.SendAsync(denied);
-            await Assert.That(await refusal.Content.ReadAsStringAsync()).DoesNotContain("\"regions\"");
+            var text = await refusal.Content.ReadAsStringAsync();
+            await Assert.That(refusal.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+            await Assert.That(JsonElement.Parse(text).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wrong_region");
+            await Assert.That(text).DoesNotContain("\"regions\"");
+            await Assert.That(refusal.Headers.Contains("X-TerraBase-Database-Regions") || refusal.Headers.Contains("X-TerraBase-Database-Home")).IsFalse();
+            await Assert.That(JsonElement.Parse(text).GetProperty("error").GetProperty("host").GetString()).IsEqualTo(RegionGuidance.Host("iad"));
+            using var unknown = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(path.Replace("pinned", "unknown", StringComparison.Ordinal) + "/collections/items/documents/by-key?id=" + EntityIds.New()));
+            unknown.Headers.Add("X-TerraScale-Region-Pin", "iad");
+            using var missing = await restricted.SendAsync(unknown);
+            await Assert.That(await missing.Content.ReadAsStringAsync()).IsEqualTo(text);
         }));
     }
 }

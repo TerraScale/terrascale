@@ -329,7 +329,7 @@ public static class Listeners
                         return;
                     }
 
-                    if (!string.Equals(host, region, StringComparison.Ordinal) && !DeferPin(context, host))
+                    if (!string.Equals(host, region, StringComparison.Ordinal))
                     {
                         // The edge already replayed it (it landed in the wrong region), the edge's replay reached no machine
                         // there (ts-replay-failed), or no machine of the region is started: the region is unavailable.
@@ -342,9 +342,12 @@ public static class Listeners
                         }
 
                         // Without a machine there, the edge sends the request back here with ts-replay-failed instead of an error.
-                        ReplayIn(context, host, fallbackSelf: true);
-                        context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
-                        return;
+                        if (!DeferPin(context, host))
+                        {
+                            ReplayIn(context, host, fallbackSelf: true);
+                            await RegionGuidance.RefuseAsync(context, host).ConfigureAwait(false);
+                            return;
+                        }
                     }
                 }
                 else if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], region, StringComparison.Ordinal)))

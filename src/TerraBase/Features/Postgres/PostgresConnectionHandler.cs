@@ -735,9 +735,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         session.Track(running);
         try
         {
-            if (await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false) is not Authorized { Database: var database })
+            var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
+            if (access is not Authorized { Database: var database })
             {
-                return Denied;
+                return access is PgError error ? error : Denied;
             }
 
             // The HTTP pipeline's admission (QosExtensions): one organization lease, then the tenant's memory and budgets.

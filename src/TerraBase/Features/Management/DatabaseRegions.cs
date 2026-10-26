@@ -181,7 +181,8 @@ public static class DatabaseRegions
             var target = pin is not null && choices.Contains(pin, StringComparer.Ordinal) && !homeOnly ? pin : allRegions ? choices[0] : home;
             if (pin is null || target == pin)
             {
-                Listeners.ReplayIn(httpContext, pin ?? (homeOnly ? home : regions));
+                Listeners.ReplayIn(httpContext, pin ?? (homeOnly ? home : regions),
+                    fallbackSelf: pin is not null && Listeners.IsRegionalHost(httpContext.Request.Host.Host, out _));
             }
 
             return RegionGuidance.RefuseAsync(httpContext, target, choices);

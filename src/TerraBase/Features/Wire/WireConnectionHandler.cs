@@ -215,7 +215,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
             string? pin = null;
             if (frame.Op == PinnedHello)
             {
-                if (offset >= frame.Body.Length || frame.Body.Length - offset - 1 != frame.Body[offset])
+                if (offset >= frame.Body.Length || frame.Body[offset] is 0 or > 63 || frame.Body.Length - offset - 1 != frame.Body[offset])
                 {
                     answers.Add(new Outgoing(Error(frame.Id, new Validation("pinned hello must end with a bounded region", "invalid_frame"))));
                     return null;

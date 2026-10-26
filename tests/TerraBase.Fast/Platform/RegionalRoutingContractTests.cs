@@ -66,7 +66,7 @@ public sealed class RegionalRoutingContractTests
         await Assert.That(replayed.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru"]);
         using (var body = JsonDocument.Parse(await replayed.Content.ReadAsStringAsync()))
         {
-            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("misdirected_request");
+            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wrong_region");
         }
 
         // A replay that lands in the pinned region is served normally.
@@ -391,6 +391,35 @@ public sealed class RegionalRoutingContractTests
         await Assert.That(agreeing.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
+    [Test]
+    public async Task A_keyed_database_request_to_a_listed_but_gone_region_reports_unavailability()
+    {
+        await using var cell = await Cell.StartAsync(["gru", "sjc"], new ClusterMember("fra-gone", "http://127.0.0.1:9/", "fra", string.Empty));
+        var api = cell.Api("gru");
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, "documents:read"));
+        foreach (var failed in new[] { false, true })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "missing")));
+            request.Headers.Host = "fra.api.terrascale.tech";
+            if (failed)
+            {
+                request.Headers.Add("ts-replay-failed", "1");
+            }
+
+            using var response = await data.SendAsync(request);
+            if (failed)
+            {
+                await AssertRefusedAsync(response, HttpStatusCode.ServiceUnavailable, "region_unavailable", "gru");
+            }
+            else
+            {
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+                await Assert.That(response.Headers.GetValues("ts-replay")).IsEquivalentTo(["region=fra;fallback=self"]);
+            }
+        }
+    }
+
     private static async Task<string> AssertRefusedAsync(HttpResponseMessage response, HttpStatusCode status, string code, string answering)
     {
         await Assert.That(response.StatusCode).IsEqualTo(status);
@@ -412,6 +441,8 @@ public sealed class RegionalRoutingContractTests
         private FakeMemberStore Members { get; } = new();
 
         public IEnumerable<string> Regions => _machines.Keys;
+
+        public ManagementApi Api(string region) => _machines[region];
 
         // Every machine is listed before any starts, so no machine reads a list that lacks another (the peers file lists a node
         // once it is started); `gone` are listed machines that do not answer.
