@@ -48,7 +48,10 @@ public sealed partial class MfaSignInTests
         const string Next = "/ui/terrascale/security";
         using var refused = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new()
         {
-            ["challenge"] = challenge, ["code"] = codes[0], ["next"] = Next, ["email"] = "untrusted@example.test",
+            ["challenge"] = challenge,
+            ["code"] = codes[0],
+            ["next"] = Next,
+            ["email"] = "untrusted@example.test",
         });
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
         await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();

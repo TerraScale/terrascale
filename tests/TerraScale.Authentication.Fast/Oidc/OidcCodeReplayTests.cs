@@ -97,7 +97,10 @@ public sealed class OidcCodeReplayTests(TerraBaseFixture fixture)
     {
         var form = new Dictionary<string, string>
         {
-            ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = OidcHarness.RedirectUri, ["code_verifier"] = verifier,
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = OidcHarness.RedirectUri,
+            ["code_verifier"] = verifier,
         };
         if (clientId is not null)
         {

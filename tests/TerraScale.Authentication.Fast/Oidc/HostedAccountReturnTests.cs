@@ -69,7 +69,7 @@ public sealed class HostedAccountReturnTests(TerraBaseFixture fixture)
         });
         await Assert.That(confirm.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var recovery = await confirm.Content.ReadAsStringAsync();
-        await Assert.That(Regex.Matches(recovery, "<li><code>[A-Za-z0-9]{24}</code></li>").Count).IsEqualTo(8);
+        await Assert.That(Regex.Count(recovery, "<li><code>[A-Za-z0-9]{24}</code></li>")).IsEqualTo(8);
         await Assert.That(Link(recovery, "I saved them")).IsEqualTo(Security);
         await Assert.That(Link(recovery, "Back to account")).IsEqualTo(Account);
         using var saved = await SendAsync(oidc, Link(recovery, "I saved them"), OidcHarness.SessionCookie(confirm)!);
@@ -140,8 +140,10 @@ public sealed class HostedAccountReturnTests(TerraBaseFixture fixture)
         var (_, mail) = await oidc.Email.NextAsync();
         var form = new Dictionary<string, string>
         {
-            ["email"] = user.Email, ["next"] = Account,
-            ["code"] = Regex.Match(mail.Text, @"\b[0-9]{6}\b").Value, ["password"] = "a new synthetic password",
+            ["email"] = user.Email,
+            ["next"] = Account,
+            ["code"] = Regex.Match(mail.Text, @"\b[0-9]{6}\b").Value,
+            ["password"] = "a new synthetic password",
         };
         using var invalid = await oidc.PostFormAsync(Reset + "/complete", new(form) { ["password"] = "short" });
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

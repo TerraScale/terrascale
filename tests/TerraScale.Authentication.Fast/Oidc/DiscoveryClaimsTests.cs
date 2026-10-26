@@ -63,8 +63,11 @@ public sealed class DiscoveryClaimsTests(TerraBaseFixture fixture)
         {
             var result = await new JsonWebTokenHandler().ValidateTokenAsync(tokens.GetProperty(field).GetString()!, new TokenValidationParameters
             {
-                ValidIssuer = OidcHarness.Issuer, ValidAudience = audience, ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
-                IssuerSigningKeys = keys.GetSigningKeys(), ClockSkew = TimeSpan.Zero,
+                ValidIssuer = OidcHarness.Issuer,
+                ValidAudience = audience,
+                ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
+                IssuerSigningKeys = keys.GetSigningKeys(),
+                ClockSkew = TimeSpan.Zero,
             });
             await Assert.That(result.IsValid).IsTrue();
             return (JsonWebToken)result.SecurityToken;

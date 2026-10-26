@@ -15,6 +15,7 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
 {
     private const string DeviceGrant = "urn:ietf:params:oauth:grant-type:device_code";
     private const string Page = $"/ui/{OidcIssuer.Slug}/device";
+    private static readonly string[] DeviceScopes = ["openid", "email", "offline_access"];
 
     private static ManualClock Clock() => new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
@@ -81,7 +82,7 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         await Assert.That(body.GetProperty("access_token").GetString()).IsNotNull();
         await Assert.That(body.GetProperty("refresh_token").GetString()).IsNotNull();
         await Assert.That(body.GetProperty("id_token").GetString()).IsNotNull();
-        await Assert.That(body.GetProperty("scope").GetString()!.Split(' ').Order()).IsEquivalentTo(new[] { "openid", "email", "offline_access" }.Order());
+        await Assert.That(body.GetProperty("scope").GetString()!.Split(' ').Order()).IsEquivalentTo(DeviceScopes.Order());
 
         // The device's access token calls the platform API as the approving user.
         var (status, _) = await oidc.FailAsync(HttpMethod.Get, PlatformCalls.Organizations, body.GetProperty("access_token").GetString());

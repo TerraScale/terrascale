@@ -84,7 +84,10 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
 
             var grant = new OidcAuthorization
             {
-                Id = AuthStore.NewId(), InstanceId = token.InstanceId, CreationDate = token.CreationDate, Type = AuthorizationTypes.AdHoc,
+                Id = AuthStore.NewId(),
+                InstanceId = token.InstanceId,
+                CreationDate = token.CreationDate,
+                Type = AuthorizationTypes.AdHoc,
             };
             var authorization = JsonSerializer.SerializeToNode(grant, OidcJson.Default.OidcAuthorization)!.AsObject();
             authorization[field] = value;
@@ -99,7 +102,10 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         await store.CreateAsync(AuthStore.OidcAuthorizationCollection, eligible.InstanceId!, id,
             JsonSerializer.SerializeToElement(new OidcAuthorization
             {
-                Id = id, InstanceId = eligible.InstanceId, CreationDate = eligible.CreationDate, Type = AuthorizationTypes.AdHoc,
+                Id = id,
+                InstanceId = eligible.InstanceId,
+                CreationDate = eligible.CreationDate,
+                Type = AuthorizationTypes.AdHoc,
             }, OidcJson.Default.OidcAuthorization));
         var retention = new OidcRetention(store, database, clock);
         await Assert.That(await retention.PruneTokensAsync(clock.UtcNow, null, CancellationToken.None)).IsEqualTo(1);
@@ -129,8 +135,11 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         using var authorized = await oidc.Client.SendAsync(request);
         using var issued = await oidc.PostTokenAsync(new()
         {
-            ["grant_type"] = "authorization_code", ["code"] = OidcHarness.Query(authorized.Headers.Location!)["code"]!,
-            ["client_id"] = client, ["redirect_uri"] = OidcHarness.RedirectUri, ["code_verifier"] = verifier,
+            ["grant_type"] = "authorization_code",
+            ["code"] = OidcHarness.Query(authorized.Headers.Location!)["code"]!,
+            ["client_id"] = client,
+            ["redirect_uri"] = OidcHarness.RedirectUri,
+            ["code_verifier"] = verifier,
         }, null, null, tenant: project);
         await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var tokens = await OidcHarness.JsonAsync(issued);
@@ -142,7 +151,9 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         clock.UtcNow = deadline - TimeSpan.FromMinutes(1);
         using var refreshed = await oidc.PostTokenAsync(new()
         {
-            ["grant_type"] = "refresh_token", ["refresh_token"] = tokens.GetProperty("refresh_token").GetString()!, ["client_id"] = client,
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = tokens.GetProperty("refresh_token").GetString()!,
+            ["client_id"] = client,
         }, null, null, tenant: project);
         await Assert.That(refreshed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var access = (await OidcHarness.JsonAsync(refreshed)).GetProperty("access_token").GetString()!;
@@ -174,8 +185,11 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         var binding = await SeedAsync(store, token);
         var authorization = new OidcAuthorization
         {
-            Id = AuthStore.NewId(), InstanceId = token.InstanceId, CreationDate = token.CreationDate,
-            Status = Statuses.Revoked, Type = AuthorizationTypes.AdHoc,
+            Id = AuthStore.NewId(),
+            InstanceId = token.InstanceId,
+            CreationDate = token.CreationDate,
+            Status = Statuses.Revoked,
+            Type = AuthorizationTypes.AdHoc,
         };
         await store.CreateAsync(AuthStore.OidcAuthorizationCollection, authorization.InstanceId!, authorization.Id!,
             JsonSerializer.SerializeToElement(authorization, OidcJson.Default.OidcAuthorization));
@@ -305,8 +319,13 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
 
     private static OidcToken Token(string tenant, DateTimeOffset created) => new()
     {
-        Id = AuthStore.NewId(), InstanceId = tenant, CreationDate = created, ExpirationDate = created.AddDays(14),
-        ReferenceId = AuthStore.NewId(), Status = Statuses.Redeemed, Type = TokenTypeIdentifiers.RefreshToken,
+        Id = AuthStore.NewId(),
+        InstanceId = tenant,
+        CreationDate = created,
+        ExpirationDate = created.AddDays(14),
+        ReferenceId = AuthStore.NewId(),
+        Status = Statuses.Redeemed,
+        Type = TokenTypeIdentifiers.RefreshToken,
     };
 
     private static async Task<CredentialBinding> SeedAsync(AuthStore store, OidcToken token)

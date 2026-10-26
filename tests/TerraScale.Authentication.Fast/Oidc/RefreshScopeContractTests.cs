@@ -24,7 +24,8 @@ public sealed class RefreshScopeContractTests(TerraBaseFixture fixture)
         var (_, _, initial) = await oidc.SignInAndRedeemAsync();
         var fields = new Dictionary<string, string>
         {
-            ["grant_type"] = "refresh_token", ["refresh_token"] = initial.GetProperty("refresh_token").GetString()!,
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = initial.GetProperty("refresh_token").GetString()!,
         };
         if (requested is not null)
         {
@@ -65,7 +66,9 @@ public sealed class RefreshScopeContractTests(TerraBaseFixture fixture)
         var before = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 100)).Items;
         using var rejected = await oidc.TokenAsync(new()
         {
-            ["grant_type"] = "refresh_token", ["refresh_token"] = initial.GetProperty("refresh_token").GetString()!, ["scope"] = requested,
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = initial.GetProperty("refresh_token").GetString()!,
+            ["scope"] = requested,
         });
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await OidcHarness.ErrorAsync(rejected)).IsEqualTo(requested.Contains("unknown_scope", StringComparison.Ordinal) ? "invalid_request" : "invalid_grant");
@@ -80,8 +83,11 @@ public sealed class RefreshScopeContractTests(TerraBaseFixture fixture)
         var keys = new JsonWebKeySet(await oidc.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"));
         var result = await new JsonWebTokenHandler().ValidateTokenAsync(body.GetProperty("access_token").GetString()!, new TokenValidationParameters
         {
-            ValidIssuer = OidcHarness.Issuer, ValidAudience = OidcHarness.Issuer, ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
-            IssuerSigningKeys = keys.GetSigningKeys(), ClockSkew = TimeSpan.Zero,
+            ValidIssuer = OidcHarness.Issuer,
+            ValidAudience = OidcHarness.Issuer,
+            ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
+            IssuerSigningKeys = keys.GetSigningKeys(),
+            ClockSkew = TimeSpan.Zero,
         });
         await Assert.That(result.IsValid).IsTrue();
         return (JsonWebToken)result.SecurityToken;
