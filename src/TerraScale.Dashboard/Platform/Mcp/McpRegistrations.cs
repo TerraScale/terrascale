@@ -72,6 +72,31 @@ public static class McpRegistrations
         throw new IOException("MCP registration changed concurrently.");
     }
 
+    // Listings carry provider IDs, not natural client IDs. Only a fresh, validated
+    // natural-key read authorizes deletion; a concurrent sign-in wins through CAS.
+    internal static async Task ReclaimUnfinishedAsync(IDashboardState state, TimeProvider time,
+        TerraBaseDocument listed, CancellationToken cancellationToken)
+    {
+        if (listed.State != "value") return;
+        var candidate = listed.Document.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
+        if (!Canonical(candidate.ClientId)) return; // Legacy clients are outside this policy.
+        Validate(candidate, candidate.ClientId);
+        if (listed.Id != TerraBaseDashboardState.DocumentId(McpOAuth.ClientCollection, candidate.ClientId))
+            throw new IOException("MCP registration listing identity is invalid.");
+        var fresh = await state.GetAsync(McpOAuth.ClientCollection, candidate.ClientId, cancellationToken);
+        if (fresh is null) return;
+        if (fresh.Id != candidate.ClientId || fresh.State != "value" || string.IsNullOrWhiteSpace(fresh.Version))
+            throw new IOException("MCP registration state identity is invalid.");
+        var current = fresh.Document.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
+        Validate(current, candidate.ClientId);
+        var now = time.GetUtcNow();
+        if (current.CreatedAt > now || current.LastActivityAt > now)
+            throw new IOException("MCP registration activity is in the future.");
+        if (current.FirstSignInCompletedAt is not null || now - current.CreatedAt < TimeSpan.FromHours(24)) return;
+        try { await state.DeleteAsync(McpOAuth.ClientCollection, current.ClientId, fresh.Version, cancellationToken); }
+        catch (TerraBasePreconditionFailedException) { } // A newer lifecycle transition must survive.
+    }
+
     private static bool Canonical(string? clientId) => clientId is { Length: 26 } && TerraScaleIds.IsValid(clientId) && clientId == clientId.ToUpperInvariant();
 
     private static void Validate(McpRegistration value, string clientId)
