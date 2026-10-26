@@ -38,7 +38,9 @@ public sealed record UsageToolReport(string OrganizationId, string ProjectId, st
 public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService accounts, SpendingService spending, IUsageMeasurements measurements, IUsageStorage documentStorage, TimeProvider time)
 {
     [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
-    public Task<UsageToolReport> Read(string databaseId = "", string range = "7d", string? organizationId = null, string? projectId = null) => ReportAsync(Scope(organizationId, projectId), databaseId, range);
+    public Task<UsageToolReport> Read(string databaseId = "",
+        [Description("1h, 24h, 7d, or 30d. Defaults to 7d; other values are rejected.")] string range = "7d",
+        string? organizationId = null, string? projectId = null) => ReportAsync(Scope(organizationId, projectId), databaseId, range);
 
     private async Task<UsageToolReport> ReportAsync(AccountContext context, string databaseId, string range)
     {

@@ -56,7 +56,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     public Task<McpDocumentWrite> ReplaceDocument(string databaseId, string collection, string documentId = "", [Description("The new document body as a JSON object. Required unless using the value alias.")] Dictionary<string, JsonElement>? document = null, string? version = null, string? organizationId = null, string? projectId = null, string? id = null, JsonElement? value = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "replace", McpScope.Alias(documentId, id, "documentId"), Body(document, value), version);
 
-    [McpServerTool(Name = "patch_document", Title = "Patch document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Merge-patch an existing document (RFC 7396), addressed by its ULID ID. Requires write access. An omitted version uses the current version as a precondition.")]
+    [McpServerTool(Name = "patch_document", Title = "Patch document", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Merge-patch an existing document (RFC 7396), addressed by its ULID ID. Null values delete fields. Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> PatchDocument(string databaseId, string collection, string documentId = "", [Description("RFC 7396 JSON merge patch: null removes fields and nested objects merge. Required unless using the value alias.")] Dictionary<string, JsonElement>? patch = null, string? version = null, string? organizationId = null, string? projectId = null, string? id = null, JsonElement? value = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "patch", McpScope.Alias(documentId, id, "documentId"), Body(patch, value), version);
 
@@ -86,7 +86,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         throw new AccountAccessException("The data plane does not expose editable collection schemas.", 503);
     }
 
-    [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one bounded read-only SQL statement with the same checks as the dashboard editor.")]
+    [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one read-only SQL statement against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
     public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null) => data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
 
     [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Check SQL input limits without running it: blank input, size, statement boundaries, parameters and transaction commands. Does not validate SQL syntax, tables or permissions.")]
@@ -96,7 +96,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         return SqlValidation.Analyze(sql);
     }
 
-    [McpServerTool(Name = "run_sql", Title = "Run SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Run one read-only SQL query against a database.")]
+    [McpServerTool(Name = "run_sql", Title = "Run SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Run one read-only SQL query against relational tables, which are separate from document collections. SQL is limited to 16 KiB; bound parameters are unsupported.")]
     public async Task<McpSqlResponse> RunSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
     {
         var result = await data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);

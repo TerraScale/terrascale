@@ -27,7 +27,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
         return await projects.ListUsersAsync(context.Session, context.Project!.Id, search, after, Cancellation);
     }
 
-    [McpServerTool(Name = "auth_set_user_disabled", Title = "Disable or enable a project user", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
+    [McpServerTool(Name = "auth_set_user_disabled", Title = "Disable or enable a project user", Idempotent = true, UseStructuredContent = true, Destructive = true, OpenWorld = false),
      Description("Disable an end user, which ends every session and token of the user, or enable them again. Requires an owner or admin.")]
     public async Task<TerraScaleAuthProjectUser> SetDisabled(string userId, bool disabled, string? organizationId = null, string? projectId = null)
     {

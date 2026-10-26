@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -22,6 +23,10 @@ public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(identity.GetProperty("operationId").GetString()).IsEqualTo("getDashboardIdentity");
         await Assert.That(identity.GetProperty("responses").TryGetProperty("401", out _)).IsTrue();
         await Assert.That(identity.GetProperty("security")[0].TryGetProperty("dashboardSession", out _)).IsTrue();
+        foreach (var route in new[] { "{kind}", "{keyId}/revoke", "revoke", "rotate" })
+            await Assert.That(paths.GetProperty("/api/v1/dashboard/credentials/" + route).GetProperty("post")
+                .GetProperty("responses").GetProperty("400").GetProperty("content").GetProperty("application/json")
+                .GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
         foreach (var route in new[] { "switch-organization", "switch-project" })
         {
             var operation = paths.GetProperty("/api/v1/dashboard/" + route).GetProperty("post");
@@ -45,6 +50,10 @@ public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
         using var me = await client.GetAsync("/api/v1/auth/me");
         await Assert.That(me.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var body = JsonDocument.Parse(await me.Content.ReadAsByteArrayAsync());
+        using var invalidCsrf = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/api-key",
+            new() { ["_csrf"] = "invalid" });
+        await Assert.That(invalidCsrf.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await invalidCsrf.Content.ReadFromJsonAsync<string>()).IsEqualTo("Invalid form token.");
         var schema = document.RootElement.GetProperty("components").GetProperty("schemas")
             .GetProperty("AccountIdentityResponse").GetProperty("properties");
         await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).Order().ToArray())

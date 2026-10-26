@@ -108,7 +108,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         return Issued(created);
     });
 
-    [McpServerTool(Name = "resend_invitation", Title = "Resend invitation", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Replace a pending invitation's link. The previous link stops working. Requires the owner or admin role; the provider supplies the new expiry and invitation ID.")]
+    [McpServerTool(Name = "resend_invitation", Title = "Resend invitation", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Replace a pending invitation's link. The previous link stops working. Requires the owner or admin role; the provider supplies the new expiry and invitation ID.")]
     public Task<OrganizationIssuedInvitation> ResendInvitation([Description("Invitation ID from list_invitations.")] string invitationId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
         Issued(await invitations.ResendAsync(Scope(organizationId, projectId), invitationId, Cancellation)));

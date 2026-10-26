@@ -38,11 +38,26 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(rootInitialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
             var rootTools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { }, "/", "mcp.terrascale.tech");
             await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
+            foreach (var path in new[] { "/", "/mcp" })
+                foreach (var method in new[] { HttpMethod.Get, HttpMethod.Delete })
+                {
+                    using var request = new HttpRequestMessage(method, path);
+                    request.Headers.Host = "mcp.terrascale.tech";
+                    request.Headers.Add("Authorization", "Bearer " + secret);
+                    using var refused = await replica.SendAsync(request);
+                    await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.MethodNotAllowed);
+                    await Assert.That(refused.Content.Headers.Allow.ToArray()).IsEquivalentTo(new[] { "POST" });
+                }
             var current = await HttpJourney.McpAsync(replica, secret, "server/discover", new { });
             await Assert.That(current.GetProperty("result").GetProperty("supportedVersions").EnumerateArray()
                 .Any(version => version.GetString() == "2026-07-28")).IsTrue();
             var discovery = await HttpJourney.McpAsync(client, secret, "tools/list", new { });
             var tools = discovery.GetProperty("result").GetProperty("tools").EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
+            // These operations end sessions, delete fields, or invalidate an existing invitation link.
+            foreach (var destructive in new[] { "auth_set_user_disabled", "patch_document", "resend_invitation", "set_backup_policy" })
+                await Assert.That(tools[destructive].GetProperty("annotations").GetProperty("destructiveHint").GetBoolean()).IsTrue();
+            // Invoice reads reach Stripe, unlike tools confined to TerraScale-owned state.
+            await Assert.That(tools["list_invoices"].GetProperty("annotations").GetProperty("openWorldHint").GetBoolean()).IsTrue();
             var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_document_history", "get_collection_schema", "set_collection_schema", "list_indexes", "create_index", "list_index_recommendations", "apply_index_recommendation", "get_index_migration", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
             await Assert.That(names.All(tools.ContainsKey)).IsTrue();
             foreach (var name in names)
