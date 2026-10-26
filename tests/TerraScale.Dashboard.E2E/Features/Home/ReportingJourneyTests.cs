@@ -39,7 +39,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             var original = await flow.MeAsync(ownerContext);
             var projectId = original.GetProperty("projectId").GetString()!;
             var orders = await DatabaseAsync("orders-" + suffix, ["GRU", "SFO"]);
-            var archive = await DatabaseAsync("archive-" + suffix, ["SFO"]);
+            var archive = await DatabaseAsync("archive-" + suffix, ["SFO", "GRU"]);
 
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders + "&region=GRU&range=24h");
             await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("10");
@@ -175,6 +175,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
                 await ownerPage.GetByRole(AriaRole.Button, new() { Name = "New database", Exact = true }).First.ClickAsync();
                 await ownerPage.Locator("#create-database[open]").WaitForAsync();
                 await ownerPage.Locator("#database-name").FillAsync(name);
+                await ownerPage.Locator("#database-home").SelectOptionAsync(placement[0]);
                 foreach (var region in new[] { "GRU", "SFO" })
                     await ownerPage.Locator("#database-region input[value=\"" + region + "\"]").SetCheckedAsync(placement.Contains(region));
                 await flow.SubmitAsync(ownerPage, "#create-database form", "Create database");
