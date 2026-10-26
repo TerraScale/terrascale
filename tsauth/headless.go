@@ -10,11 +10,11 @@ import (
 )
 
 // Headless is ts-auth's headless authentication API (TS-582) for a
-// first-party confidential client, such as ts-dashboard, that collects
-// credentials on its own pages: sign-in with a password or an emailed code,
-// sign-up, password reset, refresh and revocation. Every call carries the end
-// user's IP address, which ts-auth's rate limits key on. It is safe for
-// concurrent use.
+// legacy confidential-client declarations. The historical JSON steps have
+// retired; the remaining password/email-code grants are not served either.
+//
+// Deprecated: use hosted/registered OIDC sign-in or Device. This remaining
+// legacy grant surface will be removed; it does not establish shipped support.
 //
 //	h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
 //	tokens, err := h.SignInWithPassword(ctx, email, password, clientIP, []string{"openid", "email", "offline_access"})
@@ -127,60 +127,4 @@ func (h *Headless) tokens(ctx context.Context, form url.Values) (*Tokens, error)
 	}
 	return &Tokens{AccessToken: tr.AccessToken, RefreshToken: tr.RefreshToken, IDToken: tr.IDToken, Scope: tr.Scope,
 		Expiry: start.Add(time.Duration(tr.ExpiresIn) * time.Second)}, nil
-}
-
-// StartEmailCode emails a six-digit sign-in code (10 minutes, 5 guesses)
-// when the address has an account; it succeeds either way.
-func (h *Headless) StartEmailCode(ctx context.Context, email, ip string) error {
-	return h.call(ctx, "email-code/start", map[string]string{"email": email}, ip, nil)
-}
-
-// ResendEmailCode emails another code. Pass the pending token from SignUp
-// to resend its verification code while preserving the pending sign-up;
-// otherwise pass "" for a sign-in code. Rate limits return ErrRateLimited
-// with APIError.RetryAfter. An invalid pending token succeeds without sending
-// an email, to prevent account enumeration.
-func (h *Headless) ResendEmailCode(ctx context.Context, email, ip, pendingToken string) error {
-	body := map[string]string{"email": email}
-	if pendingToken != "" {
-		body["pending_token"] = pendingToken
-	}
-	return h.call(ctx, "email-code/start", body, ip, nil)
-}
-
-// SignUp emails a verification code to a new address and returns the
-// pending token that must accompany it to SignInWithEmailCode, which then
-// creates the account with password. An address that has an account gets a
-// sign-in code instead. Keep the token server-side with the sign-up.
-func (h *Headless) SignUp(ctx context.Context, email, password, ip string) (pendingToken string, err error) {
-	var out struct {
-		PendingToken string `json:"pending_token"`
-	}
-	if err := h.call(ctx, "sign-up", map[string]string{"email": email, "password": password}, ip, &out); err != nil {
-		return "", err
-	}
-	if out.PendingToken == "" {
-		return "", errors.New("tsauth: the sign-up response has no pending_token")
-	}
-	return out.PendingToken, nil
-}
-
-// StartPasswordReset emails a reset code when the address has an account;
-// it succeeds either way.
-func (h *Headless) StartPasswordReset(ctx context.Context, email, ip string) error {
-	return h.call(ctx, "password-reset/start", map[string]string{"email": email}, ip, nil)
-}
-
-// CompletePasswordReset sets a new password with an emailed reset code
-// (ErrInvalidCode otherwise) and signs the user out everywhere.
-func (h *Headless) CompletePasswordReset(ctx context.Context, email, code, newPassword, ip string) error {
-	return h.call(ctx, "password-reset/complete", map[string]string{"email": email, "code": code, "new_password": newPassword}, ip, nil)
-}
-
-func (h *Headless) call(ctx context.Context, path string, body map[string]string, ip string, out any) error {
-	if ip == "" {
-		return errors.New("tsauth: the end user's IP address is required")
-	}
-	body["ip_address"] = ip
-	return sendJSON(ctx, h.hc, http.MethodPost, h.issuer+"/headless/v1/"+path, basicAuth(h.clientID, h.secret), body, out)
 }
