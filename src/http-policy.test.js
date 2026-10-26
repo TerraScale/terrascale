@@ -1,9 +1,39 @@
 import { expect, test } from "vitest";
-import { createTsAuthClient } from "./ts-auth.js";
+import { createTsAuthClient, TsAuthUserPatch } from "./ts-auth.js";
 const config = {
   apiBaseUrl: "https://auth.example.test",
   instanceSlug: "example",
 };
+test("caller cancellation preserves a sanitized cause and cannot dispatch late credentials", async () => {
+  let calls = 0;
+  /** @type {(token: string) => void} */
+  let resolveToken = () => undefined;
+  const token = new Promise((resolve) => { resolveToken = resolve; });
+  const controller = new AbortController();
+  const client = createTsAuthClient({ ...config, accessToken: () => token,
+    fetch: async () => { calls++; return Response.json({ data: [] }); } });
+  const pending = client.users.update("01ARZ3NDEKTSV4RRFFQ69G5FA1", new TsAuthUserPatch().withName("example"), { signal: controller.signal });
+  controller.abort({ reason: "caller cancelled", token: "opaque-secret", url: "https://example.test/?code=private" });
+  const result = await pending;
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error.code).toBe("request_aborted");
+    expect(result.error.details).toEqual({ cause: { reason: "caller cancelled", token: "[redacted]", url: "[redacted URL]" } });
+  }
+  resolveToken("sk_late_secret");
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(calls).toBe(0);
+});
+test("caller TimeoutError and network failure stay distinct from the SDK deadline", async () => {
+  const client = createTsAuthClient({ ...config, maxRetryAttempts: 0,
+    fetch: async () => { throw new Error("network unavailable"); } });
+  const cancelled = await client.oidc.discovery({ signal: AbortSignal.abort(new DOMException("caller", "TimeoutError")) });
+  const network = await client.users.list();
+  if (cancelled.ok || network.ok) throw new Error("Expected failures.");
+  expect(cancelled.error.code).toBe("request_aborted");
+  expect(network.error.code).toBe("transport_error");
+  expect(cancelled.error.details).toEqual({ cause: { name: "TimeoutError", message: "caller" } });
+});
 test("hosted credential resolution shares the finite request deadline and cannot dispatch after expiry", async () => {
   let calls = 0;
   const client = createTsAuthClient({
@@ -17,6 +47,7 @@ test("hosted credential resolution shares the finite request deadline and cannot
   });
   const result = await client.users.list();
   expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe("request_timeout");
   expect(calls).toBe(0);
 });
 test("noncooperative hosted fetch and body streams remain bounded by cancellation", async () => {
@@ -34,6 +65,7 @@ test("noncooperative hosted fetch and body streams remain bounded by cancellatio
     });
     const result = await client.users.list();
     expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("request_timeout");
   }
 });
 test("hosted errors never retain instance keys or arbitrary secret fields", async () => {
@@ -112,7 +144,7 @@ test("terminal hosted cancellation disposes a late custom-fetch response without
       return late;
     },
   });
-  const pending = client.users.list({ signal: controller.signal });
+  const pending = client.users.delete("01ARZ3NDEKTSV4RRFFQ69G5FA1", { signal: controller.signal });
   await started;
   controller.abort(new Error("Terminal request cancellation."));
   const result = await pending;

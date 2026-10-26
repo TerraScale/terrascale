@@ -90,7 +90,7 @@ describe("platform token contract", () => {
   });
 
   test("token request types distinguish project keys from resource grants", () => {
-    const program = ts.createProgram(["test/fixtures/ts-auth-token.ts"], { strict: true, exactOptionalPropertyTypes: true, allowJs: true,
+    const program = ts.createProgram(["test/fixtures/ts-auth-token.ts", "test/fixtures/ts-auth-cancellation.ts"], { strict: true, exactOptionalPropertyTypes: true, allowJs: true,
       baseUrl: process.cwd(), paths: { "@terrascale/sdk/ts-auth": ["./src/ts-auth.js"] },
       target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, skipLibCheck: true, noEmit: true });
     expect(ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, "\n"))).toEqual([]);

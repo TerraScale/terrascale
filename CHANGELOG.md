@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.15 — hosted request cancellation
+
+Hosted identity and OIDC methods accept an optional final request-options argument
+with `signal`. Existing list options retain their signal field. Cancellation stays
+a transport error value, with `request_aborted` for caller cancellation and
+`request_timeout` for the SDK deadline; ordinary network failures retain
+`transport_error`. Cancellation details preserve a sanitized cause.
+
 ## 0.0.14 — remove the planned Better Auth stub
 
 The package no longer exports `./better-auth` or ships its always-throwing stub.

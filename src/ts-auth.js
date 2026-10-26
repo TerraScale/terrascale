@@ -378,10 +378,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthUser>>}
    */
-  get(userId) {
+  get(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}`,
       routeName: "tsauth.users.get",
@@ -390,10 +392,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {TsAuthCreateUserRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthUser>>}
    */
-  create(request) {
+  create(request, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/users`,
       routeName: "tsauth.users.create",
@@ -404,9 +408,10 @@ export class TsAuthUsersClient {
   /**
    * @param {string} userId
    * @param {TsAuthUserPatch} patch
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthUser>>}
    */
-  update(userId, patch) {
+  update(userId, patch, options = {}) {
     if (!(patch instanceof TsAuthUserPatch))
       throw new TypeError("patch must be a TsAuthUserPatch.");
     const body = patch.toJSON();
@@ -416,6 +421,7 @@ export class TsAuthUsersClient {
       );
     }
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PATCH",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}`,
       routeName: "tsauth.users.update",
@@ -425,10 +431,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(userId) {
+  delete(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}`,
       routeName: "tsauth.users.delete",
@@ -437,10 +445,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthImpersonationSession>>}
    */
-  impersonate(userId) {
+  impersonate(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/impersonate`,
       routeName: "tsauth.users.impersonate",
@@ -449,10 +459,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthSessionPage>>}
    */
-  sessions(userId) {
+  sessions(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/sessions`,
       routeName: "tsauth.users.sessions",
@@ -461,10 +473,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  revokeAllSessions(userId) {
+  revokeAllSessions(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/sessions/revoke-all`,
       routeName: "tsauth.users.revokeAllSessions",
@@ -473,10 +487,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthMfaFactorPage>>}
    */
-  mfaFactors(userId) {
+  mfaFactors(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/mfa-factors`,
       routeName: "tsauth.users.mfaFactors",
@@ -486,10 +502,12 @@ export class TsAuthUsersClient {
   /**
    * @param {string} userId
    * @param {string} factorId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  deleteMfaFactor(userId, factorId) {
+  deleteMfaFactor(userId, factorId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/mfa-factors/${segment(factorId, "factor id")}`,
       routeName: "tsauth.users.deleteMfaFactor",
@@ -499,10 +517,12 @@ export class TsAuthUsersClient {
   /**
    * @param {string} userId
    * @param {string} factorId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthRecoveryCodePage>>}
    */
-  regenerateRecoveryCodes(userId, factorId) {
+  regenerateRecoveryCodes(userId, factorId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/mfa-factors/${segment(factorId, "factor id")}/regenerate-recovery`,
       routeName: "tsauth.users.regenerateRecoveryCodes",
@@ -511,10 +531,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthPasskeyPage>>}
    */
-  passkeys(userId) {
+  passkeys(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/passkeys`,
       routeName: "tsauth.users.passkeys",
@@ -524,10 +546,12 @@ export class TsAuthUsersClient {
   /**
    * @param {string} userId
    * @param {string} passkeyId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  deletePasskey(userId, passkeyId) {
+  deletePasskey(userId, passkeyId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/passkeys/${segment(passkeyId, "passkey id")}`,
       routeName: "tsauth.users.deletePasskey",
@@ -536,10 +560,12 @@ export class TsAuthUsersClient {
 
   /**
    * @param {string} userId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<readonly TsAuthUserOrganizationMembership[]>>}
    */
-  organizations(userId) {
+  organizations(userId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/users/${segment(userId, "user id")}/organizations`,
       routeName: "tsauth.users.organizations",
@@ -572,10 +598,12 @@ export class TsAuthSessionsClient {
 
   /**
    * @param {string} sessionId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  revoke(sessionId) {
+  revoke(sessionId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/sessions/${segment(sessionId, "session id")}/revoke`,
       routeName: "tsauth.sessions.revoke",
@@ -637,11 +665,13 @@ export class TsAuthApiKeysClient {
 
   /**
    * @param {TsAuthCreateApiKeyRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthApiKeyWithSecret>>}
    */
-  create(request) {
+  create(request, options = {}) {
     requireText(request?.name, "name");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/api-keys`,
       routeName: "tsauth.apiKeys.create",
@@ -649,9 +679,13 @@ export class TsAuthApiKeysClient {
     });
   }
 
-  /** @returns {Promise<TerraScaleResult<TsAuthApiKeyPage>>} */
-  list() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthApiKeyPage>>}
+   */
+  list(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/api-keys`,
       routeName: "tsauth.apiKeys.list",
@@ -660,10 +694,12 @@ export class TsAuthApiKeysClient {
 
   /**
    * @param {string} keyId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(keyId) {
+  delete(keyId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/api-keys/${segment(keyId, "key id")}`,
       routeName: "tsauth.apiKeys.delete",
@@ -778,12 +814,14 @@ export class TsAuthOrganizationsClient {
 
   /**
    * @param {TsAuthCreateOrganizationRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOrganization>>}
    */
-  create(request) {
+  create(request, options = {}) {
     requireText(request?.name, "name");
     if (request.slug !== undefined) requireText(request.slug, "slug");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/organizations`,
       routeName: "tsauth.organizations.create",
@@ -791,9 +829,13 @@ export class TsAuthOrganizationsClient {
     });
   }
 
-  /** @returns {Promise<TerraScaleResult<readonly TsAuthOrganization[]>>} */
-  list() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<readonly TsAuthOrganization[]>>}
+   */
+  list(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/organizations`,
       routeName: "tsauth.organizations.list",
@@ -802,10 +844,12 @@ export class TsAuthOrganizationsClient {
 
   /**
    * @param {string} organizationId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOrganization>>}
    */
-  get(organizationId) {
+  get(organizationId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}`,
       routeName: "tsauth.organizations.get",
@@ -815,11 +859,13 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {TsAuthUpdateOrganizationRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOrganization>>}
    */
-  update(organizationId, request) {
+  update(organizationId, request, options = {}) {
     requireText(request?.name, "name");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PATCH",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}`,
       routeName: "tsauth.organizations.update",
@@ -829,10 +875,12 @@ export class TsAuthOrganizationsClient {
 
   /**
    * @param {string} organizationId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(organizationId) {
+  delete(organizationId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}`,
       routeName: "tsauth.organizations.delete",
@@ -842,12 +890,14 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {TsAuthCreateMembershipRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthMembership>>}
    */
-  createMembership(organizationId, request) {
+  createMembership(organizationId, request, options = {}) {
     requireId(request?.user_id, "user_id");
     requireText(request?.role, "role");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/memberships`,
       routeName: "tsauth.organizations.createMembership",
@@ -857,10 +907,12 @@ export class TsAuthOrganizationsClient {
 
   /**
    * @param {string} organizationId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<readonly TsAuthMembershipWithUser[]>>}
    */
-  listMemberships(organizationId) {
+  listMemberships(organizationId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/memberships`,
       routeName: "tsauth.organizations.listMemberships",
@@ -871,11 +923,13 @@ export class TsAuthOrganizationsClient {
    * @param {string} organizationId
    * @param {string} membershipId
    * @param {{ readonly role: string }} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthMembership>>}
    */
-  updateMembership(organizationId, membershipId, request) {
+  updateMembership(organizationId, membershipId, request, options = {}) {
     requireText(request?.role, "role");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PATCH",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/memberships/${segment(membershipId, "membership id")}`,
       routeName: "tsauth.organizations.updateMembership",
@@ -886,10 +940,12 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {string} membershipId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  deleteMembership(organizationId, membershipId) {
+  deleteMembership(organizationId, membershipId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/memberships/${segment(membershipId, "membership id")}`,
       routeName: "tsauth.organizations.deleteMembership",
@@ -899,12 +955,14 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {TsAuthCreateInvitationRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthInvitation>>}
    */
-  createInvitation(organizationId, request) {
+  createInvitation(organizationId, request, options = {}) {
     requireText(request?.email, "email");
     requireText(request?.role, "role");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/invitations`,
       routeName: "tsauth.organizations.createInvitation",
@@ -914,10 +972,12 @@ export class TsAuthOrganizationsClient {
 
   /**
    * @param {string} organizationId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<readonly TsAuthInvitation[]>>}
    */
-  listInvitations(organizationId) {
+  listInvitations(organizationId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/invitations`,
       routeName: "tsauth.organizations.listInvitations",
@@ -927,10 +987,12 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {string} invitationId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthInvitation>>}
    */
-  revokeInvitation(organizationId, invitationId) {
+  revokeInvitation(organizationId, invitationId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/invitations/${segment(invitationId, "invitation id")}/revoke`,
       routeName: "tsauth.organizations.revokeInvitation",
@@ -940,11 +1002,13 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {TsAuthAddDomainRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOrganizationDomain>>}
    */
-  createDomain(organizationId, request) {
+  createDomain(organizationId, request, options = {}) {
     requireText(request?.domain, "domain");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/domains`,
       routeName: "tsauth.organizations.createDomain",
@@ -954,10 +1018,12 @@ export class TsAuthOrganizationsClient {
 
   /**
    * @param {string} organizationId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<readonly TsAuthOrganizationDomain[]>>}
    */
-  listDomains(organizationId) {
+  listDomains(organizationId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/domains`,
       routeName: "tsauth.organizations.listDomains",
@@ -967,10 +1033,12 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} organizationId
    * @param {string} domainId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  deleteDomain(organizationId, domainId) {
+  deleteDomain(organizationId, domainId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/organizations/${segment(organizationId, "organization id")}/domains/${segment(domainId, "domain id")}`,
       routeName: "tsauth.organizations.deleteDomain",
@@ -980,11 +1048,13 @@ export class TsAuthOrganizationsClient {
   /**
    * @param {string} domain
    * @param {TsAuthEnrollRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthDomainEnrollment>>}
    */
-  enrollDomain(domain, request) {
+  enrollDomain(domain, request, options = {}) {
     requireId(request?.user_id, "user_id");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/domains/${segment(domain, "domain")}/enroll`,
       routeName: "tsauth.organizations.enrollDomain",
@@ -1083,12 +1153,14 @@ export class TsAuthOauthClientsClient {
   }
   /**
    * @param {TsAuthCreateOauthClientRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOauthClientWithSecret>>}
    */
-  create(request) {
+  create(request, options = {}) {
     validateOauthClientRequest(request, false);
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "POST",
         path: `v1/${this.#slug}/oauth-clients`,
         routeName: "tsauth.oauthClients.create",
@@ -1097,10 +1169,14 @@ export class TsAuthOauthClientsClient {
       isOauthClientWithSecret,
     );
   }
-  /** @returns {Promise<TerraScaleResult<TsAuthOauthClientList>>} */
-  list() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthOauthClientList>>}
+   */
+  list(options = {}) {
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "GET",
         path: `v1/${this.#slug}/oauth-clients`,
         routeName: "tsauth.oauthClients.list",
@@ -1111,13 +1187,15 @@ export class TsAuthOauthClientsClient {
   /**
    * @param {string} clientId
    * @param {TsAuthUpdateOauthClientRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOauthClientUpdate>>}
    */
-  update(clientId, request) {
+  update(clientId, request, options = {}) {
     validateOauthClientRequest(request, true);
     const rotateSecret = request.rotate_secret === true;
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "PATCH",
         path: `v1/${this.#slug}/oauth-clients/${segment(clientId, "client id")}`,
         routeName: "tsauth.oauthClients.update",
@@ -1133,10 +1211,12 @@ export class TsAuthOauthClientsClient {
   }
   /**
    * @param {string} clientId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(clientId) {
+  delete(clientId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/oauth-clients/${segment(clientId, "client id")}`,
       routeName: "tsauth.oauthClients.delete",
@@ -1206,12 +1286,14 @@ export class TsAuthOauthResourcesClient {
   }
   /**
    * @param {TsAuthCreateOauthResourceRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOauthResourceWithSecret>>}
    */
-  create(request) {
+  create(request, options = {}) {
     validateOauthResourceRequest(request, false);
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "POST",
         path: `v1/${this.#slug}/oauth-resources`,
         routeName: "tsauth.oauthResources.create",
@@ -1220,10 +1302,14 @@ export class TsAuthOauthResourcesClient {
       isOauthResourceWithSecret,
     );
   }
-  /** @returns {Promise<TerraScaleResult<TsAuthOauthResourceList>>} */
-  list() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthOauthResourceList>>}
+   */
+  list(options = {}) {
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "GET",
         path: `v1/${this.#slug}/oauth-resources`,
         routeName: "tsauth.oauthResources.list",
@@ -1234,12 +1320,14 @@ export class TsAuthOauthResourcesClient {
   /**
    * @param {string} resourceId
    * @param {TsAuthUpdateOauthResourceRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOauthResourceWithSecret>>}
    */
-  update(resourceId, request) {
+  update(resourceId, request, options = {}) {
     validateOauthResourceRequest(request, true);
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "PATCH",
         path: `v1/${this.#slug}/oauth-resources/${segment(resourceId, "resource id")}`,
         routeName: "tsauth.oauthResources.update",
@@ -1251,10 +1339,12 @@ export class TsAuthOauthResourcesClient {
   /**
    * Disables the resource; its registered identity remains reserved.
    * @param {string} resourceId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  revoke(resourceId) {
+  revoke(resourceId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/oauth-resources/${segment(resourceId, "resource id")}`,
       routeName: "tsauth.oauthResources.revoke",
@@ -1337,9 +1427,10 @@ export class TsAuthConnectionsClient {
 
   /**
    * @param {TsAuthCreateConnectionRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthConnectionView>>}
    */
-  create(request) {
+  create(request, options = {}) {
     requireText(request?.name, "name");
     if (request.type === "oidc") {
       requireAbsoluteHttpUrl(request.issuer_url, "issuer_url");
@@ -1351,6 +1442,7 @@ export class TsAuthConnectionsClient {
       requireText(request.x509_certificate_pem, "x509_certificate_pem");
     }
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/connections`,
       routeName: "tsauth.connections.create",
@@ -1359,10 +1451,12 @@ export class TsAuthConnectionsClient {
   }
 
   /**
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly data: readonly TsAuthConnectionView[] }>>}
    */
-  list() {
+  list(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/connections`,
       routeName: "tsauth.connections.list",
@@ -1372,10 +1466,12 @@ export class TsAuthConnectionsClient {
   /**
    * @param {string} connectionId
    * @param {TsAuthConnectionPatch} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthConnectionView>>}
    */
-  update(connectionId, request) {
+  update(connectionId, request, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PATCH",
       path: `v1/${this.#slug}/connections/${segment(connectionId, "connection id")}`,
       routeName: "tsauth.connections.update",
@@ -1385,10 +1481,12 @@ export class TsAuthConnectionsClient {
 
   /**
    * @param {string} connectionId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(connectionId) {
+  delete(connectionId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/connections/${segment(connectionId, "connection id")}`,
       routeName: "tsauth.connections.delete",
@@ -1437,11 +1535,13 @@ export class TsAuthDirectoriesClient {
 
   /**
    * @param {{ readonly org_id?: string | undefined }} [request={}]
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthDirectoryWithToken>>}
    */
-  create(request = {}) {
+  create(request = {}, options = {}) {
     if (request.org_id !== undefined) requireId(request.org_id, "org_id");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/directories`,
       routeName: "tsauth.directories.create",
@@ -1450,10 +1550,12 @@ export class TsAuthDirectoriesClient {
   }
 
   /**
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly data: readonly TsAuthDirectory[] }>>}
    */
-  list() {
+  list(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/directories`,
       routeName: "tsauth.directories.list",
@@ -1462,10 +1564,12 @@ export class TsAuthDirectoriesClient {
 
   /**
    * @param {string} directoryId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthDirectoryWithToken>>}
    */
-  rotate(directoryId) {
+  rotate(directoryId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/directories/${segment(directoryId, "directory id")}/rotate`,
       routeName: "tsauth.directories.rotate",
@@ -1474,10 +1578,12 @@ export class TsAuthDirectoriesClient {
 
   /**
    * @param {string} directoryId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(directoryId) {
+  delete(directoryId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/directories/${segment(directoryId, "directory id")}`,
       routeName: "tsauth.directories.delete",
@@ -1540,9 +1646,10 @@ export class TsAuthJwtTemplatesClient {
 
   /**
    * @param {TsAuthCreateJwtTemplateRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthJwtTemplate>>}
    */
-  create(request) {
+  create(request, options = {}) {
     validateJwtTemplateName(request?.name);
     validateJwtTemplateClaims(request?.claims);
     if (
@@ -1553,6 +1660,7 @@ export class TsAuthJwtTemplatesClient {
       throw new TypeError("lifetime_seconds must be a positive integer.");
     }
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/jwt-templates`,
       routeName: "tsauth.jwtTemplates.create",
@@ -1560,9 +1668,13 @@ export class TsAuthJwtTemplatesClient {
     });
   }
 
-  /** @returns {Promise<TerraScaleResult<readonly TsAuthJwtTemplate[]>>} */
-  list() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<readonly TsAuthJwtTemplate[]>>}
+   */
+  list(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/jwt-templates`,
       routeName: "tsauth.jwtTemplates.list",
@@ -1572,13 +1684,15 @@ export class TsAuthJwtTemplatesClient {
   /**
    * @param {string} name
    * @param {TsAuthUpdateJwtTemplateRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthJwtTemplate>>}
    */
-  update(name, request) {
+  update(name, request, options = {}) {
     validateJwtTemplateName(name);
     if (request.name !== undefined) validateJwtTemplateName(request.name);
     if (request.claims !== undefined) validateJwtTemplateClaims(request.claims);
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PATCH",
       path: `v1/${this.#slug}/jwt-templates/${segment(name, "template name")}`,
       routeName: "tsauth.jwtTemplates.update",
@@ -1588,11 +1702,13 @@ export class TsAuthJwtTemplatesClient {
 
   /**
    * @param {string} name
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(name) {
+  delete(name, options = {}) {
     validateJwtTemplateName(name);
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/jwt-templates/${segment(name, "template name")}`,
       routeName: "tsauth.jwtTemplates.delete",
@@ -1602,12 +1718,14 @@ export class TsAuthJwtTemplatesClient {
   /**
    * @param {string} name
    * @param {{ readonly user_id: import("./ids.js").EntityId }} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthJwtTokenResponse>>}
    */
-  issueToken(name, request) {
+  issueToken(name, request, options = {}) {
     validateJwtTemplateName(name);
     requireId(request?.user_id, "user_id");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/jwt-templates/${segment(name, "template name")}/tokens`,
       routeName: "tsauth.jwtTemplates.issueToken",
@@ -1671,9 +1789,10 @@ export class TsAuthWebhooksClient {
 
   /**
    * @param {{ readonly url: string; readonly events: readonly string[] }} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthWebhookWithSecret>>}
    */
-  create(request) {
+  create(request, options = {}) {
     requireAbsoluteHttpUrl(request?.url, "url");
     if (
       !Array.isArray(request?.events) ||
@@ -1685,6 +1804,7 @@ export class TsAuthWebhooksClient {
       throw new TypeError("events must be a non-empty array of strings.");
     }
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/webhooks`,
       routeName: "tsauth.webhooks.create",
@@ -1692,9 +1812,13 @@ export class TsAuthWebhooksClient {
     });
   }
 
-  /** @returns {Promise<TerraScaleResult<readonly TsAuthWebhook[]>>} */
-  list() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<readonly TsAuthWebhook[]>>}
+   */
+  list(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/webhooks`,
       routeName: "tsauth.webhooks.list",
@@ -1703,10 +1827,12 @@ export class TsAuthWebhooksClient {
 
   /**
    * @param {string} webhookId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  delete(webhookId) {
+  delete(webhookId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "DELETE",
       path: `v1/${this.#slug}/webhooks/${segment(webhookId, "webhook id")}`,
       routeName: "tsauth.webhooks.delete",
@@ -1715,10 +1841,12 @@ export class TsAuthWebhooksClient {
 
   /**
    * @param {string} webhookId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly queued: boolean }>>}
    */
-  test(webhookId) {
+  test(webhookId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/webhooks/${segment(webhookId, "webhook id")}/test`,
       routeName: "tsauth.webhooks.test",
@@ -1726,9 +1854,13 @@ export class TsAuthWebhooksClient {
     });
   }
 
-  /** @returns {Promise<TerraScaleResult<readonly TsAuthDeadLetterEntry[]>>} */
-  deadLetter() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<readonly TsAuthDeadLetterEntry[]>>}
+   */
+  deadLetter(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/webhooks/dead-letter`,
       routeName: "tsauth.webhooks.deadLetter",
@@ -1737,10 +1869,12 @@ export class TsAuthWebhooksClient {
 
   /**
    * @param {string} entryId
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly replayed: boolean }>>}
    */
-  replayDeadLetter(entryId) {
+  replayDeadLetter(entryId, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/webhooks/dead-letter/${encodeURIComponent(requireDeadLetterId(entryId))}/replay`,
       routeName: "tsauth.webhooks.replayDeadLetter",
@@ -1850,9 +1984,13 @@ export class TsAuthBillingClient {
     this.#slug = instanceSlug;
   }
 
-  /** @returns {Promise<TerraScaleResult<TsAuthBillingOverview>>} */
-  get() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthBillingOverview>>}
+   */
+  get(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/${planSegment}`,
       routeName: `tsauth.${planSegment}.get`,
@@ -1861,12 +1999,14 @@ export class TsAuthBillingClient {
 
   /**
    * @param {{ readonly plan: "pro" | "enterprise" }} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly checkout_url: string }>>}
    */
-  checkout(request) {
+  checkout(request, options = {}) {
     if (request?.plan !== "pro" && request?.plan !== "enterprise")
       throw new TypeError('plan must be "pro" or "enterprise".');
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/${planSegment}/checkout`,
       routeName: `tsauth.${planSegment}.checkout`,
@@ -1874,9 +2014,13 @@ export class TsAuthBillingClient {
     });
   }
 
-  /** @returns {Promise<TerraScaleResult<{ readonly portal_url: string }>>} */
-  portal() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{ readonly portal_url: string }>>}
+   */
+  portal(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/${planSegment}/portal`,
       routeName: `tsauth.${planSegment}.portal`,
@@ -1886,9 +2030,10 @@ export class TsAuthBillingClient {
 
   /**
    * @param {{ readonly current_users: number }} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly allowed: boolean; readonly plan: string; readonly quota: number }>>}
    */
-  enforceCheck(request) {
+  enforceCheck(request, options = {}) {
     if (
       !Number.isInteger(request?.current_users) ||
       request.current_users < 0
@@ -1896,6 +2041,7 @@ export class TsAuthBillingClient {
       throw new TypeError("current_users must be a non-negative integer.");
     }
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/${planSegment}/enforce-check`,
       routeName: `tsauth.${planSegment}.enforceCheck`,
@@ -1904,10 +2050,12 @@ export class TsAuthBillingClient {
   }
 
   /**
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<{ readonly claims_examined: number; readonly claims_removed: number; readonly claims_retained: number }>>}
    */
-  reconcileQuota() {
+  reconcileQuota(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path: `v1/${this.#slug}/${planSegment}/quota/reconcile`,
       routeName: `tsauth.${planSegment}.reconcileQuota`,
@@ -1963,9 +2111,13 @@ export class TsAuthInstanceClient {
     this.#slug = instanceSlug;
   }
 
-  /** @returns {Promise<TerraScaleResult<TsAuthInstance>>} */
-  get() {
+  /**
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthInstance>>}
+   */
+  get(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `v1/${this.#slug}/instance`,
       routeName: "tsauth.instance.get",
@@ -1974,9 +2126,10 @@ export class TsAuthInstanceClient {
 
   /**
    * @param {TsAuthInstanceUpdateRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthInstanceUpdateResponse>>}
    */
-  update(request) {
+  update(request, options = {}) {
     if (request.name !== undefined) requireText(request.name, "name");
     if (request.logo_url !== undefined)
       requireAbsoluteHttpUrl(request.logo_url, "logo_url");
@@ -1987,6 +2140,7 @@ export class TsAuthInstanceClient {
       throw new TypeError("theme_color must be a #rrggbb hex color.");
     }
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "PATCH",
       path: `v1/${this.#slug}/instance`,
       routeName: "tsauth.instance.update",
@@ -2189,10 +2343,12 @@ export class TsAuthOidcClient {
 
   /**
    * Public discovery document; sent without any authorization header.
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcDiscovery>>}
    */
-  discovery() {
+  discovery(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `${this.#slug}/.well-known/openid-configuration`,
       routeName: "tsauth.oidc.discovery",
@@ -2201,10 +2357,12 @@ export class TsAuthOidcClient {
 
   /**
    * Public signing keys; sent without any authorization header.
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcJwks>>}
    */
-  jwks() {
+  jwks(options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `${this.#slug}/.well-known/jwks.json`,
       routeName: "tsauth.oidc.jwks",
@@ -2231,9 +2389,10 @@ export class TsAuthOidcClient {
    * @param {string} clientId
    * @param {string} clientSecret
    * @param {TsAuthOidcDeviceAuthorizationRequest} [request={}]
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcDeviceAuthorizationResponse>>}
    */
-  deviceAuthorization(clientId, clientSecret, request = {}) {
+  deviceAuthorization(clientId, clientSecret, request = {}, options = {}) {
     requireFields(request, ["scope", "resource"]);
     const form = clientCredentialForm(clientId, clientSecret);
     if (request.resource !== undefined)
@@ -2245,6 +2404,7 @@ export class TsAuthOidcClient {
         `${this.#slug}/oauth/device_authorization`,
         "tsauth.oidc.deviceAuthorization",
         form,
+        options,
       ),
       isDeviceAuthorizationResponse,
     );
@@ -2257,9 +2417,10 @@ export class TsAuthOidcClient {
    * @param {string} clientId
    * @param {string} clientSecret
    * @param {TsAuthOidcTokenRequest} request
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcTokenResponse>>}
    */
-  token(clientId, clientSecret, request) {
+  token(clientId, clientSecret, request, options = {}) {
     const form = clientCredentialForm(clientId, clientSecret);
     const grantType = request.grant_type;
     const fields =
@@ -2309,7 +2470,7 @@ export class TsAuthOidcClient {
       form.set("device_code", requireText(request.device_code, "device_code"));
     }
     const projectScope = request.grant_type === "client_credentials" && "project" in request ? request.scope : undefined;
-    const pending = this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form);
+    const pending = this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form, options);
     return oauthResponse(
       // TokenBody follows RFC 6749 §5.1: omitted scope equals the explicit requested scope.
       // Snapshot it before dispatch; never infer a default or normalize other grant contracts.
@@ -2326,9 +2487,10 @@ export class TsAuthOidcClient {
    * @param {string} clientId
    * @param {string} clientSecret
    * @param {string} token
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcIntrospection>>}
    */
-  introspect(clientId, clientSecret, token) {
+  introspect(clientId, clientSecret, token, options = {}) {
     const form = clientCredentialForm(clientId, clientSecret);
     form.set("token", requireText(token, "token"));
     return oauthResponse(
@@ -2336,6 +2498,7 @@ export class TsAuthOidcClient {
         `${this.#slug}/oauth/introspect`,
         "tsauth.oidc.introspect",
         form,
+        options,
       ),
       isClientIntrospection,
     );
@@ -2347,9 +2510,10 @@ export class TsAuthOidcClient {
    * @param {TsAuthOidcResourceCredentials} credentials
    * @param {string} token
    * @param {"access_token"} [tokenTypeHint]
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcResourceIntrospection>>}
    */
-  introspectResource(credentials, token, tokenTypeHint) {
+  introspectResource(credentials, token, tokenTypeHint, options = {}) {
     requireFields(credentials, [
       "issuer",
       "audience",
@@ -2374,6 +2538,7 @@ export class TsAuthOidcClient {
     );
     return oauthResponse(
       this.#http.request({
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         method: "POST",
         path: `${this.#slug}/oauth/introspect`,
         routeName: "tsauth.oidc.resourceIntrospect",
@@ -2403,26 +2568,30 @@ export class TsAuthOidcClient {
    * @param {string} clientId
    * @param {string} clientSecret
    * @param {string} token
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<void>>}
    */
-  revoke(clientId, clientSecret, token) {
+  revoke(clientId, clientSecret, token, options = {}) {
     const form = clientCredentialForm(clientId, clientSecret);
     form.set("token", requireText(token, "token"));
     return this.#postForm(
       `${this.#slug}/oauth/revoke`,
       "tsauth.oidc.revoke",
       form,
+      options,
     );
   }
 
   /**
    * Bearer access token issued by the token endpoint, not the sk_ key.
    * @param {string} accessToken
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcUserInfo>>}
    */
-  userinfo(accessToken) {
+  userinfo(accessToken, options = {}) {
     requireText(accessToken, "accessToken");
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "GET",
       path: `${this.#slug}/oauth/userinfo`,
       routeName: "tsauth.oidc.userinfo",
@@ -2435,10 +2604,12 @@ export class TsAuthOidcClient {
    * @param {string} path
    * @param {`tsauth.${string}`} routeName
    * @param {URLSearchParams} form
+   * @param {TsAuthRequestOptions} [options={}]
    * @returns {Promise<TerraScaleResult<T>>}
    */
-  #postForm(path, routeName, form) {
+  #postForm(path, routeName, form, options = {}) {
     return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       method: "POST",
       path,
       routeName,

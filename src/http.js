@@ -273,6 +273,18 @@ export class TsAuthHttp {
         }
       }
     } catch (error) {
+      if (signal?.aborted) {
+        const timedOut = deadline?.aborted === true && signal.reason === deadline.reason;
+        let cause;
+        try { cause = sanitizeHttpDiagnostic(signal.reason); }
+        catch { cause = "[redacted]"; }
+        return err(options.routeName, {
+          kind: "transport",
+          code: timedOut ? "request_timeout" : "request_aborted",
+          message: timedOut ? "The request deadline expired." : "The request was aborted.",
+          details: { cause },
+        });
+      }
       return err(options.routeName, {
         kind: "transport",
         code: "transport_error",

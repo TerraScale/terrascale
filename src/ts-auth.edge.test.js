@@ -973,13 +973,12 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
     const requests = [];
     const tsAuth = tsAuthClient(() => json({ data: [] }), requests);
     const listed = await tsAuth.users.list({ signal: AbortSignal.abort() });
-    // pins current behavior: pre-flight cancellation surfaces as a transport
-    // error value (not a rejection), before any fetch is issued.
+    // Cancellation stays a transport error value with a distinct code.
     assert.equal(requests.length, 0);
     assert.equal(listed.ok, false);
     if (!listed.ok) {
       assert.equal(listed.error.kind, "transport");
-      assert.equal(listed.error.code, "transport_error");
+      assert.equal(listed.error.code, "request_aborted");
       assert.match(listed.error.message, /abort/iu);
     }
   });
@@ -998,13 +997,12 @@ describe("ts-auth client edge cases: D. retry / deadline / cancellation edges", 
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
     const listed = await tsAuth.users.list({ signal: controller.signal });
-    // pins current behavior: the abort during the pending retry is a transport
-    // error value; the second attempt never fires.
+    // The second attempt never fires after cancellation.
     assert.equal(requests.length, 1);
     assert.equal(listed.ok, false);
     if (!listed.ok) {
       assert.equal(listed.error.kind, "transport");
-      assert.equal(listed.error.code, "transport_error");
+      assert.equal(listed.error.code, "request_aborted");
       assert.match(listed.error.message, /abort/iu);
     }
   });
