@@ -27,6 +27,10 @@ public sealed class SystemDatabasePowerLossTests
                 new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
                 new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
         });
+        var path = $"/v1/projects/{project}/databases/canary";
+        await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
+        var read = new Uri($"{path}/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative);
+        await Docs.PutAsync(node.Client, read, new JsonObject { ["n"] = 1 });
         using var created = await node.Client.PostAsJsonAsync("/admin/api-keys", new JsonObject
         {
             ["name"] = "power loss",
@@ -36,16 +40,15 @@ public sealed class SystemDatabasePowerLossTests
         });
         await Docs.EnsureSuccessAsync(created);
         var secret = (await created.Content.ReadFromJsonAsync<JsonObject>())!["secret"]!.GetValue<string>();
-        var read = new Uri($"/v1/projects/{project}/databases/canary/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative);
-        await Assert.That(await node.StatusAsync(read, null)).IsNotEqualTo(HttpStatusCode.Unauthorized).Because("the operator reaches the registered project");
-        await Assert.That(await node.StatusAsync(read, secret)).IsNotEqualTo(HttpStatusCode.Unauthorized).Because("the new key authenticates");
+        await Assert.That(await node.StatusAsync(read, null)).IsEqualTo(HttpStatusCode.OK).Because("the operator reaches the registered project");
+        await Assert.That(await node.StatusAsync(read, secret)).IsEqualTo(HttpStatusCode.OK).Because("the new key authenticates");
 
         await node.PowerLossAsync();
         await node.StartAgainAsync();
 
-        await Assert.That(await node.StatusAsync(read, null)).IsNotEqualTo(HttpStatusCode.Unauthorized)
+        await Assert.That(await node.StatusAsync(read, null)).IsEqualTo(HttpStatusCode.OK)
             .Because("the project's registration was acknowledged before the power loss");
-        await Assert.That(await node.StatusAsync(read, secret)).IsNotEqualTo(HttpStatusCode.Unauthorized)
+        await Assert.That(await node.StatusAsync(read, secret)).IsEqualTo(HttpStatusCode.OK)
             .Because("the key was acknowledged before the power loss");
     }
 }
