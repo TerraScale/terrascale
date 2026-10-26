@@ -25,7 +25,6 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public static string Tone(string status) => status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
     public const string CreatePlacementHint = "All currently serving regions are selected by default. Keep at least two regions, including the chosen home. Selecting every current region does not include future regions. Select All regions to follow future regions automatically.";
     public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.Shared.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
-    public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
     public DatabaseListMetrics? Metrics { get; init; }
     public string Range { get; init; } = "24h";
     // Range links keep the search filter.
@@ -40,7 +39,7 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
         string N(long value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
         yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(reads) : null, metric?.Reads is { } r ? N(r) + " reads in " + Range : "", metric?.ReadTrend, "ts-cat-1");
         yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(writes) : null, metric?.Writes is { } w ? N(w) + " puts, patches and deletes in " + Range : "", metric?.WriteTrend, "ts-cat-2");
-        yield return ("Storage", metric?.StorageBytes is { } bytes ? TerraScale.Dashboard.Features.Usage.UsageFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? N(b) + " bytes in the latest bucket, summed across every reporting region" : "", null, "");
+        yield return ("Storage", metric?.StorageBytes is { } bytes ? TerraScale.Dashboard.Shared.Formatting.MetricFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? N(b) + " bytes in the latest bucket, summed across every reporting region" : "", null, "");
         yield return ("p95 latency", metric?.P95Ms is { } ms ? ms.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " ms" : null, "Highest region p95 in the latest bucket", null, "");
     }
 }

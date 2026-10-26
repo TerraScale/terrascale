@@ -12,7 +12,7 @@ public static class OperationUnitOverage
 
     public static string Rate => "$" + PlanCatalog.OperationUnitsPerMillionUsd.ToString("0.##", CultureInfo.InvariantCulture) + " per million";
 
-    // Free has no overages: it stops at its allowance.
+    // Free has no overages: it stops new writes at its allowance.
     public static long Units(BillingPlan plan, long used) => plan.PriceCents > 0 ? Math.Max(0, used - plan.Allowances.MonthlyOperations) : 0;
 
     public static string Amount(long units) =>

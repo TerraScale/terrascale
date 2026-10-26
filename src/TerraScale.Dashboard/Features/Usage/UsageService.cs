@@ -3,6 +3,7 @@ using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Shared.Charts;
+using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Usage;
@@ -122,7 +123,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
         };
 
         UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured) => new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " operation units/month" : allowance,
-            measured ? bytes ? UsageFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
+            measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
             measured && limit > 0 ? (int)Math.Min(int.MaxValue, Math.Round(used / (double)limit * 100, MidpointRounding.AwayFromZero)) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " operation units/month" : null);
         async Task<UsageStorageSnapshot?> StoredAsync() => tab == "overview" ? await storage.ReadAsync(selection, cancellationToken) : null;
     }

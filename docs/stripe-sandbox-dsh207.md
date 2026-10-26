@@ -25,8 +25,8 @@ shared by checkout return/cancel URLs, the billing portal return URL and
 webhook configuration. It inventories Stripe prices/products, webhook
 endpoints/events, recent invoice-created event delivery counts, portal settings,
 and subscription mode/status counts. It expects exactly one valid recurring
-USD price for each paid plan and interval: Starter, Pro and Business, monthly
-and annual, or six unique paid plan prices total. The inventory does not identify
+USD price for each paid plan at its published interval: Starter annual ($30),
+Pro monthly and Team monthly, or three unique paid plan prices total. The inventory does not identify
 which dashboard organization owns a Stripe customer. Per-endpoint delivery
 success must be checked in Stripe Workbench.
 

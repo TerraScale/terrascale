@@ -68,7 +68,7 @@ All source path/line citations below refer to the audited SHA above.
 
 The authoritative-state contract is documented at `docs/stripe.md:3–8`; retry-visible delivery failures are documented at `:79–81`. `StripeBilling.cs:167–192` verifies signatures/mode, uses the customer index, and invokes reconciliation; it does not keep an event-ID ledger. Duplicates intentionally re-read canonical state and advance the persisted revision. `:297–305` uses independent billing/organization conditional writes and checks the resulting billing revision. `Platform/Persistence/IDashboardState.cs` is the persistence integration boundary: `GetAsync` returns a version; `PutAsync` accepts absent/matching preconditions; conflicts must raise `TerraBasePreconditionFailedException`.
 
-Fixed catalog database limits remain Free/Starter/Pro/Business = **1/5/25/100**. Monthly read allowances are **100K/1M/100M/50M**, as configured in `PlanCatalog.cs:57–60`; this audit does not invent monotonic tier limits or alter prices.
+Fixed catalog database limits remain Free/Starter/Pro/Team = **1/5/25/100**. Monthly read allowances are **100K/1M/100M/50M**, as configured in `PlanCatalog.cs:57–60`; this audit does not invent monotonic tier limits or alter prices.
 
 ## New files and verification
 
@@ -104,7 +104,7 @@ The latest command prohibits browser sign-in, so the browser suite was **not rer
 ## Limits and ownership dependencies
 
 - No live Stripe/auth/database call or credential retrieval was used. Test keys and identities are fixed existing synthetic fixtures. Provider documentation was read over public HTTPS without authentication. Local captures contain synthetic fixture data only; no real user/customer data is used.
-- Full `fast`/`slow` aggregates, true database durability/replication, webhook signature age variations, exhausted CAS retries, actual browser-disconnect cancellation between projection writes, and Business-dunning cases were not run. Existing signature/body-size/outage cases in `Features/Billing/BillingWebhookJourneyTests.cs` were read, not rerun.
+- Full `fast`/`slow` aggregates, true database durability/replication, webhook signature age variations, exhausted CAS retries, actual browser-disconnect cancellation between projection writes, and Team-dunning cases were not run. Existing signature/body-size/outage cases in `Features/Billing/BillingWebhookJourneyTests.cs` were read, not rerun.
 - The currency evidence covers its amount display, keyboard table focus/scroll, and scoped accessibility. Full checkout navigation, Back/Forward, repeated UI clicks, Close/Cancel, annual/monthly selection, and partial-paid invoice balances belong to the separate checkout/UI audit; they are not duplicated here.
 - The verified patch touches `StripeBilling.cs`, `InvoiceHistory.cs`, and the amount cell on `BillingHistoryView.cshtml:60`. The conditional policy patch touches `StripeBilling.cs` only. Currency formatting and partial-balance work overlap the invoice row; combine them against current source rather than applying old row text blindly. Active shared R3–R6 refactoring may move these paths. No worker thread was read or contacted.
 - Publication and any source fix remain separate actions. Publication stays held while Mongo has the active slot, until the coordinator explicitly grants this audit's serial slot. No push, PR, merge or auto-merge is authorized for this packaging step.

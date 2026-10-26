@@ -69,6 +69,37 @@ public sealed class UsageBackendContractTests
     }
 
     [Test]
+    public async Task InternalBillChargesStorageAboveTheAllowancePerDecimalGigabyte()
+    {
+        using var wire = new Wire();
+        var selection = Selection();
+        var organization = selection.Context.Organization!;
+        const string planId = "01JA0000000000000000000006";
+        organization.PlanId = planId;
+        organization.InternalBilling = new(organization.Id, planId, "pro", "01JA0000000000000000000007",
+            PlanCatalog.For("pro") with { Id = planId, Key = "internal", Name = "TerraScale Internal" },
+            PlanCatalog.Limits("pro"), PlanCatalog.ResourceLimits("pro"), 0, 50);
+        var measured = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
+        var reading = measured.Monthly[selection.Context.Project!.Id].Reading!;
+        // Pro includes 10 GB; 2 GB (2,000,000,000 bytes) above it at the catalog's per-GB rate is exactly $1.00.
+        var allowance = PlanCatalog.Limits("pro").StorageBytes;
+        await Assert.That(allowance).IsEqualTo(10_000_000_000L);
+        var over = measured with
+        {
+            Monthly = new Dictionary<string, UsageObservation>
+            {
+                [reading.ProjectId] = new(UsageSourceState.Measured, reading with { LogicalBytes = allowance + 2_000_000_000 })
+            }
+        };
+
+        var bill = InternalBillingService.Estimate(organization, over, Clock.Now);
+
+        await Assert.That(bill.Available).IsTrue();
+        await Assert.That(bill.StorageCents).IsEqualTo(100).Because("binary GiB would bill 94 cents for the same bytes");
+        await Assert.That(bill.StorageCentsPerGBMonth).IsEqualTo(50);
+    }
+
+    [Test]
     public async Task CurrentHourAcceptsProducersRoundedUtcEndAndUsesCanonicalDatabaseName()
     {
         using var wire = new Wire();

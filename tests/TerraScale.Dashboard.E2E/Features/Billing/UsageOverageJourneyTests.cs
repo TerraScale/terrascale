@@ -56,8 +56,8 @@ public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
         using var client = fixture.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         await Assert.That((await ReportAsync(client, 10_000_000)).Length).IsEqualTo(0);
-        await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops at its 50,000 operation units a month, with no usage charges.");
-        await AssertSpendingAsync(client, "Free stops at its included operation allowance, with no usage charges.");
+        await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops new writes at its 50,000 operation units a month; reads and deletes keep working. No usage charges.");
+        await AssertSpendingAsync(client, "Free stops new writes at its included operation allowance; reads and deletes keep working. No usage charges.");
     }
 
     private static async Task AssertSpendingAsync(HttpClient client, string disclosure)

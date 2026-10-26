@@ -43,7 +43,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
 
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders + "&region=GRU&range=24h");
             await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("10");
-            await Assert.That(await Stat("#analytics-summary", "Storage").InnerTextAsync()).IsEqualTo("4.0 KiB");
+            await Assert.That(await Stat("#analytics-summary", "Storage").InnerTextAsync()).IsEqualTo("4.1 kB");
             await Assert.That(await Stat("#analytics-summary", "Worst p95 latency").InnerTextAsync()).IsEqualTo("1.75 ms");
             await Assert.That(await ownerPage.Locator("main .ts-grid-2 > .ts-card").CountAsync()).IsEqualTo(7);
             await flow.ShotAsync(ownerPage, "analytics-desktop");
@@ -100,7 +100,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(ownerPage, "/usage?project=" + projectId + "&database=" + orders + "&range=24h");
             await Assert.That(await Stat("#usage-summary", "Reads").InnerTextAsync()).IsEqualTo("12");
             await Assert.That(await Stat("#usage-summary", "Writes").InnerTextAsync()).IsEqualTo("7");
-            await Assert.That(await Stat("#usage-summary", "Logical storage").InnerTextAsync()).IsEqualTo("4.0 KiB");
+            await Assert.That(await Stat("#usage-summary", "Logical storage").InnerTextAsync()).IsEqualTo("4.1 kB");
             await Assert.That(await ownerPage.Locator("#replication tbody tr").CountAsync()).IsEqualTo(2);
             await flow.ShotAsync(ownerPage, "usage-desktop");
             foreach (var value in new[] { "no-period", "foreign-project", "foreign-database", "negative", "oversized", "offline", "unauthorized" })

@@ -105,7 +105,7 @@ public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
         await Assert.That(row.GetProperty("unavailable").GetBoolean()).IsFalse();
         foreach (var counter in new[] { "reads", "writes" }) await Assert.That(row.GetProperty(counter).ValueKind).IsEqualTo(JsonValueKind.Null);
         var knownBody = WebUtility.HtmlDecode(await first.GetStringAsync("/usage?project=" + projectId + "&database=" + databaseId));
-        await Assert.That(knownBody).Contains("<dd class=\"ts-stat-value\">1.0 KiB</dd>");
+        await Assert.That(knownBody).Contains("<dd class=\"ts-stat-value\">1.0 kB</dd>");
         await Assert.That(knownBody).Contains("1 documents");
         await Assert.That(knownBody.Contains("Storage isn't measured here.", StringComparison.Ordinal)).IsFalse();
 

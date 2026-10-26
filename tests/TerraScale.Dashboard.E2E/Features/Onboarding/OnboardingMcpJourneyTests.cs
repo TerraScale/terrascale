@@ -23,7 +23,9 @@ public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
         Progress(status, "account-information", 0);
         Check(status.GetProperty("plans").GetArrayLength() == 3 && status.GetProperty("plans").EnumerateArray().All(plan =>
             plan.GetProperty("priceCents").GetInt64() > 0 &&
-            (plan.GetProperty("billingInterval").GetString() == "year" ? plan.GetProperty("annualPriceCents").GetInt64() == 3000 : plan.GetProperty("annualPriceCents").GetInt64() == 0)),
+            (plan.GetProperty("billingInterval").GetString() == "year"
+                ? plan.GetProperty("priceCents").GetInt64() == 3000 && plan.GetProperty("monthlyEquivalentCents").GetInt64() == 250 && plan.GetProperty("price").GetString() == "$30.00 / year"
+                : plan.GetProperty("priceCents").GetInt64() == plan.GetProperty("monthlyEquivalentCents").GetInt64() && plan.GetProperty("price").GetString()!.EndsWith(" / month", StringComparison.Ordinal))),
             "The payment step advertises only the three paid onboarding plans with only their published cadence");
         await SafeError(replica, secret, new { step = "project", name = "Premature", region = "GRU" }, "Complete the current setup step first.");
         await SafeError(replica, secret, new { step = "account-information", displayName = "\u0001" }, "Enter a valid name.");

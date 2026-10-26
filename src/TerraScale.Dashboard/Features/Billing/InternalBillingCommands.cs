@@ -63,7 +63,7 @@ public static class InternalBillingCommands
             if (options.Command == Configure)
             {
                 await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
-                    options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGiBMonth), RefreshAuthorityAsync, cancellationToken);
+                    options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), RefreshAuthorityAsync, cancellationToken);
                 await output.WriteLineAsync($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}");
             }
             else
@@ -114,7 +114,7 @@ public static class InternalBillingCommands
         var command = args[0];
         if (command is not (Configure or Report)) throw new CommandRejectedException("Unknown command.");
         var names = command == Report ? new[] { "org", "admin-email" }
-            : new[] { "org", "admin-email", "base-plan", "spend-cap-cents", "write-cents-per-million", "storage-cents-per-gib-month" };
+            : new[] { "org", "admin-email", "base-plan", "spend-cap-cents", "write-cents-per-million", "storage-cents-per-gb-month" };
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 1; index < args.Length; index++)
         {
@@ -144,7 +144,7 @@ public static class InternalBillingCommands
         if (command == Report) return new(command, org, email, "", 0, 0, 0);
         var cap = Integer(fields["spend-cap-cents"], "spend-cap-cents");
         var writes = Integer(fields["write-cents-per-million"], "write-cents-per-million");
-        var storage = Integer(fields["storage-cents-per-gib-month"], "storage-cents-per-gib-month");
+        var storage = Integer(fields["storage-cents-per-gb-month"], "storage-cents-per-gb-month");
         if (cap <= 0 || writes < 0 || storage < 0) throw new CommandRejectedException("--spend-cap-cents must be positive and estimate rates non-negative.");
         return new(command, org, email, plan, cap, writes, storage);
     }
@@ -190,6 +190,6 @@ public static class InternalBillingCommands
         error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 
     private sealed record Arguments(string Command, string OrganizationId, string AdminEmail, string BasePlanKey,
-        long SpendCapCents, long WriteCentsPerMillion, long StorageCentsPerGiBMonth);
+        long SpendCapCents, long WriteCentsPerMillion, long StorageCentsPerGBMonth);
     private sealed class CommandRejectedException(string message) : Exception(message);
 }

@@ -39,7 +39,7 @@ public sealed class UsageStorageFormatJourneyTests(DashboardRootFixture fixture)
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var firstDocumentExists = false;
         var secondDocumentExists = false;
-        foreach (var (bytes, label) in new[] { (1023, "1023 B"), (1024, "1.0 KiB"), ((1 << 20) - 1, "1024.0 KiB"), (1 << 20, "1.0 MiB") })
+        foreach (var (bytes, label) in new[] { (999, "999 B"), (1000, "1.0 kB"), (999_949, "999.9 kB"), (999_999, "1.0 MB") })
         {
             // Larger totals use two individually valid documents. The size
             // includes their actual compact JSON syntax, not just padding.

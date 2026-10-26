@@ -23,7 +23,8 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
         await Assert.That(chooser.Length).IsGreaterThan(0);
         await Assert.That(chooser.Contains("name=\"interval\"", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(chooser).Contains("$30.00 billed yearly");
+        await Assert.That(chooser).Contains("$30.00 / year · Billed yearly · $2.50/month equivalent");
+        await Assert.That(chooser.Contains("$2.50 / month", StringComparison.Ordinal)).IsFalse().Because("Starter is sold only by the year.");
         await Assert.That(chooser).Contains("$20.00 / month · Billed monthly");
         await Assert.That(chooser).Contains("$50.00 / month · Billed monthly");
         await Assert.That(html.Contains("Save up to", StringComparison.Ordinal)).IsFalse();
@@ -107,7 +108,8 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         using var wizard = await client.GetAsync(wizardUri);
         await Assert.That(wizard.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var wizardBody = await wizard.Content.ReadAsStringAsync();
-        await Assert.That(wizardBody).Contains("$30.00 billed yearly");
+        await Assert.That(wizardBody).Contains("<strong>$30.00</strong> / year");
+        await Assert.That(wizardBody.Contains("<strong>$2.50</strong> / month", StringComparison.Ordinal)).IsFalse().Because("the pre-selected Starter plan is sold only by the year.");
         using var checkout = await HttpJourney.PostFormAsync(client,
             "/api/v1/dashboard/organization/new-organization?organizationId=" + Uri.EscapeDataString(organizationId), new()
             { ["_csrf"] = csrf, ["step"] = "payment-method", ["organizationID"] = organizationId, ["plan"] = "starter" });

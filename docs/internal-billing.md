@@ -29,7 +29,7 @@ nice -n 19 dotnet run --project src/TerraScale.Dashboard -- configure-internal-b
   --org "$INTERNAL_ORG_ID" --admin-email "$PLATFORM_ADMIN_EMAIL" \
   --base-plan "$INTERNAL_BASE_PLAN" --spend-cap-cents "$INTERNAL_CAP_CENTS" \
   --write-cents-per-million "$INTERNAL_WRITE_RATE_CENTS" \
-  --storage-cents-per-gib-month "$INTERNAL_STORAGE_RATE_CENTS"
+  --storage-cents-per-gb-month "$INTERNAL_STORAGE_RATE_CENTS"
 ```
 
 The command checks the organization is active and named exactly `terrascale`,
@@ -50,6 +50,8 @@ session. The estimate is the monthly base fee plus writes above the plan's
 allowance and logical storage above its allowance. Each excess dimension is
 rounded up to a cent. Reads are metered and free. Storage uses the current
 logical byte count as a full-month estimate: upstream provides no byte-seconds.
+The storage rate and allowance use decimal GB (1,000,000,000 bytes), the unit
+the published catalog prices.
 These best-effort counters are for dogfooding, not settlement-grade invoices.
 
 The UTC month starts at midnight on the first day. The dashboard sums every

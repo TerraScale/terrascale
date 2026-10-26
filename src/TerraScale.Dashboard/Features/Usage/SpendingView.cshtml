@@ -26,7 +26,7 @@ else
     }
     else if (plan is { PriceCents: 0 })
     {
-        <p class="ts-meta">Free stops at its included operation allowance, with no usage charges. Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units.</p>
+        <p class="ts-meta">Free stops new writes at its included operation allowance; reads and deletes keep working. No usage charges. Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units.</p>
     }
     else
     {
