@@ -2,7 +2,7 @@
   <PropertyGroup>
     <RootNamespace>TerraScale.Authentication</RootNamespace>
     <AssemblyName>ts-auth</AssemblyName>
-    <Version>0.1.0-alpha</Version>
+    <Version>0.1.0-alpha.ttd.1</Version>
     <!-- /healthz reports "<version>+<revision>"; CI passes TS_AUTH_REVISION. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <InformationalVersion Condition="'$(TS_AUTH_REVISION)' != ''">$(Version)+$(TS_AUTH_REVISION)</InformationalVersion>
