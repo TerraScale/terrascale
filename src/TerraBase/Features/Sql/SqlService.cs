@@ -381,7 +381,7 @@ internal sealed class SqlSession(
         var (opened, error) = await OpenAsync(write: _readOnly != true, cancellationToken).ConfigureAwait(false);
         if (opened is not { } request)
         {
-            await AbortAsync().ConfigureAwait(false);
+            await EndRequestAsync().ConfigureAwait(false);
             return error;
         }
 
@@ -394,7 +394,8 @@ internal sealed class SqlSession(
                 : SqlErrors.Error("the statement no longer parses");
             if (replayed is not SqlResult result || !Hash(result).AsSpan().SequenceEqual(hash))
             {
-                await AbortAsync().ConfigureAwait(false);
+                // A statement failure preserves markers so ROLLBACK TO can discard conflicting reads.
+                await EndRequestAsync().ConfigureAwait(false);
                 return replayed is SqlError { Code: "SQLITE_BUSY" } busy ? busy : Conflict;
             }
         }
@@ -406,6 +407,7 @@ internal sealed class SqlSession(
     {
         if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
         {
+            await AbortAsync().ConfigureAwait(false);
             return refused;
         }
 

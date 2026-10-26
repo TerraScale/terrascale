@@ -102,6 +102,27 @@ public sealed class PostgresSavepointTests
     }
 
     [Test]
+    public async Task Replay_conflict_preserves_a_savepoint_until_rollback_discards_the_conflicting_read()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        await using var source = await SourceAsync(api);
+        await using var connection = await source.OpenConnectionAsync();
+        await using var writer = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, Table);
+        await using var transaction = await connection.BeginTransactionAsync();
+        await transaction.SaveAsync("recover");
+        await ScalarAsync(connection, "SELECT count(*) FROM items");
+        await ExecuteAsync(writer, "INSERT INTO items (label) VALUES ('concurrent')");
+        await StateAsync(connection, "SELECT count(*) FROM items", "40001");
+        await StateAsync(connection, "INSERT INTO items (label) VALUES ('refused')", "25P02");
+        await transaction.RollbackAsync("recover");
+        await ExecuteAsync(connection, "INSERT INTO items (label) VALUES ('recovered')");
+        await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("1");
+        await transaction.CommitAsync();
+        await Assert.That(await ScalarAsync(writer, "SELECT count(*) FROM items")).IsEqualTo("2");
+    }
+
+    [Test]
     public async Task Identifier_folding_quoting_and_release_remove_the_target_and_descendants()
     {
         await using var api = await ManagementApi.StartAsync();
