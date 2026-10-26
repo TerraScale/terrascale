@@ -73,6 +73,8 @@ Success prints `PASS_TERRABASE_CRUD_QUERY`. The assertions verify persisted fiel
 
 ## 5. Continue safely
 
+For a long-running server, use the complete [renewing token provider](/examples/server-token-provider/README.txt), which pins published SDK 0.0.10.
+
 Generate [TypeScript document models](/ja/guides/schema-validation#generate-typescript-document-models) from a declared collection schema.
 
 A query page may contain fewer results than its limit, or no results with a continuation cursor. Use [pagination](/ja/guides/queries) to continue until `nextCursor` is `null`. Review [errors and retries](/ja/guides/errors) before adding automatic retries.
