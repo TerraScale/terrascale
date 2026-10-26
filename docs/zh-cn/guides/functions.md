@@ -10,10 +10,6 @@ description: Deploy JavaScript functions next to a database, call them over HTTP
 
 # Functions
 
-::: warning API prerequisite
-This guide describes the Functions API (v1) and the `ts functions` CLI commands under review. They must be released and deployed before these calls work. Live deployment and end-to-end delivery have not been verified.
-:::
-
 A function is one JavaScript file deployed next to a database. It runs when you call it over HTTPS, when documents in a collection change, or on a cron schedule, and it can write documents to its own database.
 
 ## Write a handler
@@ -54,8 +50,8 @@ function handler(event) {
 Deploy it to the `example` database with the [CLI](/zh-cn/cli), then run it:
 
 ```sh
-ts functions deploy hello.js --name hello --database example
-ts functions invoke hello --data '{"name":"Ada"}'
+ts functions deploy example hello.js -name hello
+ts functions invoke example hello -data '{"name":"Ada"}'
 ```
 
 From your server, call the function over HTTPS with an [access token](/zh-cn/guides/authentication) exchanged from a project API key. Replace `{project}` with the project ID:
@@ -88,17 +84,17 @@ function handler(event) {
 ```
 
 ```sh
-ts functions deploy audit.js --name audit-orders --database example \
-  --trigger-collection orders --events upsert,delete
+ts functions deploy example audit.js -name audit-orders \
+  -trigger-collection orders -events upsert,delete
 ```
 
-`--events` accepts `upsert` (insert or update) and `delete`. v1 cannot tell inserts apart from updates, so an audit of inserts records updates too. A change-triggered function cannot write to its own trigger collection, which prevents loops.
+`-events` accepts `upsert` (insert or update) and `delete`. v1 cannot tell inserts apart from updates, so an audit of inserts records updates too. A change-triggered function cannot write to its own trigger collection, which prevents loops.
 
 Delivery is at least once, with exponential retries. A retried delivery runs the handler again, so the example above can record the same change twice; make your writes idempotent where duplicates matter, for example with `db.put` keyed by `change.id` when only the latest entry per document matters.
 
 ## Run on a schedule
 
-Deploy with `--cron` and a five-field cron expression, evaluated in UTC. A schedule runs at most once per minute. This function writes a marker document every day at 03:00 UTC:
+Deploy with `-cron` and a five-field cron expression, evaluated in UTC. A schedule runs at most once per minute. This function writes a marker document every day at 03:00 UTC:
 
 ```js
 function handler(event) {
@@ -108,7 +104,7 @@ function handler(event) {
 ```
 
 ```sh
-ts functions deploy heartbeat.js --name heartbeat --database example --cron "0 3 * * *"
+ts functions deploy example heartbeat.js -name heartbeat -cron "0 3 * * *"
 ```
 
 The schedule runs on the server that accepted the deploy. A run missed while that server is unavailable is skipped, not replayed.
@@ -118,7 +114,7 @@ The schedule runs on the server that accepted the deploy. A run missed while tha
 Each invocation keeps its `console.log` lines, status, duration and error. The last 100 invocations are kept per function:
 
 ```sh
-ts functions logs hello --limit 20
+ts functions logs example hello -limit 20
 ```
 
 For a change-triggered function, the deliveries view shows each delivery's state and retries, including deliveries that keep failing. The dashboard Functions page shows the same logs.
@@ -126,8 +122,8 @@ For a change-triggered function, the deliveries view shows each delivery's state
 ## Manage functions
 
 ```sh
-ts functions list
-ts functions delete hello
+ts functions list example
+ts functions delete example hello
 ```
 
 Deleting a function removes its trigger, schedule and logs. Deleting the database deletes its functions.

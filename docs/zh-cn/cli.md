@@ -234,6 +234,18 @@ until the copy and validation finish. It refuses a preview with blocking
 issues; `import status` prints the whole job as JSON. Running the same command
 again resumes the same import. See [Import an existing database](/zh-cn/guides/import).
 
+### Plain document NDJSON
+
+After upgrading the CLI, import plain JSON objects (one per line) with the
+collection flag **before** the command:
+
+```sh
+ts -collection customers import customers-copy ndjson ./customers.ndjson
+```
+
+TerraBase [exports](/zh-cn/guides/export) contain `{collection,id,document}` envelopes.
+Keep them intact and omit `-collection`: `ts import restored ndjson ./export.ndjson`.
+
 ## Watch changes
 
 ```sh
