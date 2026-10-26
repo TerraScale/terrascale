@@ -520,6 +520,10 @@ transactions are separate work. Never share manual BEGIN/COMMIT groups between c
 
 ## Region latency (`client.Status`)
 
+`RegionLatency.PingURL` is a `*string`: nil means the region has no public
+browser ping target. Check it before linking; latency measurements remain
+available independently of that target.
+
 `client.Status.Latency(ctx, "")` reads all regions from the public
 `https://status.terrascale.tech/api/latency` endpoint. Pass a region code such
 as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
