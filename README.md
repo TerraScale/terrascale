@@ -33,12 +33,13 @@ alignment requires no stored-data deletion or migration.
 
 ## Source and module availability
 
-The published `v0.0.5` module ([source `b2b7a55a`](https://github.com/TerraScale/ts-go/tree/b2b7a55a66da4dd0db6588d27d571efe2177f31c))
-includes full-text/vector queries but predates `Database.Export`. Current source includes
-streaming document export and newer fixes; install an immutable commit with
-`go get terrascale.tech/sdk@<full-commit>` and retain the generated pseudo-version.
-Use that revision's API and contract files. Source, fixture and package build results do
-not establish production qualification for every method. Releases remain `0.0.X`.
+The published [`v0.0.6`](https://github.com/TerraScale/ts-go/releases/tag/v0.0.6)
+module and CLI include streaming document export, guarded database branch/delete,
+stable JSON output, SQL stdin/shell, and API-key rotation and metadata. Install the
+module with `go get terrascale.tech/sdk@v0.0.6`; follow the
+[CLI installation instructions](docs/cli-releases.md) for the released executable.
+Use that revision's API and contract files. Source, fixture and package build results
+do not establish production qualification for every method. Releases remain `0.0.X`.
 
 ## Zero-configuration operating contract
 
