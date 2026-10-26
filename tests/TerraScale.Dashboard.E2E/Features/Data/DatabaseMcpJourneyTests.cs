@@ -37,7 +37,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 new { protocolVersion = "2025-11-25", capabilities = new { }, clientInfo = new { name = "Dedicated host", version = "1" } }, "/", "mcp.terrascale.tech");
             await Assert.That(rootInitialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
             var rootTools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { }, "/", "mcp.terrascale.tech");
-            await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(96);
+            await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
             foreach (var path in new[] { "/", "/mcp" })
                 foreach (var method in new[] { HttpMethod.Get, HttpMethod.Delete })
                 {
