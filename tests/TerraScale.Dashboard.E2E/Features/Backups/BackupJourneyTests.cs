@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.DotNet;
@@ -10,6 +13,106 @@ namespace TerraScale.Dashboard.E2E.Features.Backups;
 [ClassDataSource<DashboardRootFixture>]
 public sealed class BackupJourneyTests(DashboardRootFixture fixture)
 {
+    [Test]
+    [Arguments(409, "database_limit", "restore", "Remove an unused database or upgrade your plan")]
+    [Arguments(409, "name_taken", "restore", "Choose a different name")]
+    [Arguments(404, "not_found", "restore", "snapshot could not be opened")]
+    [Arguments(429, "capacity", "restore", "Wait a moment")]
+    [Arguments(503, "capacity", "restore", "Wait a moment")]
+    [Arguments(400, "invalid_request", "policy", "Set snapshot retention from 1 to 35 days")]
+    [Arguments(400, "invalid_request", "restore", "Choose a valid name")]
+    [Arguments(409, "unknown", "restore", "conflicts with the current database state")]
+    [Arguments(503, "unavailable", "restore", "Try again shortly")]
+    [Arguments(503, "transport", "restore", "Try again shortly")]
+    [Arguments(503, "name_taken", "restore", "Try again shortly")]
+    [Arguments(409, "malformed", "restore", "conflicts with the current database state")]
+    [Arguments(409, "array", "restore", "conflicts with the current database state")]
+    [Arguments(409, "nonstring", "restore", "conflicts with the current database state")]
+    [Arguments(409, "oversized", "restore", "conflicts with the current database state")]
+    public async Task ProducerRefusalsUseFixedSafeGuidanceAcrossHttpFormsAndMcp(int status, string code, string action, string guidance)
+    {
+        const string sensitive = "UPSTREAM_PRIVATE_SENTINEL";
+        var failures = 0;
+        await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, configureScenario: builder =>
+        {
+            if (code != "transport") return;
+            var original = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new RestoreTransportFailure(original, () => Interlocked.Increment(ref failures))));
+        }, producerExtension: http =>
+        {
+            IResult? result = null;
+            if (http.Request.Method != "GET" &&
+                (http.Request.Path.Value!.EndsWith("/restore", StringComparison.Ordinal) || http.Request.Path.Value.EndsWith("/backup-policy", StringComparison.Ordinal)))
+            {
+                Interlocked.Increment(ref failures);
+                result = code switch
+                {
+                    "malformed" => Results.Text("{" + sensitive, "application/json", statusCode: status),
+                    "array" => Results.Json(new[] { sensitive }, statusCode: status),
+                    "nonstring" => Results.Json(new { error = new { code = 42, message = sensitive } }, statusCode: status),
+                    "oversized" => Results.Text(new string('x', 65537) + sensitive, "application/json", statusCode: status),
+                    _ => Results.Json(new { error = new { code = code == "unknown" ? sensitive : code, message = sensitive } }, statusCode: status)
+                };
+            }
+            return Task.FromResult(result);
+        });
+        using var client = host.CreateClient(); using var producer = host.CreateProviderClient();
+        var native = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var identity = await ReadAsync(client, "/api/v1/auth/me");
+        await ControlAsync(producer, new { command = "plan", organizationId = identity.GetProperty("organizationId").GetString(), value = OrganizationRecord.StarterPlanId });
+        var secret = await HttpJourney.CreatePatAsync(client, "Safe backup errors", native.Password);
+        var source = await CallAsync(client, secret, "create_database", new { name = "safe-source", region = "GRU" });
+        var id = source.GetProperty("id").GetString()!;
+        var snapshot = await CallAsync(client, secret, "create_backup", new { databaseId = id });
+        var backupId = snapshot.GetProperty("id").GetString()!;
+        var csrf = await HttpJourney.CsrfAsync(client, "/profile");
+        var form = new Dictionary<string, string>
+        {
+            ["_csrf"] = csrf,
+            ["databaseId"] = id,
+            ["backupId"] = backupId,
+            ["name"] = "safe-restore",
+            ["fullBackupCron"] = "0 3 * * *",
+            ["incrementalBackupCron"] = "",
+            ["retentionDays"] = "7"
+        };
+        foreach (var html in new[] { false, true })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/backups/" + action) { Content = new FormUrlEncodedContent(form) };
+            request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            request.Headers.Accept.ParseAdd(html ? "text/html" : "application/json");
+            using var response = await client.SendAsync(request);
+            var body = await response.Content.ReadAsStringAsync();
+            Check((int)response.StatusCode == status && body.Contains(guidance, StringComparison.Ordinal) && !body.Contains(sensitive, StringComparison.Ordinal),
+                "HTTP refusal preserves status and fixed guidance without upstream content");
+            if (html) Check(body.Contains("text/html", StringComparison.Ordinal) || response.Content.Headers.ContentType?.MediaType == "text/html", "Form errors render the database page");
+            if (html && action == "restore") Check(body.Contains("value=\"safe-restore\"", StringComparison.Ordinal) && body.Contains(backupId, StringComparison.Ordinal), "Restore name and snapshot remain selected");
+        }
+        object arguments = action == "restore" ? new { databaseId = id, backupId, name = "safe-restore" }
+            : new { databaseId = id, fullBackupCron = "0 3 * * *", incrementalBackupCron = "", retentionDays = 7 };
+        var rpc = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = action == "restore" ? "restore_backup" : "set_backup_policy", arguments });
+        Check(IsError(rpc) && rpc.GetRawText().Contains(guidance, StringComparison.Ordinal) && !rpc.GetRawText().Contains(sensitive, StringComparison.Ordinal), "MCP returns the same safe corrective guidance");
+        Check(failures == 3, "Every refusal reached the real backup adapter's HTTP producer or transport");
+    }
+
+    private sealed class RestoreTransportFailure(IHttpClientFactory original, Action refused) : HttpMessageHandler, IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/restore", StringComparison.Ordinal))
+            {
+                refused();
+                throw new HttpRequestException("Synthetic transport refusal.");
+            }
+            using var client = original.CreateClient("platform");
+            using var forwarded = new HttpRequestMessage(request.Method, request.RequestUri)
+            { Version = request.Version, VersionPolicy = request.VersionPolicy, Content = request.Content };
+            foreach (var header in request.Headers) forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            return await client.SendAsync(forwarded, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+    }
+
     [Test]
     public async Task NativeAndMcpBackupsRestoreActualStoredSnapshotsAcrossReplicasWithoutChangingSource()
     {

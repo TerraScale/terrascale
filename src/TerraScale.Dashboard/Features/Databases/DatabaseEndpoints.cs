@@ -126,7 +126,7 @@ public static class DatabaseEndpoints
                     {
                         if (!WantsHtml(http) || Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
                         var draft = action == "regions" ? new DatabasePlacementDraft(form["region"].Select(value => value ?? "").ToArray(), form["allRegions"] == "true") : null;
-                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error), draft);
+                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error), draft, branchName: action == "branch" ? form["name"].ToString() : null);
                     }
                 });
         }
@@ -216,7 +216,7 @@ public static class DatabaseEndpoints
         return result;
     }
 
-    internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, DatabasePlacementDraft? placementDraft = null)
+    internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, DatabasePlacementDraft? placementDraft = null, string? branchName = null)
     {
         DatabaseRecord database;
         try { database = DatabaseService.Database(context, id); }
@@ -269,6 +269,7 @@ public static class DatabaseEndpoints
         var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
         var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity)
         {
+            BranchName = branchName,
             PlacementDraft = placementDraft,
             PlacementSaved = tab == "replication" && error.Length == 0 && placementDraft is null && http.Request.Query["placement"] == "saved"
         });

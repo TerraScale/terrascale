@@ -17,6 +17,78 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
     private const int Part = 4 * 1024 * 1024;
 
     [Test]
+    public async Task PlainNdjsonTargetSurvivesExclusionEditsAndImportsOriginalObjects()
+    {
+        await using var scenario = await ImportScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client);
+        var page = await HtmlAsync(client, "/imports");
+        await Assert.That(page).Contains("Target collection (optional)");
+        await Assert.That(page).Contains("JSON arrays and CSV are not accepted");
+        var name = Minted(page);
+        var csrf = await HttpJourney.CsrfAsync(client, "/imports");
+        var source = Encoding.UTF8.GetBytes("{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n");
+        var form = Form(csrf, name, "ndjson", source);
+        form["collection"] = "people_test";
+        using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/imports", form);
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await JsonAsync(created)).GetProperty("options").GetProperty("collection").GetString()).IsEqualTo("people_test");
+        await ControlAsync(client, name, new { command = "manual" });
+        await PutAsync(client, csrf, name, 0, source);
+        var ready = await UntilAsync(client, name, "ready");
+        var previous = ready.GetProperty("preview").GetProperty("id").GetString();
+        foreach (var exclude in new[] { "main.people_test", "" })
+        {
+            using var edited = await HttpJourney.PostFormAsync(client, $"/api/v1/dashboard/imports/{name}/options", new() { ["_csrf"] = csrf, ["exclude"] = exclude });
+            await Assert.That(edited.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            var options = (await JsonAsync(edited)).GetProperty("options");
+            await Assert.That(options.GetProperty("collection").GetString()).IsEqualTo("people_test");
+            await Assert.That(options.GetProperty("exclude").GetArrayLength()).IsEqualTo(exclude.Length == 0 ? 0 : 1);
+            ready = await UntilAsync(client, name, "ready");
+            await Assert.That(ready.GetProperty("preview").GetProperty("id").GetString()).IsNotEqualTo(previous);
+        }
+        await Assert.That(ready.GetProperty("preview").GetProperty("tables")[0].GetProperty("collection").GetString()).IsEqualTo("people_test");
+        await StartAsync(client, csrf, name, ready.GetProperty("preview").GetProperty("id").GetString()!, true);
+        var complete = await UntilAsync(client, name, "completed");
+        await Assert.That(complete.GetProperty("validation").GetProperty("passed").GetBoolean()).IsTrue();
+        await Assert.That(complete.GetProperty("validation").GetProperty("tables")[0].GetProperty("documents").GetInt64()).IsEqualTo(2);
+        var id = (await JsonAsync(await client.GetAsync("/api/v1/dashboard/databases"))).EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetString();
+        using var response = await client.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=people_test");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var documents = await JsonAsync(response);
+        await Assert.That(documents.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(documents.GetProperty("hasMore").GetBoolean()).IsFalse();
+        await Assert.That(documents.GetProperty("limit").GetInt32()).IsEqualTo(100);
+        await Assert.That(documents.GetProperty("documents").EnumerateArray().Select(row => row.GetProperty("value").GetProperty("name").GetString()).Order().SequenceEqual(new[] { "Ada", "Grace" })).IsTrue();
+    }
+
+    [Test]
+    [Arguments("Bad name", "ndjson")]
+    [Arguments("sqlite_users", "ndjson")]
+    [Arguments("turso_users", "ndjson")]
+    [Arguments("fts_dir__tb_fts_index_test", "ndjson")]
+    [Arguments("collections", "ndjson")]
+    [Arguments("commit_offset", "ndjson")]
+    [Arguments("terrascale-import", "ndjson")]
+    [Arguments("con", "ndjson")]
+    [Arguments("people\n", "ndjson")]
+    [Arguments("people", "sqlite")]
+    public async Task InvalidOrReservedTargetCreatesNoDatabase(string collection, string format)
+    {
+        await using var scenario = await ImportScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client);
+        var name = Minted(await HtmlAsync(client, "/imports"));
+        var csrf = await HttpJourney.CsrfAsync(client, "/imports");
+        var form = Form(csrf, name, format, Encoding.UTF8.GetBytes("{\"name\":\"Ada\"}\n"));
+        form["collection"] = collection;
+        using var refused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/imports", form);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(await DatabaseCountAsync(client, name)).IsEqualTo(0);
+        await Assert.That((await JsonAsync(await client.GetAsync("/__test/imports/requests"))).GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task NdjsonExportsAreOfferedAndAcceptedAsAnImportFormat()
     {
         await using var scenario = await ImportScenario.StartAsync(fixture.Root);

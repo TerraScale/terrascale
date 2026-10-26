@@ -68,7 +68,7 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     // The guided flow: a fresh import-<ULID> destination from the existing createDatabase (home region
     // only, plan limits included), then createImport. A resubmitted form carries the same name, so it
     // reuses that destination and TerraBase answers the identical createImport with the same job.
-    public async Task<TerraBaseImportJob> CreateAsync(AccountContext context, string database, string format, long bytes, string sha256, CancellationToken ct)
+    public async Task<TerraBaseImportJob> CreateAsync(AccountContext context, string database, string format, long bytes, string sha256, string collection, CancellationToken ct)
     {
         context = await databases.CurrentAsync(context, ct);
         DatabaseService.DemandProvision(context.Organization!, context.UserId);
@@ -77,7 +77,9 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
         if (sha256 is not { Length: 64 } || !sha256.All(char.IsAsciiHexDigitLower))
             throw new AccountAccessException("Choose the export file again so the browser can fingerprint it. This step needs JavaScript.", 422);
         if (bytes is < 1 or > MaxSourceBytes) throw new AccountAccessException("Exports must be between 1 byte and 1 GiB.", 422);
-        var options = new TerraBaseImportOptions([]);
+        var target = TargetCollection(collection);
+        if (target is not null && format != "ndjson") throw new AccountAccessException("A target collection applies only to NDJSON exports.", 422);
+        var options = new TerraBaseImportOptions([], target);
         var destination = context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database)
             ?? await databases.CreateAsync(context, database, [context.Project.Region], false, ct);
         var scope = DatabaseService.Scope(context);
@@ -105,10 +107,11 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     public async Task<TerraBaseImportJob> UpdateAsync(AccountContext context, string database, IReadOnlyList<string> exclude, CancellationToken ct)
     {
         database = Name(database);
-        var options = new TerraBaseImportOptions(exclude);
         if (exclude.Count > 1000 || exclude.Any(item => item.Length is 0 or > 512)) throw new AccountAccessException("Exclude at most 1000 tables and columns.", 422);
         context = await Manage(context, ct);
         var (scope, home) = await RouteAsync(context, database, ct);
+        var current = Validate(scope, await Import(context, home, database, Read).GetImportAsync(ct), database);
+        var options = new TerraBaseImportOptions(exclude, current.Options.Collection);
         return Validate(scope, await Import(context, home, database, Write).UpdateImportAsync(options, ct), database);
     }
 
@@ -216,6 +219,19 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
 
     [System.Text.RegularExpressions.GeneratedRegex("^import-[0-9a-hjkmnp-tv-z]{26}$")]
     private static partial System.Text.RegularExpressions.Regex FreshName();
+
+    // Match the producer's DatabaseName, CollectionName and import-audit reservations before provisioning.
+    private static string? TargetCollection(string value)
+    {
+        if (value.Length == 0) return null;
+        if (!CollectionName().IsMatch(value) || ReservedCollection().IsMatch(value))
+            throw new AccountAccessException("Choose an unreserved collection name: 1–63 lowercase letters, digits, underscores or hyphens, starting with a letter.", 422);
+        return value;
+    }
+    [System.Text.RegularExpressions.GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
+    private static partial System.Text.RegularExpressions.Regex CollectionName();
+    [System.Text.RegularExpressions.GeneratedRegex(@"\A(sqlite_|turso_|fts_dir__tb_fts_index_|collections\z|commit_offset\z|terrascale-import\z|con\z|prn\z|aux\z|nul\z|com[0-9]\z|lpt[0-9]\z)")]
+    private static partial System.Text.RegularExpressions.Regex ReservedCollection();
 
     private static string Name(string database)
     {
