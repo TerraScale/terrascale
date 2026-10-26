@@ -5,7 +5,9 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Shared.Accounts;
 using TerraScale.Dashboard.Shared.UI;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
@@ -22,6 +24,7 @@ public static partial class McpOAuth
     public const string CodeCollection = "dashboard_mcp_oauth_codes";
     public const string McpHost = "mcp.terrascale.tech";
     private const int TokenDays = 90;
+    private const int MaxRegistrationBytes = 16 * 1024;
     private const string Scope = "mcp";
     private static readonly string[] BlockedSchemes = ["javascript", "data", "file", "vbscript", "about", "blob", "ftp", "ws", "wss"];
 
@@ -77,9 +80,27 @@ public static partial class McpOAuth
     // still needs the user's consent on the dashboard and a sign-in on ts-auth.
     private static async Task<IResult> RegisterAsync(HttpContext context, IDashboardState state, TimeProvider time)
     {
-        if (context.Request.ContentLength is > 16384) return OAuthError("invalid_client_metadata", "Client metadata is too large.");
+        IResult TooLarge() => OAuthError("invalid_client_metadata", "Client metadata exceeds 16 KiB.", StatusCodes.Status413PayloadTooLarge);
+        if (context.Request.ContentLength > MaxRegistrationBytes) return TooLarge();
+        if (!context.Request.HasJsonContentType() ||
+            !System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType) ||
+            contentType.CharSet is { } charset && !charset.Trim('"').Equals("utf-8", StringComparison.OrdinalIgnoreCase))
+            return OAuthError("invalid_client_metadata", "Send client metadata as UTF-8 application/json.");
+        // Like PlatformJson, read a fixed byte envelope plus one overflow byte before parsing.
+        // Content-Length is optional; neither chunked input nor JSON whitespace can bypass this bound.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var bytes = new byte[MaxRegistrationBytes + 1];
+        var length = 0;
+        while (length < bytes.Length)
+        {
+            var count = await context.Request.Body.ReadAsync(bytes.AsMemory(length), deadline.Token);
+            if (count == 0) break;
+            length += count;
+        }
+        if (length > MaxRegistrationBytes) return TooLarge();
         JsonElement metadata;
-        try { metadata = await JsonSerializer.DeserializeAsync<JsonElement>(context.Request.Body, cancellationToken: context.RequestAborted); }
+        try { metadata = JsonSerializer.Deserialize<JsonElement>(bytes.AsSpan(0, length)); }
         catch (JsonException) { return OAuthError("invalid_client_metadata", "Client metadata must be a JSON object."); }
         if (metadata.ValueKind != JsonValueKind.Object) return OAuthError("invalid_client_metadata", "Client metadata must be a JSON object.");
         if (!metadata.TryGetProperty("redirect_uris", out var uris) || uris.ValueKind != JsonValueKind.Array || uris.GetArrayLength() is 0 or > 10 ||
@@ -90,8 +111,8 @@ public static partial class McpOAuth
             return OAuthError("invalid_client_metadata", "Clients use the authorization_code grant.");
         var name = metadata.TryGetProperty("client_name", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString()!.Trim() : "";
         if (name.EnumerateRunes().Count() > 64 || name.Any(char.IsControl)) return OAuthError("invalid_client_metadata", "client_name uses at most 64 printable characters.");
-        var client = new McpClient(name.Length == 0 ? "MCP client" : name, uris.EnumerateArray().Select(uri => uri.GetString()!).ToArray(), time.GetUtcNow());
-        var id = "mcp_" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+        var id = AccountService.NewId();
+        var client = McpRegistrations.Create(id, name.Length == 0 ? "MCP client" : name, uris.EnumerateArray().Select(uri => uri.GetString()!).ToArray(), time.GetUtcNow());
         await state.PutAsync(ClientCollection, id, JsonSerializer.SerializeToElement(client), TerraBasePrecondition.Absent, context.RequestAborted);
         return Results.Json(new Dictionary<string, object>
         {
@@ -143,16 +164,23 @@ public static partial class McpOAuth
         string? credential = null;
         try
         {
+            var client = await McpRegistrations.ReadActiveAsync(state, time, authorization.ClientId, context.RequestAborted);
+            if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
+                throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
+            client = await McpRegistrations.CompleteSignInAsync(state, time, authorization.ClientId, context.RequestAborted);
+            if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
+                throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
             credential = await sessions.CreateCredentialAsync(fresh, tokenExpiresAt, context.RequestAborted);
             var grant = new McpCode(authorization.ClientId, authorization.RedirectUri, authorization.CodeChallenge, fresh.UserId, credential,
-                authorization.ClientName, time.GetUtcNow().AddMinutes(5), tokenExpiresAt);
+                client.Name, time.GetUtcNow().AddMinutes(5), tokenExpiresAt);
             await state.PutAsync(CodeCollection, Hash(code), JsonSerializer.SerializeToElement(grant), TerraBasePrecondition.Absent, context.RequestAborted);
         }
-        catch
+        catch (Exception error)
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             try { if (credential is not null) await sessions.DeleteCredentialAsync(credential, cleanup.Token); }
             finally { await context.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(fresh, cleanup.Token); }
+            if (error is AccountAccessException) return ErrorPage(context, error.Message);
             throw;
         }
         return Results.Redirect(QueryHelpers.AddQueryString(authorization.RedirectUri, new Dictionary<string, string?>
@@ -183,6 +211,12 @@ public static partial class McpOAuth
             form["client_id"] != grant.ClientId ? "The authorization code belongs to another client." :
             form["redirect_uri"] != grant.RedirectUri ? "redirect_uri does not match the authorization request." :
             !VerifierMatches(verifier, grant.CodeChallenge) ? "code_verifier does not match the code challenge." : null;
+        if (failure is null)
+        {
+            var client = await McpRegistrations.ReadActiveAsync(state, time, grant.ClientId, context.RequestAborted);
+            if (client is not { FirstSignInCompletedAt: not null } || !client.RedirectUris.Any(uri => RedirectMatches(uri, grant.RedirectUri)))
+                failure = "This AI client registration expired or changed. Add the server again.";
+        }
         if (failure is not null)
         {
             await tokens.ForgetGrantAsync(grant.CredentialId, context.RequestAborted);
@@ -190,7 +224,7 @@ public static partial class McpOAuth
         }
         try
         {
-            var created = await tokens.IssueGrantedAsync(grant.UserId, AccessTokenName(grant.ClientName), grant.TokenExpiresAt, grant.CredentialId, context.RequestAborted);
+            var created = await tokens.IssueGrantedAsync(grant.UserId, AccessTokenName(grant.ClientName), grant.TokenExpiresAt, grant.CredentialId, grant.ClientId, context.RequestAborted);
             return Results.Json(new Dictionary<string, object>
             {
                 ["access_token"] = created.Secret,
@@ -205,9 +239,7 @@ public static partial class McpOAuth
     private static async Task<AuthorizationRequest> ReadRequestAsync(HttpContext context, IDashboardState state, Dictionary<string, string> parameters)
     {
         var clientId = parameters.GetValueOrDefault("client_id", "");
-        var client = clientId.StartsWith("mcp_", StringComparison.Ordinal) && clientId.Length == 36 && clientId[4..].All(char.IsAsciiHexDigitLower)
-            ? await state.GetAsync(ClientCollection, clientId, context.RequestAborted) is { } document && document.Id == clientId ? document.Document.Deserialize<McpClient>() : null
-            : null;
+        var client = await McpRegistrations.ReadActiveAsync(state, context.RequestServices.GetRequiredService<TimeProvider>(), clientId, context.RequestAborted);
         if (client is null) return new(Page: ErrorPage(context, "This AI client is not registered with TerraScale. Add the server to your client again."));
         var requested = parameters.GetValueOrDefault("redirect_uri", "");
         var redirect = requested.Length == 0 && client.RedirectUris.Length == 1 ? client.RedirectUris[0] : client.RedirectUris.Any(uri => RedirectMatches(uri, requested)) ? requested : null;
@@ -292,8 +324,8 @@ public static partial class McpOAuth
         return view;
     }
 
-    private static IResult OAuthError(string error, string description) =>
-        Results.Json(new Dictionary<string, string> { ["error"] = error, ["error_description"] = description }, statusCode: StatusCodes.Status400BadRequest);
+    private static IResult OAuthError(string error, string description, int statusCode = StatusCodes.Status400BadRequest) =>
+        Results.Json(new Dictionary<string, string> { ["error"] = error, ["error_description"] = description }, statusCode: statusCode);
 
     private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
@@ -302,7 +334,6 @@ public static partial class McpOAuth
     [GeneratedRegex("^[a-z][a-z0-9+.-]*$")] private static partial Regex SchemePattern();
 
     private sealed record AuthorizationRequest(McpAuthorization? Authorization = null, IResult? Error = null, IResult? Page = null);
-    private sealed record McpClient(string Name, string[] RedirectUris, DateTimeOffset CreatedAt);
     private sealed record McpCode(string ClientId, string RedirectUri, string CodeChallenge, string UserId, string CredentialId, string ClientName,
         DateTimeOffset ExpiresAt, DateTimeOffset TokenExpiresAt);
 }
