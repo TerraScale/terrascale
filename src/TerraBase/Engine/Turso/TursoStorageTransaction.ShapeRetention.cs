@@ -19,7 +19,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
 
     public async ValueTask<int> TrimShapeAsync(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() => TrimShape(handle, before, maxRows, maxBytes, cancellationToken).Rows, cancellationToken, mutation: true)
             .ConfigureAwait(false);
     }
@@ -75,7 +75,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
 
     public async ValueTask<int> DropShapeAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() => DropShape(handle, maxRows, maxBytes, cancellationToken).Rows, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 

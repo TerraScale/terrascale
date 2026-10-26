@@ -74,6 +74,12 @@ internal sealed partial class TursoStorageTransaction
 
     public async ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken)
     {
+        // This transaction holds the writer. Retention can wait for the rewrite; replay cannot restore its uncaptured cut.
+        if (store.Rewriting)
+        {
+            return 0;
+        }
+
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {

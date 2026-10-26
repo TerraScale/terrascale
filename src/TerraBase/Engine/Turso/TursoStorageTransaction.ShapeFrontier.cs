@@ -45,7 +45,7 @@ internal sealed partial class TursoStorageTransaction
     /// </summary>
     internal async ValueTask<bool> AdvanceShapeFrontierAsync(ReplicaId self, (long From, long To)? proof, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken)
     {
-        if (store.IsSystem)
+        if (store.IsSystem || store.Rewriting)
         {
             return false;
         }
@@ -123,7 +123,7 @@ internal sealed partial class TursoStorageTransaction
     /// </summary>
     internal async ValueTask<bool> RebaseShapeFrontierAsync(long changeId, long seq, CancellationToken cancellationToken)
     {
-        if (store.IsSystem || changeId <= 0)
+        if (store.IsSystem || store.Rewriting || changeId <= 0)
         {
             return false;
         }

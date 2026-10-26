@@ -554,6 +554,11 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
     // as quiet.
     internal async Task TrimAsync(TursoDatabaseStore store, CancellationToken cancellationToken)
     {
+        if (store.Rewriting)
+        {
+            return;
+        }
+
         long? floor;
         var durability = _durability?.Invoke();
         var placement = store.Tenant is { } placed && durability is { Confirms: true }
@@ -583,6 +588,11 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
+            if (store.Rewriting)
+            {
+                return;
+            }
+
             // The file this transaction holds, which a reopen may have made another than the store's cached one.
             incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
             // Before the cut: commits that need no new proof pass the shape frontier while capture still holds them, joined

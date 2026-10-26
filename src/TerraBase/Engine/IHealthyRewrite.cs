@@ -18,8 +18,8 @@ namespace TerraBase.Engine;
 internal interface IHealthyRewrite
 {
     /// <summary>
-    /// Rewrites <paramref name="database"/>, or SYSTEM when null. Operations on the database wait (writers from the copied cut
-    /// until the new file is published); readers, writers, backup taps and their native handles must end first.
+    /// Rewrites <paramref name="database"/>, or SYSTEM when null. Copy and catch-up run beside normal operations; only the
+    /// final catch-up and publication quiesce readers, writers, backup taps and their native handles.
     /// Returns only after the new file durably replaced the old one, the old log is gone and every native handle of the old
     /// file closed. Otherwise throws <see cref="RewriteRefusedException"/> (or <see cref="OperationCanceledException"/> while
     /// copying), and the old file stays in place and serves again: the database is missing, not healthy, does not drain
@@ -40,7 +40,19 @@ internal interface IHealthyRewrite
 internal readonly record struct HealthyRewrite(Ulid SourceIncarnation, Ulid TargetIncarnation, long Offset);
 
 /// <summary>A rewrite did not happen; the old file stays in place and serves.</summary>
-internal sealed class RewriteRefusedException(string message, Exception? innerException = null) : IOException(message, innerException);
+internal enum RewriteRefusal
+{
+    Safety,
+    Budget,
+    Deadline,
+    Pressure,
+}
+
+internal sealed class RewriteRefusedException(string message, Exception? innerException = null, RewriteRefusal reason = RewriteRefusal.Safety)
+    : IOException(message, innerException)
+{
+    internal RewriteRefusal Reason { get; } = reason;
+}
 
 /// <summary>
 /// The new file is in place but a power loss may bring the old one back: storage failed closed, and no receipt may be

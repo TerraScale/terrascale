@@ -96,7 +96,7 @@ internal static class TursoCopy
         Execute(copy, "PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
-    private static void CopyRows(TursoConnection source, SqliteConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
+    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
     {
         var (columns, alias) = TableShape.Read(source, table);
         // The rowid alias column is the rowid: name it once.
@@ -107,10 +107,16 @@ internal static class TursoCopy
         // One native program per table, reset and rebound by the driver across chunk commits. No DDL runs until it is disposed.
         using var write = copy.CreateCommand();
         write.CommandText = insert;
-        write.ReuseStatement = true;
+        if (write is SqliteCommand prepared)
+        {
+            prepared.ReuseStatement = true;
+        }
         for (var i = 0; i < names.Count; i++)
         {
-            write.Parameters.AddWithValue($"$v{i}", DBNull.Value);
+            var parameter = write.CreateParameter();
+            parameter.ParameterName = $"$v{i}";
+            parameter.Value = DBNull.Value;
+            write.Parameters.Add(parameter);
         }
 
         var rowsInChunk = 0L;

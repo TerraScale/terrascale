@@ -96,6 +96,7 @@ internal sealed class TursoChangeTap : IWalTap
             // creates turso_cdc.
             await store.WithWriterAsync(writer =>
             {
+                var lineage = store.Lineage;
                 if (store.Quiescing)
                 {
                     // The lineage already moved: a tap opened now would not end, and would hold the file the rewrite drains.
@@ -103,8 +104,9 @@ internal sealed class TursoChangeTap : IWalTap
                 }
 
                 store.OpenBackupReader();
+                Interlocked.Increment(ref store.BackupTaps);
                 var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
-                tap = new TursoChangeTap(store, io, time, reader, store.Lineage);
+                tap = new TursoChangeTap(store, io, time, reader, lineage);
                 TursoSession.OpenExisting(reader, store.FilePath);
                 return tap.Reset(writer);
             }, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
@@ -117,6 +119,7 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 await io.RunAsync(tap._reader.Dispose, CancellationToken.None).ConfigureAwait(false);
                 store.CloseBackupReader();
+                Interlocked.Decrement(ref store.BackupTaps);
             }
 
             await store.RecordOperationDamageAsync(error).ConfigureAwait(false);
@@ -278,6 +281,7 @@ internal sealed class TursoChangeTap : IWalTap
         _store.BackupAnchor = null;
         await _io.RunAsync(_reader.Dispose, CancellationToken.None).ConfigureAwait(false);
         _store.CloseBackupReader();
+        Interlocked.Decrement(ref _store.BackupTaps);
     }
 
     private async Task<T> AdmittedAsync<T>(Func<Task<T>> call)
@@ -523,6 +527,8 @@ internal sealed class TursoChangeTap : IWalTap
         return tap;
     }
 
+    internal long RewriteBytes { get; private set; }
+
     internal long ReplayRewrite(TursoConnection source, TursoConnection target, bool final, CancellationToken token)
     {
         _reader = source;
@@ -531,25 +537,39 @@ internal sealed class TursoChangeTap : IWalTap
             throw new RewriteRefusedException("the rewrite's change-log anchor was trimmed");
         }
 
-        var end = Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_type = 2 AND change_id > $anchor;", _anchor) as long? ?? _anchor;
-        // Preflight the final delta without reading its images or opening a target transaction.
+        // The final cut never scans past its bounded range, even just to find the commit marker.
+        var end = _anchor;
         if (final)
         {
+            using var measured = _store.MeasureRewrite("final_preflight");
             using var check = source.CreateCommand();
-            check.CommandText = "SELECT length(after), table_name FROM turso_cdc WHERE change_id > $after AND change_id <= $end ORDER BY change_id LIMIT 1025;";
+            check.CommandText = "SELECT change_id, change_type, length(after), table_name FROM turso_cdc WHERE change_id > $after ORDER BY change_id LIMIT 1025;";
             check.Parameters.Add(new TursoParameter("$after", _anchor));
-            check.Parameters.Add(new TursoParameter("$end", end));
             using var rows = check.ExecuteReader();
-            long count = 0, bytes = 0;
+            long count = 0, bytes = 0, last = _anchor;
             while (rows.Read())
             {
-                bytes += rows.IsDBNull(0) ? 0 : rows.GetInt64(0);
-                if (++count > 1024 || bytes > PageBytes || !rows.IsDBNull(1) && rows.GetString(1) == "sqlite_schema")
+                token.ThrowIfCancellationRequested();
+                last = rows.GetInt64(0);
+                bytes += rows.IsDBNull(2) ? 0 : rows.GetInt64(2);
+                if (++count > 1024 || bytes > PageBytes || !rows.IsDBNull(3) && rows.GetString(3) == "sqlite_schema")
                 {
                     FaultAwareCopySource.Abort(rows);
-                    throw new RewriteRefusedException("the final rewrite delta exceeds its budget");
+                    throw new RewriteRefusedException("the final rewrite delta exceeds its budget", reason: RewriteRefusal.Budget);
+                }
+                if (rows.GetInt64(1) == 2)
+                {
+                    end = last;
                 }
             }
+            if (last != end)
+            {
+                throw new RewriteRefusedException("the final rewrite delta ends inside a transaction");
+            }
+        }
+        else
+        {
+            end = Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_type = 2 AND change_id > $anchor;", _anchor) as long? ?? _anchor;
         }
 
         if (_anchor == 0 && Scalar("SELECT min(change_id) FROM turso_cdc WHERE change_id > $anchor;", 0) as long? is > 1)
@@ -558,12 +578,14 @@ internal sealed class TursoChangeTap : IWalTap
         }
 
         var first = _anchor;
+        RewriteBytes = 0;
         var replay = new ChangeLog.Replay(target);
         var buffer = new ArrayBufferWriter<byte>();
         while (_anchor < end)
         {
             token.ThrowIfCancellationRequested();
             var (next, placed, _) = ReadPage(_anchor, end, long.MaxValue, _schema, buffer);
+            RewriteBytes += buffer.WrittenCount;
             using var segment = new MemoryStream(buffer.WrittenMemory.ToArray(), writable: false);
             if (!placed || next <= _anchor || !replay.Apply(segment, token))
             {

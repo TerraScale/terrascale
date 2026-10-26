@@ -157,6 +157,26 @@ public sealed class HealthyRewriteTests
         // A cut that does not include the requested commit is refused too.
         await Assert.That(async () => await engine.RewriteAsync(database, long.MaxValue, token)).Throws<RewriteRefusedException>();
         await Assert.That(store.Incarnation).IsEqualTo(before);
+
+        // The copy has finished, but the final catch-up still waits for this reader. Uncaptured housekeeping cannot be lost.
+        reader = await store.BeginTransactionAsync(write: false, token);
+        paused = PausedAsync(store);
+        rewriting = engine.RewriteAsync(database, 0, token).AsTask();
+        try
+        {
+            await paused.WaitAsync(token);
+            await using var housekeeping = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token);
+            await housekeeping.SuspendCaptureAsync(token);
+            await housekeeping.PutAsync(Probe, StorageFixture.Id("uncaptured"), "{}"u8.ToArray(), token);
+            await housekeeping.CommitAsync(token);
+        }
+        finally
+        {
+            await reader.DisposeAsync();
+        }
+        await Assert.That(async () => await rewriting).Throws<RewriteRefusedException>();
+        await Assert.That(store.Incarnation).IsEqualTo(before);
+        await Assert.That(Directory.EnumerateFiles(Path.GetDirectoryName(store.FilePath)!, "*.rewriting*")).IsEmpty();
     }
 
     [Test]

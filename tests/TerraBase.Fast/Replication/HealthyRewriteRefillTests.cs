@@ -63,6 +63,39 @@ public sealed class HealthyRewriteRefillTests
         await Assert.That(await gru.ReadAsync(offline)).IsEqualTo("""{"n":2}""");
     }
 
+    [Test]
+    public async Task Peer_applies_during_the_snapshot_survive_the_rewrite()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var cluster = await ReplicaCluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = Id();
+        await PutAsync(gru, id, """{"n":1}""");
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+        var engine = gru.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
+        var pinned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        store.RewriteSnapshotPinned = () =>
+        {
+            pinned.TrySetResult();
+            release.Wait(token);
+        };
+        var rewrite = engine.RewriteAsync(cluster.Database, 0, token).AsTask();
+        try
+        {
+            await pinned.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+            await PutAsync(sjc, id, """{"n":2}""");
+            await Assert.That(await gru.UntilAsync(id, """{"n":2}""")).IsTrue();
+        }
+        finally
+        {
+            release.Set();
+        }
+        _ = await rewrite;
+        await Assert.That(await gru.ReadAsync(id)).IsEqualTo("""{"n":2}""");
+    }
+
     private static string Id() => EntityIds.New().ToString();
 
     private static Task PutAsync(PeerStreamTests.Machine machine, string id, string json) =>

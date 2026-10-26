@@ -88,7 +88,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     // LinkedList lets cancellation unlink a node immediately; BlockingCollection retains cancelled closures.
     private readonly object _queueGate = new();
     private bool _completed;
-    private readonly int _maxAdmitted;
     private readonly Counter<long> _rejected;
     private readonly Histogram<double> _queueWait;
     private readonly Task[] _threads;
@@ -107,7 +106,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(threads);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAdmitted);
-        _maxAdmitted = maxAdmitted;
+        AdmissionCapacity = maxAdmitted;
         _maxHobbyRunning = Math.Max(1, threads - 1);
         _disposal = new(DrainAsync);
         meter.CreateObservableGauge(
@@ -194,9 +193,9 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         // With a one-slot pool every plan can still make progress.
         var limit = QosContext.Current?.Plan switch
         {
-            PlanTier.Hobby when _maxAdmitted > 1 => _maxAdmitted - Math.Max(_maxAdmitted > 2 ? 2 : 1, _maxAdmitted / 4),
-            PlanTier.Starter or PlanTier.Pro or PlanTier.Team when _maxAdmitted > 2 => _maxAdmitted - Math.Max(1, _maxAdmitted / 8),
-            _ => _maxAdmitted,
+            PlanTier.Hobby when AdmissionCapacity > 1 => AdmissionCapacity - Math.Max(AdmissionCapacity > 2 ? 2 : 1, AdmissionCapacity / 4),
+            PlanTier.Starter or PlanTier.Pro or PlanTier.Team when AdmissionCapacity > 2 => AdmissionCapacity - Math.Max(1, AdmissionCapacity / 8),
+            _ => AdmissionCapacity,
         };
         if (admitted > limit)
         {
@@ -221,6 +220,9 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     }
 
     /// <summary>Admitted transactions and maintenance calls, for tests.</summary>
+    internal int AdmissionCapacity { get; }
+    internal int WorkerCount => _threads.Length;
+
     internal int Admitted => Volatile.Read(ref _admitted);
 
     /// <summary>Calls running on the threads, for tests.</summary>

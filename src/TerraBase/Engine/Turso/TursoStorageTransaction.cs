@@ -1332,7 +1332,7 @@ internal sealed partial class TursoStorageTransaction(
 
                 if (_rewriteUncaptured)
                 {
-                    store.UncapturedCommit();
+                    store.UncapturedCommit(_uncapturedBy);
                 }
             }
             catch
@@ -1342,7 +1342,7 @@ internal sealed partial class TursoStorageTransaction(
                 {
                     if (_rewriteUncaptured)
                     {
-                        store.UncapturedCommit();
+                        store.UncapturedCommit(_uncapturedBy);
                     }
                     // An error at or after COMMIT, a failed sync included: whether the file holds the commit is unknown.
                     NoteCopyFault("an error at or after COMMIT");
@@ -1620,15 +1620,16 @@ internal sealed partial class TursoStorageTransaction(
 
     private bool _captureSuspended;
     private bool _rewriteUncaptured;
+    private string? _uncapturedBy;
 
     /// <summary>
     /// Stops capturing this write transaction's later statements in <c>turso_cdc</c> (design C's per-transaction toggle,
     /// docs/terrabase/multi-region-replication.md section 7); capture resumes when the transaction ends. Only for state
     /// that a restore and a replica rebuild themselves, such as the change tailer's own bookkeeping: continuous backup
     /// ships captured changes only, so anything written uncaptured is missing from every point-in-time restore.
-    /// Only dedicated peer-progress transactions pass peerProgressOnly: a rewrite refreshes their table at its final cut.
+    /// Only writes confined to tables refreshed or discarded at the rewrite's final cut pass rewriteRefreshOnly.
     /// </summary>
-    internal ValueTask SuspendCaptureAsync(CancellationToken cancellationToken, bool peerProgressOnly = false)
+    internal ValueTask SuspendCaptureAsync(CancellationToken cancellationToken, bool rewriteRefreshOnly = false, [CallerMemberName] string? caller = null)
     {
         if (!write)
         {
@@ -1647,7 +1648,11 @@ internal sealed partial class TursoStorageTransaction(
             command.CommandText = TursoSession.CaptureOff;
             command.ExecuteNonQuery();
             _captureSuspended = true;
-            _rewriteUncaptured |= !peerProgressOnly;
+            _rewriteUncaptured |= !rewriteRefreshOnly;
+            if (!rewriteRefreshOnly)
+            {
+                _uncapturedBy = caller;
+            }
             return true;
         }, cancellationToken).AsTask());
     }

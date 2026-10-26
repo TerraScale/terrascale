@@ -85,6 +85,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     // A writer held for seconds stalls every write of its database behind it (batch 8, 2026-10-25): how long each holder kept it.
     private static readonly double[] WriterHeldBuckets = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60];
     private readonly Histogram<double> _writerHeld;
+    private readonly Histogram<double> _rewriteSteps;
+    private readonly Counter<long> _rewriteRefused;
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -480,6 +482,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented document, feed and shape SELECT executions, by path (point, query, feed, shape, shape_body).");
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
             "How long a database's writer was held, by holder kind and call site (bounded sets of names and file:line).",
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
+        _rewriteRefused = meter.CreateCounter<long>("terrabase.storage.rewrite_refused", description: "Healthy rewrite refusals by bounded reason.");
+        _rewriteSteps = meter.CreateHistogram<double>("terrabase.storage.rewrite_step", "s",
+            "Healthy rewrite work by bounded step and database kind.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _logger = logger;
         _shutdownGrace = shutdownGrace;
@@ -990,6 +996,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         Checkpoint = _checkpoint,
                         Ledger = Ledger,
                         WriterHeld = _writerHeld,
+                        RewriteSteps = _rewriteSteps,
                         CollectionStateWritten = NoteSystemCollectionState,
                     };
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
@@ -1668,10 +1675,13 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     // Moves on entering and leaving _creation, under which TerraBase creates, deletes, swaps and purges database files.
     private long _fileEpoch;
 
-    private async ValueTask EnterCreationAsync(CancellationToken cancellationToken)
+    private async ValueTask EnterCreationAsync(CancellationToken cancellationToken, bool admitted = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Io.Admit();
+        if (!admitted)
+        {
+            Io.Admit();
+        }
         try
         {
             await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1680,18 +1690,24 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         }
         catch
         {
-            Io.Release();
+            if (!admitted)
+            {
+                Io.Release();
+            }
             throw;
         }
     }
 
-    private void ExitCreation()
+    private void ExitCreation(bool admitted = false)
     {
         TaskCompletionSource[] released = _awaitingRelease.Count == 0 ? [] : [.. _awaitingRelease];
         _awaitingRelease.Clear();
         Interlocked.Increment(ref _fileEpoch);
         _creation.Release();
-        Io.Release();
+        if (!admitted)
+        {
+            Io.Release();
+        }
         foreach (var initialization in released)
         {
             initialization.TrySetResult();
@@ -1785,6 +1801,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RequiresRemoteProof = RequiresRemoteProof,
             Ledger = Ledger,
             WriterHeld = _writerHeld,
+            RewriteSteps = _rewriteSteps,
         };
         var published = false;
         var admitted = false;

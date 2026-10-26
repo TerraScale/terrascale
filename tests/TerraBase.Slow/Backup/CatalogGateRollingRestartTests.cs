@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -59,7 +60,24 @@ public sealed class CatalogGateRollingRestartTests
                 var engine = gru.Api.Server.Services.GetRequiredService<IStorageEngine>();
                 if (restart % 2 == 0)
                 {
-                    _ = await gru.Api.Server.Services.GetRequiredService<IHealthyRewrite>().RewriteAsync(null, 0, token);
+                    var measured = (TursoDatabaseStore)await gru.Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(token);
+                    measured.RewriteStepMeasured = (step, seconds) => Console.WriteLine($"REWRITE {step}: {seconds * 1000:F3} ms");
+                    for (var attempt = 1; ; attempt++)
+                    {
+                        try
+                        {
+                            _ = await gru.Api.Server.Services.GetRequiredService<IHealthyRewrite>().RewriteAsync(null, 0, token);
+                            break;
+                        }
+                        catch (RewriteRefusedException error) when (error.Reason == RewriteRefusal.Budget)
+                        {
+                            Console.WriteLine($"Rewrite attempt {attempt}/5 refused: {error.Message}");
+                            if (attempt == 5)
+                            {
+                                throw;
+                            }
+                        }
+                    }
                 }
 
                 var before = (await engine.OpenSystemDatabaseAsync(token)).Incarnation;
