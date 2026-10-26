@@ -1,6 +1,6 @@
 namespace TerraBase.Hosting;
 
-/// <summary>Bearer-only browser access to the public document API.</summary>
+/// <summary>Bearer-only browser access to the public data APIs.</summary>
 internal static class ClientCors
 {
     private const string Policy = "document-api";
@@ -41,6 +41,16 @@ internal static class ClientCors
             && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
             && (string.Equals(segments[6], "collections", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(segments[6], "transactions", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase));
+                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase)
+                || (segments.Length == 8
+                    && string.Equals(segments[6], "sql", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(segments[7], "execute", StringComparison.OrdinalIgnoreCase))
+                || (segments.Length == 9
+                    && string.Equals(segments[6], "libsql", StringComparison.OrdinalIgnoreCase)
+                    && ((string.Equals(segments[7], "v2", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(segments[8], "pipeline", StringComparison.OrdinalIgnoreCase))
+                        || (string.Equals(segments[7], "v3", StringComparison.OrdinalIgnoreCase)
+                            && (string.Equals(segments[8], "pipeline", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(segments[8], "cursor", StringComparison.OrdinalIgnoreCase))))));
     }
 }
