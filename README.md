@@ -355,17 +355,28 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Databases are placed in region ids such as `gru-1` (not `RegionCode`):
-`ManagedDatabase` reports `Region` (the answering node), `HomeRegion` and
-`ReplicaRegions`. `CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
-ReplicaRegions: []string{"sfo-1"}})` places a new database (an empty home is
-the called region), `SetDatabaseRegions` replaces the replica list (the home
-never changes), and deleting a replicated database fails with
-`ErrDatabaseReplicated`. `tb.Placement{AllRegions: true}` and
-`SetDatabaseAllRegions` place a full copy in every serving region, including
-regions that join later (`ManagedDatabase.AllRegions`; `ReplicaRegions` is then
-empty). It cannot be combined with `ReplicaRegions`; `SetDatabaseRegions` turns
-it off, and `SetDatabaseRegions(..., nil)` is required before deleting. A region outside the placement answers 421
+Writable databases require at least two regions, identified by region ids
+such as `gru-1` (not `RegionCode`). `ManagedDatabase` reports `Region` (the
+answering node), `HomeRegion` and `ReplicaRegions`.
+`CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
+ReplicaRegions: []string{"sjc-1"}})` places a new database. An empty home uses
+the called region for management; it does not request single-region placement.
+Omitting `replicaRegions` uses every other current serving region. An explicit
+replica list must include at least one region other than the home; an empty
+list on create returns 400 `placement_needs_two_regions`. `SetDatabaseRegions`
+replaces the replica list (the home never changes).
+`tb.Placement{AllRegions: true}` and `SetDatabaseAllRegions` place a full copy
+in every serving region, including regions that join later
+(`ManagedDatabase.AllRegions`; `ReplicaRegions` is then empty). It cannot be
+combined with `ReplicaRegions`; `SetDatabaseRegions` turns it off.
+Delete directly in the database's home region without a preceding placement
+update. Permanent purge authority removes every replica, including all-regions
+placement; branches remain independent. A 204 response records logical deletion
+and local cleanup. Remote erasure is retried durably, so 204 does not guarantee
+synchronous remote erasure. An empty replica-list update can temporarily make
+document writes return 409 `placement_needs_two_regions`; it is not required
+for deletion and does not provide supported single-region placement.
+A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
 it elsewhere: send the request to a region in `Regions`. Customer
