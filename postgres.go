@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,7 +21,7 @@ import (
 )
 
 const (
-	postgresMaxBytes       = 16 * 1024
+	postgresMaxBytes       = 1024*1024 - 64 // reserve producer message framing
 	postgresResultBytes    = 16 * 1024 * 1024
 	postgresConnectTimeout = 5 * time.Second
 )
@@ -88,6 +87,8 @@ type PostgresValue struct {
 	value any
 }
 
+// PostgresParameter binds a pgx-compatible value, including nil and pgtype scalars.
+func PostgresParameter(value any) PostgresValue  { return PostgresValue{value: value} }
 func PostgresInt8(value int64) PostgresValue     { return PostgresValue{oid: 20, value: value} }
 func PostgresText(value string) PostgresValue    { return PostgresValue{oid: 25, value: value} }
 func (value PostgresValue) Int8() (int64, bool)  { v, ok := value.value.(int64); return v, ok }
@@ -119,27 +120,30 @@ func postgresTextValid(value string) bool {
 }
 
 func postgresParameters(query PostgresQuery) ([]any, error) {
-	if strings.TrimSpace(query.Statement) == "" || !postgresTextValid(query.Statement) || len(query.Parameters) > 4 {
+	if strings.TrimSpace(query.Statement) == "" || !postgresTextValid(query.Statement) || len(query.Parameters) > 32767 {
 		return nil, &PostgresError{Kind: "query"}
 	}
 	values := make([]any, len(query.Parameters))
+	budget := postgresMaxBytes - len(query.Statement)
 	for index, value := range query.Parameters {
-		switch value.oid {
-		case 20:
-			integer, ok := value.Int8()
-			if !ok {
-				return nil, &PostgresError{Kind: "query_requires_non_null_int8"}
-			}
-			values[index] = integer
-		case 25:
-			text, ok := value.Text()
-			if !ok || !postgresTextValid(text) {
-				return nil, &PostgresError{Kind: "query_requires_valid_non_null_text"}
-			}
-			values[index] = text
-		default:
+		switch v := value.value.(type) {
+		case pgx.QueryExecMode, pgx.QueryRewriter, pgx.QueryResultFormats, pgx.QueryResultFormatsByOID:
 			return nil, &PostgresError{Kind: "query"}
+		case string:
+			if !postgresTextValid(v) {
+				return nil, &PostgresError{Kind: "query"}
+			}
+			budget -= len(v)
+		case []byte:
+			budget -= len(v)
+		case json.RawMessage:
+			budget -= len(v)
 		}
+		budget -= 8
+		if budget < 0 {
+			return nil, &PostgresError{Kind: "limit"}
+		}
+		values[index] = value.value
 	}
 	return values, nil
 }
@@ -211,7 +215,7 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 
 // PostgresClient serializes one mature-driver connection without reconnect or write replay.
 type PostgresClient struct {
-	mutex  sync.Mutex
+	gate   chan struct{}
 	driver *pgx.Conn
 }
 
@@ -226,8 +230,33 @@ func ConnectPostgres(ctx context.Context, config PostgresConfig) (*PostgresClien
 	if err != nil {
 		return nil, postgresFailure(err)
 	}
-	return &PostgresClient{driver: connection}, nil
+	return &PostgresClient{driver: connection, gate: make(chan struct{}, 1)}, nil
 }
+
+// acquire owns this logical session until released; waiting is cancellation-aware.
+func (client *PostgresClient) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return postgresFailure(err)
+	}
+	if client.gate == nil {
+		return &PostgresError{Kind: "connection"}
+	}
+	select {
+	case client.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-client.gate
+			return postgresFailure(err)
+		}
+		return nil
+	case <-ctx.Done():
+		return postgresFailure(ctx.Err())
+	}
+}
+
+// Preserve pgx codecs while preferring the producer's supported parameter format.
+type postgresTextCodec struct{ pgtype.Codec }
+
+func (postgresTextCodec) PreferredFormat() int16 { return pgx.TextFormatCode }
 
 // Decode without Rows.Scan: its error path drains Rows before returning.
 func postgresDecode(types *pgtype.Map, field pgconn.FieldDescription, raw []byte) (any, error) {
@@ -281,12 +310,21 @@ func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (P
 	if err != nil {
 		return PostgresResult{}, err
 	}
-	client.mutex.Lock()
-	defer client.mutex.Unlock()
+	if err := client.acquire(ctx); err != nil {
+		return PostgresResult{}, err
+	}
+	defer func() { <-client.gate }()
 	if client.driver == nil || client.driver.IsClosed() {
 		return PostgresResult{}, &PostgresError{Kind: "connection"}
 	}
-
+	for _, oid := range []uint32{1700, 1082, 1114, 1184} {
+		typ, _ := client.driver.TypeMap().TypeForOID(oid)
+		if _, ok := typ.Codec.(postgresTextCodec); !ok {
+			copy := *typ
+			copy.Codec = postgresTextCodec{typ.Codec}
+			client.driver.TypeMap().RegisterType(&copy)
+		}
+	}
 	// The producer sends numeric and temporal scalars as text even when binary is requested.
 	// Request text explicitly: pgx ExecStatement trusts the requested formats without Describe.
 	arguments := append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, values...)
@@ -338,17 +376,14 @@ func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (P
 	result.CommandTag = tag.String()
 	result.Command, _, _ = strings.Cut(result.CommandTag, " ")
 	result.AffectedRows = uint64(tag.RowsAffected())
-	switch result.Command {
-	case "SELECT", "INSERT", "UPDATE", "DELETE", "BEGIN", "COMMIT", "ROLLBACK", "SET":
-		return result, nil
-	default:
-		return PostgresResult{}, &PostgresError{Kind: "protocol"}
-	}
+	return result, nil
 }
 
 func (client *PostgresClient) Close(ctx context.Context) error {
-	client.mutex.Lock()
-	defer client.mutex.Unlock()
+	if err := client.acquire(ctx); err != nil {
+		return err
+	}
+	defer func() { <-client.gate }()
 	if client.driver == nil {
 		return nil
 	}

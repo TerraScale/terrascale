@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -57,7 +58,7 @@ func TestPostgresParametersKeepInt8AndHostileTextSeparate(t *testing.T) {
 	if parameters[0] != int64(math.MinInt64) || parameters[1] != payload || parameters[2] != int64(math.MaxInt64) || strings.Contains(query.Statement, payload) {
 		t.Fatal("parameter loss or interpolation")
 	}
-	for _, value := range []PostgresValue{{}, PostgresText("nul\x00"), PostgresText(string([]byte{0xff})), PostgresText(strings.Repeat("x", 16385))} {
+	for _, value := range []PostgresValue{PostgresParameter(pgx.QueryExecModeSimpleProtocol), PostgresParameter(pgx.QueryResultFormats{1}), PostgresParameter(pgx.QueryResultFormatsByOID{20: 1}), PostgresText("nul\x00"), PostgresText(string([]byte{0xff})), PostgresText(strings.Repeat("x", postgresMaxBytes+1))} {
 		_, err := postgresParameters(PostgresQuery{Statement: "SELECT id FROM items WHERE id=$1", Parameters: []PostgresValue{value}})
 		if err == nil {
 			t.Fatal("invalid parameter admitted")
@@ -301,6 +302,7 @@ type postgresFixture struct {
 	fields           []pgproto3.FieldDescription
 	rows             [][][]byte
 	tag              string
+	params           []uint32
 	binds            chan *pgproto3.Bind
 	entered, release chan struct{}
 	stalled          chan error
@@ -332,9 +334,13 @@ func postgresFixtureClient(t *testing.T, f postgresFixture) *PostgresClient {
 				backend.Send(&pgproto3.ParseComplete{})
 			case *pgproto3.Describe:
 				if m.ObjectType == 'S' {
-					backend.Send(&pgproto3.ParameterDescription{ParameterOIDs: nil})
+					backend.Send(&pgproto3.ParameterDescription{ParameterOIDs: f.params})
 				}
-				backend.Send(&pgproto3.RowDescription{Fields: f.fields})
+				if len(f.fields) == 0 {
+					backend.Send(&pgproto3.NoData{})
+				} else {
+					backend.Send(&pgproto3.RowDescription{Fields: f.fields})
+				}
 			case *pgproto3.Bind:
 				if f.binds != nil {
 					f.binds <- m
@@ -385,7 +391,7 @@ func postgresFixtureClient(t *testing.T, f postgresFixture) *PostgresClient {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &PostgresClient{driver: driver}
+	return &PostgresClient{driver: driver, gate: make(chan struct{}, 1)}
 }
 func postgresFields(oids ...uint32) []pgproto3.FieldDescription {
 	fields := make([]pgproto3.FieldDescription, len(oids))
@@ -401,8 +407,7 @@ func TestPostgresNativeScalarsRowsNullAndAlias(t *testing.T) {
 	for i, v := range raw {
 		data[i] = []byte(v)
 	}
-	binds := make(chan *pgproto3.Bind, 4)
-	c := postgresFixtureClient(t, postgresFixture{fields: fields, rows: [][][]byte{data, make([][]byte, len(raw)), data}, tag: "SELECT 3", binds: binds})
+	c := postgresFixtureClient(t, postgresFixture{fields: fields, rows: [][][]byte{data, make([][]byte, len(raw)), data}, tag: "SELECT 3"})
 	result, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT CAST(1 AS BIGINT) AS value"})
 	if err != nil || len(result.Rows) != 3 || result.CommandTag != "SELECT 3" {
 		t.Fatalf("rows: %v", err)
@@ -447,26 +452,40 @@ func TestPostgresNativeScalarsRowsNullAndAlias(t *testing.T) {
 	if _, ok := result.Rows[0][13].Int8(); ok {
 		t.Fatal("aliased TEXT silently coerced to INT8")
 	}
-	// A returns NULL but retains non-null parameter restrictions until B.
-	t.Run("returned NULL rejected before wire", func(t *testing.T) {
-		for index, column := range []int{1, 6} {
-			before := len(binds)
-			_, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT $1", Parameters: []PostgresValue{result.Rows[1][column]}})
-			expected := []string{"query_requires_non_null_int8", "query_requires_valid_non_null_text"}[index]
-			var failure *PostgresError
-			if !errors.As(err, &failure) || failure.Kind != expected || err.Error() != "terrascale PostgreSQL "+expected+" failure" || len(binds) != before {
-				t.Fatalf("NULL was not rejected before binding: %v", err)
-			}
-			if _, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT still_usable"}); err != nil || c.driver.IsClosed() || len(binds) != before+1 {
-				t.Fatalf("validation damaged session: %v", err)
-			}
-		}
-	})
 	if err := c.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
-func TestPostgresAbortStalledResults(t *testing.T) {
+func TestPostgresParametersCommandsAndBinding(t *testing.T) {
+	for _, tag := range []string{"INSERT 0 3", "UPDATE 4", "DELETE 5", "CREATE TABLE", "DROP TABLE"} {
+		t.Run(tag, func(t *testing.T) {
+			binds := make(chan *pgproto3.Bind, 1)
+			c := postgresFixtureClient(t, postgresFixture{tag: tag, params: []uint32{20, 25, 16, 701, 25, 23, 1700, 1082, 1114, 1184}, binds: binds})
+			args := []PostgresValue{PostgresInt8(math.MaxInt64), PostgresText("' ; -- α"), PostgresParameter(true), PostgresParameter(1.25), PostgresParameter(nil), PostgresParameter(int32(7)), PostgresParameter(pgtype.Numeric{Int: big.NewInt(9007199254740993125), Exp: -3, Valid: true}), PostgresParameter(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)), PostgresParameter(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)), PostgresParameter(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC))}
+			result, err := c.Query(t.Context(), PostgresQuery{Statement: "operation $1,$2,$3,$4,$5,$6,$7,$8,$9,$10", Parameters: args})
+			if err != nil || result.CommandTag != tag || result.AffectedRows != uint64(pgconn.NewCommandTag(tag).RowsAffected()) {
+				t.Fatalf("command: %v", err)
+			}
+			bound := <-binds
+			if !slices.Equal(bound.ResultFormatCodes, []int16{0}) {
+				t.Fatal("producer result format lost")
+			}
+			for i, arg := range args {
+				var got any
+				format := bound.ParameterFormatCodes[0]
+				if len(bound.ParameterFormatCodes) > 1 {
+					format = bound.ParameterFormatCodes[i]
+				}
+				if err := pgtype.NewMap().Scan([]uint32{20, 25, 16, 701, 25, 23, 1700, 1082, 1114, 1184}[i], format, bound.Parameters[i], &got); err != nil || !reflect.DeepEqual(got, arg.Value()) || i >= 6 && format != 0 {
+					t.Fatal("bound value loss")
+				}
+			}
+			c.Close(t.Context())
+		})
+	}
+}
+
+func TestPostgresAbortStalledResultsAndQueuedCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		oid       uint32
@@ -504,7 +523,19 @@ func TestPostgresAbortStalledResults(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("query did not enter")
 			}
-
+			for _, closeCall := range []bool{false, true} {
+				queued, stop := context.WithTimeout(t.Context(), 25*time.Millisecond)
+				var err error
+				if closeCall {
+					err = c.Close(queued)
+				} else {
+					_, err = c.Query(queued, PostgresQuery{Statement: "SELECT queued"})
+				}
+				stop()
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("queued caller blocked")
+				}
+			}
 			if tc.cancel {
 				cancel()
 			}
@@ -534,6 +565,9 @@ func TestPostgresAbortStalledResults(t *testing.T) {
 			}
 			if err := c.Close(t.Context()); err != nil {
 				t.Fatal(err)
+			}
+			if err := c.Close(t.Context()); err != nil {
+				t.Fatal("close not idempotent")
 			}
 			if _, err := c.Query(t.Context(), PostgresQuery{Statement: "SELECT closed"}); err == nil {
 				t.Fatal("closed session reused")
