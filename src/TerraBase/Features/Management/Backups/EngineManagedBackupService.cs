@@ -172,7 +172,7 @@ internal sealed class EngineManagedBackupService(
                 static error => error, cancellationToken).ConfigureAwait(false) switch
         {
             RestoreSource { Region: null } => new Unavailable("the snapshot's region is unknown; take a new snapshot", "backup_region_unknown"),
-            RestoreSource source when source.Region != options.Region => new BackupElsewhere(source.Region!),
+            RestoreSource source when source.Region != options.Region => new BackupElsewhere(source.Region!, source.Database),
             RestoreSource source when !source.Database.PlacedIn(options.Region) => new Conflict("the snapshot's region is outside the database's current placement", "backup_region_not_placed"),
             RestoreSource source => await CopyRestoredAsync(userId, organizationId, owner, source.Database.Name, source.StorageId, name, cancellationToken).ConfigureAwait(false),
             NotFound error => error,
@@ -209,7 +209,7 @@ internal sealed class EngineManagedBackupService(
 
         if (source.Home(options.Region) != options.Region)
         {
-            return new BackupElsewhere(source.Home(options.Region));
+            return new BackupElsewhere(source.Home(options.Region), source);
         }
 
         var staging = database with { DatabaseId = EntityIds.New().ToString() };

@@ -49,7 +49,8 @@ public readonly union RestoreBackupResult(ManagedDatabase, BackupElsewhere, NotF
 
 /// <summary>A recovery request that must execute in the named region.</summary>
 /// <param name="Region">The region holding the recovery source.</param>
-public sealed record BackupElsewhere(string Region);
+/// <param name="Database">The source database's actual placement.</param>
+public sealed record BackupElsewhere(string Region, ManagedDatabase Database);
 
 /// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService

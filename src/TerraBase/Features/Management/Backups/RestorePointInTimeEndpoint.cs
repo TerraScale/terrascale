@@ -90,7 +90,7 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         var organization = ManagementRoute.OrganizationId(HttpContext);
         return await backups.RestorePointInTimeAsync(ManagementRoute.UserId(HttpContext), organization, database, at, name, cancellationToken, destination) switch
         {
-            BackupElsewhere elsewhere => DatabaseRegions.HomeRegion(elsewhere.Region, [elsewhere.Region]),
+            BackupElsewhere elsewhere => DatabaseRegions.RecoveryRegion(elsewhere.Region, elsewhere.Database),
             ManagedDatabase restored => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, restored), restored),
             NotFound error => ErrorResponse.From(error),
             Conflict error => ErrorResponse.From(error),

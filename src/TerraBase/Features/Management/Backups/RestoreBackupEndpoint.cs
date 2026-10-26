@@ -56,7 +56,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
                 ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken) switch
             {
                 ManagedDatabase restored => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, restored), restored),
-                BackupElsewhere elsewhere => DatabaseRegions.HomeRegion(elsewhere.Region, [elsewhere.Region]),
+                BackupElsewhere elsewhere => DatabaseRegions.RecoveryRegion(elsewhere.Region, elsewhere.Database),
                 NotFound error => ErrorResponse.From(error),
                 Conflict error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),

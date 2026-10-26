@@ -22,4 +22,4 @@ The nullable snapshot region is additive catalog metadata. Old nodes ignore it;
 new nodes can list old records but refuse restores whose location is unknown.
 Mixed-version nodes retain the old restore/sweep behavior until all are upgraded;
 old sweep writers can drop the field from expiring records. No migration is added.
-Needs format bump: the deployment lane owns any batched format/reset decision.
+Copies of existing home-only databases retain that placement too.

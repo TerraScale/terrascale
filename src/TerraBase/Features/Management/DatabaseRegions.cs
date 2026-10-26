@@ -69,6 +69,9 @@ public static class DatabaseRegions
     /// <summary><c>421 wrong_region</c> for a request only the home <paramref name="home"/> answers: the edge replays it there.</summary>
     internal static IResult HomeRegion(string home, IEnumerable<string> regions) => new Misdirected(home, string.Join(',', regions), homeOnly: true);
 
+    internal static IResult RecoveryRegion(string region, ManagedDatabase database) =>
+        new Misdirected(database.Home(region), string.Join(',', database.Regions(region)), homeOnly: true, replayRegion: region);
+
     /// <summary>
     /// <c>421 wrong_region</c> when the Management route's database is managed in another region (its home), or
     /// a success case: branching, updating and deleting a database happen in its home region.
@@ -154,14 +157,14 @@ public static class DatabaseRegions
         };
     }
 
-    internal sealed class Misdirected(string home, string regions, bool homeOnly) : IResult
+    internal sealed class Misdirected(string home, string regions, bool homeOnly, string? replayRegion = null) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
             httpContext.Response.Headers.CacheControl = "no-store";
             httpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
             httpContext.Response.Headers["X-TerraBase-Database-Regions"] = regions;
-            Listeners.ReplayIn(httpContext, homeOnly ? home : regions);
+            Listeners.ReplayIn(httpContext, replayRegion ?? (homeOnly ? home : regions));
             return BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "wrong_region", $"the database is served in {home}", op: null);
         }
     }
