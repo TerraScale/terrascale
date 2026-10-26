@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
     OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
     BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
-    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null);
+    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0);
 
 public static class OrganizationEndpoints
 {
@@ -34,11 +34,17 @@ public static class OrganizationEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);
             if (context.Organization is not null && context.Role.Length == 0)
-                return Results.Text("Organization membership is required.", statusCode: StatusCodes.Status403Forbidden);
+                return Notice(http, context, "organization", "Organization membership is required. Ask an owner or admin for access.", 403);
             if (http.Request.Query["tab"] == "billing" && http.Request.Query["payment"] == "success" && context.Role == "owner")
             {
-                await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>().ConfirmAsync(context, http.RequestAborted);
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                try
+                {
+                    await billing.ConfirmAsync(context, http.RequestAborted);
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                }
+                catch (AccountAccessException error) { return Notice(http, context, "billing", error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : ""), error.StatusCode); }
+                catch (Exception error) when (error is IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+                { return Notice(http, context, "billing", "Billing information could not be loaded. Your organization and projects are still available.", 503); }
             }
             else if (http.Request.Query["tab"] == "billing" && context.Organization is not null)
             {
@@ -46,16 +52,16 @@ public static class OrganizationEndpoints
                 try { if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted)) context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true); }
                 catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested) { }
             }
+            if (http.Request.Query["tab"] == "audit" && !context.CanManage)
+                return Notice(http, context, "audit", "Organization management is required to view audit events. Ask an owner or admin for access.", 403);
             context = await OrganizationWizard.PrepareAsync(http, context, accounts);
             var page = await PageModelAsync(http, context, placement);
-            if (page.Tab == "audit" && !context.CanManage)
-                return Results.Text("Organization management is required to view audit events.", statusCode: StatusCodes.Status403Forbidden);
             if (page.Tab == "billing" && context.Organization is not null)
             {
                 try { page = page with { Billing = await BillingEndpoints.LoadAsync(page.Shell, billing, spending, http.Request.Query, time.GetUtcNow(), http.RequestAborted, internalBilling) }; }
-                catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
+                catch (AccountAccessException error) { return Notice(http, context, "billing", error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : ""), error.StatusCode); }
                 catch (Exception error) when (error is IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                { return Results.Text("Billing information could not be loaded. Reload billing.", statusCode: 503); }
+                { return Notice(http, context, "billing", "Billing information could not be loaded. Your organization and projects are still available.", 503); }
             }
             if (http.Request.Headers["Datastar-Request"] == "true" && page.Tab is "members" or "invitations")
             {
@@ -135,6 +141,13 @@ public static class OrganizationEndpoints
         endpoints.MapOrganizationSso();
         endpoints.MapProjectSettings();
         return endpoints;
+    }
+
+    private static IResult Notice(HttpContext http, AccountContext context, string tab, string message, int status)
+    {
+        var view = OrganizationView.Create(new(ShellModel.For(http, context, "Organization"), tab, [], Notice: message, NoticeStatus: status));
+        view.StatusCode = status;
+        return view;
     }
 
     internal static async Task<RazorSlice> PageAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", int status = 200, string? tab = null)

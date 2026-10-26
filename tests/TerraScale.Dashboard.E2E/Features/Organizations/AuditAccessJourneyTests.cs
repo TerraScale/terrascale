@@ -46,7 +46,16 @@ public sealed class AuditAccessJourneyTests(DashboardE2EFixture fixture)
                 continue;
             }
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden).Because(route + " for " + role);
-            await Assert.That(await response.Content.ReadAsStringAsync()).DoesNotContain("session.created");
+            var body = await response.Content.ReadAsStringAsync();
+            await Assert.That(body).DoesNotContain("session.created");
+            if (route.StartsWith("/organization", StringComparison.Ordinal))
+            {
+                await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
+                await Assert.That(body).Contains("id=\"ts-navigation\"");
+                await Assert.That(body).Contains("Ask an owner or admin for access.");
+                await Assert.That(body).Contains("Request ID:");
+                await Assert.That(body).Contains(response.Headers.GetValues("X-Request-ID").Single());
+            }
         }
         using var datastar = new HttpRequestMessage(HttpMethod.Get, "/organization?tab=audit");
         datastar.Headers.Add("Datastar-Request", "true");

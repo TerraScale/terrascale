@@ -10,6 +10,15 @@ else
 {
 <main class="ts-page ts-org-page @(Model.Tab == "audit" ? "ts-audit-page" : "")">
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
+    @if (Model.Notice.Length > 0)
+    {
+        <section class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">@(Model.NoticeStatus == 403 ? "Access required" : Model.Tab == "billing" ? "Billing unavailable" : "Could not open organization")</p><p class="ts-alert-body">@Model.Notice</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p>
+        @if (Model.Tab == "billing" && Model.NoticeStatus >= 500) { <a class="ts-link" href="/organization?tab=billing">Retry billing</a> }
+        else { <a class="ts-link" href="/organization">Back to organization</a> }
+        </section>
+    }
+    else
+    {
     @if (Model.Shell.Context.Organization is { } limited && TerraScale.Dashboard.Shared.Accounts.PlanCatalog.ResourceLimits(limited).Projects is > 0 and var allowed && limited.Projects.Count > allowed)
     { <div class="ts-alert ts-alert-warning" role="status" id="project-limit-exceeded"><p class="ts-alert-title">More projects than the plan allows</p><p class="ts-alert-body">This organization has @ValueFormat.Plural(limited.Projects.Count, "project"); its plan allows @allowed. Existing projects keep working, but new projects are refused. <a class="ts-link" href="/organization?tab=billing">Upgrade the plan</a> or delete projects.</p></div> }
     @if (Model.Shell.Context.Organization is not { } org)
@@ -72,6 +81,7 @@ else
     }
     @if (Model.Tab == "projects" && Model.CanProvision) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialog, TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>(new(Model))) }
     @if (Model.OpenCreateOrganization) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Wizard.OrganizationWizardView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
+    }
 </main>
 }
 @functions {
