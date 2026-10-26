@@ -16,9 +16,9 @@ public sealed class QueryExplainTests
         }
 
         var query = new { filter = new { and = new object[] { new { gte = new object[] { "/amount", 30 } }, new { eq = new object[] { "/status", "s4" } } } }, explain = true };
-        var beforeScan = await api.ReadUsageAsync();
+        var (scanUnits, scanReads) = await api.ReadUsageAsync();
         var scan = await api.QueryAsync(query);
-        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((beforeScan.Units + 7, beforeScan.Reads + 1));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((scanUnits + 7, scanReads + 1));
         using (var owner = api.Management.As(api.Tenant.User))
         {
             using var index = await owner.PostAsJsonAsync(ManagementApi.Uri(
@@ -27,9 +27,9 @@ public sealed class QueryExplainTests
             index.EnsureSuccessStatusCode();
         }
 
-        var beforeSeek = await api.ReadUsageAsync();
+        var (seekUnits, seekReads) = await api.ReadUsageAsync();
         var seek = await api.QueryAsync(query);
-        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((beforeSeek.Units + 7, beforeSeek.Reads + 1));
+        await Assert.That(await api.ReadUsageAsync()).IsEqualTo((seekUnits + 7, seekReads + 1));
 
         await Assert.That(scan.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(scan.Json.GetProperty("items").GetArrayLength()).IsEqualTo(7);
