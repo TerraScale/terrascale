@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Platform.Observability;
-using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
@@ -46,10 +45,12 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
 
         async Task<UsageObservation> ReadAsync(ProjectRecord project, string databaseId, string bucket, DateTimeOffset first)
         {
+            var authorized = false;
             try
             {
                 if (project.OrganizationId != context.Organization.Id) throw new JsonException("Usage project scope is invalid.");
                 var token = await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token);
+                authorized = true;
                 var tap = new MonthTap(client);
                 using var tapped = new HttpClient(tap);
                 var sdk = new TerraBaseDocumentsClient(tapped, new TerraBaseDocumentsClientOptions
@@ -79,14 +80,14 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                     throw new JsonException("Project usage totals disagree with database usage.");
                 return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes), Count(totals.Documents),
                     Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
-                    totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket)).ToArray(), tap.Month));
+                    totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true)).ToArray(), tap.Month));
             }
             catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             { return new(UsageSourceState.Unauthorized); }
-            // TerraBase registers a project with its first database, so a project without databases is 404 there yet has
-            // truly done nothing; counting it as zero keeps one empty project from voiding the organization's month.
-            catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
-            { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [], new(now.UtcDateTime.ToString("yyyy-MM", CultureInfo.InvariantCulture), 0, 0, 0))); }
+            // Only a producer 404 after authorization can describe an unregistered empty project.
+            // It provides no authoritative monthly organization ledger, including deleted-project usage.
+            catch (HttpRequestException error) when (authorized && error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
+            { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [])); }
             catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
             { return new(UsageSourceState.Restricted); }
             catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.ErrorCode == "invalid_query")
@@ -94,13 +95,13 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
             catch (Exception error) when (Failure(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); return new(UsageSourceState.Unavailable); }
         }
     }
-    private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket)
+    private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket, bool child = false)
     {
         _ = Count(row.StorageBytes); _ = Count(row.Collections); _ = Count(row.Reads); _ = Count(row.Writes);
         if (!project.Databases.TryGetValue(row.DatabaseId, out var database) || database.ProjectId != project.Id)
             throw new JsonException("Usage returned a foreign database.");
         return new(project.Id, row.DatabaseId, Count(row.LogicalBytes), Count(row.Documents), Period(row.Period, from, now, bucket),
-            Points(row.Series, row.Period, bucket), []);
+            Points(row.Series, row.Period, bucket, child), []);
     }
 
     private static UsagePeriod Period(TerraBaseUsagePeriod period, DateTimeOffset from, DateTimeOffset now, string bucket)
@@ -117,19 +118,21 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
         return new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
     }
 
-    private static IReadOnlyList<ActivityPoint> Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket)
+    private static IReadOnlyList<ActivityPoint> Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket, bool child = false)
     {
+        if (child && series.Count == 0) return [];
         var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
         if (series.Any(point => point.Start < period.From || point.Start >= period.To || point.Start.Offset != TimeSpan.Zero ||
                 point.Start.TimeOfDay.Ticks % ticks != 0) || series.Select(point => point.Start).Distinct().Count() != series.Count)
             throw new JsonException("Usage returned invalid or repeated UTC buckets.");
         var points = series.Select(point => new ActivityPoint(point.Start, Count(point.Reads), Count(point.Writes))).OrderBy(point => point.Start).ToArray();
-        if (points.Length > 0 && (points.Sum(point => point.Reads) != period.Reads || points.Sum(point => point.Writes) != period.Writes))
+        if (points.Length != (period.To - period.From).Ticks / ticks ||
+            points.Sum(point => point.Reads) != period.Reads || points.Sum(point => point.Writes) != period.Writes)
             throw new JsonException("Usage totals disagree with its UTC buckets.");
         return points;
     }
 
-    // TerraScale.DotNet 0.0.4 drops TerraBase's `month` operation units, so read them from the same usage response.
+    // The pinned SDK drops TerraBase's `month` operation units, so read them from the same usage response.
     private sealed class MonthTap(HttpClient inner) : HttpMessageHandler
     {
         public UsageMonth? Month { get; private set; }
@@ -144,7 +147,8 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
             using (var json = JsonDocument.Parse(body))
                 Month = json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("month", out var month) && month.ValueKind == JsonValueKind.Object
                     ? new(month.GetProperty("month").GetString() is { Length: 7 } name ? name : throw new JsonException("Usage month is invalid."),
-                        Count(month.GetProperty("readUnits").GetInt64()), Count(month.GetProperty("writeUnits").GetInt64()), Count(month.GetProperty("units").GetInt64()))
+                        Count(month.GetProperty("readUnits").GetInt64()), Count(month.GetProperty("writeUnits").GetInt64()), Count(month.GetProperty("units").GetInt64()),
+                        month.TryGetProperty("organizationUnits", out var units) ? Count(units.GetInt64()) : null)
                     : null;
             var content = new ByteArrayContent(body);
             foreach (var header in response.Content.Headers) content.Headers.TryAddWithoutValidation(header.Key, header.Value);

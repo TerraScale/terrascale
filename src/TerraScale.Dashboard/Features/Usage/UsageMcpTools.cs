@@ -26,8 +26,10 @@ public sealed record UsageToolTotals(bool Available, string Source, string Error
 public sealed record UsageToolReport(string OrganizationId, string ProjectId, string DatabaseId,
     string PlanName, IReadOnlyList<UsageToolAllowance> Allowances, string AllowanceError, string PlanUsageNote,
     IReadOnlyList<UsageToolProject> Projects, IReadOnlyList<UsageToolDatabase> Databases, UsageToolTotals Totals,
-    int ActiveDatabases, int RegionCount, bool CanManage)
+    int ActiveDatabases,
+    [property: Description("Distinct regions in explicit project database placement; null when serving placement is unknown, including all-regions mode."), JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? RegionCount, bool CanManage)
 {
+    public string RegionCountDescription { get; init; } = "";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public InternalBill? InternalBill { get; init; }
 }
@@ -70,7 +72,6 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             }
             catch (OverflowException) { reads = null; writes = null; storage = null; }
         }
-        storage ??= stored.OrganizationBytes;
         var scope = measured.Scope.State == UsageSourceState.Measured ? measured.Scope.Reading : null;
         if (scope is not null && (scope.ProjectId != context.Project?.Id || scope.DatabaseId != databaseId)) throw new IOException("Selected usage scope is invalid.");
         var selected = controls.Projects.SingleOrDefault(project => project.Id == context.Project?.Id);
@@ -78,7 +79,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
         {
             var reading = measured.Monthly.GetValueOrDefault(project.Id) is { State: UsageSourceState.Measured } observation ? observation.Reading : null;
             if (reading is not null && (reading.ProjectId != project.Id || reading.DatabaseId.Length > 0)) throw new IOException("Project usage scope is invalid.");
-            var bytes = reading?.LogicalBytes ?? stored.Projects.GetValueOrDefault(project.Id)?.Total?.LogicalBytes;
+            var bytes = reading?.LogicalBytes;
             return new UsageToolProject(project.Id, project.Name, project.Region.Length > 0 ? project.Region : "Not configured",
                 project.Databases.Count, bytes, bytes is null,
                 Share(bytes, storage), project.Id == context.Project?.Id);
@@ -118,7 +119,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             ? "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
             : measured.Monthly.Values.Any(value => value.State == UsageSourceState.Unavailable) || complete
                 ? "This month's reads and writes could not be loaded from TerraBase. Try again shortly." : "";
-        var scopeBytes = scope?.LogicalBytes ?? stored.Scope(selection)?.LogicalBytes;
+        var scopeBytes = scope?.LogicalBytes ?? (databaseId.Length > 0 ? stored.Scope(selection)?.LogicalBytes : null);
         return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
             [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations,
                 complete && reads is not null ? measured.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null),
@@ -128,9 +129,10 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             projects, databases,
             new(scope is not null, source, error, range, scope?.Period.Reads, scope?.Period.Writes, scopeBytes, scopeBytes is not null, scope?.Series ?? []),
             context.Project?.Databases.Count ?? 0,
-            context.Project?.Databases.Values.Select(database => database.Region).Where(region => region.Length > 0).Distinct(StringComparer.Ordinal).Count() ?? 0,
+            UsagePlacement.For(context.Project).RegionCount,
             context.CanManage)
         {
+            RegionCountDescription = UsagePlacement.For(context.Project).Label,
             InternalBill = context.Organization.InternalBilling is not null
                 ? InternalBillingService.Estimate(context.Organization, measured, time.GetUtcNow()) : null
         };

@@ -18,5 +18,20 @@
 }
 else
 {
-    <section class="ts-card" aria-labelledby="spending-unavailable-title"><div class="ts-card-body ts-stack-sm"><h2 class="ts-card-title" id="spending-unavailable-title">Paid overages are unavailable</h2><p class="ts-meta">Customer spending caps and paid overage controls are unavailable because paid overages are not supported. View your included plan allowances in the usage overview.</p><div><a class="ts-link" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "")">View plan usage</a></div></div></section>
+    var plan = PlanCatalog.For(Model.Selection.Context.Organization!);
+    <section class="ts-card" aria-labelledby="spending-title"><div class="ts-card-body ts-stack-sm"><h2 class="ts-card-title" id="spending-title">Spending and overages</h2>
+    @if (plan is { PriceCents: > 0 })
+    {
+        <p class="ts-meta">Operation units above @plan.Name's included allowance are billed at @OperationUnitOverage.Rate operation units. Overage charges are added to your invoice.</p>
+    }
+    else if (plan is { PriceCents: 0 })
+    {
+        <p class="ts-meta">Free stops at its included operation allowance, with no usage charges. Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units.</p>
+    }
+    else
+    {
+        <p class="ts-meta">Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units. Choose a plan in billing to see its allowances.</p>
+    }
+    <p class="ts-meta">Customer hard spending caps are unavailable. Paid overage charges have no customer-set spending limit.</p>
+    <div><a class="ts-link" href="/organization?tab=billing">Manage billing and upgrade</a></div><div><a class="ts-link" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "")">View plan usage</a></div></div></section>
 }

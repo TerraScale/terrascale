@@ -21,6 +21,7 @@ public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
         using var completed = await client.GetAsync(checkout.Headers.Location);
         using var callback = await client.GetAsync(completed.Headers.Location);
         await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await AssertSpendingAsync(client, "Operation units above Starter's included allowance are billed at $5 per million operation units.");
         using var me = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
         var organizationId = me.RootElement.GetProperty("organizationId").GetString()!;
 
@@ -56,6 +57,17 @@ public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         await Assert.That((await ReportAsync(client, 10_000_000)).Length).IsEqualTo(0);
         await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops at its 50,000 operation units a month, with no usage charges.");
+        await AssertSpendingAsync(client, "Free stops at its included operation allowance, with no usage charges.");
+    }
+
+    private static async Task AssertSpendingAsync(HttpClient client, string disclosure)
+    {
+        var html = WebUtility.HtmlDecode(await client.GetStringAsync("/usage?tab=settings"));
+        await Assert.That(html).Contains(disclosure);
+        await Assert.That(html).Contains("$5 per million operation units");
+        await Assert.That(html).Contains("Customer hard spending caps are unavailable.");
+        await Assert.That(html).Contains("href=\"/organization?tab=billing\">Manage billing and upgrade</a>");
+        await Assert.That(html.Contains("paid overages are not supported", StringComparison.OrdinalIgnoreCase)).IsFalse();
     }
 
     private static async Task<JsonElement[]> ReportAsync(HttpClient client, long units, bool invoice = false)
