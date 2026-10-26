@@ -105,7 +105,7 @@ public sealed class TerraScaleAuthClient
     /// <summary>OAuth client registration for this instance.</summary>
     public TerraScaleAuthOAuthClientsClient OAuthClients { get; }
 
-    /// <summary>OIDC discovery, JWKS, token, introspection, revocation, and userinfo.</summary>
+    /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }
 
     /// <summary>Platform organizations, projects, members and API keys, using a user sign-in token.</summary>
@@ -238,7 +238,7 @@ public sealed class TerraScaleAuthClient
         return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
     }
 
-    /// <summary>One OAuth form POST (token, introspect, revoke) with client
+    /// <summary>One OAuth token form POST with client
     /// authentication and the flat RFC 6749 error shape.</summary>
     internal async Task<TResponse> SendOAuthFormAsync<TResponse>(
         string requestUri,

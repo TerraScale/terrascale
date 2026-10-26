@@ -78,7 +78,6 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthJwkSet))]
 [JsonSerializable(typeof(TerraScaleAuthJwk))]
 [JsonSerializable(typeof(TerraScaleAuthTokenResponse))]
-[JsonSerializable(typeof(TerraScaleAuthIntrospection))]
 [JsonSerializable(typeof(TerraScaleAuthUserInfo))]
 [JsonSerializable(typeof(JsonNode))]
 [JsonSerializable(typeof(JsonObject))]

@@ -137,26 +137,6 @@ public sealed class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
             cancellationToken);
     }
 
-    /// <summary>Introspects a token; inactive tokens return <c>active = false</c>.</summary>
-    public Task<TerraScaleAuthIntrospection> IntrospectTokenAsync(
-        string clientId,
-        string clientSecret,
-        string token,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(token);
-        return client.SendOAuthFormAsync(
-            InstanceRoute("/oauth/introspect"),
-            [
-                new KeyValuePair<string, string>("client_id", clientId),
-                new("client_secret", clientSecret),
-                new("token", token),
-            ],
-            authorization: null,
-            TerraScaleAuthJsonContext.Default.TerraScaleAuthIntrospection,
-            cancellationToken);
-    }
-
     /// <summary>Reads the userinfo claims for one issued access token.</summary>
     public Task<TerraScaleAuthUserInfo> GetUserInfoAsync(string accessToken, CancellationToken cancellationToken = default) =>
         client.GetWithBearerAsync(
@@ -202,7 +182,7 @@ public sealed record TerraScaleAuthOidcDiscovery(
     [property: JsonPropertyName("userinfo_endpoint")] string UserinfoEndpoint,
     [property: JsonPropertyName("jwks_uri")] string JwksUri,
     [property: JsonPropertyName("revocation_endpoint")] string RevocationEndpoint,
-    [property: JsonPropertyName("introspection_endpoint")] string IntrospectionEndpoint,
+    [property: JsonPropertyName("introspection_endpoint")] string? IntrospectionEndpoint,
     [property: JsonPropertyName("end_session_endpoint")] string EndSessionEndpoint,
     [property: JsonPropertyName("response_types_supported")] IReadOnlyList<string> ResponseTypesSupported,
     [property: JsonPropertyName("grant_types_supported")] IReadOnlyList<string> GrantTypesSupported,
@@ -242,18 +222,6 @@ public sealed record TerraScaleAuthTokenResponse(
     public override string ToString() =>
         $"{typeof(TerraScaleAuthTokenResponse).Name} {{ TokenType = {TokenType}, ExpiresIn = {ExpiresIn}, Scope = {Scope}, AccessToken = [REDACTED], RefreshToken = [REDACTED], IdToken = [REDACTED] }}";
 }
-
-/// <summary>A token introspection result.</summary>
-public sealed record TerraScaleAuthIntrospection(
-    [property: JsonPropertyName("active")] bool Active,
-    [property: JsonPropertyName("token_type")] string? TokenType,
-    [property: JsonPropertyName("iss")] string? Issuer,
-    [property: JsonPropertyName("sub")] string? Subject,
-    [property: JsonPropertyName("aud")] string? Audience,
-    [property: JsonPropertyName("client_id")] string? ClientId,
-    [property: JsonPropertyName("scope")] string? Scope,
-    [property: JsonPropertyName("exp")] long? ExpiresAt,
-    [property: JsonPropertyName("iat")] long? IssuedAt);
 
 /// <summary>Userinfo claims for one access token.</summary>
 public sealed record TerraScaleAuthUserInfo(
