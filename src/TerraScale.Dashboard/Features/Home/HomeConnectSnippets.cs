@@ -10,11 +10,16 @@ public static class HomeConnectSnippets
     public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
 
     public const string TokenExchange = """
-        read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
-        export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
-          -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" -d grant_type=client_credentials \
-          https://auth.terrascale.tech/terrascale/oauth/token \
-          | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
+        set +x
+        set -o pipefail
+        read -rs TERRASCALE_API_KEY &&  # paste the key, then press Enter
+        TERRASCALE_ACCESS_TOKEN="$(
+          printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
+            curl -sS --fail-with-body --config - -d grant_type=client_credentials \
+              https://auth.terrascale.tech/terrascale/oauth/token |
+            jq -er '.access_token | select(type == "string" and length > 0)'
+        )" &&
+        export TERRASCALE_ACCESS_TOKEN
         """;
 
     // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
@@ -24,16 +29,18 @@ public static class HomeConnectSnippets
         """;
 
     public static string CreateCollection(string projectId, string database) => $$"""
-        curl -sS --fail-with-body -H "Authorization: Bearer $TERRASCALE_ACCESS_TOKEN" \
+        curl -sS --fail-with-body --header @/dev/fd/3 \
           -H 'Content-Type: application/json' -d '{"name":"{{Collection}}"}' \
-          "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/collections"
+          "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/collections" \
+          3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
         """;
 
     public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database) =>
     [
         ("curl", "curl", "", $"""
-            curl -sS -H "Authorization: Bearer $TERRASCALE_ACCESS_TOKEN" \
-              "{ApiUrl}/v1/projects/{projectId}/databases/{database}/collections/{Collection}/documents?limit=10"
+            curl -sS --fail-with-body --header @/dev/fd/3 \
+              "{ApiUrl}/v1/projects/{projectId}/databases/{database}/collections/{Collection}/documents?limit=10" \
+              3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
             """),
         ("js", "JavaScript", "npm install @terrascale/sdk", $$"""
             import { createTerraBaseV1Client } from "@terrascale/sdk";
