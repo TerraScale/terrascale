@@ -114,14 +114,15 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardRootFixture fixture)
         var adminProjects = await replica.GetStringAsync("/organization?tab=projects");
         await Assert.That(adminProjects.Contains(remoteId, StringComparison.Ordinal)).IsTrue();
         await Assert.That(adminProjects.Contains(name, StringComparison.Ordinal)).IsTrue();
-        await Assert.That(adminProjects.Contains("commandfor=\"rename-project-", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(adminProjects.Contains("commandfor=\"rename-project-", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsFalse()
+            .Because("Personal organization provisioning still requires its owner.");
         using (var adminRename = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects/" + remoteId + "/rename", new()
-        { ["_csrf"] = replicaCsrf, ["name"] = "Admin mutation denied", ["region"] = "GRU", ["backupRegion"] = "GRU", ["regions"] = "GRU" }))
-        {
-            await Assert.That(adminRename.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-            await Assert.That(await adminRename.Content.ReadAsStringAsync()).Contains("Organization ownership is required.");
-        }
+        { ["_csrf"] = replicaCsrf, ["name"] = "Admin recovered project", ["region"] = "GRU", ["backupRegion"] = "GRU", ["regions"] = "GRU" }))
+            await Assert.That(adminRename.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(Organization(await ContextAsync(owner), organizationId).GetProperty("projects").GetProperty(remoteId).GetProperty("name").GetString()).IsEqualTo("Admin recovered project");
+        using (var restoredName = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects/" + remoteId + "/rename", form))
+            await Assert.That(restoredName.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await ControlAsync(producer, new { command = "role", value = "owner" });
         using (var selected = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/switch-project", new()
         { ["_csrf"] = replicaCsrf, ["projectId"] = remoteId, ["returnUrl"] = "/organization?tab=projects" }))

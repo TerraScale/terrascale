@@ -29,7 +29,7 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         var reservation = AccountService.NewId();
         await accounts.UpdateOrganizationAsync(context, async org =>
         {
-            OrganizationOperations.Owner(org, context.UserId);
+            OrganizationOperations.Manage(org, context.UserId);
             // Invitations before members: an acceptance in between shows the invitee in both, never in neither.
             var invitations = await platform.ListInvitationsAsync(context.Session, org.Id, cancellationToken);
             var members = await platform.ListMembersAsync(context.Session, org.Id, cancellationToken);
@@ -45,7 +45,7 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
             // shortcut: direct identity writes after this read can still race; enforce global allowance in ts-auth.
             await accounts.UpdateOrganizationAsync(context, async org =>
             {
-                OrganizationOperations.Owner(org, context.UserId);
+                OrganizationOperations.Manage(org, context.UserId);
                 var invitations = await platform.ListInvitationsAsync(context.Session, org.Id, cancellationToken);
                 var members = await platform.ListMembersAsync(context.Session, org.Id, cancellationToken);
                 Reconcile(org, invitations);
@@ -132,7 +132,7 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
     private async Task<AccountContext> FreshAsync(AccountContext context, CancellationToken cancellationToken)
     {
         var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-        OrganizationOperations.Owner(fresh.Organization!, fresh.UserId);
+        OrganizationOperations.Manage(fresh.Organization!, fresh.UserId);
         return fresh;
     }
 

@@ -88,17 +88,22 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
     {
         using var owner = fixture.CreateClient();
         using var member = fixture.CreateClient();
+        using var teammate = fixture.CreateClient();
         using var replica = fixture.CreateClient(replica: true);
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var password = "E2E-org-access-" + suffix;
         var ownerEmail = "org-access-owner-" + suffix + "@example.test";
         var memberEmail = "org-access-member-" + suffix + "@example.test";
+        var teammateEmail = "org-access-teammate-" + suffix + "@example.test";
         await BillingPlanJourneyTests.SignUpPaidAsync(owner, ownerEmail, password, "owner-" + suffix);
         await BillingPlanJourneyTests.SignUpPaidAsync(member, memberEmail, password, "member-" + suffix);
+        await BillingPlanJourneyTests.SignUpPaidAsync(teammate, teammateEmail, password, "teammate-" + suffix);
         using var login = await HttpJourney.LoginAsync(replica, ownerEmail, password);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var ownerSecret = await HttpJourney.CreatePatAsync(owner, "Owner access " + suffix, password);
         var memberSecret = await HttpJourney.CreatePatAsync(member, "Member access " + suffix, password);
+        var teammateSecret = await HttpJourney.CreatePatAsync(teammate, "Teammate access " + suffix, password);
+        var teammateId = (await ContextAsync(teammate, teammateSecret)).GetProperty("user").GetProperty("id").GetString()!;
         var ownerContext = await ContextAsync(owner, ownerSecret);
         var memberContext = await ContextAsync(member, memberSecret);
         var ownerId = ownerContext.GetProperty("user").GetProperty("id").GetString()!;
@@ -170,36 +175,128 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         var admittedAdmin = await ContextAsync(member, memberSecret);
         await Assert.That(Organization(admittedAdmin, businessId).GetProperty("role").GetString()).IsEqualTo("admin");
         var adminDetails = await member.GetStringAsync("/organization");
-        await Assert.That(adminDetails.Contains("id=\"organization-details\"", StringComparison.Ordinal)).IsTrue();
-        await Assert.That(adminDetails.Contains("commandfor=\"rename-organization\"", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(adminDetails.Contains("commandfor=\"rename-organization\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(adminDetails.Contains("/mfa-policy", StringComparison.Ordinal)).IsFalse();
         var adminMembers = await member.GetStringAsync("/organization?tab=members");
-        await Assert.That(adminMembers.Contains(ownerEmail, StringComparison.Ordinal)).IsTrue();
-        await Assert.That(adminMembers.Contains(memberEmail, StringComparison.Ordinal)).IsTrue();
-        await Assert.That(adminMembers.Contains("id=\"team-invite\"", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(adminMembers.Contains("name=\"role\" required", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(adminMembers.Contains("/api/v1/access/invitations", StringComparison.Ordinal)).IsFalse();
-        var adminProjects = await member.GetStringAsync("/organization?tab=projects");
-        await Assert.That(adminProjects.Contains("id=\"projects\"", StringComparison.Ordinal)).IsTrue();
-        await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(adminProjects.Contains("commandfor=\"rename-project-", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(adminProjects.Contains("commandfor=\"delete-project-", StringComparison.Ordinal)).IsFalse();
-        await ErrorAsync(member, memberSecret, "rename_organization", new { organizationId = businessId, name = "Admin cannot rename" });
-        // ts-auth offers a read-only viewer role.
-        await ToolAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role = "viewer" });
-        await Assert.That(Organization(await ContextAsync(member, memberSecret), businessId).GetProperty("role").GetString()).IsEqualTo("viewer");
-        using (var restoreMember = await HttpJourney.PostFormAsync(owner, "/api/v1/access/members/" + Uri.EscapeDataString(memberId) + "/role?tab=members", new()
-        { ["_csrf"] = ownerCsrf, ["role"] = "member" }))
-            await Assert.That(restoreMember.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        foreach (var (tool, arguments) in new (string, object)[]
+        await Assert.That(adminMembers.Contains("id=\"team-invite\"", StringComparison.Ordinal)).IsTrue();
+        // Neither the owner nor the caller can be edited, even by an admin.
+        var protectedMembers = (await ToolAsync(member, memberSecret, "list_members", new { organizationId = businessId })).GetProperty("members");
+        await Assert.That(protectedMembers.EnumerateArray().All(item => !item.GetProperty("canEdit").GetBoolean())).IsTrue();
+        var adminCsrf = await HttpJourney.CsrfAsync(member, "/organization?tab=members");
+        using (var renamed = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/rename", new()
+        { ["_csrf"] = adminCsrf, ["name"] = "Admin renamed " + suffix }))
+            await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(Organization(await ContextAsync(replica, ownerSecret), businessId).GetProperty("name").GetString()).IsEqualTo("Admin renamed " + suffix);
+        await ToolAsync(member, memberSecret, "rename_organization", new { organizationId = businessId, name = "Access company " + suffix });
+        await ErrorAsync(member, memberSecret, "create_project", new { organizationId = businessId, name = "Unpaid denied", regions = new[] { "GRU" } });
+        await ErrorAsync(member, memberSecret, "create_checkout", new { organizationId = businessId, plan = "starter", interval = "annual" });
+        // Only the owner activates billing; management permission never bypasses provisioning policy.
+        var checkout = await ToolAsync(owner, ownerSecret, "create_checkout", new { organizationId = businessId, plan = "starter", interval = "annual" });
+        using (var vendor = await owner.GetAsync(checkout.GetProperty("checkoutUrl").GetString()))
         {
-            ("rename_organization", new { organizationId = businessId, name = "Forbidden" }),
-            ("create_project", new { organizationId = businessId, name = "Forbidden", regions = new[] { "GRU" } }),
-            ("invite_member", new { organizationId = businessId, email = "forbidden@example.test" }),
-            ("remove_member", new { organizationId = businessId, userId = ownerId }),
-            ("request_ownership_transfer", new { organizationId = businessId, userId = ownerId }),
-            ("request_organization_deletion", new { organizationId = businessId, confirmName = "Access company " + suffix }),
-            ("list_audit_events", new { organizationId = businessId })
-        }) await ErrorAsync(member, memberSecret, tool, arguments);
+            await Assert.That(vendor.StatusCode).IsEqualTo(HttpStatusCode.Found);
+            using var returned = await owner.GetAsync(vendor.Headers.Location);
+            await Assert.That(returned.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        }
+        var adminProject = await ToolAsync(member, memberSecret, "create_project", new { organizationId = businessId, name = "Admin project " + suffix, regions = new[] { "GRU" } });
+        var adminProjectId = adminProject.GetProperty("id").GetString()!;
+        using (var renamed = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/projects/" + adminProjectId + "/rename", new()
+        { ["_csrf"] = adminCsrf, ["name"] = "Admin project renamed " + suffix, ["region"] = "GRU" }))
+            await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await ToolAsync(member, memberSecret, "update_project", new { organizationId = businessId, projectId = adminProjectId, name = "Admin project renamed " + suffix, regions = new[] { "GRU", "SFO" } });
+        var savedProject = Organization(await ContextAsync(replica, ownerSecret), businessId).GetProperty("projects").EnumerateArray().Single(item => item.GetProperty("id").GetString() == adminProjectId);
+        await Assert.That(savedProject.GetProperty("name").GetString()).IsEqualTo("Admin project renamed " + suffix);
+        await Assert.That(savedProject.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
+        var adminProjects = await member.GetStringAsync("/organization?tab=projects");
+        await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(adminProjects.Contains("commandfor=\"rename-project-" + adminProjectId, StringComparison.Ordinal)).IsTrue();
+        // Starter allows five projects; the sixth is refused before the provider mutation.
+        for (var index = 1; index < 5; index++)
+        {
+            using var created = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/projects", new()
+            { ["_csrf"] = adminCsrf, ["name"] = "Admin quota " + suffix + index, ["regions"] = "GRU" });
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        }
+        using (var full = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/projects", new()
+        { ["_csrf"] = adminCsrf, ["name"] = "Admin quota overflow", ["regions"] = "GRU" }))
+        {
+            await Assert.That(full.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(await full.Content.ReadAsStringAsync()).Contains("project limit (5 projects)");
+        }
+        await Assert.That(Organization(await ContextAsync(replica, ownerSecret), businessId).GetProperty("projects").GetArrayLength()).IsEqualTo(5);
+        foreach (var protectedId in new[] { ownerId, memberId })
+        {
+            await ErrorAsync(member, memberSecret, "update_member_role", new { organizationId = businessId, userId = protectedId, role = "viewer" });
+            await ErrorAsync(member, memberSecret, "remove_member", new { organizationId = businessId, userId = protectedId });
+        }
+        await ErrorAsync(member, memberSecret, "request_ownership_transfer", new { organizationId = businessId, userId = ownerId });
+        using (var deletion = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/deletion", new()
+        { ["_csrf"] = adminCsrf, ["confirmation"] = "Access company " + suffix }))
+            await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        foreach (var role in new[] { "viewer", "member", "admin" })
+        {
+            using (var invited = await HttpJourney.PostFormAsync(member, "/api/v1/access/invitations?tab=invitations", new()
+            { ["_csrf"] = adminCsrf, ["email"] = teammateEmail, ["role"] = role }))
+                await Assert.That(invited.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var invitation = (await ToolAsync(member, memberSecret, "list_invitations", new { organizationId = businessId })).GetProperty("invitations").EnumerateArray().Single(item => item.GetProperty("open").GetBoolean());
+            await Assert.That(invitation.GetProperty("role").GetString()).IsEqualTo(role);
+            var replacement = await ToolAsync(member, memberSecret, "resend_invitation", new { organizationId = businessId, invitationId = invitation.GetProperty("id").GetString() });
+            var replacementId = replacement.GetProperty("invitation").GetProperty("id").GetString()!;
+            if (role == "admin")
+                await ToolAsync(teammate, teammateSecret, "respond_to_invitation", new { token = replacement.GetProperty("inviteUrl").GetString(), action = "accept" });
+            else
+            {
+                if (role == "viewer")
+                {
+                    using var canceledInvitation = await HttpJourney.PostFormAsync(member, "/api/v1/access/invitations/" + replacementId + "/revoke?tab=invitations", new() { ["_csrf"] = adminCsrf });
+                    await Assert.That(canceledInvitation.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                }
+                else await ToolAsync(member, memberSecret, "revoke_invitation", new { organizationId = businessId, invitationId = replacementId });
+                await ErrorAsync(teammate, teammateSecret, "get_invitation", new { token = replacement.GetProperty("inviteUrl").GetString() });
+            }
+        }
+        await ErrorAsync(member, memberSecret, "request_ownership_transfer", new { organizationId = businessId, userId = teammateId });
+        using (var transfer = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/members/ownership", new()
+        { ["_csrf"] = adminCsrf, ["userID"] = teammateId }))
+            await Assert.That(transfer.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        var editable = await ToolAsync(member, memberSecret, "list_members", new { organizationId = businessId, search = teammateEmail });
+        await Assert.That(editable.GetProperty("members")[0].GetProperty("canEdit").GetBoolean()).IsTrue();
+        await Assert.That((await member.GetStringAsync("/organization?tab=members")).Contains("/api/v1/access/members/" + teammateId + "/role", StringComparison.Ordinal)).IsTrue();
+        using (var changed = await HttpJourney.PostFormAsync(member, "/api/v1/access/members/" + teammateId + "/role?tab=members", new()
+        { ["_csrf"] = adminCsrf, ["role"] = "viewer" }))
+            await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(Organization(await ContextAsync(teammate, teammateSecret), businessId).GetProperty("role").GetString()).IsEqualTo("viewer");
+        await ToolAsync(member, memberSecret, "update_member_role", new { organizationId = businessId, userId = teammateId, role = "admin" });
+        // The same session and PAT immediately lose management when ts-auth demotes the admin.
+        foreach (var role in new[] { "viewer", "member" })
+        {
+            await ToolAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role });
+            await Assert.That(Organization(await ContextAsync(member, memberSecret), businessId).GetProperty("role").GetString()).IsEqualTo(role);
+            await Assert.That((await member.GetStringAsync("/organization?tab=members")).Contains("id=\"team-invite\"", StringComparison.Ordinal)).IsFalse();
+            await Assert.That((await member.GetStringAsync("/organization")).Contains("commandfor=\"rename-organization\"", StringComparison.Ordinal)).IsFalse();
+            using (var denied = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/rename", new()
+            { ["_csrf"] = adminCsrf, ["name"] = "Forbidden" }))
+                await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            foreach (var (tool, arguments) in new (string, object)[]
+            {
+                ("rename_organization", new { organizationId = businessId, name = "Forbidden" }),
+                ("create_project", new { organizationId = businessId, name = "Forbidden", regions = new[] { "GRU" } }),
+                ("update_project", new { organizationId = businessId, projectId = adminProjectId, name = "Forbidden" }),
+                ("invite_member", new { organizationId = businessId, email = "forbidden@example.test" }),
+                ("update_member_role", new { organizationId = businessId, userId = teammateId, role = "admin" }),
+                ("remove_member", new { organizationId = businessId, userId = teammateId }),
+                ("request_ownership_transfer", new { organizationId = businessId, userId = ownerId }),
+                ("request_organization_deletion", new { organizationId = businessId, confirmName = "Access company " + suffix }),
+                ("list_audit_events", new { organizationId = businessId })
+            }) await ErrorAsync(member, memberSecret, tool, arguments);
+        }
+        await ToolAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role = "admin" });
+        using (var removed = await HttpJourney.PostFormAsync(member, "/api/v1/access/members/" + teammateId + "/revoke?tab=members", new() { ["_csrf"] = adminCsrf }))
+            await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using (var signedOutTeammate = await teammate.GetAsync("/api/v1/auth/me"))
+            await Assert.That(signedOutTeammate.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await ErrorAsync(teammate, teammateSecret, "list_members", new { organizationId = businessId });
+        await ToolAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role = "member" });
         await ToolAsync(owner, ownerSecret, "request_ownership_transfer", new { organizationId = businessId, userId = memberId });
         var pendingOwner = await ToolAsync(owner, ownerSecret, "get_organization", new { organizationId = businessId });
         await Assert.That(pendingOwner.GetProperty("pendingOwnerUserId").GetString()).IsEqualTo(memberId);
@@ -215,7 +312,8 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         var transferred = await ToolAsync(member, memberSecret, "get_organization", new { organizationId = businessId });
         await Assert.That(transferred.TryGetProperty("pendingOwnerUserId", out _)).IsFalse();
         await Assert.That(transferred.TryGetProperty("pendingOwnerExpiresAt", out _)).IsFalse();
-        await ErrorAsync(replica, ownerSecret, "rename_organization", new { organizationId = businessId, name = "Former owner denied" });
+        await ToolAsync(replica, ownerSecret, "rename_organization", new { organizationId = businessId, name = "Former owner manages as admin " + suffix });
+        await ErrorAsync(replica, ownerSecret, "request_ownership_transfer", new { organizationId = businessId, userId = memberId });
         await ToolAsync(member, memberSecret, "request_ownership_transfer", new { organizationId = businessId, userId = ownerId });
         await ToolAsync(replica, ownerSecret, "confirm_ownership_transfer", new { organizationId = businessId });
         await ToolAsync(member, memberSecret, "leave_organization", new { organizationId = businessId });

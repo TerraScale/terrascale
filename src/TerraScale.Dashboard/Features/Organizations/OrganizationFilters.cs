@@ -70,7 +70,7 @@ public sealed record InvitationRow(string Id, string Email, string Role, string 
 
 public sealed partial record OrganizationPage
 {
-    public bool CanManage => Shell.Context.Role == "owner" && Shell.Context.Organization?.OwnerUserId == Shell.Context.UserId;
+    public bool CanManage => Shell.Context.CanManage;
     public bool CanProvision => CanManage && Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true;
     public OrganizationFilters Filter => Filters ?? new();
     public IReadOnlyList<MemberRecord> MatchingMembers => (Access?.Members ?? []).Where(member =>
@@ -88,7 +88,7 @@ public sealed partial record OrganizationPage
             var now = Filter.Now ?? DateTimeOffset.UtcNow;
             var rows = (Access?.Invitations ?? []).Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
                 invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status,
-                // An expired invitation stays manageable: the owner can replace or cancel it.
+                // An expired invitation stays manageable: an owner or admin can replace or cancel it.
                 invite.CreatedAt, invite.ExpiresAt, invite.Status is "pending" or "expired")).ToDictionary(invite => invite.Id);
             return rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal).ToArray();
         }

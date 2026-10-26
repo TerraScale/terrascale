@@ -12,12 +12,12 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     private const string OrganizationDescription = "Organization ID to act on. Defaults to the caller's current dashboard organization.";
     private const string ProjectDescription = "Project ID to act on. Defaults to the current project, or the organization's default project when organizationId is given.";
 
-    [McpServerTool(Name = "rename_organization", Title = "Rename organization", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename an organization. Requires the owner role.")]
+    [McpServerTool(Name = "rename_organization", Title = "Rename organization", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename an organization. Requires the owner or admin role.")]
     public Task<OrganizationDone> RenameOrganization([Description("New name: 1-128 characters including a letter or digit.")] string name,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     { await operations.RenameAsync(Scope(organizationId, projectId), name, Cancellation); return new OrganizationDone(true); });
 
-    [McpServerTool(Name = "create_project", Title = "Create project", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Create a project in an organization. Requires the owner role and, for business organizations, active billing.")]
+    [McpServerTool(Name = "create_project", Title = "Create project", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Create a project in an organization. Requires the owner or admin role and, for business organizations, active billing.")]
     public Task<OrganizationProjectResult> CreateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
         [Description("Primary region code TerraBase serves, such as GRU. Defaults to the first listed region.")] string region = "",
         [Description("Backup region code. Defaults to the first listed region.")] string backupRegion = "",
@@ -28,7 +28,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         return new OrganizationProjectResult(project.Id, project.OrganizationId, project.Name, project.Region, project.BackupRegion, project.Regions);
     });
 
-    [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally change its regions. Requires the owner role.")]
+    [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally change its regions. Requires the owner or admin role.")]
     public Task<OrganizationDone> UpdateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
         [Description("Primary region code TerraBase serves, such as GRU. Defaults to the first listed region.")] string region = "",
         [Description("Backup region code. Defaults to the first listed region.")] string backupRegion = "",
@@ -45,7 +45,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationDone> LeaveOrganization([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     { await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation); return new OrganizationDone(true); });
 
-    [McpServerTool(Name = "update_member_role", Title = "Update member role", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Change a member's role to viewer, member or admin. Requires the owner role.")]
+    [McpServerTool(Name = "update_member_role", Title = "Update member role", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Change a member's role to viewer, member or admin. Requires the owner or admin role.")]
     public Task<OrganizationDone> UpdateMemberRole([Description("Member user ID from list_members.")] string userId,
         [Description("viewer (read only), member (read and write data) or admin (manages members, projects and keys).")] string role,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
@@ -55,7 +55,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         return new OrganizationDone(true);
     });
 
-    [McpServerTool(Name = "remove_member", Title = "Remove member", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Remove a member from an organization and sign them out. Requires the owner role.")]
+    [McpServerTool(Name = "remove_member", Title = "Remove member", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Remove a member's user access to an organization and its projects and revoke their dashboard sessions. Organization and project service keys remain active; rotate or revoke any keys known to them at /api-keys. Requires the owner or admin role.")]
     public Task<OrganizationDone> RemoveMember([Description("Member user ID from list_members.")] string userId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Member("remove", userId, organizationId, projectId);
 
@@ -79,7 +79,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
             .OrderBy(member => member.Name).ThenBy(member => member.UserId)
             .Select(member => new OrganizationMemberView(member.UserId, member.Name, member.Email, member.Role,
                 member.UserId == context.Organization!.OwnerUserId || member.Role == "owner", member.UserId == context.UserId,
-                context.Role == "owner" && member.UserId != context.UserId && member.Role != "owner",
+                context.CanManage && member.UserId != context.UserId && member.Role != "owner",
                 member.CreatedAt != DateTimeOffset.MinValue ? member.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd") : member.JoinedOn?.ToString("yyyy-MM-dd") ?? "")).ToArray();
         return new OrganizationMemberList(matching, new(members.Count(member => member.Role == "owner"), members.Count(member => member.Role == "member"),
             members.Count(member => member.Role == "viewer"), members.Count(member => member.Role == "admin")));
@@ -94,7 +94,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         return new OrganizationInvitationList(rows.OrderBy(invite => invite.Status != "Pending").ThenBy(invite => invite.Email).ToArray());
     });
 
-    [McpServerTool(Name = "invite_member", Title = "Invite member", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Invite an email address to an organization and return a one-time invitation link. Requires the owner role and plan member capacity.")]
+    [McpServerTool(Name = "invite_member", Title = "Invite member", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Invite an email address to an organization and return a one-time invitation link. Requires the owner or admin role and plan member capacity.")]
     public Task<OrganizationIssuedInvitation> InviteMember([Description("Email address to invite.")] string email,
         [Description("viewer (read only), member (read and write data) or admin (manages members, projects and keys). Defaults to member.")] string role = "member",
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
@@ -104,12 +104,12 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         return Issued(created);
     });
 
-    [McpServerTool(Name = "resend_invitation", Title = "Resend invitation", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Replace a pending invitation's link. The previous link stops working. Requires the owner role; the provider supplies the new expiry and invitation ID.")]
+    [McpServerTool(Name = "resend_invitation", Title = "Resend invitation", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Replace a pending invitation's link. The previous link stops working. Requires the owner or admin role; the provider supplies the new expiry and invitation ID.")]
     public Task<OrganizationIssuedInvitation> ResendInvitation([Description("Invitation ID from list_invitations.")] string invitationId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
         Issued(await invitations.ResendAsync(Scope(organizationId, projectId), invitationId, Cancellation)));
 
-    [McpServerTool(Name = "revoke_invitation", Title = "Revoke invitation", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Cancel a pending invitation so its link no longer works. Requires the owner role.")]
+    [McpServerTool(Name = "revoke_invitation", Title = "Revoke invitation", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Cancel a pending invitation so its link no longer works. Requires the owner or admin role.")]
     public Task<OrganizationDone> RevokeInvitation([Description("Invitation ID from list_invitations.")] string invitationId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     { await invitations.RevokeAsync(Scope(organizationId, projectId), invitationId, Cancellation); return new OrganizationDone(true); });
