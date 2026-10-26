@@ -5,26 +5,28 @@ description: Connect psql, node-postgres, psycopg, pgx, Npgsql and JDBC to a Ter
 
 # Connect with psql and Postgres drivers
 
-TerraBase databases accept connections over the PostgreSQL wire protocol (version 3). Use `psql` or a standard Postgres driver: you change the connection URL, not your client code. SQL writes replicate across regions like Documents API writes. SQL tables and Documents API collections have different schemas and query contracts, but share a database naming namespace. The examples use `sql_customers`, separate from the Documents quickstart's `customers` collection.
+TerraBase provides a PostgreSQL v3 (PGv3) driver adapter over the TerraBase SQL subset. Postgres driver connectivity does not imply full PostgreSQL SQL, native-type or ORM compatibility. SQL writes replicate across regions like Documents API writes. SQL tables and Documents API collections have different schemas and query contracts, but share a database naming namespace. The examples use `sql_customers`, separate from the Documents quickstart's `customers` collection.
 
 ::: tip Verified
 Checked on 2026-10-24 against production (`pg.terrascale.tech`) with a dashboard API key as the password: `psql` 18, `pg` 8.23.1 and `pgx` v5.11.0 ran tables, writes, joins, parameters, prepared statements, transactions and indexes; a read-only key got `42501` on writes, and a revoked key was refused within a minute.
 :::
 
+The [Drizzle](/guides/orm-drizzle), [Prisma](/guides/orm-prisma) and [SQLAlchemy](/guides/orm-sqlalchemy) guides use SQLite/libSQL, not this adapter. The current live adapter does not support `RETURNING`, savepoints, schema-qualified names or general PostgreSQL catalog reflection; native binary UUID, numeric, temporal, bytea and array bindings may be rejected. Foreign-key declarations are not enforced. Test your exact ORM/provider, generated SQL and native types; the dated verification above covers only the listed driver flows.
+
 ## Connection URL
 
 ```text
-postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=require
+postgresql://{label}@pg.terrascale.tech:5432/{database}?sslmode=verify-full&sslrootcert=system
 ```
 
 | Part | Value |
 | --- | --- |
 | `{label}` | Any user name. TerraBase ignores it; use it to tell your applications apart in your own logs. |
-| `{api-key}` | The password: an API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. A revoked key is refused within about a minute. |
+| Password (supply separately via `PGPASSWORD`) | The password: an API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. A revoked key is refused within about a minute. |
 | `{database}` | The database name in the key's project. With an organization-wide key, use `{projectId}/{name}`, written `{projectId}%2F{name}` in a URL. |
-| `sslmode=require` | Required. TLS is mandatory and plaintext connections are refused. |
+| `sslmode=verify-full&sslrootcert=system` | For libpq 16+: require TLS and verify the certificate chain and hostname using installed system CA certificates. Encryption alone (`require`) does not guarantee hostname verification. |
 
-Use a key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP`. Create it in the dashboard, keep it in your server's secret store, and pass the URL to your application through an environment variable. Never commit it, put it on a command line or log it.
+Every connection needs `documents:read`; add `documents:write` for writes and `CREATE`/`DROP`. Create it in the dashboard, keep it in your server's secret store, and pass the URL to your application through an environment variable. Never commit it, put it on a command line or log it.
 
 Complete [Getting started](/getting-started/) first and set `TERRASCALE_DATABASE_NAME` to your database name. Postgres uses the raw API key password; the 60-second lifetime of exchanged HTTP tokens does not apply to this connection. Run the psql table setup before the driver fragments. These snippets use synthetic IDs 1, 2 and 3 in a table reserved for the example.
 
@@ -32,7 +34,7 @@ Complete [Getting started](/getting-started/) first and set `TERRASCALE_DATABASE
 
 ```sh
 read -rs PGPASSWORD && export PGPASSWORD  # paste the API key, then press Enter
-export DATABASE_URL="postgresql://app@pg.terrascale.tech:5432/$TERRASCALE_DATABASE_NAME?sslmode=require"
+export DATABASE_URL="postgresql://app@pg.terrascale.tech:5432/$TERRASCALE_DATABASE_NAME?sslmode=verify-full&sslrootcert=system"
 psql "$DATABASE_URL"
 ```
 
@@ -42,7 +44,7 @@ INSERT INTO sql_customers (id, name) VALUES (1, 'Ada'), (2, 'Grace') ON CONFLICT
 SELECT name FROM sql_customers WHERE id = 1;
 ```
 
-`\dt`, `\d`, `\d sql_customers`, `\l` and `\dn` work. With libpq 16 or later, `sslmode=verify-full&sslrootcert=system` also verifies the server certificate against the system trust store.
+Use libpq 16+ for this system-trust example; older libpq needs `sslrootcert=/path/to/trusted-ca-bundle.pem` with `sslmode=verify-full`. `\dt`, `\d`, `\d sql_customers`, `\l` and `\dn` have limited support; descriptions are not complete PostgreSQL catalog metadata.
 
 ## Node.js (pg)
 
@@ -53,7 +55,11 @@ npm install pg
 ```js
 import pg from 'pg'
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, password: process.env.PGPASSWORD })
+const client = new pg.Client({
+  host: 'pg.terrascale.tech', port: 5432, user: 'app',
+  database: process.env.TERRASCALE_DATABASE_NAME, password: process.env.PGPASSWORD,
+  ssl: { rejectUnauthorized: true },
+})
 await client.connect()
 
 await client.query('INSERT INTO sql_customers (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING', [3, 'Linus'])
@@ -64,6 +70,8 @@ await client.query({ name: 'customer-by-id', text: 'SELECT name FROM sql_custome
 
 await client.end()
 ```
+
+Node uses its trusted CA certificates. Keep these explicit fields: URL options such as `sslmode` or `sslrootcert` can replace the `ssl` object if you add `connectionString`.
 
 ## Python (psycopg)
 
@@ -119,7 +127,7 @@ Use the same `PGPASSWORD` environment variable as psql. Replace `shop` with your
 ```csharp
 using Npgsql;
 
-var connectionString = "Host=pg.terrascale.tech;Port=5432;Database=shop;Username=app;SSL Mode=Require;Password="
+var connectionString = "Host=pg.terrascale.tech;Port=5432;Database=shop;Username=app;SSL Mode=VerifyFull;Password="
     + Environment.GetEnvironmentVariable("PGPASSWORD");
 await using var dataSource = NpgsqlDataSource.Create(connectionString);
 
@@ -199,7 +207,7 @@ Drivers that fetch results in batches through a cursor need that turned off: for
 
 ## Troubleshooting
 
-- **`28000` on connect.** The client connected without TLS. Add `sslmode=require` to the URL, or `SSL Mode=Require` for Npgsql.
+- **`28000` on connect.** Use the verifying TLS settings above: `sslmode=verify-full&sslrootcert=system` for libpq 16+, `SSL Mode=VerifyFull` for Npgsql, or the explicit Node `ssl` object. Keep certificate verification enabled.
 - **`28P01` on connect.** The API key is wrong, revoked or from another project, or the database name does not exist in the key's project. With an organization-wide key, use `{projectId}%2F{name}` as the database.
 - **`0A000`.** The statement or protocol feature is not supported; check [Supported](#supported). GUI tools that browse the system catalog are a common source.
 - **`40001` at `COMMIT`.** Another writer changed what your transaction read. Retry from `BEGIN`.
