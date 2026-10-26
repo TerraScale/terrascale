@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -580,6 +581,8 @@ func (u *User) do(ctx context.Context, method string, path []string, query url.V
 // sendJSON sends a JSON request with an Authorization header and decodes a
 // 2xx JSON answer into out; other answers are *APIError.
 func sendJSON(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	var body io.Reader
 	if in != nil {
 		data, err := json.Marshal(in)
@@ -605,9 +608,12 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 		return fmt.Errorf("tsauth: %s %s: %w", method, req.URL.Path, err)
 	}
 	defer res.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	data, err := io.ReadAll(io.LimitReader(res.Body, (8<<20)+1))
 	if err != nil {
 		return fmt.Errorf("tsauth: read %s %s response: %w", method, req.URL.Path, err)
+	}
+	if len(data) > 8<<20 {
+		return &ResponseContractError{}
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		e := &APIError{Status: res.StatusCode, Code: ErrorCode("http_" + strconv.Itoa(res.StatusCode)), RetryAfter: retryAfter(res.Header.Get("Retry-After"))}
@@ -624,11 +630,16 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 	}
 	// Decoding errors quote response values, such as a created key: the
 	// cause is dropped.
-	if out != nil && json.Unmarshal(data, out) != nil {
-		return fmt.Errorf("tsauth: %s %s: the response does not match the contract", method, req.URL.Path)
+	if out != nil {
+		if bytes.Equal(bytes.TrimSpace(data), []byte("null")) || json.Unmarshal(data, out) != nil {
+			return &ResponseContractError{}
+		}
+		if err := validateAuthResponse(data, reflect.TypeOf(out)); err != nil {
+			return err
+		}
 	}
 	if err := entityid.Model(out); err != nil {
-		return fmt.Errorf("tsauth: %s %s response: %w", method, req.URL.Path, err)
+		return &ResponseContractError{}
 	}
 	return nil
 }
