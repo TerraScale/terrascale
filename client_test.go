@@ -49,7 +49,7 @@ func TestNewClientRejectsInsecureOrCredentialBearingEndpoints(t *testing.T) {
 			t.Fatalf("unsafe endpoint %q was accepted", endpoint)
 		}
 	}
-	if _, err := NewClient(Config{APIBaseURL: "http://api.example.test", HTTPClient: &http.Client{}}); err != nil {
-		t.Fatalf("explicit test transport should allow .test HTTP endpoint: %v", err)
+	if _, err := NewClient(Config{APIBaseURL: "http://api.example.test", HTTPClient: &http.Client{}}); err == nil {
+		t.Fatal("injected transport accepted non-loopback HTTP")
 	}
 }

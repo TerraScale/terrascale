@@ -198,54 +198,14 @@ func TestHeadlessClientAuthentication(t *testing.T) {
 	}
 }
 
-func TestHeadlessAllowInsecureHTTP(t *testing.T) {
-	const issuer = "http://ts-auth:8080/terrascale/"
-	srv := headlessServer(t)
-	fixtureURL, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls atomic.Int64
-	h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{
-		Issuer: issuer, ClientID: clientID, ClientSecret: clientSecret, AllowInsecureHTTP: true,
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			calls.Add(1)
-			if r.URL.Scheme != "http" || r.URL.Host != "ts-auth:8080" {
-				t.Errorf("development issuer request: %s", r.URL)
-			}
-			mapped := r.Clone(r.Context())
-			mapped.URL.Host = fixtureURL.Host
-			mapped.Host = fixtureURL.Host
-			return srv.Client().Transport.RoundTrip(mapped)
-		})},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.ResendEmailCode(t.Context(), "new@example.com", userIP, "pending-1"); err != nil {
-		t.Fatalf("development resend: %v", err)
-	}
-	if tokens, err := h.SignInWithPassword(t.Context(), "ana@example.com", "correct horse", userIP, []string{"openid", "email", "offline_access"}); err != nil || tokens.AccessToken != "access-1" {
-		t.Fatalf("development sign-in: %+v %v", tokens, err)
-	}
-	if calls.Load() != 2 {
-		t.Errorf("development requests: %d, want 2", calls.Load())
-	}
-	if _, err := tsauth.NewHeadless(tsauth.HeadlessConfig{Issuer: issuer, ClientID: clientID, ClientSecret: clientSecret}); err == nil {
-		t.Error("non-loopback HTTP accepted without opt-in")
-	}
-	if _, err := tsauth.New(tsauth.Config{Issuer: issuer}); err == nil {
-		t.Error("management client accepted non-loopback HTTP")
-	}
-	for _, invalidIssuer := range []string{
-		issuer + "?x=1", issuer + "?", "http://user:secret@ts-auth:8080/terrascale",
-		issuer + "#fragment", "http://ts-auth:8080/tenant%2Fname", "ftp://ts-auth:8080/terrascale", "/terrascale",
-	} {
-		if _, err := tsauth.NewHeadless(tsauth.HeadlessConfig{
-			Issuer: invalidIssuer, ClientID: clientID, ClientSecret: clientSecret, AllowInsecureHTTP: true,
-		}); err == nil {
-			t.Errorf("invalid issuer %q accepted with HTTP opt-in", invalidIssuer)
+func TestHeadlessRequiresSecureIssuerOutsideLoopback(t *testing.T) {
+	for _, issuer := range []string{"http://ts-auth:8080/terrascale", "http://auth.example.test/terrascale"} {
+		if _, err := tsauth.NewHeadless(tsauth.HeadlessConfig{Issuer: issuer, ClientID: clientID, ClientSecret: clientSecret}); err == nil {
+			t.Fatal("non-loopback HTTP issuer accepted")
 		}
+	}
+	if _, err := tsauth.NewHeadless(tsauth.HeadlessConfig{Issuer: "http://127.0.0.1:8080/terrascale", ClientID: clientID, ClientSecret: clientSecret}); err != nil {
+		t.Fatal(err)
 	}
 }
 

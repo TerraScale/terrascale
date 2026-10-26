@@ -322,8 +322,8 @@ func TestTSAuthEdgeConfig(t *testing.T) {
 	if _, err := NewClient(Config{APIBaseURL: "http://auth.test"}); err == nil {
 		t.Fatal("http .test host accepted without an explicit transport")
 	}
-	if _, err := NewClient(Config{APIBaseURL: "http://auth.test", HTTPClient: &http.Client{}}); err != nil {
-		t.Fatalf("http .test host with explicit transport rejected: %v", err)
+	if _, err := NewClient(Config{APIBaseURL: "http://auth.test", HTTPClient: &http.Client{}}); err == nil {
+		t.Fatal("injected transport accepted non-loopback HTTP")
 	}
 	for _, cfg := range []Config{
 		{APIBaseURL: "http://auth.example.com"},

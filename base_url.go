@@ -24,7 +24,7 @@ func resolveServiceBase(raw, field string, allowPath bool) (string, error) {
 		return "", &ValidationError{Field: field, Message: "must not contain userinfo"}
 	}
 	if u.Scheme == "http" && !isDevTransport(u.Hostname()) {
-		return "", &ValidationError{Field: field, Message: "must use HTTPS outside loopback and .test dev origins"}
+		return "", &ValidationError{Field: field, Message: "must use HTTPS outside loopback"}
 	}
 	if !allowPath && u.Path != "" && u.Path != "/" {
 		return "", &ValidationError{Field: field, Message: "must not contain a path prefix"}
@@ -32,14 +32,12 @@ func resolveServiceBase(raw, field string, allowPath bool) (string, error) {
 	return strings.TrimSuffix(u.String(), "/"), nil
 }
 
-// isDevTransport permits plain HTTP on loopback and reserved .test origins.
+// isDevTransport permits HTTP only for loopback test servers.
 func isDevTransport(hostname string) bool {
 	host := strings.ToLower(hostname)
 	if host == "localhost" {
 		return true
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return true
-	}
-	return host == "test" || strings.HasSuffix(host, ".test")
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

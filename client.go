@@ -115,9 +115,8 @@ func NewClient(cfg Config) (*Client, error) {
 		if ip := net.ParseIP(host); ip != nil {
 			loopback = ip.IsLoopback()
 		}
-		testHost := host == "test" || strings.HasSuffix(host, ".test")
-		if !loopback && !(cfg.HTTPClient != nil && testHost) {
-			return nil, fmt.Errorf("sdk: API endpoints must use HTTPS, except explicit loopback/test transports")
+		if !loopback {
+			return nil, fmt.Errorf("sdk: API endpoints must use HTTPS, except loopback test transports")
 		}
 	}
 	lowerHost := strings.ToLower(u.Hostname())

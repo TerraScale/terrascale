@@ -29,9 +29,6 @@ type Headless struct {
 type HeadlessConfig struct {
 	// Issuer is the tenant issuer; empty means DefaultIssuer.
 	Issuer string
-	// AllowInsecureHTTP permits non-loopback HTTP issuers for development
-	// only. Keep false in production: HTTP exposes credentials and tokens.
-	AllowInsecureHTTP bool
 	// ClientID and ClientSecret are a confidential client allowed the
 	// headless grants.
 	ClientID, ClientSecret string
@@ -59,7 +56,7 @@ func NewHeadless(cfg HeadlessConfig) (*Headless, error) {
 	if cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return nil, errors.New("tsauth: the headless API needs a confidential client: ClientID and ClientSecret")
 	}
-	u, err := parseIssuerWithInsecureHTTP(cfg.Issuer, cfg.AllowInsecureHTTP)
+	u, err := parseIssuer(cfg.Issuer)
 	if err != nil {
 		return nil, err
 	}
