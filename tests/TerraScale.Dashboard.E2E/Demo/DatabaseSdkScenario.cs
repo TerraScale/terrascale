@@ -393,6 +393,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     {
                         var expected = path.EndsWith("/recovery-preview", StringComparison.Ordinal) ? new[] { "databases:write", "documents:read" }
                             : path.EndsWith("/recover", StringComparison.Ordinal) ? new[] { "databases:write", "documents:write" }
+                            : path.EndsWith("/plan", StringComparison.Ordinal) ? new[] { "databases:read" }
+                            : path.EndsWith("/restore", StringComparison.Ordinal) ? new[] { "databases:write" }
                             : new[] { "documents:read", "documents:write" };
                         Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(expected), "Preview/recovery uses the exact action-scoped project grant");
                     }

@@ -13,7 +13,7 @@ else{<p class="ts-meta">Schedule: <span class="ts-mono">@policy.FullBackupCron</
 </div></section>
 <section class="ts-card ts-card-flush" id="restore-points" aria-labelledby="restore-points-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="restore-points-title">Restore points</h2><p class="ts-card-description">Restore a snapshot into a new database.</p></div>
 @if(canManage && Model.Listing is not null){<form method="post" action="/api/v1/dashboard/backups"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">@Icons.Render("Archive",16)<span>Create backup</span></button></form>}
-@if(canManage){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/databases/" + Model.Database.Id + "/recovery")">Recover selected records</a>}
+@if(canManage){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/databases/" + Model.Database.Id + "/point-in-time")">Restore database at UTC time</a><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/databases/" + Model.Database.Id + "/recovery")">Recover selected records</a>}
 </header>
 @if(Model.Listing is null){<div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">Restore points unavailable.</p><p class="ts-empty-detail">@Model.Unavailable</p></div></div>}
 else if(Model.Listing.Backups.Count == 0){<div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">No restore points yet.</p><p class="ts-empty-detail">Create a backup to capture the current state of this database.</p></div></div>}
