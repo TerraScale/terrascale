@@ -28,7 +28,7 @@
 | Client egress / month | 1 GB | 5 GB | 50 GB | 100 GB | 250 GB |
 | Regions per database | up to 3 | up to 3 | up to 3 | up to 3 | up to 3 |
 
-Launch regions: GRU (São Paulo), SJC (San Jose), FRA (Frankfurt).
+Launch regions: GRU (São Paulo), SJC (San Francisco Bay Area), FRA (Frankfurt).
 
 Request rates, concurrency, query timeout, storage limit, point-in-time recovery, backup
 retention and support response targets per plan are in [plan entitlements](./limits.md#plan-entitlements).
