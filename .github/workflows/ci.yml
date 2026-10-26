@@ -34,7 +34,14 @@ jobs:
         id: npm-cache
         with:
           path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('.node-version', 'package-lock.json', 'examples/terrabase-js/package-lock.json', 'create-terrascale-app/package-lock.json') }}
+          key: npm-${{ runner.os }}-${{ hashFiles('.node-version', '**/package-lock.json') }}
+      - name: Audit every locked npm project
+        shell: bash
+        run: |
+          while IFS= read -r -d '' lock; do
+            echo "Auditing $lock"
+            npm audit --prefix "$(dirname "$lock")" --package-lock-only --ignore-scripts --audit-level=high --registry=https://registry.npmjs.org
+          done < <(git ls-files -z -- '**/package-lock.json' 'package-lock.json')
       - run: npm ci
       - run: npm run build
       - run: npm test
