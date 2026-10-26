@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ShapeOptions selects a collection's optional query-v1 filter.
@@ -165,8 +166,10 @@ func (col *Collection) Subscribe(ctx context.Context, options ShapeOptions) iter
 }
 
 // shapeGET shares the SDK's credential refresh, response limits and error
-// types. Shape-capacity failures keep the checkpoint and retry until cancelled.
+// types. Shape-capacity retries keep the checkpoint within a fixed exchange budget.
 func (c *Client) shapeGET(ctx context.Context, path []string, query url.Values, header http.Header) (*response, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 	target, err := c.url(ctx, path, query)
 	if err != nil {
 		return nil, "", err
@@ -211,11 +214,11 @@ func (c *Client) shapeGET(ctx context.Context, path []string, query url.Values, 
 		if shapeRetry {
 			delay, retry = backoff(attempt), true
 			if apiErr.retryAfterSet {
-				delay = min(apiErr.RetryAfter, MaxRetryWait)
+				delay = apiErr.RetryAfter
 			}
 		}
-		if retry && (shapeRetry || attempt < c.maxRetries) {
-			if err := sleep(ctx, delay); err != nil {
+		if retry && attempt < c.maxRetries {
+			if err := waitRetry(ctx, delay, apiErr); err != nil {
 				return nil, target, err
 			}
 			continue

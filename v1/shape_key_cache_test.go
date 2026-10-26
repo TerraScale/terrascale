@@ -350,11 +350,12 @@ func TestShapeKeyCacheReturnsHTTPTimeoutWithoutRestartingFetch(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	c, err := New(Config{BaseURL: server.URL, Token: shapeKeyToken, MaxRetries: -1,
+	c, err := New(Config{BaseURL: server.URL, Token: shapeKeyToken,
 		HTTPClient: &http.Client{Timeout: 20 * time.Millisecond}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.maxRetries = 0 // Isolate fetch ownership from transport retry policy.
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
 	key, err := shapeKeyFetch(ctx, c.Database(shapeKeyProject, "demo").Collection("notes"), 100)

@@ -17,10 +17,11 @@ func changesDB(t *testing.T, handler http.HandlerFunc) *v1.Database {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	c, err := v1.New(v1.Config{BaseURL: server.URL, Token: testToken, MaxResponseBytes: 1024})
+	c, err := v1.New(v1.Config{BaseURL: server.URL, Token: testToken})
 	if err != nil {
 		t.Fatal(err)
 	}
+	v1.SetResponseLimitForTest(c, 1024)
 	return c.Database(testProject, "main")
 }
 

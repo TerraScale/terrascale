@@ -48,7 +48,7 @@ func TestUsageDistinguishesMissingPeriodFromMeasuredZero(t *testing.T) {
 
 func TestUsagePreservesFractionalWindowBoundaries(t *testing.T) {
 	capture := &captureTransport{}
-	m, err := v1.NewManagement(v1.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: capture}, MaxRetries: -1})
+	m, err := v1.NewManagement(v1.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: capture}})
 	if err != nil {
 		t.Fatal(err)
 	}

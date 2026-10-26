@@ -50,7 +50,7 @@ func TestDocumentIDsAtHTTPBoundary(t *testing.T) {
 		fmt.Fprintf(w, `{"id":%q,"version":"opaque","offset":"1","durability":"local_durable","state":"value","document":{"name":"Ana"}}`, id)
 	}))
 	t.Cleanup(peer.Close)
-	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1, HTTPClient: peer.Client()})
+	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, HTTPClient: peer.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestTransactionGeneratedKeysAreULIDs(t *testing.T) {
 				fmt.Fprintf(w, `{"offset":"1","durability":"local_durable","results":[{"id":%q,"version":"opaque"}]}`, key)
 			}))
 			t.Cleanup(peer.Close)
-			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
+			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
 			if err != nil {
 				t.Fatal(err)
 			}

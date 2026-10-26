@@ -113,10 +113,11 @@ func TestDatabaseBranchIfIDBoundsErrorBodies(t *testing.T) {
 		io.WriteString(w, strings.Repeat("x", 64))
 	}))
 	t.Cleanup(srv.Close)
-	client, err := v1.New(v1.Config{BaseURL: srv.URL, Token: testToken, MaxResponseBytes: 16})
+	client, err := v1.New(v1.Config{BaseURL: srv.URL, Token: testToken})
 	if err != nil {
 		t.Fatal(err)
 	}
+	v1.SetResponseLimitForTest(client, 16)
 	_, err = client.Database(testProject, "main").BranchIfID(t.Context(), "preview", testProject)
 	var api *v1.APIError
 	if !errors.As(err, &api) || api.Status != 409 || len(api.Body) != 16 || api.Unwrap() == nil || calls.Load() != 1 {

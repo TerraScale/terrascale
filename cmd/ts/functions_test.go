@@ -46,7 +46,7 @@ func TestFunctionsCommands(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c, err := v1.New(v1.Config{BaseURL: srv.URL, Token: "tb_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", MaxRetries: -1})
+	c, err := v1.New(v1.Config{BaseURL: srv.URL, Token: "tb_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,7 @@ type ExportDocument struct {
 // collections, schemas, indexes, TTL rules and other metadata are not included;
 // this is a document export, not a database backup.
 //
-// Each record is bounded by Config.MaxResponseBytes; the total stream is not.
+// Each record is bounded by DefaultMaxResponseBytes; the total stream is not.
 // Success requires complete newline-terminated records and clean HTTP EOF.
 // Errors stop iteration without retrying or resuming. Consumers must exhaust
 // the iterator to establish completion; breaking early closes the response.

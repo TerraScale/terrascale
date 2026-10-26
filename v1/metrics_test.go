@@ -25,7 +25,7 @@ const (
 
 func metricsUser(t *testing.T, server *httptest.Server, retries int) *tb.ManagementUser {
 	t.Helper()
-	m, err := tb.NewManagement(tb.Config{BaseURL: server.URL + "/proxy", HTTPClient: server.Client(), MaxRetries: retries})
+	m, err := tb.NewManagement(tb.Config{BaseURL: server.URL + "/proxy", HTTPClient: server.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestMetricsRejectMalformedMainResponses(t *testing.T) {
 		}
 		for _, body := range bodies {
 			transport := &scriptTransport{responses: []scripted{{status: 200, body: body}}}
-			m, err := tb.NewManagement(tb.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: transport}, MaxRetries: -1})
+			m, err := tb.NewManagement(tb.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: transport}})
 			if err != nil {
 				t.Fatal(err)
 			}

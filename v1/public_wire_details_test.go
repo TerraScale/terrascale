@@ -29,7 +29,7 @@ func TestSetPatchOperationsAndUnknownOutcome(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			c, err := tb.New(tb.Config{BaseURL: server.URL, Token: "header.project.signature", HTTPClient: server.Client(), MaxRetries: 3})
+			c, err := tb.New(tb.Config{BaseURL: server.URL, Token: "header.project.signature", HTTPClient: server.Client()})
 			if err != nil {
 				t.Fatal(err)
 			}

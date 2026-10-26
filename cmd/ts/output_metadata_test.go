@@ -16,7 +16,7 @@ func jsonDatabaseSession(t *testing.T, handler http.HandlerFunc) *session {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := v1.New(v1.Config{BaseURL: server.URL, Token: "fixture.jwt.signature", MaxRetries: -1})
+	client, err := v1.New(v1.Config{BaseURL: server.URL, Token: "fixture.jwt.signature"})
 	if err != nil {
 		t.Fatal(err)
 	}

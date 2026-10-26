@@ -31,7 +31,7 @@ func TestAnonymousPublicProbes(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			probes, err := tb.NewProbes(tb.Config{BaseURL: server.URL + "/proxy", HTTPClient: server.Client(), Token: "must-not-be-sent", MaxRetries: -1})
+			probes, err := tb.NewProbes(tb.Config{BaseURL: server.URL + "/proxy", HTTPClient: server.Client(), Token: "must-not-be-sent"})
 			if err != nil {
 				t.Fatal(err)
 			}

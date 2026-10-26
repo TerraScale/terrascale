@@ -56,7 +56,7 @@ func parityClient(t *testing.T, method, path, query, body, response string, stat
 			t.Errorf("requests = %d; want 1", calls)
 		}
 	})
-	c, err := tb.New(tb.Config{BaseURL: server.URL + "/sdk-test", Token: "header.project.signature", HTTPClient: server.Client(), MaxRetries: -1})
+	c, err := tb.New(tb.Config{BaseURL: server.URL + "/sdk-test", Token: "header.project.signature", HTTPClient: server.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
