@@ -396,7 +396,10 @@ public sealed class RegionalRoutingContractTests
     {
         await using var cell = await Cell.StartAsync(["gru", "sjc"], new ClusterMember("fra-gone", "http://127.0.0.1:9/", "fra", string.Empty));
         var api = cell.Api("gru");
-        var database = await api.CreateManagedDatabaseAsync();
+        using var service = api.Service(api.User);
+        var organization = await api.CreateOrganizationAsync("Gone regional host", service);
+        var project = await api.CreateProjectAsync(organization, "Main", service);
+        var database = new ManagedDatabaseRef(organization, project, await api.CreateDatabaseAsync(organization, project, "main", service), "main");
         using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, "documents:read"));
         foreach (var failed in new[] { false, true })
         {
