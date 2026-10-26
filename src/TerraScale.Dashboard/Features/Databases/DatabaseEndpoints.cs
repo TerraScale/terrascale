@@ -189,7 +189,7 @@ public static class DatabaseEndpoints
             else database = DatabaseService.Database(context, id);
         }
         catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
-            (KnownFailure(failure) || failure is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
+            (KnownFailure(failure) || failure is HttpRequestException or IOException or InvalidDataException or System.Text.Json.JsonException or OperationCanceledException))
         { return DatabaseResults.PageFailure(http, context, failure); }
         IReadOnlyList<DatabaseRegion> choices = [];
         IReadOnlyList<CollectionStats> contents = [];

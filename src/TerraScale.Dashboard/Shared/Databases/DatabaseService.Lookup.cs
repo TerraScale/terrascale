@@ -30,7 +30,7 @@ public sealed partial class DatabaseService
             var listings = await Task.WhenAll(catalog.Select(async region =>
             {
                 try { return (Region: region.Id, Items: (IReadOnlyList<ManagedDatabase>?)await backend.ListAsync(scope, region, ct)); }
-                catch (Exception error) when (!ct.IsCancellationRequested && (error is OperationCanceledException || error is IOException and not InvalidDataException ||
+                catch (Exception error) when (!ct.IsCancellationRequested && (error is OperationCanceledException || error is IOException ||
                     error is HttpRequestException request && request is not DatabaseListingException &&
                     (request.StatusCode is null or HttpStatusCode.NotFound or HttpStatusCode.TooManyRequests or HttpStatusCode.MisdirectedRequest ||
                         request.StatusCode is { } status && (int)status >= 500)))
@@ -55,7 +55,7 @@ public sealed partial class DatabaseService
             }
         }
         catch (Exception error) when (!ct.IsCancellationRequested &&
-            (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or JsonException or OperationCanceledException))
+            (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException))
         { throw Unavailable(); }
         // Only complete, successful regional pagination can establish absence.
         if (imported is null) throw new AccountAccessException("Database is unavailable.", 404);
