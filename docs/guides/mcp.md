@@ -81,6 +81,8 @@ Keep confirmation enabled in your client for destructive actions and review the 
 
 `get_usage` reports the selected organization, project, database and period. Raw read/write counts describe operations; billing uses separate 4 KiB operation units, so one operation can consume multiple units. The monthly operation allowance uses the organization ledger, including usage from deleted projects.
 
+Document queries that return data consume read units even when requesting an explanation. A conditional GET returning `304 Not Modified` returns no logical object and consumes no read units; failed or invalid reads are also unbilled.
+
 Treat unavailable measurements as unknown, rather than zero. Project storage includes files; database document storage can remain available when the complete project total cannot be measured. A project share is unknown when the organization total is incomplete.
 
 `regionCount` is a number for known explicit placement, or `null` when effective all-regions placement is unknown. Read `regionCountDescription` for the explanation. Do not infer one region from an all-regions database's home region, or multiply billable operations by its region count: replication is not billed.
