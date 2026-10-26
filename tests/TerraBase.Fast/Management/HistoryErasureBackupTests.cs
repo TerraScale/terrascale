@@ -328,6 +328,15 @@ public sealed class HistoryErasureBackupTests
         host.Clock.Advance(TimeSpan.FromTicks(1));
         await Host.PassAsync(api);
         own = await Host.OwnAsync(api, erasure);
+        // Ten minutes of backup shipping can hold native readers past auth's drain; that refusal waits one more window.
+        for (var window = 0; window < 3 && own.Phase != HistoryErasure.Rewritten; window++)
+        {
+            host.Clock.Advance(TimeSpan.FromMinutes(10));
+            await Host.PassAsync(api);
+            own = await Host.OwnAsync(api, erasure);
+        }
+
+        await Assert.That(systemAttempts).IsGreaterThanOrEqualTo(2);
         await Assert.That(own.Phase).IsEqualTo(HistoryErasure.Rewritten);
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark);
         await Assert.That(own.Auth!.Source).IsEqualTo(auth.ToString()).Because("the second auth rewrite replaced exactly the file its coverage read");
