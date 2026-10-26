@@ -951,7 +951,7 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         foreach (var baseAddress in new[] { "https://auth.example.test", "https://auth.example.test/" })
         {
             var handler = new ScriptedHandler(Always(HttpStatusCode.OK,
-                """{"id":"ins_1","slug":"acme","name":"Acme","logo_url":null,"theme_color":null,"created_at":7}"""));
+                """{"keys":[]}"""));
             var client = new TerraScaleAuthClient(new HttpClient(handler), new TerraScaleAuthClientOptions
             {
                 BaseAddress = new Uri(baseAddress),
@@ -959,8 +959,8 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
                 InstanceSlug = "acme",
             });
 
-            _ = await client.Instance.GetAsync();
-            await Assert.That(handler.Requests[0]).IsEqualTo("GET /v1/acme/instance");
+            _ = await client.Oidc.GetJwksAsync();
+            await Assert.That(handler.Requests[0]).IsEqualTo("GET /acme/.well-known/jwks.json");
         }
     }
 

@@ -58,11 +58,8 @@ public sealed class TerraScaleAuthClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
-        JwtTemplates = new TerraScaleAuthJwtTemplatesClient(this);
         Webhooks = new TerraScaleAuthWebhooksClient(this);
         AuditEvents = new TerraScaleAuthAuditClient(this);
-        Instance = new TerraScaleAuthInstanceClient(this);
-        OAuthClients = new TerraScaleAuthOAuthClientsClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
@@ -74,20 +71,11 @@ public sealed class TerraScaleAuthClient
     /// <summary>Session revocation.</summary>
     public TerraScaleAuthSessionsClient Sessions { get; }
 
-    /// <summary>Custom-claim JWT templates and token minting.</summary>
-    public TerraScaleAuthJwtTemplatesClient JwtTemplates { get; }
-
     /// <summary>Outbound webhook endpoints, deliveries, and dead-letter replay.</summary>
     public TerraScaleAuthWebhooksClient Webhooks { get; }
 
     /// <summary>Instance audit event listing.</summary>
     public TerraScaleAuthAuditClient AuditEvents { get; }
-
-    /// <summary>Instance record and hosted-UI branding settings.</summary>
-    public TerraScaleAuthInstanceClient Instance { get; }
-
-    /// <summary>OAuth client registration for this instance.</summary>
-    public TerraScaleAuthOAuthClientsClient OAuthClients { get; }
 
     /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }

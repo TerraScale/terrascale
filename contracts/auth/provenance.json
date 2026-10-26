@@ -81,5 +81,12 @@
       "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
     },
     "scope": "Retires only legacy instance Connections/Directories. Current organization SSO and project providers/directory export remain distinct and unchanged."
+  },
+  "instance_template_oauth_client_retirement_producer": {
+    "revision": "4b6dfd03b2d814cea0b1f7d599478f6b06532b4a",
+    "sources_sha256": {
+      "docs/auth/parity.md": "f403a9cd914a3617535dd036530411427186290824373dd992460839eee0dbc2"
+    },
+    "scope": "Legacy instance JWT templates and OAuth-client registration only. Project clients, backend token issuance and OIDC grants remain unchanged."
   }
 }

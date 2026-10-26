@@ -6,7 +6,7 @@ namespace TerraScale.DotNet;
 /// <summary>
 /// Source-generated JSON metadata for the ts-auth client. All wire names are
 /// pinned with <see cref="JsonPropertyNameAttribute"/> because the service
-/// mixes snake_case management fields with camelCase oauth-client fields.
+/// uses explicit wire names for each operation.
 /// </summary>
 [JsonSerializable(typeof(TerraScaleAuthUser))]
 [JsonSerializable(typeof(TerraScaleAuthUserPage))]
@@ -23,16 +23,6 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthUserOrganization))]
 [JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthUserOrganization>))]
 [JsonSerializable(typeof(TerraScaleAuthOrganization))]
-[JsonSerializable(typeof(TerraScaleAuthOAuthClient))]
-[JsonSerializable(typeof(TerraScaleAuthOAuthClientList))]
-[JsonSerializable(typeof(TerraScaleAuthCreatedOAuthClient))]
-[JsonSerializable(typeof(TerraScaleAuthCreateOAuthClient))]
-[JsonSerializable(typeof(TerraScaleAuthJwtTemplate))]
-[JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthJwtTemplate>))]
-[JsonSerializable(typeof(TerraScaleAuthCreateJwtTemplate))]
-[JsonSerializable(typeof(TerraScaleAuthUpdateJwtTemplate))]
-[JsonSerializable(typeof(TerraScaleAuthMintJwtToken))]
-[JsonSerializable(typeof(TerraScaleAuthMintedToken))]
 [JsonSerializable(typeof(TerraScaleAuthWebhook))]
 [JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthWebhook>))]
 [JsonSerializable(typeof(TerraScaleAuthCreatedWebhook))]
@@ -43,9 +33,6 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthReplayResult))]
 [JsonSerializable(typeof(TerraScaleAuthAuditEvent))]
 [JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthAuditEvent>))]
-[JsonSerializable(typeof(TerraScaleAuthInstanceRecord))]
-[JsonSerializable(typeof(TerraScaleAuthInstanceSettings))]
-[JsonSerializable(typeof(TerraScaleAuthUpdateInstance))]
 [JsonSerializable(typeof(TerraScaleAuthOidcDiscovery))]
 [JsonSerializable(typeof(TerraScaleAuthJwkSet))]
 [JsonSerializable(typeof(TerraScaleAuthJwk))]
