@@ -13,8 +13,7 @@ The platform databases (`ts-auth` and `ts-dashboard`, [platform-databases.md](pl
   `[]`), or `allRegions` together with `replicaRegions`. The catalog record is unchanged.
 
 The management service enforces the same rule, so a commit `set_database_regions` operation on a platform database fails
-with the same code. Since a database in every region must drop to `replicaRegions: []` before a delete
-([all-regions-placement.md](all-regions-placement.md)), platform databases cannot be deleted through the API either.
+with the same code. This placement rule does not change deletion authorization or permanent-purge behavior.
 
 ## Restore and branch
 
