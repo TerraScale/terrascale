@@ -18,6 +18,10 @@ public sealed class ValueFormatContractTests
         await Assert.That(ValueFormat.Plural(count, noun, plural)).IsEqualTo(expected);
 
     [Test]
+    public async Task PluralKeepsTheExistingCompactNumberLabel() =>
+        await Assert.That(ValueFormat.Plural(1_000_000, "document", number: "1.0M")).IsEqualTo("1.0M documents");
+
+    [Test]
     public async Task DatesConvertOffsetsToUtcAndIgnoreServerCulture()
     {
         var original = CultureInfo.CurrentCulture;
