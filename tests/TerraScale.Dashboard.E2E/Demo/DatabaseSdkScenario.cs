@@ -284,6 +284,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             { Interlocked.Increment(ref quotaCasFailures); throw; }
             if (collection == Credentials) encrypted.Enqueue(document.GetRawText());
         }
+        Task<TerraBaseDocumentPage> IDashboardState.ReadPageAsync(string collection, JsonElement? filter, int limit, string? cursor, CancellationToken ct) => inner.ReadPageAsync(collection, filter, limit, cursor, ct);
+        Task<TerraBaseTransactionResult> IDashboardState.TransactAsync(IReadOnlyList<DashboardStateOperation> operations, CancellationToken ct) => inner.TransactAsync(operations, ct);
         public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken ct) => inner.ListAsync(collection, ct);
         public Task<TerraBaseDocumentPage> QueryPageAsync(string collection, TerraBaseQuery query, CancellationToken ct) => inner.QueryPageAsync(collection, query, ct);
         public Task DeleteAsync(string collection, string id, string version, CancellationToken ct) => inner.DeleteAsync(collection, id, version, ct);

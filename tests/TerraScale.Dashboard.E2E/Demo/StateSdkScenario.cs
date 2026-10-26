@@ -18,6 +18,7 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E;
 
@@ -110,6 +111,58 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
     {
         var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
         MapSqlCleanupRoutes(app);
+        // Test-binary-only admission harness; exercises the running hosts' real persistence adapter over HTTP.
+        app.MapPost("/__test/state-admission", async (HttpContext context, IDashboardState state) =>
+        {
+            using var json = await JsonDocument.ParseAsync(context.Request.Body);
+            var body = json.RootElement; var command = body.GetProperty("command").GetString();
+            const string clients = "dashboard_mcp_oauth_clients", grants = "dashboard_mcp_oauth_codes";
+            var ct = context.RequestAborted;
+            var filter = JsonSerializer.SerializeToElement(new { eq = new object[] { "/kind", "client" } });
+            var budget = await state.GetAsync(grants, "budget", ct);
+            var value = JsonSerializer.SerializeToElement(new { count = (budget?.Document.GetProperty("count").GetInt32() ?? -1) + 1 });
+            var key = body.TryGetProperty("key", out var named) ? named.GetString()! : "";
+            try
+            {
+                if (command == "page") return Results.Json(await state.ReadPageAsync(clients, body.GetProperty("filtered").GetBoolean() ? filter : null,
+                    1, body.TryGetProperty("cursor", out var cursor) ? cursor.GetString() : null, ct));
+                if (command == "read") return Results.Json(new { client = await state.GetAsync(clients, key, ct), budget });
+                if (command == "read-capacity") return Results.Json(new
+                {
+                    client = await state.GetAsync(clients, key, ct),
+                    grants = await Task.WhenAll(Enumerable.Range(0, 3).Select(index => state.GetAsync(grants, key + "/" + index, ct)))
+                });
+                if (command == "remove")
+                {
+                    var page = await state.ReadPageAsync(clients, filter, 1, null, ct);
+                    return Results.Json(await state.TransactAsync([DashboardStateOperation.DeleteListed(clients, page.Items.Single())], ct));
+                }
+                if (command == "delete") return Results.Json(await state.TransactAsync([DashboardStateOperation.Delete(grants, "budget", budget!.Version)], ct));
+                var client = JsonSerializer.SerializeToElement(new { kind = "client", key });
+                IReadOnlyList<DashboardStateOperation> operations = command switch
+                {
+                    "too-many" => Enumerable.Repeat(DashboardStateOperation.AssertAbsent(clients, "missing"), 1025).ToArray(),
+                    "too-many-counts" => Enumerable.Repeat(DashboardStateOperation.AssertCount(clients, null, null, 2), 17).ToArray(),
+                    "too-large" => [DashboardStateOperation.Create(clients, key, JsonSerializer.SerializeToElement(new { text = new string('é', 2 * 1024 * 1024) }))],
+                    "wildcard" => [DashboardStateOperation.Replace(grants, "budget", value, "*")],
+                    "capacity" => new[] { DashboardStateOperation.Create(clients, key, client) }.Concat(Enumerable.Range(0, 3)
+                        .Select(index => DashboardStateOperation.Create(grants, key + "/" + index, JsonSerializer.SerializeToElement(new { text = new string('x', 800 * 1024) })))).ToArray(),
+                    "noise" => [DashboardStateOperation.Create(clients, key, JsonSerializer.SerializeToElement(new { kind = "unrelated", key }))],
+                    "absent-conflict" => [DashboardStateOperation.Create(clients, key, client), DashboardStateOperation.AssertAbsent(clients, "natural-seed")],
+                    "stale-delete" => [DashboardStateOperation.Delete(grants, "budget", "stale")],
+                    "seed" => [DashboardStateOperation.Create(grants, "budget", value), DashboardStateOperation.Create(clients, key, client)],
+                    "assert" => [DashboardStateOperation.Assert(clients, key, filter), DashboardStateOperation.AssertAbsent(clients, "missing"), DashboardStateOperation.AssertCount(clients, filter, 1, 2)],
+                    "duplicate" => [DashboardStateOperation.Assert(clients, key, filter), DashboardStateOperation.Delete(clients, key, "stale")],
+                    "rollback" => [DashboardStateOperation.Create(clients, key, client), DashboardStateOperation.Replace(grants, "budget", value, "stale")],
+                    "admit" => [DashboardStateOperation.AssertCount(clients, null, null, 1), DashboardStateOperation.Create(clients, key, client),
+                        DashboardStateOperation.Replace(grants, "budget", value, budget!.Version), DashboardStateOperation.Create(grants, key, client)],
+                    _ => throw new InvalidOperationException("Unknown admission harness command.")
+                };
+                return Results.Json(await state.TransactAsync(operations, ct));
+            }
+            catch (TerraBaseException error) { return Results.Json(new { error.ErrorCode, error.OperationIndex }, statusCode: (int)error.StatusCode!.Value); }
+            catch (ArgumentException) { return Results.BadRequest(); }
+        });
         return app;
     }
 
@@ -250,9 +303,12 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private readonly TerraScaleIdGenerator ids = new();
         private readonly Dictionary<string, Collection> collections = new(StringComparer.Ordinal);
         private readonly ConcurrentQueue<string> failures = new();
+        private readonly Dictionary<string, (string Collection, string? Filter, string Last)> cursors = [];
         private readonly Dictionary<string, string> organizationPlans = new(StringComparer.Ordinal);
         private TaskCompletionSource? collectionGate;
         private TaskCompletionSource? documentGate;
+        private TaskCompletionSource? transactionGate;
+        private int pausedTransactions;
         private int pausedCreates;
         private int pausedWrites;
         private int databasePuts;
@@ -267,7 +323,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private readonly string? databaseId = "00000000000000000000000004";
         private string mode = "";
         public string Mode { get { lock (gate) return mode; } }
-        public void Release() { collectionGate?.TrySetResult(); documentGate?.TrySetResult(); }
+        public void Release() { collectionGate?.TrySetResult(); documentGate?.TrySetResult(); transactionGate?.TrySetResult(); }
 
         public async Task<IResult> DispatchAsync(HttpContext http)
         {
@@ -310,6 +366,15 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 // TerraBase seeds ts-dashboard itself; the dashboard never creates it.
                 if (parts.Length == 5) { Interlocked.Increment(ref databasePuts); Interlocked.Increment(ref databaseCreates); Require(false, "The dashboard must not create or replace its seeded database."); }
                 if (Mode == "project-missing") return Error(404, "unknown_database");
+                if (parts is [_, _, _, _, _, "transactions"] && http.Request.Method == "POST") return await TransactAsync(http);
+                if (parts is [_, _, _, _, _, "collections", var queryCollection, "query"] && http.Request.Method == "POST")
+                {
+                    if (queryCollection is "dashboard_sql_workspaces" or "dashboard_sql_database_deletions") return await QueryAsync(queryCollection, http);
+                    using var query = await JsonDocument.ParseAsync(http.Request.Body);
+                    var q = query.RootElement;
+                    lock (gate) return Page(queryCollection, q.GetProperty("limit").GetInt32(), q.TryGetProperty("cursor", out var c) ? c.GetString() : null,
+                        q.TryGetProperty("filter", out var f) ? f : null);
+                }
                 Require(parts.Length >= 6 && parts[5] == "collections", "Only genuine collection and by-key document routes are admitted.");
                 if (parts.Length == 6 && http.Request.Method == "POST") return await CreateCollectionAsync(http);
                 Require(parts.Length >= 7, "A collection name is required.");
@@ -319,17 +384,9 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                     lock (gate) return collections.TryGetValue(parts[6], out var collection)
                         ? Results.Json(CollectionBody(parts[6], collection)) : Error(404, "unknown_collection");
                 }
-                if (parts.Length == 8 && parts[7] == "query" && http.Request.Method == "POST") return await QueryAsync(parts[6], http);
                 if (parts.Length == 8 && parts[7] == "documents" && parts[6] == "dashboard_sql_workspaces") Interlocked.Increment(ref sqlWorkspaceLists);
                 if (parts.Length == 8 && parts[7] == "documents" && http.Request.Method == "GET")
-                    lock (gate) return collections.TryGetValue(parts[6], out var listed)
-                        ? Results.Json(new
-                        {
-                            items = listed.Documents.Where(entry => !entry.Value.Deleted).OrderBy(entry => entry.Key, StringComparer.Ordinal)
-                            .Select(entry => new { id = entry.Key, version = entry.Value.Version, state = "value", document = entry.Value.Value }).ToArray(),
-                            next_cursor = (string?)null
-                        })
-                        : Error(404, "unknown_collection");
+                    lock (gate) return Page(parts[6], int.TryParse(http.Request.Query["limit"], out var limit) ? limit : 50, http.Request.Query["cursor"].FirstOrDefault(), null);
                 Require(parts.Length == 9 && parts[7] == "documents" && parts[8] == "by-key" && http.Request.Query.Keys.SequenceEqual(new[] { "id" }),
                     "The official state SDK must use the genuine by-key point route and one opaque id parameter.");
                 var id = http.Request.Query["id"].ToString();
@@ -374,6 +431,80 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
             { failures.Enqueue(error.Message); return Error(500, "test_contract_failure"); }
         }
 
+        // Protocol fixture: evaluate every predicate against pre-write state, commit only after every operation succeeds.
+        private async Task<IResult> TransactAsync(HttpContext http)
+        {
+            using var json = await JsonDocument.ParseAsync(http.Request.Body);
+            var operations = json.RootElement.GetProperty("ops").EnumerateArray().ToArray();
+            if (transactionGate is { } held) { Interlocked.Increment(ref pausedTransactions); await held.Task.WaitAsync(http.RequestAborted); }
+            Require(operations.Length is >= 1 and <= 1024, "SDK operation-count contract.");
+            lock (gate)
+            {
+                var writes = new List<(Collection Collection, string Id, Document Document)>();
+                var results = new List<object>(); var targets = new HashSet<(string, string)>(); var capturedBytes = 0;
+                for (var index = 0; index < operations.Length; index++)
+                {
+                    var op = operations[index]; var kind = op.GetProperty("op").GetString(); var name = op.GetProperty("collection").GetString()!;
+                    if (!collections.TryGetValue(name, out var collection)) return Error(404, "unknown_collection", index);
+                    var filter = op.TryGetProperty("filter", out var f) ? (JsonElement?)f : null;
+                    if (kind == "assert_count")
+                    {
+                        var count = collection.Documents.Values.Count(d => !d.Deleted && Matches(d.Value, filter));
+                        if (op.TryGetProperty("gte", out var gte) && count < gte.GetInt64() || op.TryGetProperty("lte", out var lte) && count > lte.GetInt64())
+                            return Error(412, "precondition_failed", index);
+                        results.Add(new { asserted = true, count }); continue;
+                    }
+                    var id = op.GetProperty("id").GetString()!;
+                    Require(TerraScaleIds.IsValid(id) && targets.Add((name, id)), "Canonical IDs and unique transaction targets.");
+                    var existing = collection.Documents.GetValueOrDefault(id); var live = existing is { Deleted: false };
+                    if (kind == "assert")
+                    {
+                        if (op.TryGetProperty("absent", out var absent) && absent.GetBoolean() ? live : !live || !Matches(existing!.Value, filter))
+                            return Error(412, "precondition_failed", index);
+                        results.Add(new { asserted = true }); continue;
+                    }
+                    Require(kind is "create" or "put" or "delete", "Only the narrow adapter's mutation operations are supported.");
+                    if (kind == "create" ? live : !op.TryGetProperty("if_match", out var match) || !live || match.GetString() != existing!.Version)
+                        return Error(412, "precondition_failed", index);
+                    var version = "tbv2-" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+                    var value = kind == "delete" ? existing!.Value : op.GetProperty("document").Clone();
+                    var documentBytes = Encoding.UTF8.GetByteCount(value.GetRawText());
+                    Require(documentBytes <= 1024 * 1024, "Each staged document satisfies the producer's 1 MiB document limit.");
+                    capturedBytes += Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(id) + documentBytes;
+                    if (capturedBytes > 2 * 1024 * 1024) return Error(503, "capacity", index);
+                    writes.Add((collection, id, new(version, value, kind == "delete")));
+                    results.Add(new { id, version });
+                }
+                foreach (var write in writes) write.Collection.Documents[write.Id] = write.Document;
+                documentWrites += writes.Count;
+                return Results.Json(new { offset = ++offset, durability = "local_durable", results });
+            }
+        }
+
+        private static bool Matches(JsonElement document, JsonElement? filter)
+        {
+            if (filter is null) return true;
+            // Deliberately support only the fixture's eq grammar; never silently accept an unmodeled predicate.
+            var eq = filter.Value.GetProperty("eq"); var path = eq[0].GetString()!;
+            Require(path.StartsWith('/') && !path[1..].Contains('/'), "Fixture uses a top-level JSON Pointer.");
+            return document.TryGetProperty(path[1..], out var value) && JsonElement.DeepEquals(value, eq[1]);
+        }
+
+        private IResult Page(string name, int limit, string? cursor, JsonElement? filter)
+        {
+            if (!collections.TryGetValue(name, out var collection)) return Error(404, "unknown_collection");
+            string? last = null;
+            if (cursor is not null)
+            {
+                if (!cursors.TryGetValue(cursor, out var position) || position.Collection != name || position.Filter != filter?.GetRawText()) return Error(400, "invalid_cursor");
+                last = position.Last;
+            }
+            var remaining = collection.Documents.Where(d => !d.Value.Deleted && Matches(d.Value.Value, filter) && string.CompareOrdinal(d.Key, last) > 0).OrderBy(d => d.Key, StringComparer.Ordinal).Take(limit + 1).ToArray();
+            string? next = null;
+            if (remaining.Length > limit) { next = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)); cursors[next] = (name, filter?.GetRawText(), remaining[limit - 1].Key); }
+            return Results.Json(new { items = remaining.Take(limit).Select(d => new { id = d.Key, version = d.Value.Version, state = "value", document = d.Value.Value }), next_cursor = next });
+        }
+
         private async Task<IResult> CreateCollectionAsync(HttpContext http)
         {
             using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
@@ -407,6 +538,8 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 switch (body.GetProperty("command").GetString())
                 {
                     case "mode": mode = body.GetProperty("value").GetString()!; break;
+                    case "pause-transactions": pausedTransactions = 0; transactionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                    case "release-transactions": transactionGate?.TrySetResult(); transactionGate = null; break;
                     case "pause-collections": collectionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                     case "release-collections": collectionGate?.TrySetResult(); collectionGate = null; break;
                     case "pause-account-writes": pausedWrites = 0; documentGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
@@ -433,6 +566,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 pausedCreates,
                 pausedWrites,
                 privateRequests,
+                pausedTransactions,
                 redirectTargetRequests,
                 cleanupQueries = cleanupQueries.ToArray(),
                 sqlWorkspaceLists,
@@ -446,7 +580,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
             });
         }
 
-        private static IResult Error(int status, string code) => Results.Json(new { error = new { code, message = "Test-only state producer refusal.", op = (int?)null } }, statusCode: status);
+        private static IResult Error(int status, string code, int? index = null) => Results.Json(new { error = new { code, message = "Test-only state producer refusal.", op = index } }, statusCode: status);
         private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
         private sealed record Document(string Version, JsonElement Value, bool Deleted);
         private sealed class Collection(string id, long createdAt)

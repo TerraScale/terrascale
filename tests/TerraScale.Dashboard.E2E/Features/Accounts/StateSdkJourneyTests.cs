@@ -213,6 +213,88 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
             "An organization that has not paid keeps Hobby.");
     }
 
+    [Test]
+    public async Task AtomicAdmissionRollbackAndOpaquePagingSurviveTwoHostsAndColdRestart()
+    {
+        // This is the installed SDK against a test-only HTTP protocol producer, NOT a deployed TerraBase qualification.
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        Check(await scenario.StartHostsAsync(), "Both actual hosts initialize real SDK persistence.");
+        using var client = scenario.CreateClient(); using var replica = scenario.CreateClient(replica: true);
+        await ReadyAsync(client); await ReadyAsync(replica);
+        await AdmissionAsync(client, new { command = "seed", key = "natural-seed" });
+        var assertions = await AdmissionAsync(replica, new { command = "assert", key = "natural-seed" });
+        Check(assertions.GetProperty("results")[2].GetProperty("count").GetInt32() == 1, "Filter, absence and count assertions read pre-write state.");
+        await AdmissionAsync(client, new { command = "duplicate", key = "natural-seed" }, HttpStatusCode.BadRequest);
+        foreach (var command in new[] { "too-many", "too-many-counts", "too-large", "wildcard" })
+            await AdmissionAsync(client, new { command, key = "rejected" }, HttpStatusCode.BadRequest);
+        await AdmissionAsync(client, new { command = "absent-conflict", key = "absent-rejected" }, HttpStatusCode.PreconditionFailed);
+        await AdmissionAsync(client, new { command = "stale-delete" }, HttpStatusCode.PreconditionFailed);
+        var failed = await AdmissionAsync(client, new { command = "rollback", key = "rolled-back" }, HttpStatusCode.PreconditionFailed);
+        Check(failed.GetProperty("operationIndex").GetInt32() == 1, "The SDK preserves the failing operation index.");
+        var capacity = await AdmissionAsync(client, new { command = "capacity", key = "capacity-rejected" }, HttpStatusCode.ServiceUnavailable);
+        Check(capacity.GetProperty("operationIndex").GetInt32() == 3 && capacity.GetProperty("errorCode").GetString() == "capacity", "Producer captured-byte refusal preserves SDK status, error code and operation index for individually valid documents.");
+        var rejected = await AdmissionAsync(replica, new { command = "read-capacity", key = "capacity-rejected" });
+        Check(rejected.GetProperty("client").ValueKind == JsonValueKind.Null && rejected.GetProperty("grants").EnumerateArray().All(grant => grant.ValueKind == JsonValueKind.Null),
+            "Captured-byte refusal leaves neither the candidate client nor any of its three grants.");
+        var rollback = await AdmissionAsync(replica, new { command = "read", key = "rolled-back" });
+        Check(rollback.GetProperty("client").ValueKind == JsonValueKind.Null && rollback.GetProperty("budget").GetProperty("document").GetProperty("count").GetInt32() == 0,
+            "A late stale-version failure leaves neither the candidate client nor a budget increment.");
+        await ControlAsync(controls, new { command = "pause-transactions" });
+        var first = client.PostAsJsonAsync("/__test/state-admission", new { command = "admit", key = "candidate-one" });
+        var second = replica.PostAsJsonAsync("/__test/state-admission", new { command = "admit", key = "candidate-two" });
+        await WaitAsync(controls, "pausedTransactions", 2);
+        await ControlAsync(controls, new { command = "release-transactions" });
+        using var one = await first; using var two = await second;
+        Check(new[] { one.StatusCode, two.StatusCode }.Order().SequenceEqual(new[] { HttpStatusCode.OK, HttpStatusCode.PreconditionFailed }),
+            "Two hosts contending for one slot commit exactly one atomic client/budget/grant transaction.");
+        var winner = one.IsSuccessStatusCode ? "candidate-one" : "candidate-two";
+        var stored = await AdmissionAsync(replica, new { command = "read", key = winner });
+        Check(stored.GetProperty("client").GetProperty("id").GetString() == winner && stored.GetProperty("budget").GetProperty("document").GetProperty("count").GetInt32() == 1,
+            "Natural-key point read maps once and returns the sole committed budget increment.");
+        var before = await ObserveAsync(controls);
+        Check(Count(before, "dashboard_mcp_oauth_clients") == 2 && Count(before, "dashboard_mcp_oauth_codes") == 2, "No losing transaction's client or grant survives.");
+        await AdmissionAsync(replica, new { command = "noise", key = "unrelated" });
+        await AdmissionAsync(client, new { command = "assert", key = "unrelated" }, HttpStatusCode.PreconditionFailed);
+        var page = await AdmissionAsync(client, new { command = "page", filtered = true });
+        var cursor = page.GetProperty("next_cursor").GetString();
+        Check(page.GetProperty("items").GetArrayLength() == 1 && cursor is not null, "Query returns a single bounded page with opaque continuation.");
+        await AdmissionAsync(replica, new { command = "page", filtered = false, cursor }, HttpStatusCode.BadRequest);
+        Check(await scenario.RestartAsync(), "Both app hosts restart over the unchanged remote producer.");
+        using var cold = scenario.CreateClient();
+        var next = await AdmissionAsync(cold, new { command = "page", filtered = true, cursor });
+        Check(next.GetProperty("items").GetArrayLength() == 1 && next.GetProperty("next_cursor").ValueKind == JsonValueKind.Null &&
+            next.GetProperty("items")[0].GetProperty("id").GetString() != page.GetProperty("items")[0].GetProperty("id").GetString(),
+            "The unchanged filtered continuation resumes after cold replacement without duplicate IDs.");
+        var listed = await AdmissionAsync(cold, new { command = "page", filtered = false });
+        var listIds = new List<string>();
+        while (true)
+        {
+            listIds.Add(listed.GetProperty("items")[0].GetProperty("id").GetString()!);
+            var continuation = listed.GetProperty("next_cursor").GetString();
+            if (continuation is null) break;
+            listed = await AdmissionAsync(cold, new { command = "page", filtered = false, cursor = continuation });
+        }
+        Check(listIds.Count == 3 && listIds.Distinct().Count() == 3 && listIds.Contains(page.GetProperty("items")[0].GetProperty("id").GetString()!),
+            "List continuation visits all provider IDs once, while filtered query excludes the unrelated row.");
+        await AdmissionAsync(cold, new { command = "remove" });
+        await AdmissionAsync(cold, new { command = "delete" });
+        var after = await ObserveAsync(controls);
+        Check(Count(after, "dashboard_mcp_oauth_clients") == 2 && Count(after, "dashboard_mcp_oauth_codes") == 1, "Listed delete bypasses natural-key mapping; natural-key delete uses the current opaque version.");
+        Check(await scenario.SendStateClientElsewhereAsync(new Uri("https://api.terrascale.tech/healthz")) == nameof(HttpRequestException) && scenario.ForeignCredentials == 0,
+            "All transaction/query requests stayed on the credentialed private origin; a public destination is rejected before transport.");
+        CheckProtocol(after);
+    }
+
+    private static async Task<JsonElement> AdmissionAsync(HttpClient client, object command, HttpStatusCode expected = HttpStatusCode.OK)
+    {
+        using var response = await client.PostAsJsonAsync("/__test/state-admission", command);
+        var text = await response.Content.ReadAsStringAsync();
+        Check(response.StatusCode == expected, "Admission harness status: " + response.StatusCode + " expected " + expected + ": " + text);
+        if (string.IsNullOrEmpty(text)) return default;
+        using var json = JsonDocument.Parse(text); return json.RootElement.Clone();
+    }
+
     private static async Task<(string Email, string Password)> NativeAccountAsync(HttpClient client)
     {
         var suffix = Guid.NewGuid().ToString("N")[..12];
