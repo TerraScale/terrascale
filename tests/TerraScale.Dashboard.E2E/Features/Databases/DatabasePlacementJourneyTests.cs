@@ -70,8 +70,8 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         }
         var path = "/databases/" + databaseId;
         var initial = await PageAsync(client, "/replication");
-        await Assert.That(initial).Contains("sfo · San Francisco</td><td class=\"ts-num\">Not measured");
-        await Assert.That(initial).Contains("No provider latency measurements are available.");
+        await Assert.That(initial).Contains("<dt>Home region</dt><dd>sfo · San Francisco</dd>");
+        await Assert.That(initial.Contains("No provider latency measurements are available.", StringComparison.Ordinal)).IsFalse();
         await Assert.That(initial).Contains("Per database and region · 24h · TerraBase replication_bytes meter");
         await Assert.That(initial).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
         await Assert.That(initial.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
