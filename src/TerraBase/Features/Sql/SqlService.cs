@@ -22,7 +22,7 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, memory, new SqlExecutor(documents, time), time, database, canWrite);
+        return new SqlSession(engine, quota, usage, memory, new SqlExecutor(documents, memory, time), time, database, canWrite);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)

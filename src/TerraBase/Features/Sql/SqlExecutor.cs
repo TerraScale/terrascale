@@ -4,6 +4,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Primitives;
 
 namespace TerraBase.Features.Sql;
@@ -54,7 +55,7 @@ internal sealed class SqlTally(bool Measure)
 }
 
 /// <summary>Runs one statement in a storage transaction the caller commits; writes go through the document service.</summary>
-internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
+internal sealed class SqlExecutor(IDocumentService documents, IMemoryBudget memory, TimeProvider time)
 {
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly DateTimeOffset KeyEpoch = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -199,7 +200,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
     // The engine read of `read`: its tables' definitions, its parameters bound, its rows converted. `keyed` names the
     // table whose rows also expose their document id (`_id`), for UPDATE and DELETE.
-    private static async ValueTask<SqlOutcome> ReadAsync(
+    private async ValueTask<SqlOutcome> ReadAsync(
         IStorageTransaction transaction, ReadSql read, SqlCommand command, SqlTally tally, bool describe, string? keyed, CancellationToken cancellationToken)
     {
         var tables = new Dictionary<string, SqlTableDefinition>(StringComparer.Ordinal);
@@ -228,6 +229,12 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         SqlProgram program;
         try
         {
+            using var reservation = memory.TryReserve(MemoryLane.Foreground, SqlAffinityResolver.ReservationBytes);
+            if (reservation is null)
+            {
+                return new SqlError("SQLITE_NOMEM", "the server's memory budget is exhausted; retry");
+            }
+
             program = SqlRead.Program(read, tables, parameters, describe, keyed);
         }
         catch (FormatException error)

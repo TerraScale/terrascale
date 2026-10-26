@@ -8,6 +8,62 @@ namespace TerraBase.Features.Sql;
 /// <summary>SQLite parsing at the client SQL boundary.</summary>
 internal sealed class SqlDialect : SQLiteDialect
 {
+    // SQLite groups IS with equality/BETWEEN/IN/LIKE, below ordering comparisons and bitwise operators.
+    public override short GetPrecedence(Precedence precedence) => precedence switch
+    {
+        Precedence.Is or Precedence.Like => 20,
+        _ => base.GetPrecedence(precedence),
+    };
+
+    public override short? GetNextPrecedence(Parser parser) => parser.PeekToken() switch
+    {
+        Equal or DoubleEqual or NotEqual => 20,
+        LessThan or LessThanOrEqual or GreaterThan or GreaterThanOrEqual => 22,
+        Pipe or Ampersand or ShiftLeft or ShiftRight => 25,
+        StringConcat => 45,
+        _ => base.GetNextPrecedence(parser),
+    };
+
+    public override Expression? ParseInfix(Parser parser, Expression expression, int precedence)
+    {
+        if (parser.PeekToken() is not Word { Keyword: Keyword.IS })
+        {
+            return base.ParseInfix(parser, expression, precedence);
+        }
+
+        // Preserve the parser's existing UNKNOWN predicate extension.
+        if (parser.PeekNthToken(1) is Word { Keyword: Keyword.UNKNOWN }
+            || (parser.PeekNthToken(1) is Word { Keyword: Keyword.NOT }
+                && parser.PeekNthToken(2) is Word { Keyword: Keyword.UNKNOWN }))
+        {
+            return base.ParseInfix(parser, expression, precedence);
+        }
+
+        parser.ExpectKeyword(Keyword.IS);
+        var negated = parser.ParseKeyword(Keyword.NOT);
+        if (parser.ParseKeyword(Keyword.DISTINCT))
+        {
+            parser.ExpectKeyword(Keyword.FROM);
+            negated = !negated;
+        }
+
+        var right = parser.ParseSubExpression((short)precedence);
+        var value = right;
+        while (value is Expression.Nested nested)
+        {
+            value = nested.Expression;
+        }
+
+        // Inspect the complete RHS: TRUE + 1 and +TRUE are values; (TRUE) is a truth test.
+        return value switch
+        {
+            Expression.LiteralValue { Value: Value.Null } => negated ? new Expression.IsNotNull(expression) : new Expression.IsNull(expression),
+            Expression.LiteralValue { Value: Value.Boolean { Value: true } } => negated ? new Expression.IsNotTrue(expression) : new Expression.IsTrue(expression),
+            Expression.LiteralValue { Value: Value.Boolean { Value: false } } => negated ? new Expression.IsNotFalse(expression) : new Expression.IsFalse(expression),
+            _ => negated ? new Expression.IsDistinctFrom(expression, right) : new Expression.IsNotDistinctFrom(expression, right),
+        };
+    }
+
     public override Statement? ParseStatement(Parser parser)
     {
         if (!IsUnaliasedDeleteReturning(parser))

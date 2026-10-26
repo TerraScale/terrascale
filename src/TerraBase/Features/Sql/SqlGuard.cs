@@ -1,7 +1,6 @@
 using System.Reflection;
 using SqlParser;
 using SqlParser.Ast;
-using SqlParser.Dialects;
 using TerraBase.Engine;
 
 namespace TerraBase.Features.Sql;
@@ -14,21 +13,23 @@ namespace TerraBase.Features.Sql;
 /// </summary>
 internal static class SqlGuard
 {
-    // The syntax tree is immutable to callers; the guard is set on the validated tree once, before it is rendered.
+    // Guards and affinity are applied only to an execution copy of the validated tree.
     private static readonly PropertyInfo Selection = typeof(Select).GetProperty(nameof(Select.Selection))!;
+
+    /// <summary>Normalizes parser rendering before the validated tree is cached or copied.</summary>
+    public static void Normalize(Query query) => Concat(query, [with(ReferenceEqualityComparer.Instance)]);
 
     public static void Apply(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables)
     {
-        Concat(query, [with(ReferenceEqualityComparer.Instance)]);
-        var ctes = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var ctes = new Dictionary<string, string?>(SqlIdentifierComparer.Instance);
         foreach (var cte in query.With?.CteTables ?? [])
         {
-            ctes[cte.Alias.Name.Value.ToLowerInvariant()] = cte.Alias.Columns is [var first, ..] ? first.Value : null;
+            ctes[cte.Alias.Name.Value] = cte.Alias.Columns is [var first, ..] ? first.Value : null;
         }
 
         foreach (var cte in query.With?.CteTables ?? [])
         {
-            ctes[cte.Alias.Name.Value.ToLowerInvariant()] ??= FirstColumn(cte.Query, tables, ctes);
+            ctes[cte.Alias.Name.Value] ??= FirstColumn(cte.Query, tables, ctes);
         }
 
         var queries = new Queries { Found = { query } };
@@ -97,52 +98,60 @@ internal static class SqlGuard
     }
 
     /// <summary>
-    /// Applies column affinity to the constant side of comparisons, as SQLite does for a column with a declared type: a
-    /// table column reads through a CTE as an expression without affinity, so <c>int_col = '2'</c> would match nothing.
-    /// Literals are rewritten; parameters are converted when bound (the returned affinities, by parameter number).
-    /// shortcut: a column is resolved by name across the statement's SQL tables (a CTE column of the same name takes the
-    /// table's affinity); resolve per scope if that ever misleads.
+    /// Applies column affinity to each comparison independently. Extra bound slots name the original parameter and
+    /// the conversion for this occurrence; projections and other uses retain the original slots.
     /// </summary>
-    public static Dictionary<int, SqlAffinity> Affinity(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables)
+    public static List<(int Parameter, SqlAffinity Affinity)> Affinity(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables, int parameterCount)
     {
-        var columns = new Dictionary<string, SqlAffinity?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var column in tables.Values.SelectMany(table => table.Columns))
-        {
-            columns[column.Name] = columns.TryGetValue(column.Name, out var known) && known != column.Affinity ? null : column.Affinity;
-        }
-
-        var parameters = new Dictionary<int, SqlAffinity>();
+        var parameters = new List<(int Parameter, SqlAffinity Affinity)>();
+        var resolver = new SqlAffinityResolver(query, tables);
         var finder = new Comparisons();
         ((IElement)query).Visit(finder);
-        foreach (var (column, constants, set) in finder.Found)
+        foreach (var comparison in finder.Found)
         {
-            var name = column switch
-            {
-                Expression.Identifier { Ident: var ident } => ident.Value,
-                Expression.CompoundIdentifier { Idents: [.., var ident] } => ident.Value,
-                _ => null,
-            };
-            if (name is null || !columns.TryGetValue(name, out var found) || found is not { } affinity || affinity == SqlAffinity.Blob)
-            {
-                continue;
-            }
-
-            for (var i = 0; i < constants.Count; i++)
-            {
-                switch (constants[i])
-                {
-                    case Expression.LiteralValue { Value: Value.Placeholder { Value: ['$', 'p', .. var digits] } }
-                        when int.TryParse(digits, System.Globalization.CultureInfo.InvariantCulture, out var number):
-                        parameters.TryAdd(number, affinity);
-                        break;
-                    case Expression.LiteralValue { Value: Value.SingleQuotedString or Value.Number } literal when Literal(literal) is { } value:
-                        set(i, Constant(SqlWrite.Apply(affinity, value)));
-                        break;
-                }
-            }
+            var left = resolver.Resolve(comparison.Left);
+            var right = comparison.InList ? null : resolver.Resolve(comparison.Right, comparison.Context);
+            Convert(comparison.Right, Conversion(left, right), comparison.SetRight);
+            Convert(comparison.Left, Conversion(right, left), comparison.SetLeft);
         }
 
         return parameters;
+
+        void Convert(Expression expression, SqlAffinity? affinity, Action<Expression>? set)
+        {
+            if (affinity is null || Unwrap(expression) is Expression.LiteralValue { Value: Value.Null })
+            {
+                return;
+            }
+
+            if (set is null)
+            {
+                throw Unsupported();
+            }
+
+            var literal = Literal(expression);
+            var placeholder = Unwrap(expression) is Expression.LiteralValue { Value: Value.Placeholder { Value: ['$', 'p', ..] } };
+            if (affinity == SqlAffinity.Text && (placeholder || literal is not null))
+            {
+                // API parameters have no BLOB storage class. Let the engine format numeric TEXT affinity exactly;
+                // .NET floating-point formatting differs for negative zero, exponent notation and significant digits.
+                set(Call("CAST(" + expression.ToSql() + " AS TEXT)") ?? throw Unsupported());
+            }
+            else if (Unwrap(expression) is Expression.LiteralValue { Value: Value.Placeholder { Value: ['$', 'p', .. var digits] } }
+                && int.TryParse(digits, System.Globalization.CultureInfo.InvariantCulture, out var number))
+            {
+                parameters.Add((number, affinity.Value));
+                set(new Expression.LiteralValue(new Value.Placeholder("$p" + (parameterCount + parameters.Count).ToString(System.Globalization.CultureInfo.InvariantCulture))));
+            }
+            else if (literal is { } value)
+            {
+                set(Constant(ComparisonValue(affinity.Value, value)));
+            }
+            else
+            {
+                throw Unsupported();
+            }
+        }
     }
 
     public static SqlValue ComparisonValue(SqlAffinity affinity, SqlValue value) =>
@@ -158,13 +167,30 @@ internal static class SqlGuard
 
     public static FormatException Unsupported() => new("comparison requires unsupported row-dependent affinity conversion");
 
-    private static SqlValue? Literal(Expression.LiteralValue literal) => literal.Value switch
+    private static SqlValue? Literal(Expression expression)
     {
-        Value.SingleQuotedString { Value: var text } => SqlValue.Of(text),
-        Value.Number { Value: var text } when long.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var integer) => SqlValue.Of(integer),
-        Value.Number { Value: var text } when double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var real) && double.IsFinite(real) => SqlValue.Of(real),
-        _ => null,
-    };
+        var negative = false;
+        expression = Unwrap(expression);
+        var signed = expression is Expression.UnaryOp;
+        while (expression is Expression.UnaryOp { Op: UnaryOperator.Plus or UnaryOperator.Minus } unary)
+        {
+            negative ^= unary.Op == UnaryOperator.Minus;
+            expression = Unwrap(unary.Expression);
+        }
+
+        return expression switch
+        {
+            Expression.LiteralValue { Value: Value.SingleQuotedString { Value: var text } } when !signed => SqlValue.Of(text),
+            Expression.LiteralValue { Value: Value.Boolean { Value: var flag } } when !signed => SqlValue.Of(flag ? 1L : 0L),
+            Expression.LiteralValue { Value: Value.Number { Value: var text } } => Number((negative ? "-" : "") + text),
+            _ => null,
+        };
+    }
+
+    private static SqlValue? Number(string text) =>
+        long.TryParse(text, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var integer) ? SqlValue.Of(integer)
+        : double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var real) && double.IsFinite(real) ? SqlValue.Of(real)
+        : null;
 
     private static Expression Constant(SqlValue value)
     {
@@ -174,37 +200,69 @@ internal static class SqlGuard
             SqlValueKind.Real => value.Real.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
             _ => "'" + value.Text!.Replace("'", "''", StringComparison.Ordinal) + "'",
         };
-        return new Parser().ParseSql("SELECT " + text, new SQLiteDialect())
+        return new Parser().ParseSql("SELECT " + text, new SqlDialect())
             is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.Projection: [SelectItem.UnnamedExpression { Expression: var constant }] } }]
             ? constant
             : throw new FormatException("a constant cannot be rendered");
     }
 
-    // Comparisons of a column with constants: the column, the constants, and how to replace constant i.
+    private sealed record Comparison(Expression Left, Expression Right, Action<Expression>? SetLeft,
+        Action<Expression>? SetRight, bool InList = false, Expression? Context = null);
+
+    // Every comparison is inspected, including computed operands. Only independent literal/parameter conversions
+    // are rewritten; conversions of row-dependent values fail explicitly rather than changing SQL semantics.
     private sealed class Comparisons : Visitor
     {
-        private static readonly PropertyInfo Left = typeof(Expression.BinaryOp).GetProperty(nameof(Expression.BinaryOp.Left))!;
-        private static readonly PropertyInfo Right = typeof(Expression.BinaryOp).GetProperty(nameof(Expression.BinaryOp.Right))!;
+        public List<Comparison> Found { get; } = [];
 
-        public List<(Expression Column, IReadOnlyList<Expression> Constants, Action<int, Expression> Set)> Found { get; } = [];
+        private static Action<Expression> Setter(Expression owner, string property) =>
+            value => owner.GetType().GetProperty(property)!.SetValue(owner, value);
+
+        public override ControlFlow PreVisitTableFactor(TableFactor relation)
+        {
+            if (relation is TableFactor.Derived { SubQuery: var query })
+            {
+                ((IElement)query).Visit(this);
+            }
+
+            return ControlFlow.Continue;
+        }
 
         public override ControlFlow PreVisitExpression(Expression expression)
         {
             switch (expression)
             {
                 case Expression.BinaryOp { Op: BinaryOperator.Eq or BinaryOperator.NotEq or BinaryOperator.Lt or BinaryOperator.LtEq or BinaryOperator.Gt or BinaryOperator.GtEq } compare:
-                    if (compare.Left is Expression.Identifier or Expression.CompoundIdentifier)
+                    Found.Add(new(compare.Left, compare.Right, Setter(compare, nameof(compare.Left)), Setter(compare, nameof(compare.Right))));
+                    break;
+                case Expression.IsDistinctFrom compare:
+                    Found.Add(new(compare.Expression1, compare.Expression2, Setter(compare, nameof(compare.Expression1)), Setter(compare, nameof(compare.Expression2))));
+                    break;
+                case Expression.IsNotDistinctFrom compare:
+                    Found.Add(new(compare.Expression1, compare.Expression2, Setter(compare, nameof(compare.Expression1)), Setter(compare, nameof(compare.Expression2))));
+                    break;
+                case Expression.Case { Operand: { } caseOperand, Conditions: var conditions } simpleCase:
+                    for (var i = 0; i < conditions.Count; i++)
                     {
-                        Found.Add((compare.Left, [compare.Right], (_, value) => Right.SetValue(compare, value)));
-                    }
-                    else if (compare.Right is Expression.Identifier or Expression.CompoundIdentifier)
-                    {
-                        Found.Add((compare.Right, [compare.Left], (_, value) => Left.SetValue(compare, value)));
+                        var index = i;
+                        Found.Add(new(caseOperand, conditions[i], null, value => simpleCase.Conditions[index] = value));
                     }
 
                     break;
-                case Expression.InList { Expression: Expression.Identifier or Expression.CompoundIdentifier, List: var list } inList:
-                    Found.Add((inList.Expression, [.. list], (i, value) => list[i] = value));
+                case Expression.InList { List: var list } inList:
+                    for (var i = 0; i < list.Count; i++)
+                    {
+                        var index = i;
+                        Found.Add(new(inList.Expression, list[i], null, value => list[index] = value, InList: true));
+                    }
+
+                    break;
+                case Expression.InSubquery { Expression: { } operand } inQuery:
+                    Found.Add(new(operand, new Expression.Subquery(inQuery.SubQuery), Setter(inQuery, nameof(inQuery.Expression)), null, Context: inQuery));
+                    break;
+                case Expression.Between between:
+                    Found.Add(new(between.Expression, between.Low, null, Setter(between, nameof(between.Low))));
+                    Found.Add(new(between.Expression, between.High, null, Setter(between, nameof(between.High))));
                     break;
             }
 
@@ -245,7 +303,7 @@ internal static class SqlGuard
     };
 
     private static Expression? Call(string sql) =>
-        new Parser().ParseSql($"SELECT {sql}", new SQLiteDialect())
+        new Parser().ParseSql($"SELECT {sql}", new SqlDialect())
             is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.Projection: [SelectItem.UnnamedExpression { Expression: var call }] } }]
             ? call
             : null;
@@ -289,7 +347,7 @@ internal static class SqlGuard
         }
 
         var argument = columns.Count == 0 ? "0" : $"coalesce({string.Join(", ", columns)}, 0)";
-        var guard = new Parser().ParseSql($"SELECT 1 WHERE {SqlProgram.RowGuard}({argument})", new SQLiteDialect())
+        var guard = new Parser().ParseSql($"SELECT 1 WHERE {SqlProgram.RowGuard}({argument})", new SqlDialect())
             is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.Selection: { } parsed } }]
             ? parsed
             : throw new FormatException("the statement cannot be guarded");
@@ -322,9 +380,9 @@ internal static class SqlGuard
     {
         var (qualifier, column) = item switch
         {
-            TableFactor.Table { Name.Values: [var name] } when ctes.TryGetValue(name.Value.ToLowerInvariant(), out var first) =>
+            TableFactor.Table { Name.Values: [var name] } when ctes.TryGetValue(name.Value, out var first) =>
                 (item.Alias?.Name.Value ?? name.Value, first),
-            TableFactor.Table { Name.Values: [var name] } when tables.TryGetValue(name.Value.ToLowerInvariant(), out var table) =>
+            TableFactor.Table { Name.Values: [var name] } when tables.TryGetValue(SqlIdentifierComparer.LowerAscii(name.Value), out var table) =>
                 (item.Alias?.Name.Value ?? name.Value, table.Columns[0].Name),
             TableFactor.Derived { SubQuery: var query, Alias: { } alias } =>
                 (alias.Name.Value, alias.Columns is [var first, ..] ? first.Value : FirstColumn(query, tables, ctes)),
