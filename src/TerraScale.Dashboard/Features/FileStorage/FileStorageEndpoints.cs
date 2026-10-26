@@ -38,7 +38,7 @@ public static class FileStorageEndpoints
                     {
                         case "bucket": await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted); break;
                         case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); break;
-                        case "delete-bucket": await files.DeleteBucketAsync(context, bucket, http.RequestAborted); bucket = ""; break;
+                        case "delete-bucket": await files.DeleteBucketAsync(context, bucket, form["confirmName"].ToString(), http.RequestAborted); bucket = ""; break;
                         case "upload":
                             using (var metadata = JsonDocument.Parse(form["metadata"].ToString()))
                             {
@@ -75,7 +75,9 @@ public static class FileStorageEndpoints
     private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, FileStorageService files, string? error = null, string? bucket = null)
     {
         FileStorageListing? listing = null;
-        try { listing = await files.ListAsync(context, Empty(bucket ?? http.Request.Query["bucket"].ToString()), Empty(http.Request.Query["after"].ToString()), Empty(http.Request.Query["bucketAfter"].ToString()), http.RequestAborted); }
+        var bucketAfter = http.Request.Query["bucketAfter"].ToString();
+        if (http.Request.HasFormContentType) bucketAfter = (await http.Request.ReadFormAsync(http.RequestAborted))["bucketAfter"].ToString();
+        try { listing = await files.ListAsync(context, Empty(bucket ?? http.Request.Query["bucket"].ToString()), Empty(http.Request.Query["after"].ToString()), Empty(bucketAfter), http.RequestAborted); }
         catch (Exception failure) when (Known(failure, http)) { error ??= Message(failure); http.Response.StatusCode = Status(failure); }
         var page = FileStorageView.Create(new(ShellModel.For(http, context, "File storage"), listing, error));
         page.StatusCode = http.Response.StatusCode;
@@ -95,7 +97,7 @@ public static class FileStorageEndpoints
         ArgumentException or JsonException => 422,
         _ => 503
     };
-    private static string Message(Exception error) => Status(error) switch
+    private static string Message(Exception error) => error is AccountAccessException { StatusCode: 422 } denied ? denied.Message : Status(error) switch
     {
         401 => "Sign in again to access project files.",
         403 => "Your role cannot perform this file operation.",

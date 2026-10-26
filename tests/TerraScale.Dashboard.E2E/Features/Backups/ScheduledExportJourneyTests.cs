@@ -49,6 +49,8 @@ public sealed class ScheduledExportJourneyTests(DashboardRootFixture fixture)
         var html = WebUtility.HtmlDecode(await client.GetStringAsync(page));
         await Assert.That(html).Contains("customer-exports").And.Contains("value=\"0 3 * * 0\" selected=\"selected\"").And.Contains("No scheduled export has run yet.");
         await Assert.That(html).DoesNotContain("tsec_synthetic_secret").And.DoesNotContain("tid_synthetic");
+        var removal = System.Text.RegularExpressions.Regex.Match(html, "<dialog id=\"remove-backup-bucket\"[\\s\\S]*?</dialog>").Value;
+        await Assert.That(removal).Contains("Remove bucket: customer-exports").And.Contains("data-submit-once").And.Contains("deletes its saved credentials");
 
         Volatile.Write(ref failed, 1);
         await Assert.That(WebUtility.HtmlDecode(await client.GetStringAsync(page))).Contains("The last scheduled export failed").And.Contains("bucket refused the write");
