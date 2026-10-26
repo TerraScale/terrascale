@@ -150,6 +150,7 @@ internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, Reference
     public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct)
     { var contents = await inner.CollectionsAsync(scope, home, id, ct); facts.ValidateMeasurements(scope, home, id, contents); return contents; }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken ct) => inner.RegionsAsync(ct);
+    public Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken ct) => inner.CatalogAsync(ct);
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) => inner.ListAsync(scope, home, ct);
     public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken ct) => inner.CreateAsync(scope, name, placement, allRegions, ct);
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct) => inner.BranchAsync(scope, home, id, name, ct);

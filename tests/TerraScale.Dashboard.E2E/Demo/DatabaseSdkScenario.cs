@@ -477,7 +477,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     lock (gate)
                     {
                         var external = new ManagedDatabase(ids.NewId(), body.GetProperty("projectId").GetString()!, body.GetProperty("value").GetString()!, DateTimeOffset.UtcNow,
-                            HomeRegion: "gru", ReplicaRegions: ["sfo"]);
+                            HomeRegion: body.TryGetProperty("home", out var home) ? home.GetString()! : "gru",
+                            ReplicaRegions: body.TryGetProperty("replicas", out var replicas) ? replicas.EnumerateArray().Select(value => value.GetString()!).ToArray() : ["sfo"]);
                         databases[external.Id] = external;
                     }
                     break;
@@ -742,7 +743,9 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 var after = query["after"].ToString();
                 lock (gate)
                 {
-                    var owned = databases.Values.Where(value => value.ProjectId == project).OrderBy(value => value.Id, StringComparer.Ordinal).ToArray();
+                    var owned = databases.Values.Where(value => value.ProjectId == project && (value.AllRegions ||
+                        value.HomeRegion == answering || value.ReplicaRegions?.Contains(answering, StringComparer.Ordinal) == true))
+                        .OrderBy(value => value.Id, StringComparer.Ordinal).ToArray();
                     if (after.Length > 0 && !owned.Any(value => value.Id == after)) return Error(400, "validation");
                     var page = owned.Where(value => string.CompareOrdinal(value.Id, after) > 0).Take(limit + 1).ToArray();
                     return Results.Json(new { items = page.Take(limit).Select(value => Wire(value, answering)).ToArray(), next = page.Length > limit ? page[limit - 1].Id : null });

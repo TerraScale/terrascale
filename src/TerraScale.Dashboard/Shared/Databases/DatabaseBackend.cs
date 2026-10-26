@@ -57,6 +57,7 @@ public sealed record CreatedProjectCredential(ProjectCredential Key, string Secr
 public interface IDatabaseBackend
 {
     Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
     Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
@@ -85,7 +86,11 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         catch (Exception error) when (error is HttpRequestException or JsonException) { return await AnsweringRegionAsync(cancellationToken); }
     }
 
-    private async Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken)
+    // Absence requires a complete catalog: a health-only fallback cannot discover an unknown home.
+    public Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "region-catalog"), () => ReadCatalogAsync(cancellationToken));
+
+    private async Task<IReadOnlyList<DatabaseRegion>> ReadCatalogAsync(CancellationToken cancellationToken)
     {
         using var response = await factory.CreateClient("platform").GetAsync(new Uri(TerraBaseDiscovery.Origin, "/v1/regions"), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -136,12 +141,12 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             {
                 if (item.ProjectId != scope.ProjectId || !TerraScaleIds.IsValid(item.Id) ||
                     result.Any(existing => existing.Id == item.Id || existing.Name == item.Name))
-                    throw new HttpRequestException("Database listing returned an invalid identity.");
+                    throw new DatabaseListingException("Database listing returned an invalid identity.");
                 result.Add(Map(item));
             }
             next = page.Next;
             if (!string.IsNullOrEmpty(next) && (!seen.Add(next) || ++pages >= 100))
-                throw new HttpRequestException("Database pagination did not advance within its bounds.");
+                throw new DatabaseListingException("Database pagination did not advance within its bounds.");
         } while (!string.IsNullOrEmpty(next));
         return result;
     }
@@ -305,6 +310,8 @@ internal sealed record SqlExecuteError(string Code, string Message);
 internal sealed partial class DatabaseSqlJson : JsonSerializerContext;
 
 public class DatabaseProviderException(HttpStatusCode status, string message = "The database service could not complete the request.") : HttpRequestException(message, null, status);
+// A successful producer's invalid listing cannot be treated as an unreachable region.
+internal sealed class DatabaseListingException(string message) : DatabaseProviderException(HttpStatusCode.ServiceUnavailable, message);
 
 // TerraBase's 421 wrong_region, as ts-dotnet 0.0.2's TerraBaseWrongRegionException reads it: the answering region
 // (X-TerraBase-Region) and the database's home and serving regions (X-TerraBase-Database-Home/-Regions). Nothing is
