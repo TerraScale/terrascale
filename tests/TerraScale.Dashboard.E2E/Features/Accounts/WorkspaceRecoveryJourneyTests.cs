@@ -115,7 +115,8 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardRootFixture fixture)
         await Assert.That(adminProjects.Contains(remoteId, StringComparison.Ordinal)).IsTrue();
         await Assert.That(adminProjects.Contains(name, StringComparison.Ordinal)).IsTrue();
         await Assert.That(adminProjects.Contains("commandfor=\"rename-project-", StringComparison.Ordinal)).IsTrue();
-        await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsFalse()
+            .Because("Personal organization provisioning still requires its owner.");
         using (var adminRename = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects/" + remoteId + "/rename", new()
         { ["_csrf"] = replicaCsrf, ["name"] = "Admin recovered project", ["region"] = "GRU", ["backupRegion"] = "GRU", ["regions"] = "GRU" }))
             await Assert.That(adminRename.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
