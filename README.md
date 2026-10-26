@@ -389,6 +389,8 @@ known fixed error codes. Messages are fixed safe diagnostics; arbitrary
 producer messages, codes and response bodies are never retained. Options
 formatting omits credentials.
 
+Project and API-key IP allowlists use typed CIDR records and setters; see [CIDR contracts and examples](contracts/auth/cidrs.md).
+
 ## Verification and package distribution
 
 ```bash

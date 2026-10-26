@@ -104,7 +104,8 @@
       "issuer": "https://auth.example.test/{project}",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "admin"
+      "role": "admin",
+      "allowed_cidrs": []
     }
   },
   "list_projects": {
@@ -118,7 +119,8 @@
           "issuer": "https://auth.example.test/{project}",
           "created_by": "{user}",
           "created_at": "2026-10-13T00:00:00+00:00",
-          "role": "member"
+          "role": "member",
+          "allowed_cidrs": []
         }
       ],
       "next": "opaque+/cursor="
@@ -133,7 +135,8 @@
       "issuer": "https://auth.example.test/{project}",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "member"
+      "role": "member",
+      "allowed_cidrs": []
     }
   },
   "rename_project": {
@@ -147,7 +150,8 @@
       "issuer": "https://auth.example.test/{project}",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "admin"
+      "role": "admin",
+      "allowed_cidrs": []
     }
   },
   "delete_project": {
@@ -190,7 +194,8 @@
         "documents:read"
       ],
       "database": null,
-      "expires_at": null
+      "expires_at": null,
+      "allowed_cidrs": null
     },
     "response": {
       "api_key": {
@@ -206,7 +211,8 @@
         "created_at": "2026-10-13T00:00:00+00:00",
         "expires_at": null,
         "previous_secret_expires_at": null,
-        "last_used_at": null
+        "last_used_at": null,
+        "allowed_cidrs": []
       },
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -228,7 +234,8 @@
           "created_at": "2026-10-13T00:00:00+00:00",
           "expires_at": null,
           "previous_secret_expires_at": null,
-          "last_used_at": null
+          "last_used_at": null,
+          "allowed_cidrs": []
         }
       ],
       "next": "opaque+/cursor="
@@ -249,7 +256,8 @@
       "created_at": "2026-10-13T00:00:00+00:00",
       "expires_at": null,
       "previous_secret_expires_at": null,
-      "last_used_at": "2026-10-13T00:00:30+00:00"
+      "last_used_at": "2026-10-13T00:00:30+00:00",
+      "allowed_cidrs": []
     }
   },
   "revoke_organization_api_key": {
@@ -274,7 +282,8 @@
         "created_at": "2026-10-13T00:00:00+00:00",
         "expires_at": null,
         "previous_secret_expires_at": "2026-10-13T00:01:00+00:00",
-        "last_used_at": null
+        "last_used_at": null,
+        "allowed_cidrs": []
       },
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -286,7 +295,8 @@
         "documents:read"
       ],
       "database": "example-db",
-      "expires_at": null
+      "expires_at": null,
+      "allowed_cidrs": null
     },
     "response": {
       "api_key": {
@@ -302,7 +312,8 @@
         "created_at": "2026-10-13T00:00:00+00:00",
         "expires_at": null,
         "previous_secret_expires_at": null,
-        "last_used_at": null
+        "last_used_at": null,
+        "allowed_cidrs": []
       },
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -324,7 +335,8 @@
           "created_at": "2026-10-13T00:00:00+00:00",
           "expires_at": null,
           "previous_secret_expires_at": null,
-          "last_used_at": null
+          "last_used_at": null,
+          "allowed_cidrs": []
         }
       ],
       "next": "opaque+/cursor="
@@ -345,7 +357,8 @@
       "created_at": "2026-10-13T00:00:00+00:00",
       "expires_at": null,
       "previous_secret_expires_at": null,
-      "last_used_at": "2026-10-13T00:00:30+00:00"
+      "last_used_at": "2026-10-13T00:00:30+00:00",
+      "allowed_cidrs": []
     }
   },
   "revoke_project_api_key": {
@@ -370,7 +383,8 @@
         "created_at": "2026-10-13T00:00:00+00:00",
         "expires_at": null,
         "previous_secret_expires_at": "2026-10-13T00:01:00+00:00",
-        "last_used_at": null
+        "last_used_at": null,
+        "allowed_cidrs": []
       },
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -530,5 +544,8 @@
       ],
       "next": "opaque+/cursor="
     }
-  }
+  },
+  "set_project_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{project}", "organization_id": "{organization}", "name": "Synthetic project", "issuer": "https://auth.example.test/{project}", "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "role": "admin", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
+  "set_project_api_key_allowed_cidrs": {"request": {"allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": "{project}", "database": "example-db", "scopes": ["documents:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": ["192.0.2.0/24", "2001:db8::/32"]}},
+  "set_organization_api_key_allowed_cidrs": {"request": {"allowed_cidrs": []}, "response": {"id": "{key}", "name": "Synthetic project", "organization_id": "{organization}", "project_id": null, "database": null, "scopes": ["documents:read"], "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "expires_at": null, "previous_secret_expires_at": null, "last_used_at": "2026-10-13T00:00:30+00:00", "allowed_cidrs": []}}
 }

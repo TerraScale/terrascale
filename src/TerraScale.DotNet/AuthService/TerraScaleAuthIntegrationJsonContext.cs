@@ -14,6 +14,7 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProject>))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformProjectMember))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformAllowedCidrs))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformCreateApiKey))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformRotateApiKey))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformApiKey))]

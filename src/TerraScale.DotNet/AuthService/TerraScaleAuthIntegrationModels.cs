@@ -37,7 +37,8 @@ public sealed record TerraScaleAuthPlatformProject(
     [property: JsonPropertyName("issuer")] string? Issuer,
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("role")] string Role);
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
 
 /// <summary>Wire DTO for the producer ProjectMemberBody. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformProjectMember(
@@ -51,7 +52,8 @@ public sealed record TerraScaleAuthPlatformCreateApiKey(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("scopes")] IReadOnlyList<string>? Scopes,
     [property: JsonPropertyName("database")] string? Database = null,
-    [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt = null);
+    [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt = null,
+    [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string>? AllowedCidrs = null);
 
 /// <summary>Wire DTO for the producer RotateApiKeyRequest. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformRotateApiKey([property: JsonPropertyName("previous_secret_ttl")] int? PreviousSecretTtl = null);
@@ -68,6 +70,7 @@ public sealed record TerraScaleAuthPlatformApiKey(
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
     [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt,
+    [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs,
     [property: JsonPropertyName("last_used_at")] DateTimeOffset? LastUsedAt = null);
 
 /// <summary>Wire DTO for the producer ApiKeySecretBody. See contracts/auth/dtos.json.</summary>
