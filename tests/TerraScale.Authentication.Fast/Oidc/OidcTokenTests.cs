@@ -448,23 +448,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         return await OidcHarness.JsonAsync(polled);
     }
 
-    private static async Task AssertReplayRejectedAsync(HttpResponseMessage response)
-    {
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await AssertConflictNoticeAsync(await OidcHarness.JsonAsync(response));
-    }
-
-    private static async Task AssertConflictNoticeAsync(JsonElement error)
-    {
-        await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("another region");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("Sign in again or use the latest credential");
-        foreach (var token in new[] { "access_token", "refresh_token", "id_token" })
-        {
-            await Assert.That(error.TryGetProperty(token, out _)).IsFalse();
-        }
-    }
-
     private static async Task AssertAccessWorksAsync(OidcHarness oidc, JsonElement tokens, HttpClient? client = null)
     {
         using var response = await oidc.UserInfoAsync(tokens.GetProperty("access_token").GetString()!, client);
