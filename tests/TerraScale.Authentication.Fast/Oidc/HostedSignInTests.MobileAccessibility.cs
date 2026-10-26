@@ -186,7 +186,17 @@ public sealed partial class HostedSignInTests
 
             // The existing forwarder uses AllHeadersAsync, preserving actual Origin and cookies.
             Console.WriteLine($"Mobile route start {route.Request.Method} {new Uri(route.Request.Url).AbsolutePath}");
-            await ForwardContinuationFormAsync(route, server);
+            try
+            {
+                await ForwardContinuationFormAsync(route, server);
+            }
+            catch (Exception error)
+            {
+                Console.WriteLine($"Mobile forwarding failed {error.GetType().Name}");
+                await route.AbortAsync();
+                return;
+            }
+
             Console.WriteLine($"Mobile route fulfilled {route.Request.Method} {new Uri(route.Request.Url).AbsolutePath}");
         });
         var page = await context.NewPageAsync();

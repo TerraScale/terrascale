@@ -167,7 +167,9 @@ public sealed partial class HostedSignInTests
 
     private static async Task ForwardContinuationFormAsync(IRoute route, AuthTestServer server)
     {
-        var headers = await route.Request.AllHeadersAsync();
+        Console.WriteLine("Mobile forwarding headers start");
+        var headers = await route.Request.AllHeadersAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Console.WriteLine("Mobile forwarding headers complete");
         using var request = new HttpRequestMessage(new HttpMethod(route.Request.Method), new Uri(route.Request.Url).PathAndQuery);
         if (route.Request.PostDataBuffer is { } body)
         {
@@ -181,7 +183,9 @@ public sealed partial class HostedSignInTests
         }
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        Console.WriteLine("Mobile forwarding server start");
         using var response = await server.Client.SendAsync(request, deadline.Token);
+        Console.WriteLine($"Mobile forwarding server complete {(int)response.StatusCode}");
         var responseHeaders = response.Headers.Concat(response.Content.Headers)
             .Where(header => header.Key is not ("Content-Length" or "Transfer-Encoding"))
             .ToDictionary(header => header.Key, header => string.Join(", ", header.Value));
