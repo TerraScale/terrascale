@@ -84,6 +84,14 @@ Keep confirmation enabled in your client for destructive actions and review the 
 
 For key rotation, call `rotate_api_key` only where the returned secret can be kept private. `previousSecretTtlSeconds` accepts 0–86400 seconds; its default 0 stops new exchanges with the old secret immediately. With a grace period, update application secrets before that period ends. Another rotation is refused while the previous secret's grace period remains. Already-issued access tokens can remain valid within the documented [revocation bound](/ar/guides/authentication#failed-authorization). Verify the replacement works and revoke credentials you no longer need.
 
+## Continue through list results
+
+`list_documents` returns `documents`, `nextCursor`, `hasMore` and the effective `limit`. Pass `nextCursor` unchanged as `after` until `hasMore` is false, even when a filtered page is empty. Keep the database, collection, search, sort and direction unchanged. The final cursor is explicitly `null`.
+
+Native ID order defaults to 100 documents per page. Set `sort` or `descending` for query order, which defaults to 25; `limit` accepts 1–100, and 0 keeps the mode's default. Query search examines at most 100 documents in four reads per call. Query `page` is a label: use 1 initially and provide `after` for later pages. Native ID order uses `after` without a page label. Totals and page counts are unavailable and returned as `null`; use `hasMore` to decide whether to continue.
+
+`list_api_keys`, `list_databases`, `list_backups`, `list_members`, `list_invitations`, `list_saved_queries`, `auth_list_clients` and `list_query_subscriptions` also accept `limit` (1–100, default 100) and `after`. Their named result arrays include `nextCursor` and `hasMore`. Preserve the scope and filters. Continuations select positions rather than a snapshot: restart traversal to include concurrent inserts before your checkpoint.
+
 ## Dashboard API reference
 
 The [dashboard integration API reference](https://dash.terrascale.tech/reference/) and [OpenAPI schema](https://dash.terrascale.tech/openapi/integration.json) describe same-origin browser integrations. They require a signed-in dashboard session cookie; mutations also require the same-origin `_csrf` form token. MCP uses an OAuth-issued or personal access token in a bearer header instead. The [TerraBase data API](/ar/guides/authentication) uses project-scoped access tokens obtained by exchanging API keys. Follow each surface's authentication contract; these credentials are not interchangeable.
