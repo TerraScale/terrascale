@@ -45,8 +45,9 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         await CallAsync(replica, secret, "patch_document", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010", patch = new { score = 2 } });
         var second = await CallAsync(replica, secret, "create_backup", new { databaseId = id });
         var listing = await CallAsync(client, secret, "list_backups", new { databaseId = id });
-        Check(listing.GetProperty("backups").GetArrayLength() == 2 && listing.GetProperty("backups")[0].GetProperty("id").GetString() == second.GetProperty("id").GetString(),
-            "MCP follows the genuine opaque pagination cursor and projects backups newest first");
+        var backupIds = listing.GetProperty("backups").EnumerateArray().Select(row => row.GetProperty("id").GetString()).ToArray();
+        Check(backupIds.SequenceEqual(new[] { backupId, second.GetProperty("id").GetString() }.Order(StringComparer.Ordinal)),
+            "MCP follows upstream continuation and orders every snapshot by immutable ID");
         var measured = await CallAsync(client, secret, "get_database", new { databaseId = id });
         Check(measured.GetProperty("backupsEnabled").GetBoolean(), "Database metadata projects the actual enabled full-backup policy");
         using (var overview = await replica.GetAsync("/databases/" + id))

@@ -53,7 +53,7 @@ public sealed class ReferenceDatabaseJourneyTests(DashboardRootFixture fixture)
                     expected.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsTrue();
                 var snapshots = await CallAsync(replica, secret, "list_backups", new { organizationId, projectId, databaseId });
                 await Assert.That(snapshots.GetProperty("backups").GetArrayLength()).IsEqualTo(Rows(observed.GetProperty("backups").GetProperty("backups")).Length);
-                await Assert.That(snapshots.TryGetProperty("policy", out _)).IsFalse();
+                await Assert.That(snapshots.GetProperty("policy").ValueKind).IsEqualTo(JsonValueKind.Null);
                 await Assert.That(detail.TryGetProperty("backupsEnabled", out _)).IsFalse()
                     .Because("The actual source's unsaved retention0 is not an admitted production scheduler contract.");
                 var mutation = await HttpJourney.McpAsync(client, secret, "tools/call", new
