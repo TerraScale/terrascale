@@ -128,7 +128,7 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 }
 func (f *oidcFixture) application(t *testing.T) *TSAuthOIDCApplication {
 	t.Helper()
-	oidc := newTSAuthTestInstance(t, Config{TSAuthBaseURL: f.server.URL, MaxRetryAttempts: 2}).OIDC
+	oidc := newTSAuthTestInstance(t, Config{TSAuthBaseURL: f.server.URL}).OIDC
 	app, err := oidc.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: TSAuthClientSecretBasic}, RedirectURI: "https://app.example/callback?intent=login", PostLogoutRedirectURIs: []string{"https://app.example/logout"}, RequireSession: true})
 	if err != nil {
 		t.Fatal(err)

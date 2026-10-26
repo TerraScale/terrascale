@@ -129,21 +129,20 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 	ctx := t.Context()
 	edgeClient := TSAuthOAuthClientAuthentication{ClientID: "cli_1", ClientSecret: "csek", Method: TSAuthClientSecretPost}
 
-	// D35: GET + always-503 with MaxRetryAttempts=2 fails after exactly 3
-	// attempts.
-	instance, rec := newTSAuthEdgeInstance(t, Config{MaxRetryAttempts: 2, RetryDelay: time.Millisecond}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+	// D35: safe reads stop after the fixed retry budget.
+	instance, rec := newTSAuthEdgeInstance(t, Config{}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		tsAuthEdgeResponse{status: http.StatusServiceUnavailable}.write(w)
 	})
 	_, err := instance.OIDC.GetUserInfo(ctx, "access-token")
 	tsAuthEdgeRequireAPIError(t, err, "tsauth.oidc.userinfo", http.StatusServiceUnavailable, "server_error", "Service Unavailable")
-	if got := rec.count("GET /acme/oauth/userinfo"); got != 3 {
-		t.Fatalf("503 attempts = %d, want exactly 3", got)
+	if got := rec.count("GET /acme/oauth/userinfo"); got != 4 {
+		t.Fatalf("503 attempts = %d, want exactly 4", got)
 	}
 
 	// D36: Retry-After: 0 retries immediately, with no backoff sleep (the
-	// configured 500ms base delay is bypassed).
+	// fixed base delay is bypassed).
 	var retriedAt time.Time
-	instance, rec = newTSAuthEdgeInstance(t, Config{MaxRetryAttempts: 1, RetryDelay: 5 * time.Second}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+	instance, rec = newTSAuthEdgeInstance(t, Config{}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		if rec.count("GET /acme/oauth/userinfo") == 1 {
 			tsAuthEdgeResponse{status: http.StatusServiceUnavailable, retryAfter: "0"}.write(w)
 			return
@@ -159,8 +158,8 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 		t.Fatalf("Retry-After: 0 retried after %s, want no sleep", elapsed)
 	}
 
-	// D37: POST + 503 is never retried, even with retries enabled.
-	instance, rec = newTSAuthEdgeInstance(t, Config{MaxRetryAttempts: 2, RetryDelay: time.Millisecond}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+	// D37: POST + 503 is never retried.
+	instance, rec = newTSAuthEdgeInstance(t, Config{}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		tsAuthEdgeResponse{status: http.StatusServiceUnavailable, body: `{"error":{"code":"server_error","message":"unavailable"}}`}.write(w)
 	})
 	err = instance.OIDC.RevokeToken(ctx, edgeClient, "token")
@@ -177,7 +176,7 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 		"u403": http.StatusForbidden,
 	}
 	hits := map[string]int{}
-	instance, _ = newTSAuthEdgeInstance(t, Config{MaxRetryAttempts: 2, RetryDelay: time.Millisecond}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+	instance, _ = newTSAuthEdgeInstance(t, Config{}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		status, ok := responses[token]
 		if !ok {
@@ -203,9 +202,7 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 		return nil, errors.New("connection reset by peer")
 	})
 	instance, _ = newTSAuthEdgeInstance(t, Config{
-		HTTPClient:       &http.Client{Transport: failing},
-		MaxRetryAttempts: 1,
-		RetryDelay:       time.Millisecond,
+		HTTPClient: &http.Client{Transport: failing},
 	}, func(w http.ResponseWriter, r *http.Request, _ []byte) { http.NotFound(w, r) })
 	_, err = instance.OIDC.GetUserInfo(ctx, "access-token")
 	if err == nil || !strings.Contains(err.Error(), "tsauth.oidc.userinfo") || !strings.Contains(err.Error(), "connection reset by peer") {
@@ -215,8 +212,8 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 	if errors.As(err, &apiErr) {
 		t.Fatalf("GET transport error = %v, want a wrapped transport error", err)
 	}
-	if transportCalls != 2 {
-		t.Fatalf("GET transport attempts = %d, want 2 (retried)", transportCalls)
+	if transportCalls != 4 {
+		t.Fatalf("GET transport attempts = %d, want 4 (retried)", transportCalls)
 	}
 	transportCalls = 0
 	err = instance.OIDC.RevokeToken(ctx, edgeClient, "token")
@@ -248,7 +245,7 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 	// always lands before a second request regardless of scheduling.
 	sleepCtx, cancelSleep := context.WithCancel(ctx)
 	var answered atomic.Bool
-	instance, rec = newTSAuthEdgeInstance(t, Config{MaxRetryAttempts: 1, RetryDelay: time.Millisecond}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+	instance, rec = newTSAuthEdgeInstance(t, Config{}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		tsAuthEdgeResponse{status: http.StatusTooManyRequests, body: `{"error":{"code":"rate_limited","message":"slow down"}}`, retryAfter: "30"}.write(w)
 		if answered.CompareAndSwap(false, true) {
 			cancelSleep()
@@ -416,7 +413,7 @@ func TestTSAuthEdgeExplicitOrigin(t *testing.T) {
 // response_too_large APIError.
 func TestTSAuthEdgeOversizedResponse(t *testing.T) {
 	attempts := 0
-	instance, _ := newTSAuthEdgeInstance(t, Config{MaxRetryAttempts: 3, RetryDelay: time.Millisecond}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+	instance, _ := newTSAuthEdgeInstance(t, Config{}, func(w http.ResponseWriter, r *http.Request, _ []byte) {
 		attempts++
 		w.Header().Set("Content-Length", strconv.Itoa(int(MaxResponseBodyBytes)+1))
 		w.WriteHeader(http.StatusInternalServerError)

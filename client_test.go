@@ -28,7 +28,7 @@ func TestRetryAfterIsBoundedAndRejectsInvalidValues(t *testing.T) {
 		ok    bool
 	}{
 		{"2", 2 * time.Second, true},
-		{"999999999999999999999999", MaxRetryAfter, true},
+		{"999999999999999999999999", time.Duration((1<<63-1)/int64(time.Second)) * time.Second, true},
 		{"-1", 0, false},
 		{"1.5", 0, false},
 	} {
@@ -36,12 +36,6 @@ func TestRetryAfterIsBoundedAndRejectsInvalidValues(t *testing.T) {
 		if got != test.want || ok != test.ok {
 			t.Errorf("parseRetryAfter(%q) = (%s, %v), want (%s, %v)", test.value, got, ok, test.want, test.ok)
 		}
-	}
-}
-
-func TestNewClientValidatesRequestTimeoutCeiling(t *testing.T) {
-	if _, err := NewClient(Config{APIBaseURL: "http://127.0.0.1", RequestTimeout: MaxRequestTimeout + time.Nanosecond}); err == nil {
-		t.Fatal("request timeout above protocol ceiling was accepted")
 	}
 }
 

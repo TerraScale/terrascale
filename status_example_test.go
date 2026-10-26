@@ -9,7 +9,7 @@ import (
 )
 
 func ExampleStatusClient_Latency() {
-	client, err := sdk.NewClient(sdk.Config{MaxRetryAttempts: 2})
+	client, err := sdk.NewClient(sdk.Config{})
 	if err != nil {
 		log.Fatal(err)
 	}
