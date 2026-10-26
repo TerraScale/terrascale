@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "node --test scripts/*.test.mjs && vite build && node ./scripts/inline-prerendered-css.mjs",
+    "build": "node --test scripts/*.test.mjs && vite build && node ./scripts/inline-prerendered-css.mjs && node ./scripts/write-build-info.mjs",
     "cf:login": "wrangler login",
     "cf:whoami": "wrangler whoami",
     "cf:dev": "npm run build && wrangler dev",
