@@ -673,6 +673,24 @@ Functions (`Database.DeployFunction`, `Functions`, `InvokeFunction`,
 `FunctionLogs`, `FunctionDeliveries`, `DeleteFunction`) follow TerraBase's
 functions contract: JavaScript `handler(event)` deployed per database, run on
 `invoke`, collection changes or a UTC cron schedule.
+`InvokeFunction` preserves successful status, content type and response bytes;
+non-2xx responses are `*v1.APIError` with `Status`, `Header` and raw `Body`.
+Pass query values separately so the SDK escapes them into `event.query`:
+
+```go
+response, err := db.InvokeFunction(ctx, "hello", []byte(`{"n":1}`), url.Values{
+    "label": {"a&b /+"},
+})
+if err != nil {
+    return err
+}
+// Inspect response.StatusCode and response.ContentType before decoding response.Body.
+```
+
+Import `net/url` for this example. Function management reads require both
+`documents:read` and `documents:write`; invocation needs `documents:read`.
+Invocation is sent once, including handler 401/429/503 responses, and cancellation
+can leave its outcome unknown. [Pinned public contract](contracts/function-invocation.md).
 With `TERRASCALE_API_KEY` set (CI), database commands act as that API key in
 its project instead of the stored sign-in. `ts migrate up` applies each
 pending `migrations/NNNN_<name>.sql` file in one transaction together with its

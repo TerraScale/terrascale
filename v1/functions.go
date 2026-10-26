@@ -68,7 +68,7 @@ func (d *Database) DeployFunction(ctx context.Context, name string, in FunctionR
 	return databaseCall[Function](ctx, d, http.MethodPut, nil, body, "functions", name)
 }
 
-// Functions lists the database's functions without their source. Needs documents:read.
+// Functions lists functions without their source. Needs documents:read and documents:write.
 func (d *Database) Functions(ctx context.Context) ([]Function, error) {
 	out, err := databaseCall[[]Function](ctx, d, http.MethodGet, nil, nil, "functions")
 	if err != nil {
@@ -77,7 +77,7 @@ func (d *Database) Functions(ctx context.Context) ([]Function, error) {
 	return *out, nil
 }
 
-// Function reads one function with its source. Needs documents:read.
+// Function reads one function with its source. Needs documents:read and documents:write.
 func (d *Database) Function(ctx context.Context, name string) (*Function, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
@@ -99,27 +99,47 @@ func (d *Database) DeleteFunction(ctx context.Context, name string) error {
 	return err
 }
 
-// InvokeFunction runs the function with body (JSON, or nil for none) as
-// event.body and returns the handler's response body. A handler status
-// outside 2xx is an *APIError whose Body is the handler's body. Invocations
-// may write documents, so they are never retried. Needs documents:read.
-func (d *Database) InvokeFunction(ctx context.Context, name string, body []byte) ([]byte, error) {
+// FunctionResponse owns a successful handler's original HTTP status, media type
+// and response bytes, including an empty 204. Treat Body as immutable when shared.
+type FunctionResponse struct {
+	StatusCode  int
+	ContentType string
+	Body        []byte
+}
+
+// InvokeFunction runs the function with body (JSON, or nil for none) as event.body
+// and URL-escaped query values as event.query. Repeated query values become a
+// comma-joined string in the handler. The result preserves status, media and body;
+// a status outside 2xx is an *APIError preserving those fields in Status, Header
+// and Body. Invocations may write documents and are never retried. Needs documents:read.
+func (d *Database) InvokeFunction(ctx context.Context, name string, body []byte, query url.Values) (*FunctionResponse, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
+	}
+	if len(body) > 1<<20 {
+		return nil, errors.New("terrabase: function input must be at most 1 MiB")
 	}
 	p, err := d.path("functions", name, "invoke")
 	if err != nil {
 		return nil, err
 	}
-	resp, err := d.c.do(ctx, request{method: http.MethodPost, path: p, body: body})
+	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	defer cancel()
+	token, err := d.c.bearerToken(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	return resp.body, nil
+	// A handler can itself return 401 after executing. Pin this invocation's
+	// credential so a handler response cannot trigger a refresh and replay.
+	resp, err := d.c.do(ctx, request{method: http.MethodPost, path: p, query: query, body: body, token: token})
+	if err != nil {
+		return nil, err
+	}
+	return &FunctionResponse{StatusCode: resp.status, ContentType: resp.header.Get("Content-Type"), Body: resp.body}, nil
 }
 
 // FunctionLogs lists the newest invocations, newest first. Limit is 1..100;
-// zero uses the server default. Needs documents:read.
+// zero uses the server default. Needs documents:read and documents:write.
 func (d *Database) FunctionLogs(ctx context.Context, name string, limit int) ([]FunctionLog, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err
@@ -139,7 +159,7 @@ func (d *Database) FunctionLogs(ctx context.Context, name string, limit int) ([]
 }
 
 // FunctionDeliveries lists the retained change-trigger deliveries to the
-// function. Needs documents:read.
+// function. Needs documents:read and documents:write.
 func (d *Database) FunctionDeliveries(ctx context.Context, name string) ([]WebhookDelivery, error) {
 	if err := checkName("function", name); err != nil {
 		return nil, err

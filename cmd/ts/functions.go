@@ -121,7 +121,11 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 				return err
 			}
 		}
-		res, err := db.InvokeFunction(ctx, args[0], body)
+		response, err := db.InvokeFunction(ctx, args[0], body, nil)
+		var res []byte
+		if response != nil {
+			res = response.Body
+		}
 		if jsonMode(out) {
 			if err != nil {
 				return err
