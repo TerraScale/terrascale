@@ -25,11 +25,12 @@ public sealed class FileConfirmationBrowserJourneyTests(DashboardRootFixture fix
         {
             var path = http.Request.Path.Value!;
             if (!path.Contains("/buckets", StringComparison.Ordinal)) return Task.FromResult<IResult?>(null);
+            if (path.EndsWith("/download", StringComparison.Ordinal))
+                return Task.FromResult<IResult?>(Results.Json(new TerraBaseFileUrl(fileId, "https://fixture.r2.cloudflarestorage.com/files/avatar.png", DateTimeOffset.UtcNow.AddMinutes(5), new Dictionary<string, string>())));
             IResult result = http.Request.Method switch
             {
                 "GET" when path.EndsWith("/buckets", StringComparison.Ordinal) => Results.Json(new { items = bucketExists ? new[] { bucket } : [], next = (string?)null }),
                 "GET" => Results.Json(new { items = fileExists ? new[] { file } : [], next = (string?)null }),
-                "POST" when path.EndsWith("/download", StringComparison.Ordinal) => Results.Json(new TerraBaseFileUrl(fileId, "https://fixture.r2.cloudflarestorage.com/files/avatar.png", DateTimeOffset.UtcNow.AddMinutes(5), new Dictionary<string, string>())),
                 "DELETE" => Deleted(path),
                 _ => Results.NotFound()
             };
