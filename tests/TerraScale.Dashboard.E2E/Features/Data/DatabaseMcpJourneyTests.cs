@@ -230,7 +230,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             foreach (var id in savedIds.ToArray()) await CallAsync(replica, "delete_saved_query", new() { ["queryId"] = id });
             savedIds.Clear();
 
-            var issued = await CallAsync(client, "create_api_key", new() { ["name"] = "SDK " + suffix, ["scopes"] = new[] { "database:read", "database:write" }, ["databaseId"] = databaseId });
+            var issued = await CallAsync(client, "create_api_key", new() { ["name"] = "SDK " + suffix, ["scopes"] = new[] { "documents:read", "documents:write" }, ["databaseId"] = databaseId });
             keyId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
             var keySecret = issued.GetProperty("secret").GetString()!;
             await Assert.That(issued.GetProperty("apiKey").GetProperty("lastFour").GetString()).IsEqualTo("");
@@ -250,7 +250,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             // The previous secret is still in its grace period, so ts-auth refuses another rotation.
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId });
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 86401 });
-            await ErrorAsync(replica, "create_m2m_client", new() { ["name"] = "Unavailable", ["scopes"] = new[] { "database:read" } });
+            await ErrorAsync(replica, "create_m2m_client", new() { ["name"] = "Unavailable", ["scopes"] = new[] { "documents:read" } });
             using (var authConsole = await replica.GetAsync("/auth/overview"))
             {
                 await Assert.That(authConsole.StatusCode).IsEqualTo(HttpStatusCode.OK);

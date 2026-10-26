@@ -43,9 +43,26 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             Check(collection.StatusCode == HttpStatusCode.Created, "The native database has an SDK-backed collection");
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
             "Database and collection setup issues no hidden project key at ts-auth");
+        using (var picker = await client.GetAsync("/api-keys?create=key"))
+        {
+            var html = await picker.Content.ReadAsStringAsync();
+            Check(picker.StatusCode == HttpStatusCode.OK && html.Contains("value=\"documents:read\"", StringComparison.Ordinal) &&
+                html.Contains("value=\"documents:read,documents:write\"", StringComparison.Ordinal) &&
+                html.Contains("value=\"documents:write\"", StringComparison.Ordinal) &&
+                html.Contains("value=\"documents:read,documents:write,databases:read,databases:write\"", StringComparison.Ordinal) &&
+                !html.Contains("database:read", StringComparison.Ordinal), "Every picker option submits the canonical scopes");
+        }
+        foreach (var scope in new[] { "database:read", "database:write", "*", "documents:unknown" })
+        {
+            using var rejected = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            { ["_csrf"] = csrf, ["name"] = "Invalid scope", ["scopes"] = scope });
+            Check(rejected.StatusCode == HttpStatusCode.UnprocessableEntity, "JSON issuance rejects the unsupported scope " + scope);
+        }
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
+            "Rejected scopes issue no credential at ts-auth");
         string keyId; string secret;
         using (var credential = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
-        { ["_csrf"] = csrf, ["name"] = "Customer SDK", ["databaseId"] = databaseId, ["scopes"] = "database:read,database:write" }))
+        { ["_csrf"] = csrf, ["name"] = "Customer SDK", ["databaseId"] = databaseId, ["scopes"] = "documents:read,documents:write" }))
         {
             Check(credential.StatusCode == HttpStatusCode.Created, "Native issuance returns a ts-auth project key once");
             using var json = JsonDocument.Parse(await credential.Content.ReadAsStringAsync());
@@ -78,7 +95,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued key at ts-auth");
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "The revoked key is gone at its issuer");
         using (var full = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
-        { ["_csrf"] = csrf, ["name"] = "Seed script", ["scopes"] = "database:read,database:write,databases:read,databases:write" }))
+        { ["_csrf"] = csrf, ["name"] = "Seed script", ["scopes"] = "documents:read,documents:write,databases:read,databases:write" }))
         {
             Check(full.StatusCode == HttpStatusCode.Created, "A Full access key is issued for seed and migration scripts");
             using var json = JsonDocument.Parse(await full.Content.ReadAsStringAsync());
@@ -143,10 +160,14 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         await journey.ErrorAsync(replica, "revoke_api_key", new() { ["keyId"] = new TerraScaleIdGenerator().NewId() });
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
             "Revoking a guessed key ID is refused by ts-auth and changes nothing");
-        await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Foreign", ["scopes"] = new[] { "database:read" }, ["projectId"] = new TerraScaleIdGenerator().NewId() });
+        await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Foreign", ["scopes"] = new[] { "documents:read" }, ["projectId"] = new TerraScaleIdGenerator().NewId() });
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
             "A key is never issued outside the signed-in tenant's selected project");
-        var issued = await journey.CallAsync(client, "create_api_key", new() { ["name"] = "Public SDK key", ["scopes"] = new[] { "database:read" }, ["databaseId"] = id });
+        foreach (var scope in new[] { "database:read", "database:write", "*", "documents:unknown" })
+            await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Invalid scope", ["scopes"] = new[] { scope } });
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
+            "MCP refuses unsupported scopes before issuing any key");
+        var issued = await journey.CallAsync(client, "create_api_key", new() { ["name"] = "Public SDK key", ["scopes"] = new[] { "documents:read" }, ["databaseId"] = id });
         var publicId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
         var publicSecret = issued.GetProperty("secret").GetString()!;
         var held = (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single();
@@ -269,7 +290,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         await journey.ErrorAsync(replica, "get_database", new() { ["databaseId"] = id });
         await journey.ErrorAsync(client, "create_database", new() { ["name"] = "after-revocation", ["region"] = "GRU" });
         await journey.ErrorAsync(replica, "create_document", new() { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "01K78D0C000000000000000018", ["document"] = new { denied = true } });
-        await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Denied", ["scopes"] = new[] { "database:read" } });
+        await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Denied", ["scopes"] = new[] { "documents:read" } });
         Check((await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32() == before,
             "Previously issued PATs cannot reach customer data after the production workspace SDK rereads removed membership");
         await ControlAsync(controls, new { command = "role", value = "owner" });

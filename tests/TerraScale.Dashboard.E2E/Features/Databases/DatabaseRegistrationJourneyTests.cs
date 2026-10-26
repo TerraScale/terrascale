@@ -124,7 +124,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
                 await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await EvidenceAsync(collection, producer));
             string keyId; string customerSecret;
             using (var credential = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
-            { ["_csrf"] = csrf, ["name"] = "Catalog recovery SDK", ["databaseId"] = databaseId, ["scopes"] = "database:read,database:write" }))
+            { ["_csrf"] = csrf, ["name"] = "Catalog recovery SDK", ["databaseId"] = databaseId, ["scopes"] = "documents:read,documents:write" }))
             {
                 await Assert.That(credential.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await EvidenceAsync(credential, producer));
                 var issued = await BodyAsync(credential);

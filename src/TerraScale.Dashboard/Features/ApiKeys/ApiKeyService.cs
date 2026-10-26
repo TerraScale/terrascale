@@ -43,8 +43,8 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         if (name.EnumerateRunes().Count() is 0 or > 128 || name.Any(char.IsControl)) throw new AccountAccessException("Enter a name of up to 128 characters and choose a database access level.", 422);
         if (kind is not ("key" or "api-key")) throw new AccountAccessException("Machine clients are not issued by this view.", 503);
         var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
-        var permissions = scopes.Select(scope => scope.Trim()).Select(MintedScope).Distinct(StringComparer.Ordinal).ToArray();
-        if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose read and/or write permission.", 422);
+        var permissions = scopes.Distinct(StringComparer.Ordinal).ToArray();
+        if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose one or more of documents:read, documents:write, databases:read, databases:write.", 422);
         if (!ExpiryChoices.Contains(expiresInDays)) throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
         // Whole seconds, so the expiry ts-auth echoes back compares exactly.
         DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
@@ -130,6 +130,8 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         return new(key, result.Key);
     }
 
+    public const string ScopeDescription = "Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Hrana/libSQL and Postgres wire protocols, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
+
     public const int MaxPreviousSecretTtl = 86400;
     public const int MaxAllowedCidrs = 32;
     // Light checks only: ts-auth validates and canonicalizes each entry and answers 400 with the reason.
@@ -144,9 +146,6 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     public static bool ExpiresSoon(ProjectCredential key, DateTimeOffset now) => key.ExpiresAt is { } expires && expires > now && expires - now <= TimeSpan.FromDays(7);
     // Key lifetimes offered on create, in days; 0 means the key works until it is revoked.
     public static readonly IReadOnlyList<int> ExpiryChoices = [0, 30, 90, 365];
-
-    // The form's database:* choices are aliases of the documents:* scopes ts-auth mints.
-    public static string MintedScope(string scope) => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope };
 
     public static ProjectApiKeyMetadata Metadata(ProjectCredential key) => new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
         key.DatabaseId ?? "", key.CreatedByEmail, Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
@@ -244,31 +243,32 @@ public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell
     }
     public string AccessFor(string kind)
     {
-        if (Create != kind || DraftScopes.Length == 0 && Error.Length == 0) return "database:read";
+        if (Create != kind || DraftScopes.Length == 0 && Error.Length == 0) return "documents:read";
         var scopes = DraftScopes.Split([',', ' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(scope => scope.Replace("documents:", "database:", StringComparison.Ordinal)).Distinct().Order(StringComparer.Ordinal).ToArray();
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        if (scopes.SequenceEqual(Full.Split(',').Order(StringComparer.Ordinal))) return Full;
         var value = string.Join(',', scopes);
-        return value is "database:read" or "database:write" or "database:read,database:write" or Full ? value : "";
+        return value is "documents:read" or "documents:write" or "documents:read,documents:write" or Full ? value : "";
     }
     public string DraftDatabaseFor(string kind) => Create == kind ? Context.Project?.Databases.GetValueOrDefault(DraftDatabaseId)?.Name ?? "All project databases (current and future)" : "All project databases (current and future)";
     public string PermissionSignals(string kind) => System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["_" + kind + "Access"] = AccessFor(kind), ["_" + kind + "Database"] = DraftDatabaseFor(kind) });
     // Documents plus database management: create and delete databases, indexes and saved queries (a seed or migration script).
-    public const string Full = "database:read,database:write,databases:read,databases:write";
+    public const string Full = "documents:read,documents:write,databases:read,databases:write";
     public static string Summary(string access) => access switch
     {
         Full => "Can read and change records, and create and delete databases and indexes.",
-        "database:read,database:write" => "Can read, create, update, and delete records.",
-        "database:read" => "Can read records. Cannot create, update, or delete them.",
-        "database:write" => "Can create, update, and delete records. Cannot read or query them.",
+        "documents:read,documents:write" => "Can read, create, update, and delete records.",
+        "documents:read" => "Can read records. Cannot create, update, or delete them.",
+        "documents:write" => "Can create, update, and delete records. Cannot read or query them.",
         _ => "Choose an access level before creating this credential.",
     };
-    public static string PermissionSummary(string kind) => "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'database:read,database:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'database:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'database:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
+    public static string PermissionSummary(string kind) => "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'documents:read,documents:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'documents:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'documents:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
     public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
     {
         if (new[] { "documents:read", "documents:write", "databases:read", "databases:write" }.All(key.Scopes.Contains))
             return ("Full-access key", "rose", "ShieldAlert");
-        if (key.Scopes.Any(scope => scope.EndsWith(":write", StringComparison.Ordinal)))
-            return key.Scopes.Any(scope => scope.EndsWith(":read", StringComparison.Ordinal)) ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
+        if (key.Scopes.Any(scope => scope is "documents:write" or "databases:write"))
+            return key.Scopes.Any(scope => scope is "documents:read" or "databases:read") ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
         return ("Read-only key", "sky", "Eye");
     }
 }

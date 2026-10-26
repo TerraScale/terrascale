@@ -24,7 +24,7 @@ public sealed class AuditEventsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var databaseId = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString()!;
         using var key = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/credentials/key", new()
-        { ["_csrf"] = csrf, ["name"] = "Audited key", ["databaseId"] = databaseId, ["scopes"] = "database:read" });
+        { ["_csrf"] = csrf, ["name"] = "Audited key", ["databaseId"] = databaseId, ["scopes"] = "documents:read" });
         await Assert.That(key.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var keyId = JsonDocument.Parse(await key.Content.ReadAsStringAsync()).RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
         using (var revoked = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
