@@ -15,9 +15,16 @@ Create an API key in the dashboard for the exact project and database your appli
 
 A dashboard API key has the form `<key ID>_<secret>` and is an OAuth 2.0 client credential. Exchange it at the token endpoint with the client credentials grant; the client ID is the key ID (the part before `_`) and the client secret is the whole key:
 
+Use Bash, `curl` and `jq`, with the key already supplied privately as `TERRASCALE_API_KEY` and shell tracing off. This keeps the key out of process arguments and captures the token without printing it:
+
 ```bash
-curl -sS --fail-with-body -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" \
-  -d grant_type=client_credentials https://auth.terrascale.tech/terrascale/oauth/token
+set -o pipefail
+TERRASCALE_ACCESS_TOKEN="$(
+  printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
+    curl -sS --fail-with-body --config - -d grant_type=client_credentials \
+      https://auth.terrascale.tech/terrascale/oauth/token |
+    jq -er '.access_token'
+)" && export TERRASCALE_ACCESS_TOKEN
 ```
 
 The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in: 60` and the granted `scope`. Send the token to `https://api.terrascale.tech` as `Authorization: Bearer <token>`. The token is valid for 60 seconds; request a new one before it expires or after a `401`. Sending the key itself as a bearer token answers `401`.

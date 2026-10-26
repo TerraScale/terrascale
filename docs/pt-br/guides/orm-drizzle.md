@@ -53,7 +53,7 @@ async function accessToken(apiKey = process.env.TERRASCALE_API_KEY) {
 }
 ```
 
-Access tokens last 15 minutes. A long-running server creates a new client with a fresh token before the old one expires.
+Project API-key access tokens last **60 seconds**. These snippets obtain one token when creating a client. For a long-running server, create a client with a fresh token before expiry and close the old client when its work finishes. Token renewal does not authorize replaying an uncertain write; see [safe retries](/pt-br/guides/errors).
 
 ## Schema
 
