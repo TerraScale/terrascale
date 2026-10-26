@@ -35,6 +35,7 @@ public static class SecuritySchemes
 
     /// <summary>A whole project API key, restricted to server-to-server end-user token minting.</summary>
     public const string ProjectApiKey = "projectApiKey";
+    public const string ApiKeyToken = "apiKeyToken";
 
     /// <summary>Status-only account deletion capability, independent of sign-in credentials.</summary>
     public const string AccountDeletionReceipt = "accountDeletionReceipt";
@@ -196,6 +197,13 @@ public static partial class OpenApiSetup
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
             Description = "Whole project API key, with no database restriction and both documents:read and documents:write. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
+        },
+        [SecuritySchemes.ApiKeyToken] = () => new()
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            Description = "An access token the token endpoint issued for an API key (client credentials), carrying key_id and key_gen.",
         },
         [SecuritySchemes.PlatformUser] = () => new()
         {

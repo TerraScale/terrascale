@@ -6,6 +6,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 using TerraScale.Endpoints;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -46,8 +47,10 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         Tags("API keys");
         Produces<ApiKeyStatusBody>();
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        AllowAnonymous();
+        // The handler checks the bearer itself, as AccountDeletionStatusEndpoint checks its receipt.
+        Metadata(new RequiresSecurity(SecuritySchemes.ApiKeyToken));
     }
 
     /// <inheritdoc />
