@@ -13,7 +13,7 @@ namespace TerraScale.DotNet;
 /// per <see cref="TerraScaleAuthClientOptions"/>; ts-auth mutations carry no
 /// idempotency contract and are always sent exactly once.
 /// </summary>
-public sealed class TerraScaleAuthClient
+public sealed partial class TerraScaleAuthClient
 {
     private const int MaxOperationBytes = 1_048_576;
     private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
@@ -118,24 +118,20 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>One management request whose JSON body the caller already serialized
     /// (the tri-state user patch builds its own object).</summary>
-    internal async Task<TResponse> SendPreparedJsonAsync<TResponse>(
+    private async Task<TResponse> SendPreparedJsonCoreAsync<TResponse>(
         HttpMethod method,
         string requestUri,
         byte[] payload,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
-        // The deadline spans the send and the body read, so it is owned here
-        // and disposed once the response is fully consumed.
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             method,
             requestUri,
             CreateRawJsonBodyFactory(payload),
             RequestAuthentication.Management,
-            deadline.Token).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
     private static Func<HttpContent?> CreateRawJsonBodyFactory(byte[] payload)
@@ -194,130 +190,116 @@ public sealed class TerraScaleAuthClient
     }
 
     /// <summary>One unauthenticated GET for OIDC metadata documents.</summary>
-    internal async Task<TResponse> GetMetadataAsync<TResponse>(
+    private async Task<TResponse> GetMetadataCoreAsync<TResponse>(
         string requestUri,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             HttpMethod.Get,
             requestUri,
             bodyFactory: null,
             RequestAuthentication.None,
-            deadline.Token).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>One OAuth token form POST with client
     /// authentication and the flat RFC 6749 error shape.</summary>
-    internal async Task<TResponse> SendOAuthFormAsync<TResponse>(
+    private async Task<TResponse> SendOAuthFormCoreAsync<TResponse>(
         string requestUri,
         IReadOnlyList<KeyValuePair<string, string>> formValues,
         AuthenticationHeaderValue? authorization,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             HttpMethod.Post,
             requestUri,
             CreateFormBodyFactory(formValues),
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
-            deadline.Token).ConfigureAwait(false);
-        await RequireStatusAsync(response, HttpStatusCode.OK, deadline.Token).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
+        await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>One OAuth form POST whose success body is empty (revocation,
     /// RFC 7009: unknown tokens also succeed).</summary>
-    internal async Task SendOAuthFormForSuccessAsync(
+    private async Task SendOAuthFormForSuccessCoreAsync(
         string requestUri,
         IReadOnlyList<KeyValuePair<string, string>> formValues,
         AuthenticationHeaderValue? authorization,
         CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             HttpMethod.Post,
             requestUri,
             CreateFormBodyFactory(formValues),
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
-            deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
         {
-            throw await TerraScaleAuthErrors.CreateAsync(response, deadline.Token).ConfigureAwait(false);
+            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>One bearer-authenticated GET with a caller-provided access token (userinfo).</summary>
-    internal async Task<TResponse> GetWithBearerAsync<TResponse>(
+    private async Task<TResponse> GetWithBearerCoreAsync<TResponse>(
         string requestUri,
         string accessToken,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             HttpMethod.Get,
             requestUri,
             bodyFactory: null,
             new RequestAuthentication(TerraScaleAuthCredentials.Bearer(accessToken)),
-            deadline.Token).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task<TResponse> SendAuthenticatedJsonAsync<TRequest, TResponse>(
+    private async Task<TResponse> SendAuthenticatedJsonCoreAsync<TRequest, TResponse>(
         HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
         JsonTypeInfo<TResponse> responseType, AuthenticationHeaderValue authorization,
         HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken cancellationToken)
         where TRequest : class
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
-            new RequestAuthentication(authorization), deadline.Token).ConfigureAwait(false);
-        await RequireStatusAsync(response, expectedStatus, deadline.Token).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseType, deadline.Token).ConfigureAwait(false);
+            new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
+        await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task SendAuthenticatedForStatusAsync<TRequest>(
+    private async Task SendAuthenticatedForStatusCoreAsync<TRequest>(
         HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
         AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
         int maxRequestBytes, CancellationToken cancellationToken)
         where TRequest : class
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
-            new RequestAuthentication(authorization), deadline.Token).ConfigureAwait(false);
-        await RequireStatusAsync(response, expectedStatus, deadline.Token).ConfigureAwait(false);
+            new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
+        await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
     }
 
     // A deletion that ts-auth may finish in the background: true for 204 (done), false for 202 (pending; repeating the
     // request resumes it). Any other success status is not evidence either way.
-    internal async Task<bool> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
+    private async Task<bool> SendAuthenticatedForDeletionCoreAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
-        using var response = await SendWithRetriesAsync(HttpMethod.Delete, route, null, new RequestAuthentication(authorization), deadline.Token).ConfigureAwait(false);
+        using var response = await SendWithRetriesAsync(HttpMethod.Delete, route, null, new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Accepted)
         {
             return false;
         }
 
-        await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+        await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
-    internal async Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route,
+    private async Task<bool> SendForAccountDeletionCoreAsync(HttpMethod method, string route,
         AuthenticationHeaderValue? authorization, string deletionReceipt, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(deletionReceipt);
@@ -328,17 +310,15 @@ public sealed class TerraScaleAuthClient
             throw new ArgumentException("A deletion receipt must be the canonical unpadded base64url encoding of exactly 32 bytes.", nameof(deletionReceipt));
         }
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(method, route, null,
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
-            deadline.Token, deletionReceipt).ConfigureAwait(false);
+            cancellationToken, deletionReceipt).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Accepted)
         {
             return false;
         }
 
-        await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+        await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -355,7 +335,7 @@ public sealed class TerraScaleAuthClient
         }
     }
 
-    private async Task<TResponse> SendAsync<TResponse>(
+    private async Task<TResponse> SendCoreAsync<TResponse>(
         HttpMethod method,
         string requestUri,
         Func<HttpContent?>? bodyFactory,
@@ -363,35 +343,31 @@ public sealed class TerraScaleAuthClient
         RequestAuthentication authentication,
         CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             method,
             requestUri,
             bodyFactory,
             authentication,
-            deadline.Token).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SendNoContentAsync(
+    private async Task SendNoContentCoreAsync(
         HttpMethod method,
         string requestUri,
         Func<HttpContent?>? bodyFactory,
         RequestAuthentication authentication,
         CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(RequestDeadline);
         using var response = await SendWithRetriesAsync(
             method,
             requestUri,
             bodyFactory,
             authentication,
-            deadline.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
         {
-            throw await TerraScaleAuthErrors.CreateAsync(response, deadline.Token).ConfigureAwait(false);
+            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         if (response.StatusCode != HttpStatusCode.NoContent)
