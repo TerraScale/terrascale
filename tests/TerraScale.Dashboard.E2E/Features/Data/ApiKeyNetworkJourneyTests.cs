@@ -208,7 +208,8 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var issued = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var keyId = issued.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
-        await Assert.That(TerraScaleIds.IsValid(issued.RootElement.GetProperty("apiKey").GetProperty("createdByUserId").GetString()!)).IsTrue();
+        await Assert.That(issued.RootElement.GetProperty("apiKey").GetProperty("createdByUserId").GetString())
+            .IsEqualTo(environment.ApiKeys.Issued().Single().Key.CreatedBy);
         await Assert.That(issued.RootElement.GetProperty("apiKey").GetProperty("createdByEmail").GetString()).IsEqualTo("user@example.com");
         await Assert.That(Cidrs(issued.RootElement.GetProperty("apiKey"))).IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32" });
 
