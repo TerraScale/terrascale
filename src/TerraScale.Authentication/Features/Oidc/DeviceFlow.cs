@@ -85,7 +85,7 @@ public static class DeviceFlow
         var permissions = application is null ? [] : await applications.GetPermissionsAsync(application, cancellationToken);
         if (application is null || !permissions.Contains(Permissions.Endpoints.DeviceAuthorization)
             || !permissions.Contains(Permissions.GrantTypes.DeviceCode)
-            || scopes.Any(scope => PermissionDescription(scope) is null
+            || scopes.Any(scope => !OidcResults.SignInScopes.Contains(scope)
                 || scope == Scopes.OfflineAccess && !permissions.Contains(Permissions.GrantTypes.RefreshToken)
                 || scope is not (Scopes.OpenId or Scopes.OfflineAccess) && !permissions.Contains(Permissions.Prefixes.Scope + scope)))
         {
@@ -131,10 +131,6 @@ public static class DeviceFlow
         Scopes.Email => "Read your email address",
         Scopes.Profile => "Read your profile information",
         Scopes.OfflineAccess => "Keep access through refresh tokens until access expires or is revoked",
-        TerraBaseScopes.DatabasesRead => "Read databases, schema, indexes, backups, policies and usage",
-        TerraBaseScopes.DatabasesWrite => "Create, change and delete databases, backups, policies and indexes",
-        TerraBaseScopes.DocumentsRead => "Read collections and documents and run queries",
-        TerraBaseScopes.DocumentsWrite => "Write collections and documents and run transactions",
         _ => null,
     };
 }

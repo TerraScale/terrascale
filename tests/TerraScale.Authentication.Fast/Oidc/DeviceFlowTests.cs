@@ -20,6 +20,28 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
     private static ManualClock Clock() => new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
     [Test]
+    public async Task Resource_scopes_are_never_offered_as_approvable_sign_in_permissions()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await oidc.CreateUserAsync();
+        var session = await oidc.SignInAsync("alice@example.test");
+        using var requested = await oidc.Client.PostAsync($"/{OidcIssuer.Slug}/oauth/device", new FormUrlEncodedContent(new Dictionary<string, string>
+        { ["client_id"] = OidcIssuer.CliClientId, ["scope"] = "openid email documents:read" }));
+        await Assert.That(requested.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var device = await OidcHarness.JsonAsync(requested);
+        var code = device.GetProperty("user_code").GetString()!;
+        using var shown = await oidc.AuthorizeAsync($"{Page}?user_code={Uri.EscapeDataString(code)}", session);
+        await Assert.That(shown.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var html = await shown.Content.ReadAsStringAsync();
+        await Assert.That(html).Contains("Device request unavailable");
+        await Assert.That(html).DoesNotContain("Requested permissions");
+        await Assert.That(html).DoesNotContain("name=\"decision\"");
+        using var approved = await DecideAsync(oidc, session, code, "approve");
+        await Assert.That(approved.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await PollAsync(oidc, device.GetProperty("device_code").GetString()!)).IsEqualTo("authorization_pending");
+    }
+
+    [Test]
     public async Task A_device_is_signed_in_only_after_an_explicit_approval_and_redeems_once()
     {
         var clock = Clock();

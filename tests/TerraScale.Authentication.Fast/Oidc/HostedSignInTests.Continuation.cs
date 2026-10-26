@@ -56,7 +56,7 @@ public sealed partial class HostedSignInTests
         await oidc.CreateUserAsync();
         var session = await oidc.SignInAsync("alice@example.test");
         using var requested = await oidc.Client.PostAsync("/terrascale/oauth/device", new FormUrlEncodedContent(new Dictionary<string, string>
-        { ["client_id"] = OidcIssuer.CliClientId, ["scope"] = "openid email documents:read" }));
+        { ["client_id"] = OidcIssuer.CliClientId, ["scope"] = "openid email profile offline_access" }));
         var device = await OidcHarness.JsonAsync(requested);
         var browser = await Chromium.BrowserAsync();
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = 844 } });
@@ -69,8 +69,9 @@ public sealed partial class HostedSignInTests
         await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/device?user_code={Uri.EscapeDataString(device.GetProperty("user_code").GetString()!)}");
         await Assert.That(await page.Locator(".facts").TextContentAsync()).Contains("ts-cli");
         var permissions = await page.GetByRole(AriaRole.List, new() { Name = "Requested permissions" }).TextContentAsync();
-        await Assert.That(permissions).Contains("Read collections and documents and run queries (documents:read)");
+        await Assert.That(permissions).Contains("Read your profile information (profile)");
         await Assert.That(permissions).Contains("Read your email address (email)");
+        await Assert.That(permissions).Contains("Keep access through refresh tokens until access expires or is revoked (offline_access)");
         await Assert.That(permissions).DoesNotContain("Write collections");
         await Assert.That(await page.EvaluateAsync<int>("document.documentElement.scrollWidth")).IsLessThanOrEqualTo(width);
         await page.GetByRole(AriaRole.Button, new() { Name = "Approve", Exact = true }).FocusAsync();
