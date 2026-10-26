@@ -45,6 +45,7 @@ public static class PlatformDatabases
                 Name = known.Name,
                 Region = home,
                 Status = "ready",
+                AllRegions = item.GetProperty("allRegions").GetBoolean(),
                 Regions = [home, .. item.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString() ?? "").Where(region => region.Length > 0)],
             };
         }
