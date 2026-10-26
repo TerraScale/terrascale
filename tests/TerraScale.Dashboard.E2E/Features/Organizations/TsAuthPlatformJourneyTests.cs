@@ -18,7 +18,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations;
 // production TsAuthGateway transport. The producer fake follows terrascale
 // e30ffdc2 PlatformEndpoints/InvitationEndpoints; it must be rechecked against
 // the corrected exported ts-dotnet auth fixtures before this counts as parity.
-// Collaborator listing and read boundaries follow terrascale 1d823d8534fc PlatformDirectory.
 public sealed class TsAuthPlatformJourneyTests
 {
     [Test]

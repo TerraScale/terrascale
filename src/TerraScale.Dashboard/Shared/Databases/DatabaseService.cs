@@ -232,7 +232,6 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                 (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
-            // A collaborator without saved placement discovers only its exact project in each region.
             if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId)) homes = catalog.ToArray();
             var listings = await Task.WhenAll(homes.Select(async home =>
             {
