@@ -708,6 +708,7 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
             !databases.TryAdd(database.Id, database)) throw new InvalidDataException("Invalid or duplicate fixture database.");
     }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken) => Task.FromResult(regions);
+    public Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken) => RegionsAsync(cancellationToken);
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
     public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
     { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions: allRegions); databases[value.Id] = value; return Task.FromResult(value); }

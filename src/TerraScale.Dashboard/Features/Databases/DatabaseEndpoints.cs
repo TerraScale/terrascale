@@ -212,8 +212,15 @@ public static class DatabaseEndpoints
     internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, DatabasePlacementDraft? placementDraft = null, string? branchName = null)
     {
         DatabaseRecord database;
-        try { database = DatabaseService.Database(context, id); }
-        catch (AccountAccessException failure) { return DatabaseResults.PageFailure(http, context, failure); }
+        try
+        {
+            if (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method))
+                (context, database) = await databases.LookupAsync(context, id, http.RequestAborted);
+            else database = DatabaseService.Database(context, id);
+        }
+        catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
+            (KnownFailure(failure) || failure is HttpRequestException or IOException or InvalidDataException or System.Text.Json.JsonException or OperationCanceledException))
+        { return DatabaseResults.PageFailure(http, context, failure); }
         IReadOnlyList<DatabaseRegion> choices = [];
         IReadOnlyList<CollectionStats> contents = [];
         var contentsAvailable = false;
