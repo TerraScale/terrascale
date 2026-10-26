@@ -70,7 +70,8 @@ public sealed class StorageChangeGroupSinkTests
         var first = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
         using var body = JsonDocument.Parse("""{"retry":true}""");
         var offset = 0;
-        var groups = new[] { 8, 300, 8 }.Select((size, index) => new OriginGroup(index + 1,
+        int[] sizes = [8, 300, 8];
+        var groups = sizes.Select((size, index) => new OriginGroup(index + 1,
             [.. Enumerable.Range(0, size).Select(_ =>
             {
                 var stamp = new Hlc(first + (ulong)++offset);
