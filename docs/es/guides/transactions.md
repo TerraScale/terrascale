@@ -29,6 +29,9 @@ Transactions need `documents:write`. A transaction with assertions also needs `d
 This places an order only if the account is active and has fewer than 100 orders:
 
 ```bash
+for collection in accounts orders items; do api -H 'Content-Type: application/json' -d "{\"name\":\"$collection\"}" "$DB/collections"; done
+api -X PUT -H 'Content-Type: application/json' -H 'If-None-Match: *' -d '{"status":"active"}' "$DB/collections/accounts/documents/by-key?id=01JB7Q3V0Z8K4M2N6P9R5T1W6A" | jq
+api -X PUT -H 'Content-Type: application/json' -H 'If-None-Match: *' -d '{"stock":3}' "$DB/collections/items/documents/by-key?id=01JB7Q5A1B3C5D7E9F0G2H4J6K" | jq
 api -H 'Content-Type: application/json' --data-binary @- "$DB/transactions" <<'JSON' | jq
 {"ops": [
   {"op": "assert", "collection": "accounts", "id": "01JB7Q3V0Z8K4M2N6P9R5T1W6A",
@@ -63,7 +66,7 @@ Rules:
 - Two operations may not target the same document.
 - Assertions see the state before this transaction's writes.
 - At most 16 `assert_count` operations per transaction. Each examines at most 10000 documents; more answers `400 assert_requires_index`. Narrow the filter or add an [index](/es/guides/indexes).
-- Changes of one transaction fit 2 MiB of collection names, ids and JSON. Split larger writes into several transactions.
+- Captured changes fit 2 MiB, including encoded document state, materialized JSON, collection names and ids. This is separate from the 4 MiB request-body and 1 MiB document limits; JSON smaller than 2 MiB can still exceed the capture budget. Split larger writes into several transactions.
 
 ## With the JavaScript SDK
 
@@ -83,7 +86,7 @@ const result = await database.transaction()
 
 ## Failures
 
-Any failure rolls back the whole transaction. `error.op` is the zero-based index of the failing operation.
+A deterministic operation rejection rolls back the whole transaction. `error.op` is the zero-based index of the failing operation. An uncertain write response does not prove rollback; reconcile the affected documents before resubmitting.
 
 | Response | Cause |
 | --- | --- |
@@ -93,12 +96,14 @@ Any failure rolls back the whole transaction. `error.op` is the zero-based index
 | `404 unknown_collection` / `not_found` | Missing collection or document |
 | `409 patch_conflict` / `unique_violation` | Patch does not fit the stored value, or a [unique key](/es/guides/schema-validation#declare-unique-keys) is taken |
 | `412 precondition_failed` | `if_match` or `if_none_match` failed, `create` found an existing document, or an assertion did not hold |
-| `503 capacity` | The changes exceed 2 MiB; split the transaction |
+| `503 capacity` | Captured changes exceed the 2 MiB budget; split the transaction after a deterministic rejection |
+
+A capture-budget overflow discovered while finalizing changes can currently return `503 write_outcome_unknown` instead of `capacity`. Reconcile the affected documents before splitting or resubmitting; do not infer rollback from this error.
 
 A `503` with `Retry-After`, such as `remote_region_unavailable` or `confirmation_busy`, was rejected before execution and can be retried within a deadline. A `503 write_outcome_unknown` means the commit may or may not have happened. Never replay it automatically: read the affected documents first. See [errors](/es/guides/errors).
 
 ## Durability
 
-`durability` is `remote_durable` once another region holding the database confirmed the write, `local_durable` when no other region holds it, and `unchanged` when only assertions ran.
+`durability` defaults to `local_durable` after the serving region persists the write, even when other regions hold the database; replication continues in the background. Add `-H 'TB-Durability: remote_durable'` to the transaction request to wait up to 10 seconds for another placed region to confirm persistence. A database placed only in its home region refuses writes with `409 placement_needs_two_regions`. Assertions alone return `unchanged`.
 
 </div>

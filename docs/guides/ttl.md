@@ -40,6 +40,8 @@ api -X DELETE "$DB/collections/sessions/ttl" | jq
 Store the expiry as an RFC 3339 time in UTC, ending in `Z`:
 
 ```bash
+# Restore TTL after the clear example above.
+api -X PUT -H 'Content-Type: application/json' -d '{"path":"/expiresAt"}' "$DB/collections/sessions/ttl" | jq
 api -H 'Content-Type: application/json' \
   -d '{"user":"u_123","expiresAt":"2026-10-24T12:00:00Z"}' \
   "$DB/collections/sessions/documents" | jq

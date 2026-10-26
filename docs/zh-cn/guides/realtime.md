@@ -71,7 +71,7 @@ A stream ends after 30 minutes, or when the access token expires. Reconnect with
 | `410` | `cursor_expired` | Re-read your data, then start again with `cursor=now`. |
 | `429` | `changes_busy` | Wait for `Retry-After` (1 second), then reconnect with backoff. |
 
-The feed keeps changes for 7 days. A cursor older than 7 days, or one that cannot be decoded, returns `410 cursor_expired`. The same code can arrive as an `error` event during a stream. A database allows at most 32 open streams per server, so close streams you no longer read.
+The feed keeps changes for 7 days. A cursor older than 7 days, or one that cannot be decoded, returns `410 cursor_expired`. The same code can arrive as an `error` event during a stream. A database allows at most 128 open streams per server, so close streams you no longer read.
 
 ## Follow the feed in JavaScript
 

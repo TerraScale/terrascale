@@ -59,14 +59,14 @@ A recommendation `id` is `collection:field`. Applying it answers `201` with `sta
 
 ## Automatic index policy
 
-Each collection has an automatic index policy. It is enabled by default: TerraBase may create and remove indexes for the collection on its own.
+Automatic index maintenance is not available through these routes. They store a policy only and do not create or remove indexes. Create and drop indexes explicitly with the manual operations above.
 
 ```bash
 api "$DB/auto-index/posts" | jq
 api -X PUT -H 'Content-Type: application/json' -d '{"enabled":false}' "$DB/auto-index/posts" | jq
 ```
 
-`enabled` is required. `false` opts the collection out of automatic index creation and removal; `true` restores the default. The collection does not need to exist yet. Manual index operations work either way. At most 1000 collections per database can opt out; one more answers `400 auto_index_policy_limit`.
+`enabled` is required. `false` records an opt-out; `true` restores the default policy. Neither value starts maintenance. The collection does not need to exist yet. Manual index operations work either way. At most 1000 collections per database can record an opt-out; one more answers `400 auto_index_policy_limit`.
 
 ## Query shapes
 
