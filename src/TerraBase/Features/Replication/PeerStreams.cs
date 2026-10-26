@@ -33,7 +33,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan Bookkeeping = TimeSpan.FromMilliseconds(250);
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
     // Linked nodes HeldOriginsAsync considers at most; past it none is held. The membership bounds links well below it.
@@ -344,7 +343,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
-        var ledger = new Ledger(_time);
+        var ledger = new Ledger();
         var positions = new Dictionary<TenantContext, Task<SourceCursor?>>();
         var work = new ShippingWork();
         link.Work = work;
@@ -600,7 +599,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 while (true)
                 {
-                    foreach (var ((database, incarnation), due) in await ledger.TakeAsync(Unsettled, activity.Token).ConfigureAwait(false))
+                    foreach (var ((database, incarnation), due) in await ledger.TakeAsync(Settled, activity.Token).ConfigureAwait(false))
                     {
                         try
                         {
@@ -684,17 +683,16 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
-        // How long an ack of a database with batches still in flight to this peer waits for theirs, which supersede it: up
-        // to Bookkeeping (zero: due now). A busy database then costs one proof and one ack write per interval on its writer,
-        // not two per batch. The ack written later only moves the resume cursor and retention; the stream goes on from the
-        // ack in memory.
-        TimeSpan Unsettled(TenantContext database, Ulid incarnation, Due due)
+        // An ack of a database with two or more batches still in flight to this peer is superseded by theirs: it waits for
+        // them, up to ReplicationProtocol.Window acks. A busy database then costs one proof and one ack write per window on
+        // its writer, not two per batch. The ack written later only moves the resume cursor and retention; the stream goes on
+        // from the ack in memory. With one batch left, or none, it is written at once.
+        bool Settled(TenantContext database, Ulid incarnation, Due due)
         {
             lock (link.Gate)
             {
-                return link.Cursors.GetValueOrDefault(database) is { } cursor && cursor.Incarnation == incarnation && cursor.Flights.Count > 0
-                    ? Bookkeeping - _time.GetElapsedTime(due.Since)
-                    : TimeSpan.Zero;
+                return link.Cursors.GetValueOrDefault(database) is not { } cursor || cursor.Incarnation != incarnation
+                    || cursor.Flights.Count < 2 || due.Acks >= ReplicationProtocol.Window;
             }
         }
 
@@ -1388,7 +1386,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     // One stream's responses that need a database's writer, coalesced per copy: the live ranges to prove, the newest ack and
     // the highest stable stamp. Pending and active batches each hold at most MaxDue copies of at most
     // RemoteAckWaiter.MaxRanges ranges; the consumer waits for capacity rather than dropping a proof.
-    private sealed class Ledger(TimeProvider time)
+    private sealed class Ledger
     {
         private const int MaxDue = 1024;
 
@@ -1408,13 +1406,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     if ((_due.TryGetValue((database, incarnation), out var due) || _due.Count < MaxDue)
                         && (due is null || due.CanKeep(proof)))
                     {
-                        due ??= _due[(database, incarnation)] = new Due { Since = time.GetTimestamp() };
+                        due ??= _due[(database, incarnation)] = new Due();
                         if (proof is { } range)
                         {
                             RemoteAckWaiter.Keep(due.Proofs, range.From, range.To);
                         }
 
-                        (due.Acked, due.Stable) = (acked ?? due.Acked, Math.Max(due.Stable, stable));
+                        (due.Acked, due.Stable, due.Acks) = (acked ?? due.Acked, Math.Max(due.Stable, stable), due.Acks + (acked is null ? 0 : 1));
                         Signal();
                         return;
                     }
@@ -1426,28 +1424,21 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
-        // The entries due now (`unsettled` zero or less); the others stay until the next change or the soonest is due.
+        // The settled entries; an unsettled one stays until a later change (its batches' acks) settles it.
         public async ValueTask<Dictionary<(TenantContext Database, Ulid Incarnation), Due>> TakeAsync(
-            Func<TenantContext, Ulid, Due, TimeSpan> unsettled, CancellationToken cancellationToken)
+            Func<TenantContext, Ulid, Due, bool> settled, CancellationToken cancellationToken)
         {
             while (true)
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 Task changed;
-                TimeSpan? soonest = null;
                 lock (_gate)
                 {
                     Dictionary<(TenantContext Database, Ulid Incarnation), Due>? taken = null;
                     foreach (var (key, due) in _due)
                     {
-                        var left = unsettled(key.Database, key.Incarnation, due);
-                        if (left <= TimeSpan.Zero)
+                        if (settled(key.Database, key.Incarnation, due))
                         {
                             (taken ??= [])[key] = due;
-                        }
-                        else if (soonest is not { } known || left < known)
-                        {
-                            soonest = left;
                         }
                     }
 
@@ -1463,14 +1454,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     changed = _changed.Task;
-                }
-
-                if (soonest is { } wait)
-                {
-                    using var due = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    _ = await Task.WhenAny(changed, Task.Delay(wait, time, due.Token)).ConfigureAwait(false);
-                    await due.CancelAsync().ConfigureAwait(false);
-                    continue;
                 }
 
                 await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1498,8 +1481,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         public ulong Stable { get; set; }
 
-        // When its first entry was added (TimeProvider timestamp).
-        public long Since { get; init; }
+        // The acks it holds, recorded as one.
+        public int Acks { get; set; }
     }
 
     // Notifications retain at most 1024 database identities (three fixed-size ULIDs each), independently per peer.

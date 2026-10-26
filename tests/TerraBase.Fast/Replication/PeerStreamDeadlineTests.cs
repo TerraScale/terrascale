@@ -492,6 +492,8 @@ public sealed class PeerStreamDeadlineTests
         var warnings = new PeerWarnings(time, streamFailuresOnly: true);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release, stableBeforeBatches: true);
+        // The reset is logged once the cursor is reset: only then may an ACK end the prepared send's wait for budget.
+        peer.AcksAfterStable = warnings.BookkeepingFailed.Task;
         var (unused, bind) = CreateSource();
         ResetSource? source = null;
         TenantContext[] databases = [];
@@ -1601,6 +1603,10 @@ public sealed class PeerStreamDeadlineTests
 
         public TaskCompletionSource StableSent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // With stableBeforeBatches: the held batch ACKs wait for this after the stable report, so the sender's drain of that
+        // report has finished its consequences before any ACK can free its budget.
+        public Task? AcksAfterStable { get; set; }
+
         public TaskCompletionSource FirstEnded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public static async Task<FakePeer> StartAsync(
@@ -1748,6 +1754,10 @@ public sealed class PeerStreamDeadlineTests
                                 await responses.WriteAsync(new AckFrame { Stable = new StableReport { Database = frontier.Database, Stable = frontier.Hlc } }, context.CancellationToken);
                                 frontier = null;
                                 StableSent.SetResult();
+                                if (AcksAfterStable is { } gate)
+                                {
+                                    await gate.WaitAsync(context.CancellationToken);
+                                }
                             }
 
                             while (pending.TryDequeue(out var ack))

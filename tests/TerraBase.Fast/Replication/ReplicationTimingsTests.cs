@@ -12,7 +12,7 @@ namespace TerraBase.Fast.Replication;
 public sealed class ReplicationTimingsTests
 {
     private static readonly string[] SenderSteps = ["send.pass", "send.read", "send.ack"];
-    private static readonly string[] ReceiverSteps = ["receive.wait", "receive.open", "receive.begin", "receive.join", "receive.commit", "receive.stable", "receive.total"];
+    private static readonly string[] ReceiverSteps = ["receive.loop", "receive.wait", "receive.open", "receive.begin", "receive.join", "receive.commit", "receive.stable", "receive.total"];
 
     [Test]
     public async Task A_replicated_write_records_its_remote_ack_delay_every_step_and_the_catalog_lookups()

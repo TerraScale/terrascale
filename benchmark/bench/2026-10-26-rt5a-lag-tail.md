@@ -42,6 +42,27 @@ The tail is on the origin, not the wire or the receiver. Into gru the same holds
 (FR1's 2 h: receive.total p50/p99/p999 16.5/49.4/209 ms), and the origin's batch -> durable ack to gru is RTT + 10-25 ms at
 p99 idle (sjc -> gru 183-196 ms, fra -> gru 243-360 ms against 169/181 ms RTT).
 
+### Origin -> gru, split with exact timestamps
+
+sjc -> fra probes (origin sjc, so every probe also replicates to gru), headers-only captures on sjc and on gru at once
+(read-only; no client on gru), each batch on sjc's stream to gru matched by TCP sequence number. Clock offset gru - sjc from
+the two directions: 0.2 ms. 2026-10-26 ~04:3xZ, sjc on batch 10, gru on batch 9. ms:
+
+| Segment | Idle p50 / p90 / p99 (60 batches) | `-load 2` p50 / p90 / p99 (323 batches) |
+| --- | --- | --- |
+| sjc: probe write in -> response out (origin commit) | 20.1 / 63.2 / 331.9 | 40.6 / 161.2 / 477.0 |
+| sjc: probe write in -> first batch to gru leaves | 22.4 / 159.8 / 358.7 | 23.4 / 198.1 / 1001.4 |
+| wire: batch leaves sjc -> TCP receipt at gru | 84.0 / 84.3 / 86.2 | 83.8 / 84.1 / 84.9 |
+| gru: TCP receipt -> ack leaves | 13.0 / 72.1 / 173.2 | 8.4 / 64.5 / 174.6 |
+| wire: ack back at sjc | 83.9 / 84.5 / 85.6 | 84.0 / 84.4 / 86.2 |
+
+- The wire adds nothing beyond its 84 ms floor. The largest tail is the origin's (commit, then shipping).
+- gru's receipt -> ack p99 (~175 ms) is ~125 ms above its own `receive.total` p99 (49 ms): `received` was stamped only
+  when the stream's loop took the frame. The receiver now stamps the frame's arrival and records `receive.loop` (arrival
+  until the loop takes it), so production shows this gap. `apply_delay` used buckets 0.05 / 0.1 / 0.25 / 0.5 s, so its
+  "~250 ms p99" was a bucket edge; it now uses the step buckets.
+- sjc also ships about 4 SYSTEM batches per second to gru while idle (129-byte frames, each answered and applied).
+
 ## 4. What holds the origin's writer: bookkeeping, about four FULL write transactions per client write
 
 Writer holds on sjc over one `-load 2` sjc -> fra run (all databases): client commits (group commit batches) 354 holds,
@@ -55,12 +76,16 @@ writer, 1-2 ms each: they never hold a tenant database's writer.
 
 ## 5. Change and cell proof
 
-- An ack of a database with batches still in flight to that peer waits for theirs, up to 250 ms: one proof and one ack write
-  per interval instead of two per batch per peer. A quiet database's last ack is recorded at once.
+- An ack of a database with two or more batches still in flight to that peer waits for theirs, up to 8 acks
+  (`ReplicationProtocol.Window`): one proof and one ack write per window instead of two per batch per peer. With one batch
+  left, or none, it is recorded at once (as before). No timer: a stalled stream ends at the progress timeout and resends.
 - The ack's inline `HeadAsync` read runs only when a `remote_durable` write waits on the database.
 - The sender's read returns retention from its own snapshot: one read transaction per batch instead of two. A fault noted
   after the read still refuses the batch (in-memory check before shipping).
 - `terrabase.storage.queue_wait{lane}`: time a Turso call waits for an I/O thread.
+
+The first cell run below used an earlier form of this rule (defer while any batch was in flight, up to 250 ms); the
+count-bounded form replaced it so tests on frozen clocks keep their ordering, and is measured in the second run.
 
 Local three-region cell (`local-lag.sh`, one-way delays gru-sjc 84.6, gru-fra 94.1, sjc-fra 68.9 ms, 2 storage threads per
 node), main `09e3edbf` vs branch `1e1ae8ef`, interleaved on mariogk-dev, 3 runs x 60 probes, 2 load writers at a fixed
