@@ -12,7 +12,7 @@ public sealed record MethodsBody(bool Passcode, bool Password, bool SignUp);
 
 /// <summary>Hosted page branding; null shows the project's name and the default theme.</summary>
 public sealed record BrandingBody(string? Name, string? LogoUrl, string? ThemeColor, int? TitleSize = null, string? DefaultTheme = null,
-    IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null, string? EmailMessage = null);
+    IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null, [property: JsonPropertyName("email_message")] string? EmailMessage = null);
 
 /// <summary>A labelled HTTPS link underneath the hosted card.</summary>
 public sealed record FooterLinkBody(string Label, string Url);
