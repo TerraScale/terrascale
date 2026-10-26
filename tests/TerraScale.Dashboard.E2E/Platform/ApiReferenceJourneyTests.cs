@@ -150,6 +150,19 @@ public sealed class ApiReferenceJourneyTests(DashboardRootFixture fixture)
             {
                 await page.GetByRole(AriaRole.Button, new() { Name = "Open Menu", Exact = true }).ClickAsync();
                 await Expect(page.GetByRole(AriaRole.Link, new() { Name = "Introduction", Exact = true })).ToBeVisibleAsync();
+                // Both desktop and mobile search components are mounted while the menu is open.
+                await page.Keyboard.PressAsync("Control+k");
+                var mobileSearch = page.GetByRole(AriaRole.Combobox, new() { Name = "Enter search query" });
+                await Expect(mobileSearch).ToHaveCountAsync(1);
+                await mobileSearch.FillAsync("no-such-endpoint-q15");
+                await Expect(page.GetByRole(AriaRole.Option)).ToHaveCountAsync(0);
+                await Expect(page.GetByText("No results found", new() { Exact = true })).ToBeVisibleAsync();
+                await page.Keyboard.PressAsync("Control+k");
+                await Expect(mobileSearch).ToHaveCountAsync(0);
+                await page.Keyboard.PressAsync("Control+k");
+                await Expect(mobileSearch).ToHaveCountAsync(1);
+                await page.Keyboard.PressAsync("Escape");
+                await Expect(mobileSearch).ToHaveCountAsync(0);
             }
             var undersized = await page.EvaluateAsync<string[]>("""
                 () => [...document.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,summary,[tabindex="0"],[role=button],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch]')]
