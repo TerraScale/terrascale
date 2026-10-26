@@ -124,8 +124,13 @@ class AsyncTerraScale:
     async def create_database(self, name: str, *, home_region: str | None = None,
                         replica_regions: Sequence[str] | None = None,
                         all_regions: bool | None = None) -> models.Database:
-        """Create a database. Regions are names such as ``"gru"``; omit them
-        for the default placement, or pass ``all_regions=True``."""
+        """Create a database in at least two distinct serving regions.
+
+        Regions are names such as ``"gru"``. Omitting ``replica_regions`` uses
+        all current serving regions; ``home_region`` alone is not single-region
+        placement. Pass ``all_regions=True`` to include future regions too.
+        An explicit ``replica_regions=[]`` is rejected with HTTP 400 on create.
+        """
         return await self._send(_spec.create_database(self.project, name, home_region, replica_regions, all_regions))
 
 
@@ -147,11 +152,22 @@ class AsyncDatabase:
 
     async def update(self, *, home_region: str | None = None, replica_regions: Sequence[str] | None = None,
                all_regions: bool | None = None) -> models.Database:
-        """Change the region placement."""
+        """Change region placement. Writable databases require at least two regions.
+
+        ``replica_regions=[]`` can temporarily disable document writes with
+        HTTP 409 ``placement_needs_two_regions``. It does not provide supported
+        single-region placement and is not required before deletion.
+        ``all_regions=True`` includes current and future serving regions.
+        """
         return await self._c._send(_spec.update_database(*self._p, home_region, replica_regions, all_regions))
 
     async def delete(self) -> None:
-        """Delete the database. Remove replica regions first (``database_replicated``)."""
+        """Delete directly in the database's home region, without a placement update.
+
+        Deletion covers every replica, including all-regions placement. HTTP 204
+        confirms logical deletion and local cleanup; remote erasure is retried
+        durably and may complete later.
+        """
         await self._c._send(_spec.delete_database(*self._p))
 
     async def branch(self, name: str) -> models.Database:
