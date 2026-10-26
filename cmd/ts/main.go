@@ -409,7 +409,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		if placementSet {
 			return createPlacedDatabase(ctx, s.tb.Database(s.project, operands[0]), requestedPlacement, out)
 		}
-		return s.dispatch(ctx, name, fn, *collection, operands, out)
+		return s.dispatch(ctx, name, fn, *collection, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
@@ -530,7 +530,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 }
 
 // dispatch runs a project command.
-func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, collection string, operands []string, out io.Writer) error {
+func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, collection string, operands []string, input commandInput, out io.Writer) error {
+	if name == "sql" || name == "exec" {
+		mode := "document"
+		if name == "exec" {
+			mode = "relational"
+		}
+		return runSQL(ctx, s.tb.Database(s.project, operands[0]), mode, operands[1], input.in, out)
+	}
 	if strings.HasPrefix(name, "functions ") {
 		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
 	}
@@ -849,20 +856,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 	}
 	switch name {
 	case "sql":
-		res, err := db.SQL(ctx, args[1])
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, res)
-		}
-		for _, row := range res.Rows {
-			fmt.Fprintf(out, "%s\n", row.Value)
-		}
-		if res.Truncated {
-			fmt.Fprintf(os.Stderr, "ts: truncated: %d rows matched\n", res.Matched)
-		}
-		return nil
+		return runSQL(ctx, db, "document", args[1], nil, out)
 	case "db list":
 		items := []v1.ManagedDatabase{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -1002,24 +996,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 	case "db changes":
 		return tailChangesFrom(ctx, db, "now", args[1:], out)
 	case "exec":
-		res, err := db.ExecuteSQL(ctx, args[1])
-		if err != nil {
-			return err
-		}
-		if jsonMode(out) {
-			return emitJSON(out, res)
-		}
-		if len(res.Columns) == 0 {
-			fmt.Fprintf(out, "%d rows affected\n", res.RowsAffected)
-			return nil
-		}
-		enc := json.NewEncoder(out)
-		for _, row := range res.Maps() {
-			if err := enc.Encode(row); err != nil {
-				return err
-			}
-		}
-		return nil
+		return runSQL(ctx, db, "relational", args[1], nil, out)
 	case "migrate up":
 		return migrateUp(ctx, db, out)
 	case "migrate status":

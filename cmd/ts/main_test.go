@@ -241,7 +241,7 @@ func TestImportNDJSONSendsCollection(t *testing.T) {
 	}
 	s := &session{tb: c, project: project}
 	var out bytes.Buffer
-	if err := s.dispatch(t.Context(), "import", functionFlags{}, "people", []string{"app", "ndjson", path}, &out); err != nil {
+	if err := s.dispatch(t.Context(), "import", functionFlags{}, "people", []string{"app", "ndjson", path}, commandInput{}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if declarations != 1 || !strings.Contains(out.String(), "Imported 1 rows into app") {
