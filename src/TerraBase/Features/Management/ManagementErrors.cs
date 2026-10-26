@@ -52,6 +52,13 @@ internal static class ManagementErrors
         $"the organization's {plan} plan allows {allowed} database{(allowed == 1 ? "" : "s")}; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing",
         DatabaseLimitCode);
 
+    /// <summary>
+    /// This region holds none of the organization's database allowance and could not reach every region that may hold some
+    /// (docs/terrabase/decisions/0016).
+    /// </summary>
+    public static readonly Conflict DatabaseAllowanceElsewhere = new(
+        "the rest of the organization's database allowance is held in regions this region cannot reach now; retry shortly", DatabaseLimitCode);
+
     /// <summary>The stable code of <see cref="DatabaseLimit"/>.</summary>
     public const string DatabaseLimitCode = "database_limit";
 

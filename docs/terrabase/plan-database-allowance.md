@@ -27,8 +27,13 @@ allowance answers `409` with code `database_limit` and a message naming the plan
   route aliases), the legacy `PUT /v1/projects/{project}/databases/{database}`, branches
   (`POST …/databases/{database}/branches`), copies, backup and point-in-time restores, and
   `create_database` in management commits. Nothing is created when it is refused.
-- The count and the check run in the catalog transaction that registers the database, so
-  concurrent creates cannot both pass on one node.
+- The check runs in the catalog transaction that registers the database and is strict across
+  regions: each region spends units of the allowance it holds and asks other regions for one when
+  it has none ([decision 0016](decisions/0016-strict-database-allowance-escrow.md), which lists
+  the cases it does not cover). Concurrent creates in different regions do not pass it together.
+  A region that holds no unit and cannot reach every region that may hold one answers
+  `409 database_limit` with "the rest of the organization's database allowance is held in regions
+  this region cannot reach now; retry shortly".
 - A database counts once, however many regions hold it: a region that adopts a replica of a
   database created elsewhere does not count it again. Deleted databases do not count.
 - Replaying a create for a name that exists still finds it (`200` on the legacy `PUT`,
