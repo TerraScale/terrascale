@@ -859,9 +859,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         using var verified = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = alice.Email, ["code"] = code });
         await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(OidcHarness.SessionCookie(verified)).IsNull();
-        // An authenticated different subject cannot adopt an existing capability.
+        // An authenticated different subject cannot adopt an existing capability, even with a fresh proof.
         var (_, otherToken) = await oidc.SignInUserAsync("other@example.test");
-        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: otherToken, oidc: oidc)).IsEqualTo((409, "deletion_refused"));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: otherToken, oidc: oidc)).IsEqualTo((403, "step_up_required"));
         // Losing a root without Users.DeleteAsync's atomic fence must never certify completion.
         var root = (await store.GetAsync(AuthStore.UserCollection, "terrascale", alice.Id))!;
         await Assert.That(await store.CompareAndDeleteAsync(AuthStore.UserCollection, "terrascale", alice.Id, root.Version)).IsTrue();

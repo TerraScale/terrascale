@@ -269,6 +269,9 @@ paths:
       tags: [Members]
       summary: Delete your account
       description: |
+        Requires fresh delete_account/ts-auth proof in X-TerraScale-Step-Up-Proof, or both the exact
+        X-TerraScale-Deletion-Receipt and X-TerraScale-Deletion-Authorization continuation capability.
+        See step-up.openapi.yaml and step-up-proof.md. A bearer token alone never authorizes deletion.
         Deletes the caller's account, sessions, tokens and MFA, and frees its email. Organizations where the caller is the
         only member are deleted with their projects, each project only after TerraBase accepted its closure
         (docs/terrabase/project-closure.md); the others are left. 202 while a project closure is pending: the account
@@ -282,6 +285,7 @@ paths:
         '204': { description: 'Deleted.' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/invitations:
