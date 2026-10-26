@@ -490,17 +490,21 @@ The connection contract is pinned to the implemented
 [issued key syntax](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraScale.Authentication/Features/Platform/ApiKeys.cs),
 [public TLS edge](https://github.com/TerraScale/ts-orchestrator/blob/4c8093d0fed4b69fd31d83daa62b78301c2015e8/internal/edge/postgres.go),
 and [public connection guide](https://github.com/TerraScale/ts-docs/blob/894161603ff0cdeb18bb6f4a489394d197844b1f/docs/guides/postgres-clients.md).
-After SSLRequest, ALPN may be absent or `postgresql`; source/fixture checks do not establish live authorization.
+After SSLRequest, ALPN may be absent or `postgresql`. Source and fixture checks
+do not establish live authorization.
 
-`PostgresValue.Value()` returns native pgx scalars or nil (SQL NULL); column OIDs remain.
-JSON/JSONB use `json.RawMessage`; NUMERIC uses exact `pgtype.Numeric`, including a bounded
-scientific coefficient/scale adapter. Native codecs request producer-supported text format.
-`CommandTag` retains full tags. Collection has a fixed16MiB budget; overflow returns `limit`.
-Decode failures return `decode`. Both physically abort before row cleanup and discard partial
-results; never replay uncertain mutations. Parameter expansion, unrestricted command tags,
-and cancellation-aware Query/Close admission remain a separate slice. A accepts only
-non-null INT8/TEXT parameters; reusing a NULL result returns a fixed validation error. This remains one
-logical session; pooling and owned transactions require separate work (TS-1282).
+`PostgresParameter(value)` binds native pgx values or `nil` (SQL NULL); `Value()` returns native scalars, exact `pgtype.Numeric`,
+`json.RawMessage` for JSON/JSONB, or `nil`; column OIDs and Int8/Text helpers remain.
+The [producer scalar contract](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraBase/Features/Postgres/PostgresStatements.cs)
+can describe aliased CAST expressions as TEXT. `CommandTag` preserves complete tags.
+Native pgx codecs use producer-supported formats. Scientific NUMERIC tokens
+normalize exactly into a bounded decimal coefficient/scale without float coercion. Collected results have a fixed
+16 MiB budget (wire values plus structural accounting); overflow discards results,
+closes the session and returns `limit`. Decode failures abort before row cleanup
+and return `decode`; partial results are discarded and mutations are never replayed. SQL/string/byte validation has a fixed
+1 MiB budget less framing; the pinned producer accepts 32,767 parameters. Admission
+observes cancellation. This remains one logical session: pooling and owned
+transactions are separate work. Never share manual BEGIN/COMMIT groups between callers or replay uncertain mutations.
 
 ## Region latency (`client.Status`)
 
