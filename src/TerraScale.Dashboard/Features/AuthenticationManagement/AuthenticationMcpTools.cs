@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Auth;
@@ -62,10 +63,13 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
 
     [McpServerTool(Name = "auth_list_clients", Title = "List OAuth applications", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
      Description("List the project's OAuth applications. Client secrets are never listed.")]
-    public async Task<AuthenticationClients> Clients(string? organizationId = null, string? projectId = null)
+    public async Task<AuthenticationClients> Clients(string? organizationId = null, string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "")
     {
         var context = await Fresh(organizationId, projectId, false);
-        return new(await projects.ListClientsAsync(context.Session, context.Project!.Id, Cancellation));
+        var page = CursorPaging.Page(await projects.ListClientsAsync(context.Session, context.Project!.Id, Cancellation),
+            client => client.ClientId, CursorPaging.Scope(context, "auth-clients"), limit, after);
+        return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
     }
 
     [McpServerTool(Name = "auth_create_client", Title = "Create an OAuth application", UseStructuredContent = true, Destructive = false, OpenWorld = false),
@@ -130,4 +134,4 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }
 
-public sealed record AuthenticationClients(IReadOnlyList<TerraScaleAuthProjectOAuthClient> Clients);
+public sealed record AuthenticationClients(IReadOnlyList<TerraScaleAuthProjectOAuthClient> Clients, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);

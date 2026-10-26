@@ -52,7 +52,7 @@ public sealed class AccountDeletionJourneyTests
         { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "items", ["operation"] = "create", ["document"] = "{\"value\":1}" }))
             await Assert.That(document.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using (var documents = JsonDocument.Parse(await scenario.Client.GetStringAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=items")))
-            await Assert.That(documents.RootElement.GetArrayLength()).IsEqualTo(1);
+            await Assert.That(documents.RootElement.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
         // This journey verifies dashboard delegation; ts-auth/TerraBase qualify physical erasure.
         await HttpJourney.CreatePatAsync(scenario.Client);
         // The shared organization's projection must survive deletion.

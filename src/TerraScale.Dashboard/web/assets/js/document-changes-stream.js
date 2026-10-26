@@ -46,9 +46,21 @@ export async function readChanges(body, signal, receive) {
 
 export async function reconcileDocuments(databaseId, collection, signal, fetcher = fetch) {
   const query = new URLSearchParams({ databaseId, collection });
-  const response = await fetcher(`/api/v1/dashboard/data/documents?${query}`, { signal, credentials: 'same-origin', cache: 'no-store' });
-  if (!response.ok) throw new Error(`Current documents could not be reread (HTTP ${response.status}).`);
-  const rows = await response.json();
-  if (!Array.isArray(rows)) throw new Error('Invalid current documents response.');
+  const rows = [], cursors = new Set(), ids = new Set();
+  while (true) {
+    const response = await fetcher(`/api/v1/dashboard/data/documents?${query}`, { signal, credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(`Current documents could not be reread (HTTP ${response.status}).`);
+    const page = await response.json();
+    if (!Array.isArray(page.documents) || typeof page.hasMore !== 'boolean' ||
+        (page.hasMore ? typeof page.nextCursor !== 'string' || !page.nextCursor : page.nextCursor !== null))
+      throw new Error('Invalid current documents response.');
+    for (const row of page.documents) {
+      if (typeof row.id !== 'string' || ids.has(row.id)) throw new Error('Invalid repeated document identity.');
+      ids.add(row.id); rows.push(row);
+    }
+    if (!page.hasMore) break;
+    if (cursors.has(page.nextCursor)) throw new Error('Document pagination did not advance.');
+    cursors.add(page.nextCursor); query.set('after', page.nextCursor);
+  }
   return rows;
 }

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
@@ -9,8 +10,14 @@ namespace TerraScale.Dashboard.Features.Backups;
 public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService backups)
 {
     [McpServerTool(Name = "list_backups", Title = "List backups", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's backups and its backup policy.")]
-    public Task<BackupListing> ListBackups(string databaseId, string? organizationId = null, string? projectId = null) =>
-        backups.ListAsync(Scope(organizationId, projectId), databaseId, Cancellation);
+    public async Task<McpBackupList> ListBackups(string databaseId, string? organizationId = null, string? projectId = null,
+        [Description(CursorPaging.Description)] int limit = 100, string after = "")
+    {
+        var context = Scope(organizationId, projectId);
+        var listing = await backups.ListAsync(context, databaseId, Cancellation);
+        var page = CursorPaging.Page(listing.Backups, backup => backup.Id, CursorPaging.Scope(context, "backups", databaseId), limit, after);
+        return new(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit);
+    }
 
     [McpServerTool(Name = "create_backup", Title = "Create backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Take an on-demand backup of a database's documents, schemas, and indexes. Requires an owner or admin role.")]
     public Task<BackupView> CreateBackup(string databaseId, string? organizationId = null, string? projectId = null) =>
@@ -36,3 +43,5 @@ public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService back
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }
+
+public sealed record McpBackupList([property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BackupPolicyView? Policy, IReadOnlyList<BackupView> Backups, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);

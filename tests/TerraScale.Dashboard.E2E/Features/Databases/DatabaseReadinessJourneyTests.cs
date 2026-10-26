@@ -92,7 +92,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         { ["_csrf"] = csrf, ["databaseId"] = actualId, ["collection"] = "users", ["id"] = "01K78D0C000000000000000013", ["operation"] = "create", ["document"] = "{\"ready\":true}" }))
             await Assert.That(document.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await EvidenceAsync(document, producer));
         var documents = await JsonAsync(replica, "/api/v1/dashboard/data/documents?databaseId=" + actualId + "&collection=users");
-        await Assert.That(documents[0].GetProperty("value").GetProperty("ready").GetBoolean()).IsTrue();
+        await Assert.That(documents.GetProperty("documents")[0].GetProperty("value").GetProperty("ready").GetBoolean()).IsTrue();
         await DeleteAsync(client, csrf, actualId, name);
         observed = await JsonAsync(producer, "/__test/observations");
         await Assert.That(observed.GetProperty("creates").GetInt32()).IsEqualTo(1);

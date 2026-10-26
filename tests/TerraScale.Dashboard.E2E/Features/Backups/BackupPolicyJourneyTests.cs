@@ -82,7 +82,7 @@ public sealed class BackupPolicyJourneyTests(DashboardRootFixture fixture)
             .Because("Missing, invalid and unsaved-zero policy never becomes a usable scheduler setting.");
         var listed = await CallAsync(replica, secret, "list_backups", new { databaseId });
         await Assert.That(listed.GetProperty("backups").GetArrayLength()).IsEqualTo(1);
-        await Assert.That(listed.TryGetProperty("policy", out _)).IsFalse();
+        await Assert.That(listed.GetProperty("policy").ValueKind).IsEqualTo(JsonValueKind.Null);
         var detail = await CallAsync(replica, secret, "get_database", new { databaseId });
         await Assert.That(detail.TryGetProperty("backupsEnabled", out _)).IsFalse();
         await Assert.That(detail.GetProperty("unavailable").GetString()).Contains("Backup scheduling");

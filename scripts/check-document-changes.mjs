@@ -34,12 +34,23 @@ assert.deepEqual(await reconcileDocuments('db /', 'one+collection', signal, asyn
   requested = url;
   assert.equal(options.signal, signal);
   assert.equal(options.credentials, 'same-origin');
-  return Response.json([{ id: 'owned', value: { text: '<script>' } }]);
+  return Response.json({ documents: [{ id: 'owned', value: { text: '<script>' } }], nextCursor: null, hasMore: false });
 }), [{ id: 'owned', value: { text: '<script>' } }]);
 const query = new URL(requested, 'https://dashboard.test').searchParams;
 assert.equal(query.get('databaseId'), 'db /');
 assert.equal(query.get('collection'), 'one+collection');
 await assert.rejects(() => reconcileDocuments('db', 'same', signal, async () => new Response('', { status: 400 })), /HTTP 400/);
+let pages = 0;
+assert.deepEqual(await reconcileDocuments('db', 'same', signal, async url => {
+  const after = new URL(url, 'https://dashboard.test').searchParams.get('after');
+  pages++;
+  if (!after) return Response.json({ documents: [], nextCursor: 'opaque+/=', hasMore: true });
+  assert.equal(after, 'opaque+/=');
+  return Response.json({ documents: [{ id: 'second', value: {} }], nextCursor: null, hasMore: false });
+}), [{ id: 'second', value: {} }]);
+assert.equal(pages, 2);
+await assert.rejects(() => reconcileDocuments('db', 'same', signal, async () => Response.json({ documents: [], nextCursor: 'repeat', hasMore: true })), /did not advance/);
+await assert.rejects(() => reconcileDocuments('db', 'same', signal, async () => Response.json({ documents: [], nextCursor: null, hasMore: true })), /Invalid current documents/);
 console.log('Document changes reader: UTF-8/chunk framing, checkpoint validation, bounds, disposal and document reread passed.');
 const source = { value: 'SELECT latest FROM items' };
 let mirrored = 0;
@@ -107,7 +118,7 @@ try {
       assert.equal(resyncPanel.items.children.length, 2, 'Apply both transaction changes before accepting its final checkpoint.');
       assert.match(resyncPanel.statuses.at(-1), /Establishing a new checkpoint/);
       assert.equal(resyncPanel.statuses.some(value => value.startsWith('Resynced')), false);
-      return Response.json([{ id: 'current', value: {} }]);
+      return Response.json({ documents: [{ id: 'current', value: {} }], nextCursor: null, hasMore: false });
     }
     calls++;
     if (calls === 1) return stream(event('resync_required', null));

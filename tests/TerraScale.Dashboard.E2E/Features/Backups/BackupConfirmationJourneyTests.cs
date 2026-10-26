@@ -325,7 +325,7 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
         return (await BodyAsync(response)).GetProperty("id").GetString()!;
     }
     private static async Task<int> ScoreAsync(HttpClient client, string id) =>
-        (await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=users"))[0].GetProperty("value").GetProperty("score").GetInt32();
+        (await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=users")).GetProperty("documents")[0].GetProperty("value").GetProperty("score").GetInt32();
     private static async Task DeleteAsync(HttpClient client, string csrf, string id, string name)
     {
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()

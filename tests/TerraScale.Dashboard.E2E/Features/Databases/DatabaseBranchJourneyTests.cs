@@ -313,7 +313,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync());
     }
     private static async Task<string> ValueAsync(HttpClient client, string id) =>
-        (await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=users"))[0].GetProperty("value").GetProperty("value").GetString()!;
+        (await ReadAsync(client, "/api/v1/dashboard/data/documents?databaseId=" + id + "&collection=users")).GetProperty("documents")[0].GetProperty("value").GetProperty("value").GetString()!;
     private static async Task DeleteAsync(HttpClient client, string csrf, string id, string name)
     {
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()

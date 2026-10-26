@@ -71,8 +71,28 @@ public static class DataEndpoints
             if (context is null) return Results.Unauthorized();
             try
             {
-                var result = await data.DocumentsAsync(context, http.Request.Query["databaseId"].ToString(), http.Request.Query["collection"].ToString(), http.RequestAborted);
-                return Results.Json(result.Select(document => new { id = document.Id, value = document.Document }));
+                var query = http.Request.Query;
+                var limit = 100;
+                if (query.TryGetValue("limit", out var requestedLimit) &&
+                    (requestedLimit.Count != 1 || !int.TryParse(requestedLimit[0], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out limit) || limit is < 1 or > 100))
+                    throw new AccountAccessException("Document limits use 1–100 rows.", 422);
+                if (query.ContainsKey("after") && query.ContainsKey("cursor"))
+                    throw new AccountAccessException("Use either after or cursor for document continuation.", 422);
+                var continuation = query.ContainsKey("after") ? query["after"] : query["cursor"];
+                if (continuation.Count > 1 || continuation.Count == 1 &&
+                    (string.IsNullOrWhiteSpace(continuation[0]) || continuation[0]!.Any(char.IsControl)))
+                    throw new AccountAccessException("Enter a valid document continuation cursor.", 422);
+                var result = await data.ListPageAsync(context, query["databaseId"].ToString(), query["collection"].ToString(),
+                    query["search"].ToString(), limit, continuation.ToString(), http.RequestAborted);
+                http.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new
+                {
+                    documents = result.Items.Select(document => new { id = document.Id, value = document.Document }),
+                    nextCursor = result.NextCursor,
+                    hasMore = !string.IsNullOrEmpty(result.NextCursor),
+                    limit
+                });
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
