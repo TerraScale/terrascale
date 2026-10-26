@@ -41,18 +41,7 @@ public static partial class SqlValidation
         statement = statement.Trim();
         var error = Diagnostics(statement).FirstOrDefault(item => item.Severity == "error")?.Message ?? "";
         if (error.Length > 0) return new(false, error);
-        var visible = Visible(statement)!;
-        var read = IsRead(statement);
-        var collection = Regex.Match(visible, @"\bFROM\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        var suggestions = new List<SqlSuggestion>();
-        foreach (Match match in Regex.Matches(visible, @"\bWHERE\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-            suggestions.Add(new(match.Groups[1].Value, "WHERE filters on " + match.Groups[1].Value + "; consider an index for this field."));
-        foreach (Match match in Regex.Matches(visible, @"\bORDER\s+BY\s+([A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-            suggestions.Add(new(match.Groups[1].Value, "ORDER BY sorts on " + match.Groups[1].Value + "; consider an index for bounded pagination."));
-        return new(true, Collection: collection.Success ? collection.Groups[1].Value : null, ParameterSlots: 0,
-            HasLimit: Regex.IsMatch(visible, @"\bLIMIT\s+[0-9]+\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant),
-            Explain: !read ? null : visible.TrimStart().StartsWith("EXPLAIN ", StringComparison.OrdinalIgnoreCase) ? statement : "EXPLAIN QUERY PLAN " + statement,
-            Suggestions: suggestions.Count == 0 ? null : suggestions, Write: !read);
+        return new(true, Write: !IsRead(statement));
     }
 
     public static string Error(string statement)

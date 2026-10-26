@@ -62,7 +62,7 @@ export function attach(api, editor, textarea, host) {
     const body = new URLSearchParams(new FormData(context.form));
     body.set('sql', model.getValue());
     // A check that could not run says so instead of looking clean.
-    const failed = reason => [{ severity: 'warning', message: `The SQL check did not run: ${reason}`, from: 0, to: model.getValueLength() }];
+    const failed = reason => [{ severity: 'warning', message: `The input check did not run: ${reason}`, from: 0, to: model.getValueLength() }];
     let response;
     try {
       response = await fetch(host.dataset.sqlCheck, { method: 'POST', body, headers: { Accept: 'application/json' }, signal: current.signal });

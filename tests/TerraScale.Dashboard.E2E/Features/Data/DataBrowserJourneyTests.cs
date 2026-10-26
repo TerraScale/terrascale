@@ -105,12 +105,12 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("SELECT *\nFROM orders\nWHERE total > 500\nORDER BY createdAt");
         await CheckAsync();
         var analysis = await page.Locator("#sql-analysis").InnerTextAsync();
-        await Assert.That(analysis).Contains("Add LIMIT to bound results.");
-        await Assert.That(analysis).Contains("Server check passed.");
-        await Assert.That(analysis).Contains("WHERE filters on total; consider an index for this field.");
-        await Assert.That(analysis).Contains("ORDER BY sorts on createdAt; consider an index for bounded pagination.");
+        await Assert.That(analysis).Contains("It does not validate SQL syntax");
+        await Assert.That(analysis).Contains("Input checks passed. SQL validity has not been checked.");
+        await Assert.That(analysis).DoesNotContain("EXPLAIN statement preview");
+        await Assert.That(analysis).DoesNotContain("consider an index");
         await Assert.That(await page.Locator("#sql-result").CountAsync()).IsEqualTo(0)
-            .Because("The native check validates and advises without executing the query.");
+            .Because("The input check must never execute SQL.");
         await EditorAsync("BEGIN");
         await CheckAsync(422);
         await Assert.That(await page.Locator("#sql-analysis").CountAsync()).IsEqualTo(0);
@@ -144,7 +144,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         }
         async Task CheckAsync(int expectedStatus = 200)
         {
-            var response = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Check SQL", Exact = true }).ClickAsync(),
+            var response = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Check input", Exact = true }).ClickAsync(),
                 value => value.Request.IsNavigationRequest && value.Request.Method == "POST" && new Uri(value.Url).AbsolutePath == "/api/v1/dashboard/data/sql/check");
             await Assert.That(response.Status).IsEqualTo(expectedStatus);
             await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);

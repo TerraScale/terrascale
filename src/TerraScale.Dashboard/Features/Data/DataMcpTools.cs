@@ -80,7 +80,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one bounded read-only SQL statement with the same checks as the dashboard editor.")]
     public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null) => data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
 
-    [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Validate a read-only SQL statement without running it and suggest indexes for it.")]
+    [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Check SQL input limits without running it: blank input, size, statement boundaries, parameters and transaction commands. Does not validate SQL syntax, tables or permissions.")]
     public SqlAnalysis CheckSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
     {
         DatabaseService.Database(Scope(organizationId, projectId), databaseId);
