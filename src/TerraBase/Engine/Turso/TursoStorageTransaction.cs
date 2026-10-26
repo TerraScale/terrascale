@@ -58,6 +58,7 @@ internal sealed partial class TursoStorageTransaction(
 
     // Set once COMMIT returned: a later failure resetting the pooled session no longer makes the write look failed.
     private bool _committed;
+    private bool _collected;
     private int _writes;
     private long _writtenBytes;
 
@@ -1324,6 +1325,10 @@ internal sealed partial class TursoStorageTransaction(
                 committing = true;
                 transaction.Commit();
                 _committed = true;
+                if (_collected)
+                {
+                    store.Collected();
+                }
             }
             catch
             {

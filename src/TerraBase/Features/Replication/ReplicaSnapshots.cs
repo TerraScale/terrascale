@@ -1,19 +1,16 @@
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
 
 /// <summary>Imports a whole pinned snapshot, then its obsolete-origin prefix proofs. Partial transfers certify nothing.</summary>
-internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IReplicaStates states,
-    PeerCredential credential, IMemoryBudget memory)
+internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IReplicaStates states, PeerCredential credential)
 {
     internal async Task<bool> PullAsync(TenantContext database, ClusterMember peer, IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
     {
-        using var reservation = memory.TryReserve(MemoryLane.Replication, 16L * ReplicationProtocol.MaxApplicationBytes, tenant: null);
-        if (reservation is null || await states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
+        if (await states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
         {
             return false;
         }
@@ -29,12 +26,13 @@ internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IRepli
 
         // Deliberately read every state, even if digests match. Coverage comes from one native read snapshot and its
         // terminal vector, never from equality of independently sampled XOR roots.
-        using var call = client.ReadSnapshot(new DigestRequest { Database = ChangeGroups.Wire(database, source) },
-            deadline: DateTime.UtcNow.AddMinutes(10), cancellationToken: cancellationToken);
         return await importer.ImportAsync(database, local.Incarnation, Pages(cancellationToken), origins, cancellationToken).ConfigureAwait(false);
 
         async IAsyncEnumerable<ReplicaSnapshotPage> Pages([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
         {
+            // Let the importer capture the destination's collection generation before the source pins its snapshot.
+            using var call = client.ReadSnapshot(new DigestRequest { Database = ChangeGroups.Wire(database, source) },
+                deadline: DateTime.UtcNow.AddMinutes(10), cancellationToken: token);
             var complete = false;
             while (await call.ResponseStream.MoveNext(token).ConfigureAwait(false))
             {

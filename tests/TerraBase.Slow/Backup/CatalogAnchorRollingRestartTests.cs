@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Replication;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -24,12 +27,34 @@ public sealed class CatalogAnchorRollingRestartTests
         var token = TestContext.Current!.Execution.CancellationToken;
         var bucket = new FakeS3();
         var members = new FakeMemberStore();
+        var phases = new ConcurrentQueue<(Meter Meter, string Phase, double Seconds)>();
+        var meters = new Dictionary<Meter, string>();
+        using var timings = new MeterListener();
+        timings.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Name == "terrabase.replication.snapshot_import")
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
+        };
+        timings.SetMeasurementEventCallback<double>((instrument, seconds, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "phase" && phases.Count < 4096)
+                {
+                    phases.Enqueue((instrument.Meter, (string)tag.Value!, seconds));
+                }
+            }
+        });
+        timings.Start();
         await using var gru = new RestartingMachine("gru", bucket, members);
         await using var sjc = new RestartingMachine("sjc", bucket, members);
         await using var fra = new RestartingMachine("fra", bucket, members);
         foreach (var machine in (RestartingMachine[])[gru, sjc, fra])
         {
             await machine.StartAsync();
+            Track(machine);
         }
 
         foreach (var machine in (RestartingMachine[])[gru, sjc, fra])
@@ -71,6 +96,7 @@ public sealed class CatalogAnchorRollingRestartTests
                 var missed = Volatile.Read(ref writes) + 50;
                 await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref writes) >= missed), timeout: TimeSpan.FromSeconds(60));
                 await fra.StartAsync();
+                Track(fra);
                 // The peers anchored markers fra missed: its gate opens once a revocation snapshot or their streams cover them,
                 // which a loaded runner takes longer than a minute for. Only the anchors are bounded here.
                 try
@@ -88,11 +114,21 @@ public sealed class CatalogAnchorRollingRestartTests
         {
             await stop.CancelAsync();
             await load;
+            foreach (var phase in phases.Where(phase => meters.ContainsKey(phase.Meter)))
+            {
+                TestContext.Current!.OutputWriter.WriteLine($"SnapshotPhase region={meters[phase.Meter]} phase={phase.Phase} seconds={phase.Seconds:F6}");
+            }
         }
 
         var late = anchors.Where(anchor => !anchor.Held || anchor.Took >= Within).Select(anchor => $"{anchor.Region} {anchor.Took.TotalSeconds:F1} s {anchor.Held}").ToList();
         await Assert.That(late).IsEmpty();
         await Assert.That(anchors.Count).IsEqualTo(300);
+
+        void Track(RestartingMachine machine)
+        {
+            meters[machine.Api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName)] =
+                machine.Api.Server.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().Region;
+        }
 
         async Task WriteCountAsync(RestartingMachine machine, int count)
         {

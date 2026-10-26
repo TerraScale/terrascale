@@ -589,9 +589,12 @@ public sealed class RebuildFaultSafetyTests
             await Assert.That(page).IsGreaterThan(1);
             offset = (page - 1) * size;
         }
-        using var file = File.OpenWrite(path);
+        // Complement the page's first byte: a fixed 0xFF left an encrypted page unchanged whenever its ciphertext held 0xFF.
+        using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
         file.Position = offset;
-        file.WriteByte(0xFF);
+        var original = file.ReadByte();
+        file.Position = offset;
+        file.WriteByte((byte)~original);
     }
 
     private static Task<bool> IntentAsync(TursoStorageEngine engine, TenantContext database) =>

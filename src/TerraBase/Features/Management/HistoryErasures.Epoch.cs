@@ -6,6 +6,8 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class HistoryErasures
 {
+    private readonly Dictionary<(string Erasure, string Peer), (int Evidence, DateTimeOffset Next, TimeSpan Delay)> _recovery = [];
+
     private static ulong Cut(IEnumerable<OriginCut> cuts, ulong replica) =>
         cuts.Where(cut => cut.Replica == replica).Select(cut => cut.Stamp).DefaultIfEmpty().Max();
 
@@ -40,7 +42,10 @@ internal sealed partial class HistoryErasures
 
         // One peer's two files per pass, bounded by the snapshot RPC deadline. The receipt's cursor survives a restart.
         var peers = AntiEntropy.Peers(await membership.RefreshAsync(cancellationToken).ConfigureAwait(false), Machine)
-            .Where(peer => receipts.Any(receipt => receipt.MachineId == peer.Name)).OrderBy(peer => peer.Name, StringComparer.Ordinal).ToList();
+            .Where(peer => receipts.Any(receipt => receipt.MachineId == peer.Name)
+                && (!_recovery.TryGetValue((record.ErasureId, peer.Name), out var wait)
+                    || wait.Evidence != RecoveryEvidence(own, receipts.Single(receipt => receipt.MachineId == peer.Name), origins)
+                    || time.GetUtcNow() >= wait.Next)).OrderBy(peer => peer.Name, StringComparer.Ordinal).ToList();
         var peer = peers.FirstOrDefault(peer => own.RecoveryAfter is null || string.CompareOrdinal(peer.Name, own.RecoveryAfter) > 0)
             ?? peers.FirstOrDefault();
         if (peer is null)
@@ -48,6 +53,10 @@ internal sealed partial class HistoryErasures
             return;
         }
 
+        var key = (record.ErasureId, peer.Name);
+        var evidence = RecoveryEvidence(own, receipts.Single(receipt => receipt.MachineId == peer.Name), origins);
+        var progressed = false;
+        var completed = false;
         try
         {
             var snapshots = services.GetRequiredService<ReplicaSnapshots>();
@@ -57,14 +66,47 @@ internal sealed partial class HistoryErasures
                 return;
             }
 
-            // Imported origin cuts came from the same read snapshot as every joined state, not from a new epoch or a root
-            // comparison. Re-fence, then repeat all-holder settlement and scoped auth re-verification before a final cut.
-            await MarkAsync(record, own, cancellationToken, peer.Name).ConfigureAwait(false);
+            completed = true;
+            var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false);
+            if (auth is null)
+            {
+                return;
+            }
+
+            await using var read = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+            var authCuts = await read.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
+            var systemCuts = await catalog.ReadUncheckedAsync(transaction => transaction.GetAppliedAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+            progressed = origins.Any(origin => authCuts.GetValueOrDefault(new(origin)).Value > Cut(own.AuthApplied, origin)
+                || systemCuts.GetValueOrDefault(new(origin)).Value > Cut(own.SystemApplied, origin));
+            if (progressed)
+            {
+                // Only actual imported prefix progress warrants a fresh fence. No-op imports must not churn every
+                // holder's settlement digest, or imply that an old marker nobody retained has been proved.
+                await MarkAsync(record, own, cancellationToken, peer.Name).ConfigureAwait(false);
+            }
         }
         finally
         {
             if (!cancellationToken.IsCancellationRequested)
             {
+                if (progressed)
+                {
+                    _recovery.Remove(key);
+                }
+                else
+                {
+                    var delay = _recovery.TryGetValue(key, out var previous) && previous.Evidence == evidence
+                        ? TimeSpan.FromTicks(Math.Min(previous.Delay.Ticks * 2, MaxBackoff.Ticks)) : completed ? TimeSpan.FromMinutes(1) : Interval;
+                    // A bounded scheduling cache, never coverage proof. Eviction/restart permits an extra attempt.
+                    if (_recovery.Count == HistoryErasure.MaxHolders)
+                    {
+                        _recovery.Remove(_recovery.MinBy(entry => entry.Value.Next).Key);
+                    }
+
+                    _recovery[key] = (evidence, time.GetUtcNow() + delay, delay);
+                    _errors.Add(1, new KeyValuePair<string, object?>("reason", "epoch_no_progress"));
+                }
+
                 // A failed/offline first witness must not starve a later one. Persist only the cursor, never coverage.
                 _ = await catalog.WriteDurableAsync(async transaction =>
                 {
@@ -81,5 +123,24 @@ internal sealed partial class HistoryErasures
                 }, static _ => false, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    // Scheduling evidence excludes the ever-changing fence marker and cursor. A hash collision can delay a retry at
+    // most an hour; it can never certify coverage. A peer's advancing old cuts or a new epoch retries immediately.
+    private static int RecoveryEvidence(HistoryErasureReceipt own, HistoryErasureReceipt peer, IReadOnlySet<ulong> origins)
+    {
+        var hash = new HashCode();
+        hash.Add(own.Replica);
+        hash.Add(peer.Replica);
+        foreach (var origin in origins.Order())
+        {
+            hash.Add(origin);
+            hash.Add(Cut(own.PreviousAuth ?? [], origin));
+            hash.Add(Cut(own.PreviousSystem ?? [], origin));
+            hash.Add(Cut(peer.AuthApplied, origin));
+            hash.Add(Cut(peer.SystemApplied, origin));
+        }
+
+        return hash.ToHashCode();
     }
 }

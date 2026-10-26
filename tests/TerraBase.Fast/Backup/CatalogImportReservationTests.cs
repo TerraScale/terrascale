@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
+using TerraBase.Hosting;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -34,11 +37,42 @@ public sealed class CatalogImportReservationTests
 
         var exporter = source.Server.Services.GetRequiredService<IReplicaSnapshotSource>();
         var importer = target.Server.Services.GetRequiredService<IReplicaSnapshotImporter>();
-        var origins = new HashSet<ulong> { source.Server.Services.GetRequiredService<LocalReplica>().Id.Value };
-        for (var attempt = 0; attempt < 2; attempt++)
+        var meter = target.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        var timings = new ConcurrentQueue<(string Phase, double Seconds)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, owner) =>
         {
-            await Assert.That(await importer.ImportAsync(ChangeGroups.System, targetStore.Incarnation,
-                exporter.SnapshotAsync(ChangeGroups.System, sourceStore.Incarnation, token), origins, token)).IsTrue();
+            if (ReferenceEquals(instrument.Meter, meter) && instrument.Name == "terrabase.replication.snapshot_import")
+            {
+                owner.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, seconds, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "phase" && timings.Count < 64)
+                {
+                    timings.Enqueue(((string)tag.Value!, seconds));
+                }
+            }
+        });
+        listener.Start();
+        var origins = new HashSet<ulong> { source.Server.Services.GetRequiredService<LocalReplica>().Id.Value };
+        try
+        {
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                await Assert.That(await importer.ImportAsync(ChangeGroups.System, targetStore.Incarnation,
+                    exporter.SnapshotAsync(ChangeGroups.System, sourceStore.Incarnation, token), origins, token)).IsTrue();
+            }
+        }
+        finally
+        {
+            foreach (var (phase, seconds) in timings)
+            {
+                TestContext.Current!.OutputWriter.WriteLine($"SnapshotPhase states={Documents} phase={phase} seconds={seconds:F6}");
+            }
         }
 
         await using var read = await targetStore.BeginTransactionAsync(write: false, token);
