@@ -98,7 +98,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
         const string statement = "SELECT * FROM users WHERE name = $1 LIMIT 20";
         await EditConsoleAsync(page, statement);
-        var check = page.GetByRole(AriaRole.Button, new() { Name = "Check SQL", Exact = true });
+        var check = page.GetByRole(AriaRole.Button, new() { Name = "Check input", Exact = true });
         await check.FocusAsync();
         var response = await page.RunAndWaitForResponseAsync(() => check.PressAsync("Enter"), value =>
             value.Request.IsNavigationRequest && value.Request.Method == "POST" && new Uri(value.Url).AbsolutePath == "/api/v1/dashboard/data/sql/check");
@@ -107,7 +107,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
         await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo(statement);
         await Assert.That(await page.Locator("#sql-result").CountAsync()).IsEqualTo(0);
-        var passed = await page.GetByText("Server check passed.", new() { Exact = true }).CountAsync();
+        var passed = await page.GetByText("Input checks passed. SQL validity has not been checked.", new() { Exact = true }).CountAsync();
         var evidence = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/database-data-access/obj/evidence");
         Directory.CreateDirectory(evidence);
         await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"sql-check-{width}.png"), FullPage = true });
@@ -173,7 +173,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await page.GoForwardAsync();
         await Assert.That(page.Url).Contains("/documents");
         await Assert.That(actual).IsEqualTo(draft)
-            .Because("Save query must use the current console text even before Check SQL or Run query.");
+            .Because("Save query must use the current console text even before Check input or Run query.");
         await Assert.That(persisted).IsEqualTo(draft);
 
     }

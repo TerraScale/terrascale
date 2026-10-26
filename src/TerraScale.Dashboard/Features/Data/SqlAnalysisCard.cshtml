@@ -1,16 +1,9 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
-@using TerraScale.Dashboard.Features.Data
-@{ var analysis = Model.Analysis; }
 <section class="ts-card ts-card-boxed" id="sql-analysis" aria-labelledby="sql-analysis-title">
-<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-analysis-title">SQL check</h2></div></header>
-<div class="ts-card-body">
-<ul class="ts-data-checks">
-@if(analysis.Write){<li class="ts-data-check-warn">@Icons.Render("CircleAlert",16)<span>Write or schema statement: it changes data when run, as its own transaction, and needs write access.</span></li>}else{<li>@Icons.Render("CircleCheck",16)<span>Read-only statement accepted. @analysis.ParameterSlots parameter slot(s).</span></li>
-if(analysis.HasLimit){<li>@Icons.Render("CircleCheck",16)<span>Bounded with LIMIT.</span></li>}else{<li class="ts-data-check-warn">@Icons.Render("CircleAlert",16)<span>Add LIMIT to bound results.</span></li>}}
-@if(Model.SqlChecked){<li>@Icons.Render("CircleCheck",16)<span>Server check passed.</span></li>}
-@if(!string.IsNullOrEmpty(analysis.Collection)){<li class="ts-data-check-info">@Icons.Render("Table",16)<span>Statement collection: @analysis.Collection</span></li>}
-</ul>
-@if(analysis.Explain is not null){<div class="ts-stack-sm"><p class="ts-meta">EXPLAIN statement preview</p><pre class="ts-code">@analysis.Explain</pre></div>}
-<div class="ts-card-section"><h3 class="ts-strong">Advisory index suggestions</h3>
-@if(analysis.Suggestions is not {Count:>0}){<p class="ts-meta">No index hints found in WHERE or ORDER BY.</p>}else{<ul class="ts-list">@foreach(var suggestion in analysis.Suggestions){<li class="ts-list-item"><strong class="ts-mono">@suggestion.Field</strong><span class="ts-meta">@suggestion.Reason</span></li>}</ul>}
-</div></div></section>
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-analysis-title">Input check</h2></div></header>
+<div class="ts-card-body ts-stack-sm">
+<p>Input check only: checks for blank input, the 16 KiB size limit, one statement, unsupported parameters and transaction commands.</p>
+<p class="ts-meta">It does not validate SQL syntax, table or column names, permissions, or whether the statement can run. Nothing is executed by this check.</p>
+@if(Model.SqlChecked){<p role="status">Input checks passed. SQL validity has not been checked.</p>}
+<p class="ts-meta">Each run is its own transaction. SQL tables are separate from document collections. SQL indexes currently enforce uniqueness; they do not accelerate reads.</p>
+</div></section>

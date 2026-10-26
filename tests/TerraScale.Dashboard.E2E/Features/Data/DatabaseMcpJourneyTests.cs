@@ -147,7 +147,8 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             analysis = await CallAsync(replica, "check_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT * FROM users WHERE score > 1 ORDER BY name LIMIT 20" });
             await Assert.That(analysis.GetProperty("ok").GetBoolean()).IsTrue();
             await Assert.That(analysis.GetProperty("parameterSlots").GetInt32()).IsEqualTo(0);
-            await Assert.That(analysis.GetProperty("suggestions").GetArrayLength()).IsEqualTo(2);
+            await Assert.That(analysis.TryGetProperty("suggestions", out _)).IsFalse();
+            await Assert.That(analysis.TryGetProperty("explain", out _)).IsFalse();
             var sql = await CallAsync(replica, "run_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT * FROM users LIMIT 100" });
             await Assert.That(sql.GetProperty("result").GetProperty("rows").GetArrayLength()).IsEqualTo(31);
             await ErrorAsync(replica, "run_sql", new() { ["databaseId"] = databaseId, ["sql"] = "DELETE FROM users" });

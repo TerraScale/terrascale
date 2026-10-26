@@ -33,7 +33,7 @@ public sealed class DatabaseDataAccessJourneyTests(DashboardRootFixture fixture)
         using var check = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql/check", fields);
         await Assert.That(check.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
         var html = WebUtility.HtmlDecode(await check.Content.ReadAsStringAsync());
-        await Assert.That(html.Contains("Server check passed.", StringComparison.Ordinal)).IsFalse()
+        await Assert.That(html.Contains("Input checks passed. SQL validity has not been checked.", StringComparison.Ordinal)).IsFalse()
             .Because("The HTML check must agree with its JSON diagnostics and the execution boundary.");
         await Assert.That(html).Contains("The console cannot bind parameters");
     }
