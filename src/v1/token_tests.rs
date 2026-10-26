@@ -11,6 +11,9 @@ use std::sync::{
     Mutex,
 };
 
+#[path = "token_failure_tests.rs"]
+mod failures;
+
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const KEY_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 fn key() -> String {
