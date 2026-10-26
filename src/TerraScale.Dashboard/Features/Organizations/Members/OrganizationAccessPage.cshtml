@@ -2,7 +2,7 @@
 @using TerraScale.Dashboard.Features.Organizations
 <main id="access-page" class="ts-page ts-org-page ts-access-page">
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, OrganizationPage>(Model))
-    <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access">Organization roles, invitations and access</a></p>
+    <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access" @(ExternalLink.Attributes)>Organization roles, invitations and access@(ExternalLink.Hint)</a></p>
     <div class="ts-toolbar ts-access-toolbar">
         <form id="access-filter-form" method="get" action="/organization" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@@get('/organization', {contentType:'form'})">
             <input type="hidden" name="tab" value="members" /><button class="ts-sr-only" type="submit">Apply filters</button><input type="hidden" name="role" value="@(Model.Filter.Role == "all" ? "" : Model.Filter.Role)" />

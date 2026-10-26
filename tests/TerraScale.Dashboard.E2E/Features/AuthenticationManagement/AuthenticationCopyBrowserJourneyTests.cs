@@ -93,7 +93,8 @@ public sealed class AuthenticationCopyBrowserJourneyTests(DashboardRootFixture f
             await button.FocusAsync();
             await page.Keyboard.PressAsync(key);
             await Expect(page.Locator("#" + id + "-copy-status")).ToHaveTextAsync(label + " copied.");
-            await Assert.That(await page.EvaluateAsync<string>("() => globalThis.copiedValue")).IsEqualTo(await value.TextContentAsync());
+            var expected = await value.GetAttributeAsync("href") ?? await value.TextContentAsync();
+            await Assert.That(await page.EvaluateAsync<string>("() => globalThis.copiedValue")).IsEqualTo(expected);
         }
     }
 }

@@ -32,7 +32,7 @@
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="account-information" />
                 <div class="ts-field"><label class="ts-label" for="displayName">Full name</label><input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" maxlength="128" autocomplete="name" required /></div>
                 <div class="ts-field"><label class="ts-label" for="accountEmail">Email</label><input class="ts-input" id="accountEmail" type="email" value="@Model.Email" readonly aria-describedby="accountEmail-hint" /><p class="ts-field-hint" id="accountEmail-hint">Your sign-in email cannot be changed during account setup.</p></div>
-                <p class="ts-meta">By continuing you accept the <a href="https://docs.terrascale.tech/legal/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a>, <a href="https://docs.terrascale.tech/legal/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> and <a href="https://docs.terrascale.tech/legal/dpa" target="_blank" rel="noopener noreferrer">Data Processing Agreement</a>.</p>
+                <p class="ts-meta">By continuing you accept the <a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms of Service@(ExternalLink.Hint)</a>, <a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy Policy@(ExternalLink.Hint)</a> and <a href="https://docs.terrascale.tech/legal/dpa" @(ExternalLink.Attributes)>Data Processing Agreement@(ExternalLink.Hint)</a>.</p>
                 <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue <span aria-hidden="true">→</span></button></div>
             </form>
         }
@@ -50,7 +50,7 @@
                     }
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>
-                <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact">Contact sales</a></p>
+                <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>Contact sales@(ExternalLink.Hint)</a></p>
                 <p class="ts-meta">Continue to Stripe Checkout or stay on @PlanCatalog.For("free").Name without payment.</p>
                 <div class="ts-onboarding-footer"><button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on @PlanCatalog.For("free").Name</button><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button></div>
             </form>

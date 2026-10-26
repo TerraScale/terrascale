@@ -60,6 +60,9 @@ if (form) {
       if (!label || !url) continue;
       const link = document.createElement('a');
       link.textContent = label.slice(0, 24); link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      const hint = document.createElement('span');
+      hint.className = 'ts-sr-only'; hint.textContent = ' (opens in a new tab)';
+      link.append(hint);
       footer.append(link);
     }
     document.querySelector('[data-brand-dirty]').hidden = snapshot() === original;

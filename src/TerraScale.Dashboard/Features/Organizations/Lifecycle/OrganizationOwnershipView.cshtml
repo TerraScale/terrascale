@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @using TerraScale.Dashboard.Features.Organizations
-<p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access#transfer-ownership-and-leave">Ownership transfer and offboarding guide</a></p>
+<p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access#transfer-ownership-and-leave" @(ExternalLink.Attributes)>Ownership transfer and offboarding guide@(ExternalLink.Hint)</a></p>
 @if (Model.Shell.Context.Organization is { } org)
 {
     var transfer = Model.Access?.PendingTransfer;
