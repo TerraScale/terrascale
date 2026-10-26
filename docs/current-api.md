@@ -35,6 +35,9 @@ caller-selected response types, preserving all producer fields with `serde_json:
 Recommendation selectors use `collection:field`, not entity IDs.
 
 Restore acknowledgements use `RestoredDatabase` without a serving `region`.
+Database placement requires a home region and at least one distinct replica region.
+On create, omitting `replica_regions` uses all current serving regions; selecting
+only a home region or supplying an empty replica list cannot request single-region placement.
 `all_regions` (`allRegions`) asks for a full copy in every serving region, including
 later regions; responses default it to `false` when absent. Nullable `home_region`/`replica_regions` preserve unassigned placement;
 `replicas()` derives an empty slice for null replicas. `placement_version` is

@@ -31,6 +31,12 @@ See [API-key authentication](docs/api-key-auth.md) for error and refresh behavio
 Project requests use the public origin automatically. Customer credentials determine
 project, database and operation access; an endpoint does not grant authorization.
 
+Database placement requires at least two distinct serving regions: a home region
+and at least one replica. On creation, omitting `DatabasePlacement::replica_regions`
+uses all current serving regions, even when `home_region` is set.
+`all_regions: Some(true)` also follows future serving regions. An empty replica
+list cannot request single-region placement.
+
 ### Relational SQL
 
 `Database::sql()` runs parameterized SQL on `POST /v1/projects/{project}/databases/{database}/sql/execute`

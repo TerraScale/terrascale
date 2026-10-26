@@ -16,9 +16,12 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement supplied when creating or updating a database. `all_regions`
-/// asks for a full copy in every serving region, including regions added later;
-/// the server rejects it combined with `replica_regions` on create.
+/// Placement supplied when creating or updating a database. Databases require
+/// at least two distinct serving regions: the home region and at least one replica.
+/// On create, omitting `replica_regions` uses all current serving regions;
+/// setting only `home_region` does not request single-region placement.
+/// `all_regions: Some(true)` also follows regions added later; the server rejects
+/// it combined with `replica_regions` on create.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
@@ -96,7 +99,8 @@ impl Database {
             .await
     }
 
-    /// `PATCH D`; an explicit empty replica list removes replicas.
+    /// `PATCH D`; placement must retain at least two distinct serving regions.
+    /// An empty replica list cannot request single-region placement.
     pub async fn update_database(
         &self,
         placement: &DatabasePlacement,
@@ -105,7 +109,7 @@ impl Database {
             .await
     }
 
-    /// `DELETE D`; the server refuses replicated databases with 409.
+    /// `DELETE D`; deletes the database.
     pub async fn delete_database(&self) -> Result<()> {
         check_name("database", self.name())?;
         self.client()
