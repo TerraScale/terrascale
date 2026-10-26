@@ -118,12 +118,16 @@ public static class DashboardContracts
         const string theme = "P(Mr(`style`),{innerHTML:";
         // Select Zod's existing interpreter without its forbidden Function() capability probe.
         const string evalProbe = "try{return Function(``),!0}catch{return!1}";
+        // Desktop and mobile SearchButton instances both listen on window. Handle one shortcut once.
+        const string searchShortcut = "t.key===e.searchHotKey&&(t.preventDefault(),t.stopPropagation(),n.open?n.hide():n.show())";
         if (producers.Matches(script).Count != 4 || script.Split(theme, StringSplitOptions.None).Length != 2 ||
-            script.Split(evalProbe, StringSplitOptions.None).Length != 2)
+            script.Split(evalProbe, StringSplitOptions.None).Length != 2 ||
+            script.Split(searchShortcut, StringSplitOptions.None).Length != 2)
             throw new InvalidOperationException("Scalar style producers changed; review CSP adapter before upgrading");
         script = producers.Replace(script, match => $"Object.assign({match.Value},{{nonce:{nonce}}})");
         script = script.Replace(theme, $"P(Mr(`style`),{{nonce:{nonce},innerHTML:", StringComparison.Ordinal)
-            .Replace(evalProbe, "return!1", StringComparison.Ordinal);
+            .Replace(evalProbe, "return!1", StringComparison.Ordinal)
+            .Replace(searchShortcut, searchShortcut.Replace("t.stopPropagation()", "t.stopImmediatePropagation()", StringComparison.Ordinal), StringComparison.Ordinal);
         var bytes = Encoding.UTF8.GetBytes(script);
         using var compressed = new MemoryStream();
         using (var writer = new GZipStream(compressed, CompressionLevel.Optimal, leaveOpen: true)) writer.Write(bytes);
