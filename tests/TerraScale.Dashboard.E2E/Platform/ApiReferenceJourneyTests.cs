@@ -94,7 +94,7 @@ public sealed class ApiReferenceJourneyTests(DashboardRootFixture fixture)
         await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ColorScheme = ColorScheme.Light });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ColorScheme = ColorScheme.Light });
         await context.AddInitScriptAsync("""
             window.referenceViolations = [];
             addEventListener('securitypolicyviolation', e => referenceViolations.push(e.effectiveDirective));
