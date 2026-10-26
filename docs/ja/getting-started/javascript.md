@@ -10,7 +10,7 @@ description: Install the published TerraScale SDK and create, read, update, quer
 
 # JavaScript quickstart
 
-Install `@terrascale/sdk@0.0.5` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ja/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
+Install `@terrascale/sdk@0.0.9` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ja/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
 
 ## 1. Install the SDK
 
@@ -20,10 +20,10 @@ Use Node.js **22 or 24** and npm **11 or newer**, matching the published package
 mkdir terrabase-quickstart
 cd terrabase-quickstart
 npm init -y
-npm install --save-exact @terrascale/sdk@0.0.5
+npm install --save-exact @terrascale/sdk@0.0.9
 ```
 
-The package is available on [public npm registry](https://registry.npmjs.org/@terrascale/sdk/0.0.5). Do not substitute the old unpublished `0.3.0` starter pin.
+The package is available on [public npm registry](https://registry.npmjs.org/@terrascale/sdk/0.0.9). Do not substitute the old unpublished `0.3.0` starter pin.
 
 ## 2. Supply connection details
 
@@ -72,6 +72,8 @@ node quickstart.mjs
 Success prints `PASS_TERRABASE_CRUD_QUERY`. The assertions verify persisted fields, stale-write rejection, query contents and deletion. The example deletes only its own generated document. It does not delete the database or collection. An interrupted mutation can leave data behind; [reconcile its outcome](/ja/guides/errors) before retrying or cleaning it up.
 
 ## 5. Continue safely
+
+Generate [TypeScript document models](/ja/guides/schema-validation#generate-typescript-document-models) from a declared collection schema.
 
 A query page may contain fewer results than its limit, or no results with a continuation cursor. Use [pagination](/ja/guides/queries) to continue until `nextCursor` is `null`. Review [errors and retries](/ja/guides/errors) before adding automatic retries.
 

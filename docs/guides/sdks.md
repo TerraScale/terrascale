@@ -10,7 +10,7 @@ Use a TerraBase SDK to store and query JSON documents in a project database. Eac
 
 | Language | Package / entrypoint | Runtime | Install |
 | --- | --- | --- | --- |
-| JavaScript / TypeScript | `@terrascale/sdk@0.0.6`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
+| JavaScript / TypeScript | `@terrascale/sdk@0.0.9`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
 | C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Build the package from source; [quickstart](/getting-started/csharp) |
 | Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.3` |
 | Python | `terrascale`, `TerraScale` / `AsyncTerraScale` | Python ≥3.10, httpx | `pip install` from Git; [quickstart](/getting-started/python) |
@@ -21,10 +21,12 @@ The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its 
 ### JavaScript / TypeScript
 
 ```bash
-npm install --save-exact @terrascale/sdk@0.0.6
+npm install --save-exact @terrascale/sdk@0.0.9
 ```
 
 Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Filter` and typed errors. `client.database(name).collection(name)` selects a collection. It provides `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` and `items`; `db.execute`, `db.query` and `db.batch` run [SQL](/guides/sql-http#from-the-sdks). See [the complete example](/getting-started/javascript).
+
+Generate [TypeScript document models](/guides/schema-validation#generate-typescript-document-models) with the Node-only `@terrascale/sdk/codegen` API or `terrascale-models` CLI.
 
 ### C#
 
