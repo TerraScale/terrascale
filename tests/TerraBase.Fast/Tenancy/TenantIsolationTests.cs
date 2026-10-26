@@ -283,6 +283,7 @@ public sealed class TenantIsolationTests
             var path = pattern
                 .Replace("{organization}", organization, StringComparison.Ordinal)
                 .Replace("{project}", project, StringComparison.Ordinal)
+                .Replace("{expectedId}", database, StringComparison.Ordinal)
                 // Legacy management routes name a database by id; canonical management and data use its name.
                 .Replace("{database}", IsManagement(pattern) ? database : databaseName, StringComparison.Ordinal)
                 .Replace("{collection}", "people", StringComparison.Ordinal)
