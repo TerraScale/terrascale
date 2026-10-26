@@ -225,9 +225,14 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Backup_off_or_without_a_snapshot_returns_not_found(bool enabled)
     {
-        var s3 = new FakeS3 { FailPut = _ => true };
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(enabled ? s3.Configure : null, enabled ? s3.Route : null, time);
+        await using var api = await ManagementApi.StartAsync(enabled ? s3.Configure : null, enabled ? services =>
+        {
+            s3.Route(services);
+            // Keep the snapshot absent without racing background shipping or failing the final shutdown flush.
+            ManualBackupHosting.Configure(services);
+        } : null, time);
         var database = await api.CreateManagedDatabaseAsync();
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = time.GetUtcNow() }),
             HttpStatusCode.NotFound, "not_found", "continuous backup holds nothing of this database");
