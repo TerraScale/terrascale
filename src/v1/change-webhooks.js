@@ -1,5 +1,5 @@
 import { requireId } from "../ids.js";
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector, requireName } from "./ids.js";
 import { object, string } from "./decode.js";
 import { list, nullable, numeric, record, text } from "./management-decode.js";
 import { members, mutationOptions, pageQuery } from "./management-validation.js";
@@ -30,7 +30,7 @@ export class V1ChangeWebhooks {
   /** @param {V1Transport} transport @param {string} database @param {string} collection */
   constructor(transport, database, collection) {
     this.#transport = transport;
-    this.#params = { database: requireName("database", database), collection: requireName("collection", collection) };
+    this.#params = { database: requireDatabaseSelector(database), collection: requireName("collection", collection) };
     Object.freeze(this);
   }
   /**

@@ -1,6 +1,6 @@
 import { requireId } from "../ids.js";
 import { array, boolean, malformed, object, string } from "./decode.js";
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector, requireName } from "./ids.js";
 import { isJsonPointer } from "./filter.js";
 import { isJsonObject, stringifyExactJson } from "./json.js";
 /**
@@ -134,7 +134,27 @@ export class V1Databases {
 
   /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async get(name, options = {}) {
-    const response = await this.#transport.call("getDatabase", { database: requireName("database", name) }, { signal: options.signal });
+    const response = await this.#transport.call("getDatabase", { database: requireDatabaseSelector(name) }, { signal: options.signal });
+    return database(response.value);
+  }
+
+  /**
+   * Prepared for the pending rename API; availability remains held. See docs/database-rename.md.
+   * Rename by immutable ULID with databases:write; returns the existing database.
+   * ID, data, keys and placement stay unchanged. Invalid names return 400 (or a
+   * local TypeError); project-duplicate names return 409. Old name routes return
+   * 404. Update name-based connection strings and handles; ID-based strings stay
+   * valid. Reconcile uncertain failures before explicitly retrying.
+   * @param {string} databaseId
+   * @param {string} name
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<V1ManagedDatabase>}
+   */
+  async rename(databaseId, name, options = {}) {
+    mutationOptions(options);
+    const response = await this.#transport.call("updateDatabase", { database: requireId(databaseId, "Database ID") }, {
+      body: stringifyExactJson({ name: requireName("database", name) }, "database rename"), signal: options.signal,
+    });
     return database(response.value);
   }
 
@@ -157,7 +177,7 @@ export class V1Databases {
       if (request.allRegions !== undefined) throw new TypeError("allRegions must be true; send replicaRegions to turn it off.");
       replicas(request.replicaRegions, request.homeRegion);
     }
-    const response = await this.#transport.call("updateDatabase", { database: requireName("database", name) }, {
+    const response = await this.#transport.call("updateDatabase", { database: requireDatabaseSelector(name) }, {
       body: stringifyExactJson({
         ...(request.allRegions === true ? { allRegions: true } : { replicaRegions: request.replicaRegions }),
         ...(request.homeRegion === undefined ? {} : { homeRegion: request.homeRegion }),
@@ -175,14 +195,14 @@ export class V1Databases {
    */
   async delete(name, options = {}) {
     mutationOptions(options);
-    await this.#transport.call("deleteDatabase", { database: requireName("database", name) }, { signal: options.signal });
+    await this.#transport.call("deleteDatabase", { database: requireDatabaseSelector(name) }, { signal: options.signal });
   }
 
   /** @param {string} name @param {V1DatabaseBranchRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async branch(name, request, options = {}) {
     members(request, ["name"]);
     mutationOptions(options);
-    const response = await this.#transport.call("branchDatabase", { database: requireName("database", name) }, {
+    const response = await this.#transport.call("branchDatabase", { database: requireDatabaseSelector(name) }, {
       body: stringifyExactJson({ name: requireName("database", request.name) }, "database branch"), signal: options.signal,
     });
     return database(response.value);

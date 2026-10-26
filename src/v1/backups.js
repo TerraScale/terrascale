@@ -1,5 +1,5 @@
 import { requireId } from "../ids.js";
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector, requireName } from "./ids.js";
 import { flag, list, nullable, numeric, optional, record, text } from "./management-decode.js";
 import { members, mutationOptions, pageQuery } from "./management-validation.js";
 import { malformed, object } from "./decode.js";
@@ -43,7 +43,7 @@ export class V1Backups {
   /** @type {{database: string}} */
   #params;
   /** @param {V1Transport} transport @param {string} database */
-  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireName("database", database) }; Object.freeze(this); }
+  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireDatabaseSelector(database) }; Object.freeze(this); }
   /** @param {V1RequestOptions} [options] @returns {Promise<V1Backup>} */
   async create(options = {}) {
     mutationOptions(options);
