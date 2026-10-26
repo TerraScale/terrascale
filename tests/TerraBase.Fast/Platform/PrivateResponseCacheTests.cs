@@ -1,6 +1,7 @@
 using System.Net;
 using Bogus;
 using TerraBase.Fast.Documents;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
 
@@ -37,15 +38,15 @@ public sealed class PrivateResponseCacheTests
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { name = new Faker().Name.FirstName() })).Status).IsEqualTo(HttpStatusCode.Created);
         using var bootstrap = await api.Client.GetAsync(new Uri($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1", UriKind.Relative));
         await Assert.That(bootstrap.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-        await Assert.That(bootstrap.Headers.CacheControl?.ToString()).IsEqualTo("private, no-store");
+        await CacheControlAssert.EqualAsync(bootstrap.Headers.CacheControl?.ToString());
         using var page = await api.Client.GetAsync(bootstrap.Headers.Location);
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(page.Headers.CacheControl?.ToString()).IsEqualTo("private, no-store");
+        await CacheControlAssert.EqualAsync(page.Headers.CacheControl?.ToString());
         using var conditional = new HttpRequestMessage(HttpMethod.Get, bootstrap.Headers.Location);
         conditional.Headers.IfNoneMatch.Add(page.Headers.ETag!);
         using var unchanged = await api.Client.SendAsync(conditional);
         await Assert.That(unchanged.StatusCode).IsEqualTo(HttpStatusCode.NotModified);
-        await Assert.That(unchanged.Headers.CacheControl?.ToString()).IsEqualTo("private, no-store");
+        await CacheControlAssert.EqualAsync(unchanged.Headers.CacheControl?.ToString());
 
         using (var stream = await api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor=now", UriKind.Relative), HttpCompletionOption.ResponseHeadersRead))
         {
@@ -56,6 +57,6 @@ public sealed class PrivateResponseCacheTests
 
         using var regions = await api.Client.GetAsync(new Uri("/v1/regions", UriKind.Relative));
         await Assert.That(regions.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(regions.Headers.CacheControl?.ToString()).IsEqualTo("public, max-age=5");
+        await CacheControlAssert.EqualAsync(regions.Headers.CacheControl?.ToString(), "public, max-age=5");
     }
 }

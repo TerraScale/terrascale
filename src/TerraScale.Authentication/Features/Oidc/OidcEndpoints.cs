@@ -289,11 +289,13 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
 /// <summary><c>GET /{slug}/oauth/userinfo</c>: claims about the user of a valid access token.</summary>
 public sealed class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
+    internal const string RouteName = "oauth_userinfo";
+
     /// <inheritdoc />
     public override void Configure()
     {
         Get("/{slug}/oauth/userinfo");
-        Name("oauth_userinfo");
+        Name(RouteName);
         Summary("UserInfo endpoint");
         Description("Requires an access token issued by this issuer and not revoked, with the user's current authentication epoch. Tokens of active MFA accounts without the ts_auth_mfa claim and identity tokens are rejected. Unavailable or corrupt MFA state answers 503 temporarily_unavailable.");
         Tags("OAuth");
@@ -305,8 +307,6 @@ public sealed class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReque
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        this.HttpContext.Response.Headers.CacheControl = "no-store";
-        this.HttpContext.Response.Headers.Pragma = "no-cache";
         try
         {
             return await this.ClaimsAsync(cancellationToken);
