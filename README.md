@@ -490,10 +490,17 @@ The connection contract is pinned to the implemented
 [issued key syntax](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraScale.Authentication/Features/Platform/ApiKeys.cs),
 [public TLS edge](https://github.com/TerraScale/ts-orchestrator/blob/4c8093d0fed4b69fd31d83daa62b78301c2015e8/internal/edge/postgres.go),
 and [public connection guide](https://github.com/TerraScale/ts-docs/blob/894161603ff0cdeb18bb6f4a489394d197844b1f/docs/guides/postgres-clients.md).
-After SSLRequest, ALPN may be absent or `postgresql`. Source and fixture checks
-do not establish live authorization. The current single-session wrapper still
-has probe-only result/type/parameter limits; pooling and transaction ownership
-require separate work.
+After SSLRequest, ALPN may be absent or `postgresql`; source/fixture checks do not establish live authorization.
+
+`PostgresValue.Value()` returns native pgx scalars or nil (SQL NULL); column OIDs remain.
+JSON/JSONB use `json.RawMessage`; NUMERIC uses exact `pgtype.Numeric`, including a bounded
+scientific coefficient/scale adapter. Native codecs request producer-supported text format.
+`CommandTag` retains full tags. Collection has a fixed16MiB budget; overflow returns `limit`.
+Decode failures return `decode`. Both physically abort before row cleanup and discard partial
+results; never replay uncertain mutations. Parameter expansion, unrestricted command tags,
+and cancellation-aware Query/Close admission remain a separate slice. A accepts only
+non-null INT8/TEXT parameters; reusing a NULL result returns a fixed validation error. This remains one
+logical session; pooling and owned transactions require separate work (TS-1282).
 
 ## Region latency (`client.Status`)
 
