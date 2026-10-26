@@ -52,6 +52,8 @@ func TestCompletionRealShells(t *testing.T) {
 				want string
 			}
 			probes := []probe{
+				{[]string{"keys", ""}, "create list revoke rotate"},
+				{[]string{"-project", "demo", "keys", "r"}, "revoke rotate"},
 				{[]string{"db", ""}, db},
 				{[]string{"-project", "demo", "db", ""}, db},
 				{[]string{"-project", "demo", "d"}, "db doc"},
