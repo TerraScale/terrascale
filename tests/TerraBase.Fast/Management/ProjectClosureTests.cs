@@ -224,7 +224,8 @@ public sealed class ProjectClosureTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var route = $"/v1/management/organizations/{database.Organization}/projects/{database.Project}";
-        using var issued = await api.Client.PostAsJsonAsync(ManagementApi.Uri(route + "/api-keys"), new { name = "existing", scopes = ReadScope });
+        using var issued = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
+            new { name = "existing", scopes = ReadScope, organizationId = database.Organization, projectId = database.Project });
         await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var key = await issued.Content.ReadFromJsonAsync<JsonElement>();
         using var data = api.DataClient(key.GetProperty("secret").GetString());
@@ -253,7 +254,7 @@ public sealed class ProjectClosureTests
         var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
         await using (var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None))
         {
-            await Assert.That(await transaction.GetAsync("api_keys", key.GetProperty("key").GetProperty("id").GetString()!, CancellationToken.None)).IsNull();
+            await Assert.That(await transaction.GetAsync("api_keys", key.GetProperty("id").GetString()!, CancellationToken.None)).IsNull();
             foreach (var collection in new[] { $"projects/{database.Project}/api_keys", $"projects/{database.Project}/api_key_order", $"projects/{database.Project}/backup_destination" })
             {
                 await Assert.That((await transaction.ListAsync(collection, null, 10, 1024 * 1024, CancellationToken.None)).Documents).IsEmpty().Because(collection);

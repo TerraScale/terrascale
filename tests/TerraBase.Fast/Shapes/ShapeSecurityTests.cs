@@ -38,11 +38,11 @@ public sealed class ShapeSecurityTests
         using var stranger = await api.Management.CreateTenantAsync("documents:read");
         using var owner = api.Management.As(api.Tenant.User);
         var sibling = await api.Management.CreateProjectAsync(api.Tenant.OrganizationId, "Sibling " + _faker.Random.AlphaNumeric(8), owner);
-        using var siblingProject = api.Management.DataClient(await IssueProjectKeyAsync(owner, api.Tenant.OrganizationId, sibling, databaseId: null));
+        using var siblingProject = api.Management.DataClient(await IssueProjectKeyAsync(api.Server.Client, api.Tenant.OrganizationId, sibling, databaseId: null));
         var otherDatabase = await api.SendAsync(HttpMethod.Put, api.DatabasePath("db2"));
         otherDatabase.Status.ShouldBe(HttpStatusCode.Created);
         using var siblingDatabase = api.Management.DataClient(
-            await IssueProjectKeyAsync(owner, api.Tenant.OrganizationId, api.Tenant.ProjectId, otherDatabase.Json.GetProperty("id").GetString()));
+            await IssueProjectKeyAsync(api.Server.Client, api.Tenant.OrganizationId, api.Tenant.ProjectId, otherDatabase.Json.GetProperty("id").GetString()));
 
         var keys = $"{shape}/keys?handle={handle}&epoch={CurrentEpoch()}&key_id={DocumentApi.NewId()}";
         foreach (var (who, client) in new[] { ("other organization", stranger.Data), ("sibling project key", siblingProject), ("sibling database key", siblingDatabase) })
@@ -208,9 +208,9 @@ public sealed class ShapeSecurityTests
     {
         await using var api = await DocumentApi.StartAsync();
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), Item("open"))).Status).IsEqualTo(HttpStatusCode.Created);
-        using var owner = api.Management.As(api.Tenant.User);
-        var keys = $"/v1/management/organizations/{api.Tenant.OrganizationId}/projects/{api.Tenant.ProjectId}/api-keys";
-        using var created = await owner.PostAsJsonAsync(Relative(keys), new { name = _faker.Hacker.Noun(), scopes = ReadScopes });
+        var owner = api.Server.Client;
+        const string Keys = "/admin/api-keys";
+        using var created = await owner.PostAsJsonAsync(Relative(Keys), new { name = _faker.Hacker.Noun(), scopes = ReadScopes, organizationId = api.Tenant.OrganizationId, projectId = api.Tenant.ProjectId });
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var reader = api.Management.DataClient(issued.GetProperty("secret").GetString());
@@ -221,7 +221,7 @@ public sealed class ShapeSecurityTests
         await TerraBaseTestServer.EventuallyAsync(async ct => parked.IsCompleted || await WaitingAsync(api.Server, ct) >= 1);
         await Assert.That(parked.IsCompleted).IsFalse().Because("the poll must be parked before the revocation");
 
-        using var revoked = await owner.DeleteAsync(Relative($"{keys}/{issued.GetProperty("key").GetProperty("id").GetString()}"));
+        using var revoked = await owner.DeleteAsync(Relative($"{Keys}/{issued.GetProperty("id").GetString()}"));
         revoked.StatusCode.ShouldBe(HttpStatusCode.NoContent);
         var sinceRevocation = Stopwatch.StartNew();
         using var refused = await reader.GetAsync(Relative($"{shape}?handle={handle}&offset={offset}"));
@@ -292,8 +292,8 @@ public sealed class ShapeSecurityTests
 
     private async Task<string> IssueProjectKeyAsync(HttpClient owner, string organization, string project, string? databaseId)
     {
-        using var created = await owner.PostAsJsonAsync(Relative($"/v1/management/organizations/{organization}/projects/{project}/api-keys"),
-            new { name = _faker.Hacker.Noun(), scopes = ReadScopes, databaseId });
+        using var created = await owner.PostAsJsonAsync(Relative("/admin/api-keys"),
+            new { name = _faker.Hacker.Noun(), scopes = ReadScopes, organizationId = organization, projectId = project, databaseId });
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
     }

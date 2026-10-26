@@ -84,6 +84,9 @@ public sealed record IssuedApiKey(ApiKey Key, string Secret);
 /// <summary>An issued key, or why it was not issued: its scope does not exist.</summary>
 public readonly union CreateApiKeyResult(IssuedApiKey, NotFound, Unavailable);
 
+/// <summary>A revoked operator key, or why it was not revoked.</summary>
+public readonly union RevocationResult(Done, NotFound, Unavailable);
+
 /// <summary>An issued project key with its secret, or why it was not issued.</summary>
 public readonly union CreateProjectKeyResult(CreatedProjectApiKey, NotFound, Forbidden, Unavailable);
 
@@ -105,6 +108,9 @@ public interface IApiKeyStore
     ValueTask<CreateApiKeyResult> CreateAsync(
         string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken,
         DateTimeOffset? expiresAt = null);
+
+    /// <summary>Revokes an operator-issued key by id; it stops authenticating immediately.</summary>
+    ValueTask<RevocationResult> RevokeAsync(string keyId, CancellationToken cancellationToken);
 
     /// <summary>Finds the key for a presented secret; <see cref="NotFound"/> when unknown, expired or stored before tenancy.</summary>
     ValueTask<Found<ApiKey>> FindAsync(string secret, CancellationToken cancellationToken);

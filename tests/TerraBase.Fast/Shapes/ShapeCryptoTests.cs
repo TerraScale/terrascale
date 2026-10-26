@@ -296,9 +296,9 @@ public sealed class ShapeCryptoTests
     {
         await using var host = await CryptoHost.StartAsync();
         var database = await host.Api.TenantOfAsync();
-        using var owner = host.Api.Management.As(host.Api.Tenant.User);
-        var keys = $"/v1/management/organizations/{host.Api.Tenant.OrganizationId}/projects/{host.Api.Tenant.ProjectId}/api-keys";
-        using var created = await owner.PostAsJsonAsync(new Uri(keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes });
+        var owner = host.Api.Server.Client;
+        const string Keys = "/admin/api-keys";
+        using var created = await owner.PostAsJsonAsync(new Uri(Keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes, organizationId = host.Api.Tenant.OrganizationId, projectId = host.Api.Tenant.ProjectId });
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var reader = host.Api.Management.DataClient(issued.GetProperty("secret").GetString());
@@ -308,7 +308,7 @@ public sealed class ShapeCryptoTests
         var oldPlain = Encoding.UTF8.GetBytes(_faker.Lorem.Paragraph());
         using var oldObject = await host.Crypto.EncryptAsync(database, host.Handle, "2", oldPlain, CancellationToken.None);
 
-        using var revoked = await owner.DeleteAsync(new Uri($"{keys}/{issued.GetProperty("key").GetProperty("id").GetString()}", UriKind.Relative));
+        using var revoked = await owner.DeleteAsync(new Uri($"{Keys}/{issued.GetProperty("id").GetString()}", UriKind.Relative));
         using var sameEpoch = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
         host.Time.Advance(TimeSpan.FromMinutes(10));
         var newPlain = Encoding.UTF8.GetBytes(_faker.Lorem.Paragraph());
@@ -435,9 +435,9 @@ public sealed class ShapeCryptoTests
             lookup.Inner = (IShapeLineages)collection.Last(service => service.ServiceType == typeof(IShapeLineages)).ImplementationInstance!;
             collection.AddSingleton<IShapeLineages>(lookup);
         });
-        using var owner = host.Api.Management.As(host.Api.Tenant.User);
-        var keys = $"/v1/management/organizations/{host.Api.Tenant.OrganizationId}/projects/{host.Api.Tenant.ProjectId}/api-keys";
-        using var created = await owner.PostAsJsonAsync(new Uri(keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes });
+        var owner = host.Api.Server.Client;
+        const string Keys = "/admin/api-keys";
+        using var created = await owner.PostAsJsonAsync(new Uri(Keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes, organizationId = host.Api.Tenant.OrganizationId, projectId = host.Api.Tenant.ProjectId });
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var reader = host.Api.Management.DataClient(issued.GetProperty("secret").GetString());
@@ -449,7 +449,7 @@ public sealed class ShapeCryptoTests
         var entered = lookup.Arm();
         var pending = host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
         await entered.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        using var revoked = await owner.DeleteAsync(new Uri($"{keys}/{issued.GetProperty("key").GetProperty("id").GetString()}", UriKind.Relative));
+        using var revoked = await owner.DeleteAsync(new Uri($"{Keys}/{issued.GetProperty("id").GetString()}", UriKind.Relative));
         lookup.Release();
         using var refused = await pending.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
 
@@ -745,9 +745,9 @@ public sealed class ShapeCryptoTests
     {
         await using var host = await CryptoHost.StartAsync();
         var database = await host.Api.TenantOfAsync();
-        using var owner = host.Api.Management.As(host.Api.Tenant.User);
-        var keys = $"/v1/management/organizations/{host.Api.Tenant.OrganizationId}/projects/{host.Api.Tenant.ProjectId}/api-keys";
-        using var created = await owner.PostAsJsonAsync(new Uri(keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes });
+        var owner = host.Api.Server.Client;
+        const string Keys = "/admin/api-keys";
+        using var created = await owner.PostAsJsonAsync(new Uri(Keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes, organizationId = host.Api.Tenant.OrganizationId, projectId = host.Api.Tenant.ProjectId });
         created.StatusCode.ShouldBe(HttpStatusCode.Created);
         var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
         using var reader = host.Api.Management.DataClient(issued.GetProperty("secret").GetString());
@@ -757,7 +757,7 @@ public sealed class ShapeCryptoTests
         using var fetched = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
         fetched.StatusCode.ShouldBe(HttpStatusCode.OK);
         var held = Base64Url.DecodeFromChars((await fetched.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
-        using var revoked = await owner.DeleteAsync(new Uri($"{keys}/{issued.GetProperty("key").GetProperty("id").GetString()}", UriKind.Relative));
+        using var revoked = await owner.DeleteAsync(new Uri($"{Keys}/{issued.GetProperty("id").GetString()}", UriKind.Relative));
         revoked.StatusCode.ShouldBe(HttpStatusCode.NoContent);
         var revokedAt = host.Time.GetUtcNow();
         using var refused = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
