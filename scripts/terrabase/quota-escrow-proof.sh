@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Production proof of the strict plan database allowance (decision 0016, TS-995).
 #
-# Run on a ts-orch host (ssh ts-gru-1 'bash -s' < scripts/terrabase/quota-escrow-proof.sh). As the platform operator on
-# the internal listeners (NetBird, h2c, the shared peer credential read from the local TerraBase container, never
-# printed), it creates a dedicated user's Starter organization and project. Each of ROUNDS rounds sends six concurrent
+# Run on a ts-orch host (ssh ts-gru-1 'bash -s' < scripts/terrabase/quota-escrow-proof.sh). A run outlives its ssh
+# session, so a lock refuses a second one while it runs. As the platform operator on the internal listeners (NetBird,
+# h2c, the shared peer credential read from the local TerraBase container into a private header file, never printed
+# or passed on a command line), it creates a dedicated user's Starter organization and project. Each of ROUNDS rounds sends six concurrent
 # creates (two to each region's node) and expects exactly five 201 and one 409 database_limit; then, with four databases
 # listed in every region, one create to each region at once, and expects exactly one 201. It deletes the databases,
 # the project and the organization afterwards.
@@ -11,13 +12,19 @@
 set -euo pipefail
 ROUNDS=${ROUNDS:-3}
 PORT=8081
+exec 9> "$HOME/.quota-escrow-proof.lock"
+flock -n 9 || { echo "another proof run holds $HOME/.quota-escrow-proof.lock" >&2; exit 1; }
+umask 077
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
 
 # The running TerraBase task: its container's image is ghcr.io/terrascale/terrabase.
 container=$(join <(sudo -n ctr -n terrascale containers ls | awk '$2 ~ /terrascale\/terrabase@/ {print $1}' | sort) \
   <(sudo -n ctr -n terrascale tasks ls | awk '$3 == "RUNNING" {print $1}' | sort) | head -1)
 pid=$(sudo -n ctr -n terrascale tasks ls | awk -v c="$container" '$1 == c {print $2}')
 secret_file=$(sudo -n cat "/proc/$pid/environ" | tr '\0' '\n' | sed -n 's/^TERRABASE_PEER_SECRET_FILE=//p')
-secret=$(sudo -n cat "/proc/$pid/root$secret_file")
+# printf is a builtin: the credential reaches only the header file, never a process's arguments.
+printf 'X-TerraBase-Peer-Credential: %s\n' "$(sudo -n cat "/proc/$pid/root$secret_file")" > "$work/headers"
 # One "<node> <region> <netbird-ipv4>" line per region.
 mapfile -t peers < <(sudo -n cat "/proc/$pid/root/run/ts-orch/peers/peers")
 declare -A node
@@ -29,14 +36,12 @@ ulid() { python3 -c 'import os,time
 a="0123456789ABCDEFGHJKMNPQRSTVWXYZ"; n=(int(time.time()*1000)<<80)|int.from_bytes(os.urandom(10),"big")
 print("".join(a[(n>>(5*i))&31] for i in range(25,-1,-1)))'; }
 user=$(ulid)
-work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+echo "X-TerraBase-User-Id: $user" >> "$work/headers"
 
 # call REGION METHOD PATH [JSON] -> prints "<status> <body>"
 call() {
   local out="$work/body.$BASHPID.$RANDOM" status
-  local args=(-s --http2-prior-knowledge -m 30 -o "$out" -w '%{http_code}' -X "$2"
-    -H "X-TerraBase-Peer-Credential: $secret" -H "X-TerraBase-User-Id: $user")
+  local args=(-s --http2-prior-knowledge -m 120 -o "$out" -w '%{http_code}' -X "$2" -H "@$work/headers")
   [[ $# -ge 4 ]] && args+=(-H 'Content-Type: application/json' -d "$4")
   status=$(curl "${args[@]}" "http://${node[$1]}:$PORT$3")
   echo "$status $(cat "$out")"; rm -f -- "$out"
@@ -133,6 +138,5 @@ read -r status body <<< "$(call gru DELETE "/v1/management/organizations/$organi
 echo "delete project: $status"
 read -r status body <<< "$(call gru DELETE "/v1/management/organizations/$organization")"
 echo "delete organization: $status"
-unset secret
 echo "result: $([[ $failed == 0 ]] && echo PASS || echo FAIL)"
 exit "$failed"
