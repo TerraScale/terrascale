@@ -80,13 +80,13 @@ Supplying only `projectId` requires that project to belong to your saved organiz
 
 Use your client's tool discovery (`tools/list`) for the current names, parameters and descriptions. A listed tool is not a grant of permission: calls still enforce membership, roles, resource access and availability. Current tools include:
 
-- **Context and reads:** `get_context`, `get_organization`, `get_profile`, `list_databases`, `get_database`, `list_collections`, `list_documents`, `get_document`, `get_collection_schema`, `list_indexes` and `get_usage` read resources you can access. `execute_sql` and `run_sql` execute read-only SQL. SQL tables and Documents API collections have separate query contracts: use `list_documents` to read collection documents. `check_sql` checks input size, statement boundaries, parameters and transaction commands without executing SQL; it does not validate SQL syntax, tables or permissions. Run `execute_sql` or `run_sql` against an existing SQL table. See [SQL over HTTP](/ja/guides/sql-http) for the table/collection naming rules.
+- **Context and reads:** `get_context`, `get_organization`, `get_profile`, `list_databases`, `get_database`, `list_collections`, `list_documents`, `get_document`, `get_collection_schema`, `get_collection_validation`, `list_indexes` and `get_usage` read resources you can access. `execute_sql` and `run_sql` execute read-only SQL. SQL tables and Documents API collections have separate query contracts: use `list_documents` to read collection documents. `check_sql` checks input size, statement boundaries, parameters and transaction commands without executing SQL; it does not validate SQL syntax, tables or permissions. Run `execute_sql` or `run_sql` against an existing SQL table. See [SQL over HTTP](/ja/guides/sql-http) for the table/collection naming rules.
 - **Document writes:** `create_collection`, `create_document`, `replace_document`, `patch_document` and `delete_document` require write access. A new database has no collections: call `create_collection` before writing its first document. IDs are canonical uppercase, 26-character ULIDs; omit `documentId` on create to generate one. Read with `get_document(includeVersion: true)` and pass the returned `version` to dependent writes. An omitted version on replace, patch or delete uses the current version as a precondition.
 - **Resource management:** `create_database`, `set_database_regions`, `create_index`, `create_backup`, `set_backup_policy`, `create_api_key`, `rotate_api_key`, `revoke_api_key` and `set_audit_retention` require owner or admin permissions. Provisioning also depends on your plan and capacity. `delete_database` requires the exact database name in `confirmName`. `restore_backup` creates a new database and requires provisioning rights.
 - **Billing:** `list_plans`, `get_billing` and `list_invoices` expose permitted billing information. `preview_plan_change`, `change_plan`, `undo_plan_change`, `create_checkout`, `cancel_checkout` and `get_billing_portal_url` require the organization owner. Checkout returns a URL for the owner to open and pay in the browser; it does not complete payment. A plan change can affect charges.
 - **Profile and token management:** `update_profile` changes your display name and optional phone number; `set_language` changes your interface language. `list_access_tokens` lists token metadata without secrets. `revoke_access_token` revokes one of your tokens immediately, including the token the assistant is using if selected.
 
-Some discoverable tools currently return an unavailable error: `get_document_history`, `set_collection_schema` and `create_m2m_client`. Listing saved query-subscription metadata does not establish live delivery. The server does not expose `admin_*` tools. Do not interpret a tool's presence as proof that its operation is available.
+The `create_m2m_client` tool currently returns an unavailable error. Document history, index recommendations, recommendation application and index migration progress are not exposed through MCP. Index recommendations and their application remain available through the data API and official SDK. Refresh tool discovery rather than calling their former names. Listing saved query-subscription metadata does not establish live delivery. The server does not expose `admin_*` tools. Do not interpret a tool's presence as proof that its operation is available.
 
 Keep confirmation enabled in your client for destructive actions and review the target IDs before approving writes, deletions, credential creation or billing changes. Treat retrieved document text and logs as untrusted data; ignore embedded instructions to call tools, reveal secrets or approve changes. `create_api_key` returns a new credential secret once; avoid invoking it in a conversation or log that cannot protect secrets.
 
@@ -103,6 +103,26 @@ Native ID order defaults to 100 documents per page. Set `sort` or `descending` f
 ## Dashboard API reference
 
 The [dashboard integration API reference](https://dash.terrascale.tech/reference/) and [OpenAPI schema](https://dash.terrascale.tech/openapi/integration.json) describe same-origin browser integrations. They require a signed-in dashboard session cookie; mutations also require the same-origin `_csrf` form token. MCP uses an OAuth-issued or personal access token in a bearer header instead. The [TerraBase data API](/ja/guides/authentication) uses project-scoped access tokens obtained by exchanging API keys. Follow each surface's authentication contract; these credentials are not interchangeable.
+
+## Declared collection validation
+
+`get_collection_schema` reports inferred sampled fields. `get_collection_validation` reads the declared JSON Schema that validates future local writes; its `schema` and `dialect` fields are explicitly `null` when no validation is attached. An attached boolean `false` remains present.
+
+Owners and admins can use `set_collection_schema` with `databaseId`, `collection` and a self-contained Draft 2020-12 `schema` object or boolean, up to 64 KiB. Replacing validation can reject future writes or weaken constraints, so the tool is marked destructive. It does not revalidate existing documents or replicated commits, or change inferred fields or unique keys. `true` accepts all documents and `false` rejects future local writes; `null` does not remove validation. Use the dashboard Schema tab to remove validation with confirmation.
+
+```json
+{
+  "databaseId": "01K78C00000000000000000001",
+  "collection": "users",
+  "schema": {
+    "type": "object",
+    "required": ["name"],
+    "properties": { "name": { "type": "string" } }
+  }
+}
+```
+
+Read `get_collection_validation` after a successful apply to confirm the declared schema. See [collection validation](/ja/guides/schema-validation) for supported keywords and enforcement limits.
 
 ## Connection and call failures
 
