@@ -44,7 +44,13 @@ public static class ProfileEndpoints
             var active = await sessions.ListAsync(http, context.Session);
             var status = tab == "security" ? await mfa.GetAccountMfaAsync(context.Session, http.RequestAborted) : null;
             var linked = tab == "profile" ? await providers.ListProvidersAsync(context.Session, http.RequestAborted) : null;
-            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Tokens: list, Sessions: active, Mfa: status)
+            var notice = tab == "profile" ? http.Request.Query["status"].ToString() switch
+            {
+                "profile-saved" => "Profile saved.",
+                "language-saved" => "Language preference saved.",
+                _ => ""
+            } : "";
+            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Status: notice, Tokens: list, Sessions: active, Mfa: status)
             {
                 Providers = linked,
                 ConfirmProvider = http.Request.Query["unlink"].ToString() is var selected && TsAuthGateway.IsSignInProvider(selected) ? selected : null
@@ -81,7 +87,7 @@ public static class ProfileEndpoints
             {
                 await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
             }
-            return HttpRedirects.SeeOther("/profile?tab=profile");
+            return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));
         }
         catch (AccountAccessException error)
         {

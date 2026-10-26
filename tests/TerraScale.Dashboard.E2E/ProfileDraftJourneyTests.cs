@@ -22,6 +22,7 @@ public sealed class ProfileDraftJourneyTests(DashboardE2EFixture fixture)
                 new() { ["_csrf"] = csrf, ["name"] = name, ["phoneNumber"] = phone });
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             var html = await rejected.Content.ReadAsStringAsync();
+            await Assert.That(html.Contains("ts-alert-success", StringComparison.Ordinal)).IsFalse();
             foreach (var (id, expected) in new[] { ("displayName", name), ("phoneNumber", phone) })
             {
                 var field = Regex.Match(html, "<input[^>]*id=\"" + id + "\"[^>]*value=\"([^\"]*)\"");
