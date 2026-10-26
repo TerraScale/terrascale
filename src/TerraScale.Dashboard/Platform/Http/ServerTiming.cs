@@ -100,7 +100,8 @@ public sealed class ServerTiming
             bool called;
             lock (timing.gate) called = timing.upstreams.Count > 0;
             if (context.GetEndpoint() is not null && called)
-                logger.LogInformation("Page timing {Method} {Path} {Status}: {Timing}", context.Request.Method, context.Request.Path.Value, context.Response.StatusCode, timing.Header());
+                logger.LogInformation("Page timing {Method} {Route} {Status}: {Timing}", SafeHttpLogging.Method(context.Request.Method),
+                    (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", context.Response.StatusCode, timing.Header());
         }
     }
 

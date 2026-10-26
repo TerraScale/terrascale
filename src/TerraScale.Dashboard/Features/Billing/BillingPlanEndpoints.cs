@@ -51,7 +51,7 @@ public static class BillingPlanEndpoints
     {
         if (error is AccountAccessException access) return Results.Text(access.Message, statusCode: access.StatusCode);
         if (error is OnboardingValidationException validation) return Results.Text(validation.Message, statusCode: 400);
-        http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingPlanEndpoints)).LogWarning("Billing {Path} failed ({ErrorType}: {Error})", http.Request.Path.Value, error.GetType().Name, Describe(error));
+        http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingPlanEndpoints)).LogWarning("Billing change failed ({ErrorType}: {Error})", error.GetType().Name, Describe(error));
         if (DatabaseEndpoints.WantsHtml(http))
         {
             var page = BillingChangeUnavailable.Create(new DocumentModel("Billing change uncertain", DocumentModel.NonceFor(http)));
@@ -60,7 +60,7 @@ public static class BillingPlanEndpoints
         }
         return Results.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502);
     }
-    // Stripe's error type, code and parameter name the cause; its message carries no credentials.
-    internal static string Describe(Exception error) => error is StripeException { StripeError: { } stripe } vendor
-        ? $"HTTP {(int)vendor.HttpStatusCode} {stripe.Type}/{stripe.Code} param={stripe.Param}: {stripe.Message}" : error.Message;
+    // Provider messages/parameters and arbitrary exception text can echo credentials or URLs.
+    internal static string Describe(Exception error) => error is StripeException vendor
+        ? $"Stripe HTTP {(int)vendor.HttpStatusCode}" : error.GetType().Name;
 }
