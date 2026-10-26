@@ -1,5 +1,4 @@
 using System.Text;
-using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
@@ -32,7 +31,7 @@ public sealed class HistoryErasureBackupTests
 
     [Test]
     [Timeout(300_000)]
-    public async Task Staggered_erasures_share_each_files_rewrite_window_and_all_complete(CancellationToken _1)
+    public async Task Staggered_erasures_share_each_files_rewrite_window_and_all_complete(CancellationToken cancellationToken)
     {
         await using var host = new Host();
         RecordingRewrite recording = null!;
@@ -45,9 +44,9 @@ public sealed class HistoryErasureBackupTests
         async Task<HistoryErasureStatus> RequestAsync(string erasure, DateTimeOffset requested, string? token = null)
         {
             using var response = await api.Server.Client.PutAsJsonAsync(new Uri("/admin/history-erasures/" + erasure, UriKind.Relative),
-                new HistoryErasureRequest(1, requested, token), Hosting.TerraBaseJsonContext.Default.HistoryErasureRequest);
+                new HistoryErasureRequest(1, requested, token), Hosting.TerraBaseJsonContext.Default.HistoryErasureRequest, cancellationToken);
             response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync(Hosting.TerraBaseJsonContext.Default.HistoryErasureStatus))!;
+            return (await response.Content.ReadFromJsonAsync(Hosting.TerraBaseJsonContext.Default.HistoryErasureStatus, cancellationToken))!;
         }
 
         for (var index = 0; index < 3; index++)
@@ -81,7 +80,7 @@ public sealed class HistoryErasureBackupTests
 
         host.Clock.Advance(TimeSpan.FromDays(8));
         await Host.CollectAndTrimAsync(api);
-        await Host.PassWithBackupAsync(api, backup);
+        await Host.PassAsync(api);
         await Assert.That(recording.Starts.Count).IsEqualTo(5).Because("residue is also batched");
         await DaysOfBackupAsync(host, backup, 3);
         await Host.PassWithBackupAsync(api, backup);
@@ -93,6 +92,7 @@ public sealed class HistoryErasureBackupTests
             await Assert.That(status.Status).IsEqualTo(HistoryErasure.Retire);
             await Assert.That(status.ActiveDueAt).IsEqualTo(requested.AddDays(30));
             await Assert.That(status.BackupDueAt).IsEqualTo(requested.AddDays(31));
+            await Assert.That(host.Clock.GetUtcNow()).IsLessThan(status.BackupDueAt);
             await Assert.That(status.ActiveOverdue || status.BackupOverdue).IsFalse();
             await Host.RetireAsync(api, fence, erasure);
         }
@@ -321,8 +321,11 @@ public sealed class HistoryErasureBackupTests
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark).Because("its own rewrite is no restore: no new fence marker");
 
         Volatile.Write(ref refusing, 0);
-        // Past the first backoff (10 s) and its jitter (up to a quarter more).
-        host.Clock.Advance(TimeSpan.FromSeconds(13));
+        // The per-file start interval also covers refusals, beyond the first backoff and its jitter.
+        host.Clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromTicks(1));
+        await Host.PassAsync(api);
+        await Assert.That(systemAttempts).IsEqualTo(1);
+        host.Clock.Advance(TimeSpan.FromTicks(1));
         await Host.PassAsync(api);
         own = await Host.OwnAsync(api, erasure);
         await Assert.That(own.Phase).IsEqualTo(HistoryErasure.Rewritten);
