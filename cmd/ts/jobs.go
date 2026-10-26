@@ -80,7 +80,7 @@ const importPoll = 2 * time.Second
 
 // importFile creates db, stages the file, prints the preview, confirms it
 // and waits until the import finishes.
-func importFile(ctx context.Context, db *v1.Database, format, path string, out io.Writer) error {
+func importFile(ctx context.Context, db *v1.Database, format, path, collection string, out io.Writer) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -95,7 +95,11 @@ func importFile(ctx context.Context, db *v1.Database, format, path string, out i
 	if _, err := db.Create(ctx); err != nil && !errors.Is(err, v1.ErrNameTaken) {
 		return err
 	}
-	job, err := db.CreateImport(ctx, v1.CreateImportRequest{Format: format, SourceBytes: size, SourceSHA256: hex.EncodeToString(h.Sum(nil))})
+	req := v1.CreateImportRequest{Format: format, SourceBytes: size, SourceSHA256: hex.EncodeToString(h.Sum(nil))}
+	if collection != "" {
+		req.Options = &v1.ImportOptions{Collection: collection}
+	}
+	job, err := db.CreateImport(ctx, req)
 	if err != nil {
 		return err
 	}

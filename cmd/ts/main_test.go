@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -165,13 +167,98 @@ func TestImportFileStagesConfirmsAndWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := importFile(t.Context(), c.Database(project, "app"), "postgres_plain", path, &out); err != nil {
+	if err := importFile(t.Context(), c.Database(project, "app"), "postgres_plain", path, "", &out); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"POST ", "POST /app/import", "PUT /app/import/source", "GET /app/import",
 		"POST /app/import/start", "GET /app/import"}
 	if !slices.Equal(calls, want) || received != len(src) || !strings.Contains(out.String(), "Imported 2 rows into app") {
 		t.Fatalf("calls = %q, received = %d, out = %q", calls, received, out.String())
+	}
+}
+
+func TestImportNDJSONSendsCollection(t *testing.T) {
+	t.Parallel()
+	const project, id = "01M5N8CG630T6P449ES15GNZ8N", "01M5N9000000000000000000AA"
+	src := []byte("{\"name\":\"Ana\"}\n")
+	var mu sync.Mutex
+	state, received, declarations := "awaiting_source", 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + strings.TrimPrefix(r.URL.Path, "/v1/projects/"+project+"/databases") {
+		case "POST ":
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w, `{"id":%q,"projectId":%q,"name":"app"}`, id, project)
+			return
+		case "POST /app/import":
+			declarations++
+			var req struct {
+				Format       string            `json:"format"`
+				SourceBytes  int64             `json:"sourceBytes"`
+				SourceSHA256 string            `json:"sourceSha256"`
+				Options      map[string]string `json:"options"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Format != "ndjson" ||
+				req.SourceBytes != int64(len(src)) || req.SourceSHA256 != fmt.Sprintf("%x", sha256.Sum256(src)) ||
+				req.Options["collection"] != "people" {
+				t.Errorf("import request = %+v, decode error = %v", req, err)
+			}
+		case "PUT /app/import/source":
+			body, _ := io.ReadAll(r.Body)
+			if !bytes.Equal(body, src) {
+				t.Errorf("source = %q, want %q", body, src)
+			}
+			received, state = len(body), "ready"
+		case "POST /app/import/start":
+			state = "completed"
+		case "GET /app/import":
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		fmt.Fprintf(w, `{"id":%q,"project":%q,"database":"app","state":%q,"source":{"receivedBytes":%d},`+
+			`"preview":{"id":%q,"tables":[{"source":"ndjson","collection":"people","rows":1}]},"progress":{"rowsWritten":1}}`,
+			id, project, state, received, id)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := v1.New(v1.Config{BaseURL: srv.URL, Token: "tb_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "people.ndjson")
+	if err := os.WriteFile(path, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &session{tb: c, project: project}
+	var out bytes.Buffer
+	if err := s.dispatch(t.Context(), "import", functionFlags{}, "people", []string{"app", "ndjson", path}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if declarations != 1 || !strings.Contains(out.String(), "Imported 1 rows into app") {
+		t.Fatalf("declarations = %d, output = %q", declarations, out.String())
+	}
+}
+
+func TestCollectionFlagRejectsMisuseBeforeAuthentication(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"-collection", "people", "db", "list"},
+		{"-collection", "people", "auth", "login"},
+		{"-collection", "people", "completion", "bash"},
+		{"-collection", "people", "import", "status", "app"},
+		{"-collection", "people", "import", "cancel", "app"},
+		{"-collection", "people", "import", "app", "sqlite", "dump.db"},
+		{"-collection", "people", "import", "app", "postgres_plain", "dump.sql"},
+		{"-collection", "people", "import", "app", "json", "dump.json"},
+		{"-collection=", "db", "list"},
+		{"-collection=", "import", "app", "ndjson", "people.ndjson"},
+		{"-collection", " ", "import", "app", "ndjson", "people.ndjson"},
+		{"import", "app", "ndjson", "people.ndjson", "-collection", "people"},
+	} {
+		if err := run(t.Context(), args, io.Discard); !errors.Is(err, errUsage) {
+			t.Errorf("run(%q) = %v, want usage", args, err)
+		}
 	}
 }
 
