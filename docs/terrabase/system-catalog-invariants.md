@@ -55,7 +55,7 @@ stable and horizon, so the same code collects nothing there.
   `_unique` documents, section 5) and follow the client rules (R7 collects their tombstones below the horizon; a newer
   write brings a collection back).
 - **Same-name race** (two regions create one name at once): the smaller ULID keeps the name on every machine; the larger
-  one is removed through the same deletion (its name index entry is left to the winner). See R10a-3,
+  one is kept under a conflict name, never deleted. See [database name conflicts](database-name-conflicts.md),
   `CatalogConvergence`.
 
 ## 2. Rejoin and refill

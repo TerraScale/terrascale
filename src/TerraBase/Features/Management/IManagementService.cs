@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
 
@@ -34,9 +35,16 @@ public sealed record Project(string Id, string OrganizationId, string Name, Date
 /// <param name="ReplicaRegions">The other regions that hold a full copy; <see langword="null"/> for none.</param>
 /// <param name="PlacementVersion">Raised by the home region on every placement change; the highest one wins elsewhere.</param>
 /// <param name="AllRegions">Every serving region holds a full copy, including regions that join later; no replica regions are then recorded.</param>
+/// <param name="PreviousName">
+/// The name this database lost to <paramref name="ConflictOf"/> when two regions accepted it at once; <see langword="null"/>
+/// for none (docs/terrabase/database-name-conflicts.md).
+/// </param>
+/// <param name="ConflictOf">Id of the database that kept <paramref name="PreviousName"/>; <see langword="null"/> for none.</param>
 public sealed record ManagedDatabase(
     string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt,
-    string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0, bool AllRegions = false)
+    string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0, bool AllRegions = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PreviousName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ConflictOf = null)
 {
     /// <summary>The home region, as a member of <paramref name="region"/> reads it.</summary>
     public string Home(string region) => HomeRegion ?? region;

@@ -669,7 +669,7 @@ internal sealed partial class EngineManagementService(
 
     // Removes a database's record and records its cleanup intent, in the caller's transaction, after the caller's checks.
     private async ValueTask<TenantContext> UnregisterRecordAsync(
-        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool releaseName = true, bool customerDeletion = false)
+        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool customerDeletion = false)
     {
         if (customerDeletion)
         {
@@ -677,7 +677,8 @@ internal sealed partial class EngineManagementService(
             await BackupDestinationHistory.CaptureAsync(transaction, storage, cancellationToken).ConfigureAwait(false);
         }
         await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
-        if (releaseName)
+        // The name is released only when it is this database's: after a name race it can be another database's.
+        if (await GetAsync(transaction, DatabaseNames(database.ProjectId), database.Name, Id, cancellationToken).ConfigureAwait(false) == database.Id)
         {
             await transaction.DeleteAsync(DatabaseNames(database.ProjectId), database.Name, cancellationToken).ConfigureAwait(false);
         }
@@ -1073,9 +1074,7 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        var named = await GetAsync(transaction, DatabaseNames(tenant.ProjectId!), name, Id, cancellationToken).ConfigureAwait(false);
-        if (named is not null
-            && await transaction.GetVersionAsync(Databases(tenant.ProjectId!), named, cancellationToken).ConfigureAwait(false) is not { Deleted: true })
+        if (await NameHolderAsync(transaction, tenant.ProjectId!, name, cancellationToken).ConfigureAwait(false) is not null)
         {
             return ManagementErrors.NameTaken;
         }

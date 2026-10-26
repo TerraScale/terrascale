@@ -680,7 +680,7 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<TenantContext?> FindDatabaseAsync(
         IStorageTransaction transaction, string organizationId, string projectId, string database, CancellationToken cancellationToken) =>
         await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } project
-        && await GetAsync(transaction, DatabaseNames(projectId), database, Id, cancellationToken).ConfigureAwait(false) is { } databaseId
+        && await NameHolderAsync(transaction, projectId, database, cancellationToken).ConfigureAwait(false) is { } databaseId
         && !await DatabasePurge.IsDeletedAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false)
             ? project with { DatabaseId = databaseId }
             : null;

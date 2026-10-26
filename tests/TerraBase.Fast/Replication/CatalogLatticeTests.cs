@@ -171,40 +171,130 @@ public sealed class CatalogLatticeTests
         await Assert.That(File.Exists(gru.FileOf(tenant))).IsFalse();
     }
 
+    // docs/terrabase/database-name-conflicts.md: a partition lets both sides take one name and write; healing keeps both.
     [Test]
-    public async Task Two_regions_creating_one_name_at_once_keep_the_database_of_the_smaller_id_everywhere()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_name_taken_on_both_sides_of_a_partition_keeps_both_databases_and_their_data_under_unique_names(bool restartLoserHome)
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var user = gru.Api.User;
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
-        await gru.CommitAsync(gru.Api.User,
+        await gru.CommitAsync(user,
             new { op = "create_organization", id = organization, name = "Racing" },
             new { op = "create_project", organization, id = project, name = "p" });
         await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
 
         string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString()];
         Array.Sort(ids, StringComparer.Ordinal);
-        var (winner, loser) = (ids[0], ids[1]);
+        var (winner, loser) = (new TenantContext(organization, PlanTier.Hobby, project, ids[0]), new TenantContext(organization, PlanTier.Hobby, project, ids[1]));
         var members = await cluster.SeparateAsync();
         // Isolated HTTP writes can refuse remote durability; seed the two already-committed catalog decisions directly.
-        await sjc.SeedDatabaseAsync(new TenantContext(organization, PlanTier.Hobby, project, winner), "twin");
+        await sjc.SeedDatabaseAsync(winner, "twin");
         var winningVersion = (await sjc.VersionAsync($"projects/{project}/database_names", "twin"))!.Value.Version;
         gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Observe(new Hlc(checked((ulong)winningVersion + 1)));
-        await gru.SeedDatabaseAsync(new TenantContext(organization, PlanTier.Hobby, project, loser), "twin");
+        await gru.SeedDatabaseAsync(loser, "twin");
         await Assert.That((await gru.VersionAsync($"projects/{project}/database_names", "twin"))!.Value.Version).IsGreaterThan(winningVersion);
-        cluster.Rejoin(members);
+        await WriteItemAsync(sjc, winner, "kept by the winner");
+        await WriteItemAsync(gru, loser, "kept by the loser");
 
-        var lost = new TenantContext(organization, PlanTier.Hobby, project, loser);
-        foreach (var region in cluster.Regions)
+        cluster.Rejoin(members);
+        if (restartLoserHome)
         {
-            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "twin", json => json == $"\"{winner}\"")).IsTrue().Because(region.Name);
-            await Assert.That(await Until(async () => await region.VersionAsync($"projects/{project}/databases", loser) is { Deleted: true })).IsTrue().Because(region.Name);
-            await Assert.That(await region.ReadAsync($"projects/{project}/databases", winner)).IsNotNull().Because(region.Name);
+            // The loser's home restarts mid-convergence, whether or not it moved the loser yet: the outcome is the same.
+            await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", loser.DatabaseId!, json => json is not null)).IsTrue();
+            await gru.StopAsync();
+            await gru.StartAsync();
         }
 
-        await Assert.That(await Until(() => Task.FromResult(!File.Exists(gru.FileOf(lost))))).IsTrue();
-        await Assert.That(File.Exists(sjc.FileOf(lost with { DatabaseId = winner }))).IsTrue();
+        var renamed = $"twin-conflict-{loser.DatabaseId![^6..].ToLowerInvariant()}";
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "twin", json => json == $"\"{winner.DatabaseId}\"")).IsTrue().Because(region.Name);
+            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", renamed, json => json == $"\"{loser.DatabaseId}\"")).IsTrue().Because(region.Name);
+            await Assert.That(await region.UntilAsync($"projects/{project}/databases", loser.DatabaseId!, json => json is not null
+                && JsonElement.Parse(json) is var record && record.GetProperty("name").GetString() == renamed
+                && record.GetProperty("previousName").GetString() == "twin" && record.GetProperty("conflictOf").GetString() == winner.DatabaseId)).IsTrue().Because(region.Name);
+            await Assert.That(JsonElement.Parse((await region.ReadAsync($"projects/{project}/databases", winner.DatabaseId!))!).GetProperty("name").GetString()).IsEqualTo("twin");
+            // The name index matches the records: one entry per database, each under its record's name.
+            await Assert.That(await Until(async () => (await region.IdsAsync($"projects/{project}/database_names")).SequenceEqual(new[] { "twin", renamed }.Order(StringComparer.Ordinal))))
+                .IsTrue().Because(region.Name);
+        }
+
+        foreach (var (collection, id) in new[] { ("databases", winner.DatabaseId!), ("databases", loser.DatabaseId!), ("database_names", "twin"), ("database_names", renamed) })
+        {
+            await Assert.That(await cluster.UntilConvergedAsync($"projects/{project}/{collection}", id)).IsTrue().Because($"{collection} {id}");
+        }
+
+        await Assert.That(await gru.UntilDocumentAsync(loser, "items", "one", json => json == """{"by":"kept by the loser"}""")).IsTrue();
+        await Assert.That(await sjc.UntilDocumentAsync(winner, "items", "one", json => json == """{"by":"kept by the winner"}""")).IsTrue();
+        await Assert.That(File.Exists(gru.FileOf(loser))).IsTrue();
+
+        // By id the loser answers under its new name; the lost name serves the winner only.
+        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+        using var owner = gru.Api.As(user);
+        var byId = await owner.GetFromJsonAsync<JsonElement>(ManagementApi.Uri($"{databases}/{loser.DatabaseId}"));
+        await Assert.That(byId.GetProperty("name").GetString()).IsEqualTo(renamed);
+        await Assert.That(byId.GetProperty("conflictOf").GetString()).IsEqualTo(winner.DatabaseId);
+        await Assert.That(await gru.Tenants.FindDatabaseAsync(organization, project, "twin", CancellationToken.None) is TenantContext { DatabaseId: var found } && found == winner.DatabaseId).IsTrue();
+
+        var events = await Task.WhenAll((await gru.IdsAsync($"organizations/{organization}/audit")).Select(id => gru.ReadAsync($"organizations/{organization}/audit", id)));
+        await Assert.That(events.Count(json => JsonElement.Parse(json!) is var e && e.GetProperty("action").GetString() == "database.name_conflict"
+            && e.GetProperty("target").GetString() == loser.DatabaseId)).IsEqualTo(1);
     }
+
+    // Both regions accept the same name over HTTP at the same moment: whatever each accepted survives everywhere.
+    [Test]
+    public async Task Concurrent_creates_of_one_name_in_two_regions_never_delete_an_accepted_database()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var user = gru.Api.User;
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(user,
+            new { op = "create_organization", id = organization, name = "Racing" },
+            new { op = "create_project", organization, id = project, name = "p" });
+        await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
+
+        var path = ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases");
+        using var sjcUser = sjc.Api.As(user);
+        var responses = await Task.WhenAll(gru.Api.Client.PostAsJsonAsync(path, new { name = "same" }), sjcUser.PostAsJsonAsync(path, new { name = "same" }));
+        string[] accepted = [.. await Task.WhenAll(responses.Where(response => response.StatusCode == HttpStatusCode.Created)
+            .Select(async response => (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!))];
+        await Assert.That(accepted).IsNotEmpty();
+        foreach (var response in responses)
+        {
+            await Assert.That(response.StatusCode is HttpStatusCode.Created or HttpStatusCode.Conflict).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            response.Dispose();
+        }
+
+        foreach (var region in cluster.Regions)
+        {
+            // Every accepted database is live, each under its own name, and the index holds exactly those names.
+            await Assert.That(await Until(async () =>
+            {
+                var records = await Task.WhenAll(accepted.Select(id => region.ReadAsync($"projects/{project}/databases", id)));
+                if (records.Any(json => json is null))
+                {
+                    return false;
+                }
+
+                var names = records.Select(json => JsonElement.Parse(json!).GetProperty("name").GetString()!).ToArray();
+                var index = await Task.WhenAll(names.Select(name => region.ReadAsync($"projects/{project}/database_names", name)));
+                return names.Distinct().Count() == accepted.Length && names.Contains("same")
+                    && index.Select((json, i) => json == $"\"{accepted[i]}\"").All(matches => matches)
+                    && (await region.IdsAsync($"projects/{project}/database_names")).Length == accepted.Length;
+            })).IsTrue().Because(region.Name);
+        }
+    }
+
+    private static Task WriteItemAsync(Region region, TenantContext database, string by) =>
+        region.WriteAsync(database, async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", "one", Json($$"""{"by":"{{by}}"}"""), CancellationToken.None);
+        });
 
     // docs/terrabase/project-closure.md: a fence written in one region is not acceptance. A database another region
     // registered before the fence reached it keeps the closure pending, and survives, until its own deletion.
