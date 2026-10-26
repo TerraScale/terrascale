@@ -65,12 +65,17 @@ const outputs = [['docs/public/llms.txt', Buffer.from(text)]];
 for (const [folder, files] of [
   ['terrabase-js', ['quickstart.mjs', 'package.json', 'follow-changes.mjs']],
   ['terrabase-dotnet', ['Program.cs', 'TerraBaseStarter.csproj']],
+  ['server-token-provider', ['server-client.mjs', 'package.json']],
 ]) {
   for (const file of files) outputs.push([
     `docs/public/examples/${folder}/${file}`,
     readFileSync(join(root, 'examples', folder, file)),
   ]);
 }
+outputs.push([
+  'docs/public/examples/server-token-provider/README.txt',
+  readFileSync(join(root, 'examples/server-token-provider/README.md')),
+]);
 for (const [name, content] of outputs) {
   const path = join(root, name);
   if (check) {
