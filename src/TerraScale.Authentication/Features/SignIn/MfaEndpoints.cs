@@ -153,7 +153,7 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
         Post("/ui/{slug}/security/totp");
         Name("ui_security_totp_begin");
         Summary("Start authenticator enrolment");
-        Description("Same-origin form post from a live session opened in the last 15 minutes (otherwise the page asks to sign in again). Shows a QR code and key for a new TOTP secret (SHA-1, 6 digits, 30 seconds) that stays pending for 10 minutes until confirmed. 409 page when an authenticator is already active.");
+        Description("Same-origin form post from a live session opened in the last 15 minutes (otherwise the page asks to sign in again). Shows a QR code and key for a new TOTP secret (SHA-1, 6 digits, 30 seconds) that stays pending for 10 minutes until confirmed, and never past the end of that 15-minute window. A sign-out that lands before the change commits refuses it. 409 page when an authenticator is already active.");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -183,10 +183,10 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
             { Account = live.User.Email }, StatusCodes.Status401Unauthorized);
         }
 
-        if (await mfa.BeginAsync(live.User, cancellationToken) is not { } enrollment)
+        if (await mfa.BeginAsync(live.User, SecurityFlow.Fresh(this.HttpContext, live.Session), cancellationToken) is not { } enrollment)
         {
-            return await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, ("Already set up", "Two-factor authentication is already on, or your account changed. Reload and try again."), cancellationToken,
-                StatusCodes.Status409Conflict);
+            return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("Already set up", "Two-factor authentication is already on, or your account changed. Reload and try again."),
+                StatusCodes.Status409Conflict, cancellationToken);
         }
 
         using var qr = QRCodeGenerator.GenerateQrCode(enrollment.ProvisioningUri, QRCodeGenerator.ECCLevel.M);
@@ -209,7 +209,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
         Post("/ui/{slug}/security/totp/confirm");
         Name("ui_security_totp_confirm");
         Summary("Turn on two-factor authentication");
-        Description("Same-origin form post with code, the authenticator's current six-digit code for the pending secret, from a live session. Success activates the factor, signs the account out everywhere (every session and token), opens a fresh two-factor session for this browser, records member.mfa_enabled in the account's organizations' audit logs and shows eight single-use recovery codes once. A wrong or expired code answers 401; 10 attempts per account per 15 minutes (429).");
+        Description("Same-origin form post with code, the authenticator's current six-digit code for the pending secret, from a live session; a sign-out that lands before the change commits refuses it. Success activates the factor, signs the account out everywhere (every session and token), opens a fresh two-factor session for this browser, records member.mfa_enabled in the account's organizations' audit logs and shows eight single-use recovery codes once. A wrong or expired code answers 401; 10 attempts per account per 15 minutes (429).");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -234,10 +234,10 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        if (await mfa.ConfirmAsync(live.User, (form.Code ?? string.Empty).Trim(), cancellationToken) is not { } issued)
+        if (await mfa.ConfirmAsync(live.User, (form.Code ?? string.Empty).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken) is not { } issued)
         {
-            return await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, ("That code is wrong or expired", "Enter the current code from your authenticator app, or start the setup again."),
-                cancellationToken, StatusCodes.Status401Unauthorized);
+            return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or expired", "Enter the current code from your authenticator app, or start the setup again."),
+                StatusCodes.Status401Unauthorized, cancellationToken);
         }
 
         logger.ZLogInformation($"Audit: user {live.User.Id:@UserId} turned on two-factor authentication");
@@ -252,7 +252,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
 }
 
 /// <summary><c>POST /ui/{slug}/security/totp/disable</c>: removes the authenticator after a TOTP or recovery code.</summary>
-public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, Users users, PlatformDirectory platform, AuthOptions options, ILogger<TotpDisableEndpoint> logger) : EndpointWithoutRequest<IResult>
+public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, AuthOptions options, ILogger<TotpDisableEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -260,7 +260,7 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         Post("/ui/{slug}/security/totp/disable");
         Name("ui_security_totp_disable");
         Summary("Turn off two-factor authentication");
-        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session; the code reauthenticates the change. Success removes the factor and its recovery codes, signs the account out everywhere, opens a fresh session for this browser and records member.mfa_disabled in the account's organizations' audit logs. Members of organizations that require two-factor authentication lose access to them until they enrol again. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
+        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session; the code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success removes the factor and its recovery codes, signs the account out everywhere, opens a fresh session for this browser and records member.mfa_disabled in the account's organizations' audit logs. Members of organizations that require two-factor authentication lose access to them until they enrol again. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -285,15 +285,16 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        if (!await mfa.DisableAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), cancellationToken))
+        if (await mfa.DisabledUserAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken)
+            is not { } user)
         {
-            return await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
-                cancellationToken, StatusCodes.Status401Unauthorized);
+            return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
+                StatusCodes.Status401Unauthorized, cancellationToken);
         }
 
         logger.ZLogInformation($"Audit: user {live.User.Id:@UserId} turned off two-factor authentication");
         await SecurityFlow.AuditAsync(platform, tenant, live.User.Id, "member.mfa_disabled", cancellationToken);
-        var user = await users.GetAsync(tenant, live.User.Id, cancellationToken) ?? live.User;
+        // The replacement carries the authority this change committed: a sign-out everywhere since then refuses it.
         if (await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is { } session)
         {
             BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, tenant);
@@ -309,12 +310,37 @@ internal static class SecurityFlow
     /// <summary>How recent a sign-in must be to start enrolment.</summary>
     public static readonly TimeSpan ReauthenticationWindow = TimeSpan.FromMinutes(15);
 
-    /// <summary>The browser's live session and its user, or null.</summary>
-    public static Task<(SessionRecord Session, UserRecord User)?> LiveAsync(HttpContext context, Sessions sessions, CancellationToken cancellationToken)
+    /// <summary>The browser's live session, its stored version and its user, or null.</summary>
+    public static Task<(SessionRecord Session, string Version, UserRecord User)?> LiveAsync(HttpContext context, Sessions sessions, CancellationToken cancellationToken)
     {
         var tenant = SignInFlow.Tenant(context);
-        return sessions.ResolveAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        return sessions.ResolveVersionedAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
     }
+
+    /// <summary>
+    /// Binds enrolment to the caller's session. Immediately before submission the change is refused once the session's
+    /// expiry or the end of its reauthentication window has passed; the transaction itself asserts that the session is
+    /// still stored, unrevoked and at its authentication state, and was unexpired at the time this request sampled. A
+    /// commit the store acknowledges is kept even if it lands after a deadline; the pending secret expires by the earlier one.
+    /// </summary>
+    public static MfaAuthorization Fresh(HttpContext context, SessionRecord session)
+    {
+        var fresh = session.CreatedAt + ReauthenticationWindow;
+        return new(Sessions.Live(session, context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()), fresh < session.ExpiresAt ? fresh : session.ExpiresAt);
+    }
+
+    /// <summary>
+    /// Consumes the caller's session, at the version that authorized the request, in the factor change's commit: a
+    /// sign-out, rotation or revocation that lands first fails the change. Its expiry is checked immediately before
+    /// submission. The endpoint then opens the replacement from the committed user state.
+    /// </summary>
+    public static MfaAuthorization Consumed(SessionRecord session, string version) =>
+        new(AuthStore.Delete(AuthStore.SessionCollection, session.InstanceId, session.TokenHash, version), session.ExpiresAt);
+
+    /// <summary>The answer to a factor change that did not commit: sign in again once the caller's session is gone.</summary>
+    public static async Task<IResult> RefusedAsync(HttpContext context, Sessions sessions, TotpCredentials mfa, UserRecord user, (string Title, string Message) error, int statusCode,
+        CancellationToken cancellationToken) =>
+        await LiveAsync(context, sessions, cancellationToken) is null ? SignIn(context) : await PageAsync(context, mfa, user, error, cancellationToken, statusCode);
 
     /// <summary>Whether <paramref name="session"/> was opened recently enough for a credential change.</summary>
     public static bool Recent(HttpContext context, SessionRecord session) =>
