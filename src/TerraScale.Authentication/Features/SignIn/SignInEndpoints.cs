@@ -494,13 +494,20 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
 /// <summary>Checks shared by the sign-in forms.</summary>
 internal static class SignInFlow
 {
-    public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null)
+    public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
-        var retryAfter = ((long)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
+        var retryAfter = seconds.ToString(CultureInfo.InvariantCulture);
         context.Response.Headers.RetryAfter = retryAfter;
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, Tenant(context), email, next, $"Try again in {retryAfter} seconds.") { ErrorTitle = "Too many attempts", Limited = true, PendingToken = pendingToken },
+            new SignInPageModel(step, Tenant(context), email, next, $"Try again in {retryAfter} seconds.")
+            {
+                ErrorTitle = "Too many attempts",
+                Limited = true,
+                PendingToken = pendingToken,
+                Challenge = challenge,
+            },
             StatusCodes.Status429TooManyRequests);
     }
 

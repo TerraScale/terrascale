@@ -8,6 +8,7 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
+using TerraScale.Authentication.Store;
 using TerraScale.Endpoints;
 using ZLogger;
 
@@ -26,7 +27,7 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         Post("/ui/{slug}/sign-in/mfa");
         Name("ui_sign_in_mfa");
         Summary("Sign in with a second factor");
-        Description("Same-origin form post with challenge (from the code, password or sign-up step), code and next. code is the authenticator app's current six-digit code or one unused 24-character recovery code; each works once. The challenge lasts 5 minutes and dies with a sign-out everywhere, reset or factor change. Charges 30 calls per IP per minute and 10 second-factor attempts per account per 15 minutes; exhaustion answers 429. A wrong code answers 401 with the step again. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post with challenge (from the code, password or sign-up step), code and next. code is the authenticator app's current six-digit code or one unused 24-character recovery code; each works once. The challenge lasts 5 minutes, completes at most once and dies with a sign-out everywhere, reset or factor change; a spent or expired challenge answers 401 with sign-in from the start. Charges 30 calls per IP per minute and 10 second-factor attempts per account per 15 minutes; exhaustion answers 429 with Retry-After and keeps a live challenge. A wrong code answers 401 with the step again. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -48,25 +49,34 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } wait)
+        var ipWait = await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken);
+        // Resolving the challenge only reads: a refused request keeps a valid continuation and spends no proof.
+        if (await mfa.ChallengedAsync(tenant, form.Challenge, cancellationToken) is not { } challenged)
         {
-            AuthMetrics.SignIn("hosted_mfa", "rate_limited");
-            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, wait, form.Email ?? string.Empty, next);
+            AuthMetrics.SignIn("hosted_mfa", ipWait is null ? "expired" : "rate_limited");
+            return Expired(tenant, next);
         }
 
-        if (await mfa.ChallengedUserAsync(tenant, form.Challenge, cancellationToken) is not { } user)
+        var user = challenged.User;
+        if (ipWait is { } wait)
         {
-            AuthMetrics.SignIn("hosted_mfa", "expired");
-            var expired = new SignInPageModel(SignInStep.Email, tenant, Next: next, Error: "Your sign-in took too long or your account changed. Sign in again.")
-            {
-                ErrorTitle = "Sign-in expired",
-            };
-            return SignInPageModel.Render(this.HttpContext, expired, StatusCodes.Status401Unauthorized);
+            AuthMetrics.SignIn("hosted_mfa", "rate_limited");
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, wait, user.Email, next, challenge: form.Challenge);
         }
 
         var code = (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim();
-        if (!await mfa.VerifyAsync(user, code, cancellationToken)
-            || await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true }, cancellationToken) is not { } session)
+        bool completed;
+        try
+        {
+            completed = await mfa.CompleteAsync(challenged, code, cancellationToken);
+        }
+        catch (ApiException limited) when (limited is { Status: StatusCodes.Status429TooManyRequests, RetryAfter: { } accountWait })
+        {
+            AuthMetrics.SignIn("hosted_mfa", "rate_limited");
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, accountWait, user.Email, next, challenge: form.Challenge);
+        }
+
+        if (!completed)
         {
             AuthMetrics.SignIn("hosted_mfa", "refused");
             var wrong = new SignInPageModel(SignInStep.Mfa, tenant, user.Email, next, "Enter the current code from your authenticator app, or an unused recovery code.")
@@ -75,6 +85,13 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
                 Challenge = form.Challenge,
             };
             return SignInPageModel.Render(this.HttpContext, wrong, StatusCodes.Status401Unauthorized);
+        }
+
+        // The challenge is spent; a session that loses to a newer sign-out or a competing completion starts over.
+        if (await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true }, cancellationToken) is not { } session)
+        {
+            AuthMetrics.SignIn("hosted_mfa", "expired");
+            return Expired(tenant, next);
         }
 
         if (code.Length != 6)
@@ -86,6 +103,12 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         AuthMetrics.SignIn("hosted_mfa", "succeeded");
         return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
     }
+
+    private IResult Expired(string tenant, string? next) =>
+        SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, tenant, Next: next, Error: "Your sign-in took too long, was already completed or your account changed. Sign in again.")
+        {
+            ErrorTitle = "Sign-in expired",
+        }, StatusCodes.Status401Unauthorized);
 }
 
 /// <summary><c>GET /ui/{slug}/security</c>: the signed-in account's two-factor state, with enrolment or removal.</summary>
