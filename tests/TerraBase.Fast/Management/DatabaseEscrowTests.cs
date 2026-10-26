@@ -83,6 +83,9 @@ public sealed class DatabaseEscrowTests
         await cell.CountEverywhereAsync(0);
         await cell.StopAsync(0);
         await cell.StopAsync(2);
+        var peers = cell.Regions[1].Server.Services.GetRequiredService<IEscrowPeers>();
+        await TerraBaseTestServer.EventuallyAsync(async token => (await peers.RegionsAsync(token)).Count == 0,
+            timeout: TimeSpan.FromSeconds(30));
         // AllRegions remains valid after peer discovery expires, so this reaches the allowance check.
         using var refused = await cell.Regions[1].Client.PostAsJsonAsync(ManagementApi.Uri(cell.Databases),
             new { name = "partitioned", allRegions = true });
