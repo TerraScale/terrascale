@@ -1,13 +1,13 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
 	"errors"
@@ -38,8 +38,8 @@ func postgresTestConfig(t *testing.T) PostgresConfig {
 		t.Fatal(err)
 	}
 	id := "01ARZ3NDEKTSV4RRFFQ69G5FAE"
-	return PostgresConfig{Host: "127.0.0.1", Port: 55432, TLSServerName: "postgres.example", Database: "01J0000000E008000000000001",
-		KeyID: id, Password: "tbk1." + id + "." + base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+	return PostgresConfig{Host: "127.0.0.1", Port: 55432, TLSServerName: "postgres.example", Database: "main",
+		KeyID: id, Password: id + "_" + strings.Repeat("0", 52),
 		CACertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
 }
 
@@ -78,7 +78,7 @@ func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
 	if driver.Host != config.Host || driver.Port != config.Port || driver.User != config.KeyID || driver.Database != config.Database || driver.Password != config.Password {
 		t.Fatal("ambient identity or routing affected explicit config")
 	}
-	if driver.TLSConfig.MinVersion != tls.VersionTLS13 || driver.TLSConfig.MaxVersion != tls.VersionTLS13 || driver.TLSConfig.InsecureSkipVerify || driver.TLSConfig.ServerName != config.TLSServerName {
+	if driver.TLSConfig.MinVersion != tls.VersionTLS13 || driver.TLSConfig.MaxVersion != 0 || driver.TLSConfig.InsecureSkipVerify || driver.TLSConfig.ServerName != config.TLSServerName || driver.ConnectTimeout != 5*time.Second {
 		t.Fatal("TLS contract weakened")
 	}
 	if !slices.Equal(driver.TLSConfig.NextProtos, []string{"postgresql"}) || driver.TLSConfig.VerifyConnection == nil {
@@ -86,7 +86,7 @@ func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
 	}
 	for _, selected := range []string{"", "h2", "postgresql"} {
 		err := driver.TLSConfig.VerifyConnection(tls.ConnectionState{NegotiatedProtocol: selected})
-		if (err == nil) != (selected == "postgresql") {
+		if (err == nil) != (selected == "postgresql" || selected == "") {
 			t.Fatalf("selected protocol %q: %v", selected, err)
 		}
 	}
@@ -96,6 +96,43 @@ func TestPostgresConfigOverridesHostileLibpqEnvironment(t *testing.T) {
 	}
 	if strings.Contains(fmt.Sprintf("%v %#v", config, config), config.Password) || strings.Contains(driver.ConnString(), config.Password) {
 		t.Fatal("configuration diagnostics expose a credential")
+	}
+}
+
+func TestPostgresPublicDefaultsAndDatabaseSelectors(t *testing.T) {
+	t.Setenv("PGSERVICE", "")
+	key := "01ARZ3NDEKTSV4RRFFQ69G5FAE_" + strings.Repeat("0", 52)
+	for _, database := range []string{"main", "a-b_2", "01ARZ3NDEKTSV4RRFFQ69G5FAE/main"} {
+		driver, err := buildPostgresConfig(PostgresConfig{Database: database, Password: key})
+		if err != nil {
+			t.Fatal("public configuration rejected")
+		}
+		if driver.Host != "pg.terrascale.tech" || driver.Port != 5432 || driver.Database != database || driver.User != key[:26] ||
+			driver.TLSConfig.ServerName != driver.Host || driver.TLSConfig.RootCAs != nil || len(driver.Fallbacks) != 0 {
+			t.Fatal("public defaults, selector, identity or system trust lost")
+		}
+	}
+	for _, database := range []string{"", "Main", "a/b", "01ARZ3NDEKTSV4RRFFQ69G5FAE/main/other", "01ARZ3NDEKTSV4RRFFQ69G5FAE%2Fmain", "main\x00", "main\n", "con", "com0", "lpt9", strings.Repeat("a", 64)} {
+		if _, err := buildPostgresConfig(PostgresConfig{Database: database, Password: key}); err == nil {
+			t.Fatal("malformed database selector admitted")
+		}
+	}
+	for _, password := range []string{"", "tbk1." + key[:26] + ".secret", strings.ToLower(key), key[:len(key)-1], key + "0", key[:27] + strings.Repeat("i", 52), key + "\n"} {
+		_, err := buildPostgresConfig(PostgresConfig{Database: "main", Password: password})
+		if err == nil || password != "" && strings.Contains(err.Error(), password) {
+			t.Fatal("malformed key admitted or exposed")
+		}
+	}
+	for _, config := range []PostgresConfig{
+		{Database: "main", Password: key, KeyID: "01ARZ3NDEKTSV4RRFFQ69G5FAF"},
+		{Database: "main", Password: key, Host: "https://pg.terrascale.tech"},
+		{Database: "main", Password: key, TLSServerName: "bad\nname"},
+		{Database: "main", Password: key, CACertificatePEM: []byte("not a certificate")},
+		{Database: "main", Password: key, CACertificatePEM: make([]byte, 65537)},
+	} {
+		if _, err := buildPostgresConfig(config); err == nil {
+			t.Fatal("invalid identity, route or trust admitted")
+		}
 	}
 }
 
@@ -121,9 +158,18 @@ func TestPostgresFailurePreservesStateAndCancellationWithoutDriverDetails(t *tes
 	}
 }
 
-// This uses the actual pgx startup path over an in-memory TLS peer. It proves
-// rejection before startup bytes, not a successful native PostgreSQL journey.
-func TestPostgresALPNRejectsBeforeStartup(t *testing.T) {
+func TestPostgresConnectHonorsCanceledContext(t *testing.T) {
+	t.Setenv("PGSERVICE", "")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	connection, err := ConnectPostgres(ctx, postgresTestConfig(t))
+	if connection != nil || !errors.Is(err, context.Canceled) {
+		t.Fatal("connect lost caller cancellation")
+	}
+}
+
+// The real pgx SSLRequest path must verify TLS before sending startup bytes.
+func TestPostgresTLSBeforeStartup(t *testing.T) {
 	t.Setenv("PGSERVICE", "")
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -140,10 +186,27 @@ func TestPostgresALPNRejectsBeforeStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, offered := range []string{"", "h2"} {
-		t.Run("server="+offered, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, alpn, serverName string
+		untrusted, refuseTLS   bool
+		startup                int
+	}{
+		{name: "optional ALPN", startup: 1},
+		{name: "postgresql ALPN", alpn: "postgresql", startup: 1},
+		{name: "wrong protocol", alpn: "h2"},
+		{name: "wrong hostname", serverName: "wrong.example"},
+		{name: "untrusted certificate", untrusted: true},
+		{name: "no plaintext fallback", refuseTLS: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			config := postgresTestConfig(t)
 			config.CACertificatePEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+			if tc.untrusted {
+				config.CACertificatePEM = nil
+			}
+			if tc.serverName != "" {
+				config.TLSServerName = tc.serverName
+			}
 			driver, err := buildPostgresConfig(config)
 			if err != nil {
 				t.Fatal(err)
@@ -160,22 +223,55 @@ func TestPostgresALPNRejectsBeforeStartup(t *testing.T) {
 					sent <- -1
 					return
 				}
-				if _, err := peer.Write([]byte{'S'}); err != nil {
+				answer := byte('S')
+				if tc.refuseTLS {
+					answer = 'N'
+				}
+				if _, err := peer.Write([]byte{answer}); err != nil {
 					sent <- -1
 					return
 				}
+				if tc.refuseTLS {
+					var startup [1]byte
+					n, _ := peer.Read(startup[:])
+					sent <- n
+					return
+				}
 				serverConfig := &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
-				if offered != "" {
-					serverConfig.NextProtos = []string{offered}
+				if tc.alpn != "" {
+					serverConfig.NextProtos = []string{tc.alpn}
 				}
 				secure := tls.Server(peer, serverConfig)
 				if err := secure.HandshakeContext(t.Context()); err != nil {
 					sent <- 0
 					return
 				}
-				var startup [1]byte
-				n, _ := secure.Read(startup[:])
-				sent <- n
+				var header [4]byte
+				if _, err := io.ReadFull(secure, header[:]); err != nil {
+					sent <- 0
+					return
+				}
+				length := binary.BigEndian.Uint32(header[:])
+				if length < 8 || length > 10000 {
+					sent <- -2
+					return
+				}
+				startup := make([]byte, length-4)
+				if _, err := io.ReadFull(secure, startup); err != nil || !bytes.Contains(startup, []byte("database\x00main\x00")) {
+					sent <- -2
+					return
+				}
+				// Request the password only after the TLS boundary has been verified.
+				secure.Write([]byte{'R', 0, 0, 0, 8, 0, 0, 0, 3})
+				password := make([]byte, 5+len(config.Password)+1)
+				if _, err := io.ReadFull(secure, password); err != nil || password[0] != 'p' || string(password[5:]) != config.Password+"\x00" {
+					sent <- -2
+					return
+				}
+				secure.Write([]byte{'R', 0, 0, 0, 8, 0, 0, 0, 0, 'Z', 0, 0, 0, 5, 'I'})
+				sent <- 1
+				var terminate [5]byte
+				io.ReadFull(secure, terminate[:])
 			}()
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
@@ -183,10 +279,10 @@ func TestPostgresALPNRejectsBeforeStartup(t *testing.T) {
 			if connection != nil {
 				connection.Close(ctx)
 			}
-			if err == nil {
-				t.Fatal("non-PostgreSQL ALPN admitted")
+			if (err == nil) != (tc.startup == 1) {
+				t.Fatal("PostgreSQL TLS handshake acceptance mismatch")
 			}
-			if count := <-sent; count != 0 {
+			if count := <-sent; count != tc.startup {
 				t.Fatalf("startup bytes=%d", count)
 			}
 		})

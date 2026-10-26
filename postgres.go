@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"errors"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,19 +17,26 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const postgresMaxBytes = 16 * 1024
+const (
+	postgresMaxBytes       = 16 * 1024
+	postgresConnectTimeout = 5 * time.Second
+)
 
-// PostgresConfig addresses an explicitly enabled, signed PostgreSQL listener.
-// Credentials and CA trust are independent from the native HTTP configuration.
+// PostgresConfig addresses the public PostgreSQL listener with a dashboard API key.
+// Zero routing/trust fields use pg.terrascale.tech:5432 and verified system trust.
 type PostgresConfig struct {
-	Host             string
-	Port             uint16
+	// Host and Port override the public listener address for a custom deployment.
+	Host string
+	Port uint16
+	// TLSServerName defaults to Host; CACertificatePEM replaces system roots when supplied.
 	TLSServerName    string
 	CACertificatePEM []byte
-	Database         string
-	KeyID            string
-	Password         string
-	ConnectTimeout   time.Duration
+	// Database is a name, or project ULID/name for an organization-wide key.
+	Database string
+	// KeyID is optional; when supplied it must equal the ID in Password.
+	KeyID string
+	// Password is the complete dashboard API key: <ULID>_<52 lowercase Crockford base32 characters>.
+	Password string
 }
 
 // String and GoString keep credentials out of ordinary configuration diagnostics.
@@ -122,26 +129,39 @@ func postgresParameters(query PostgresQuery) ([]any, error) {
 	return values, nil
 }
 
-func postgresBase64(value string, length int) bool {
-	decoded, err := base64.RawURLEncoding.DecodeString(value)
-	return err == nil && len(decoded) == length && base64.RawURLEncoding.EncodeToString(decoded) == value
-}
+var (
+	postgresDatabaseName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
+	postgresReservedName = regexp.MustCompile(`^(con|prn|aux|nul|com[0-9]|lpt[0-9])$`)
+)
 
 func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
-	timeout := config.ConnectTimeout
-	if timeout == 0 {
-		timeout = 5 * time.Second
+	if config.Host == "" {
+		config.Host = "pg.terrascale.tech"
 	}
-	parts := strings.Split(config.Password, ".")
-	if config.Host == "" || len(config.Host) > 253 || strings.ContainsAny(config.Host, " \t\r\n,/\x00") || config.Port == 0 ||
-		config.TLSServerName == "" || strings.ContainsAny(config.TLSServerName, " \t\r\n,/\x00") || timeout <= 0 || timeout > 10*time.Second ||
-		ValidateID(config.Database) != nil || ValidateID(config.KeyID) != nil || len(parts) != 3 || parts[0] != "tbk1" ||
-		parts[1] != config.KeyID || !postgresBase64(parts[2], 32) || len(config.CACertificatePEM) > 64*1024 {
+	if config.Port == 0 {
+		config.Port = 5432
+	}
+	if config.TLSServerName == "" {
+		config.TLSServerName = config.Host
+	}
+	keyID, secret, _ := strings.Cut(config.Password, "_")
+	project, name, qualified := strings.Cut(config.Database, "/")
+	if !qualified {
+		name = config.Database
+	}
+	if len(config.Host) > 253 || strings.ContainsAny(config.Host, " \t\r\n,/@\x00") ||
+		len(config.TLSServerName) > 253 || strings.ContainsAny(config.TLSServerName, " \t\r\n,/@\x00") ||
+		!postgresDatabaseName.MatchString(name) || postgresReservedName.MatchString(name) || qualified && ValidateID(project) != nil ||
+		ValidateID(keyID) != nil || len(secret) != 52 || strings.Trim(secret, "0123456789abcdefghjkmnpqrstvwxyz") != "" ||
+		config.KeyID != "" && config.KeyID != keyID || len(config.CACertificatePEM) > 64*1024 {
 		return nil, &PostgresError{Kind: "configuration"}
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(config.CACertificatePEM) {
-		return nil, &PostgresError{Kind: "configuration"}
+	var roots *x509.CertPool // nil uses the platform's system certificate roots.
+	if len(config.CACertificatePEM) != 0 {
+		roots = x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(config.CACertificatePEM) {
+			return nil, &PostgresError{Kind: "configuration"}
+		}
 	}
 	// pgx has no environment-free config constructor. Refuse service selection
 	// before parsing; explicit nonempty stub passwords also prevent pgpass reads.
@@ -153,15 +173,16 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 	if err != nil {
 		return nil, &PostgresError{Kind: "configuration"}
 	}
-	driver.Host, driver.Port, driver.Database, driver.User, driver.Password = config.Host, config.Port, config.Database, config.KeyID, config.Password
-	driver.ConnectTimeout = timeout
-	driver.DialFunc = (&net.Dialer{Timeout: timeout}).DialContext
+	driver.Host, driver.Port, driver.Database, driver.User, driver.Password = config.Host, config.Port, config.Database, keyID, config.Password
+	driver.ConnectTimeout = postgresConnectTimeout
+	driver.DialFunc = (&net.Dialer{Timeout: postgresConnectTimeout}).DialContext
 	driver.TLSConfig = &tls.Config{
 		RootCAs: roots, ServerName: config.TLSServerName,
-		MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		MinVersion: tls.VersionTLS13,
 		NextProtos: []string{"postgresql"},
 		VerifyConnection: func(state tls.ConnectionState) error {
-			if state.NegotiatedProtocol != "postgresql" {
+			// SSLRequest establishes the protocol; the public edge permits absent ALPN.
+			if state.NegotiatedProtocol != "" && state.NegotiatedProtocol != "postgresql" {
 				return &PostgresError{Kind: "tls_protocol"}
 			}
 			return nil

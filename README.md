@@ -452,10 +452,28 @@ The platform management API, API key tokens and headless sign-in are in
 `terrascale.tech/sdk/tsauth`.
 
 Schema and SQL builders construct and validate statements locally and do not
-execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
-listener configuration, credentials, and CA trust. Actual PostgreSQL execution
-requires its producer protocol and an admitted signed listener; source and
-package checks do not qualify an actual admitted PostgreSQL runtime.
+execute SQL over HTTP. The pgx-backed PostgreSQL client connects to
+`pg.terrascale.tech:5432` using the dashboard API key directly as its password.
+`PostgresConfig.Database` is the database name for a project key, or
+`<project ULID>/<name>` for an organization key; do not URL-encode the slash.
+The optional `KeyID` must match the password's key ID; otherwise it is derived.
+TLS uses PostgreSQL SSLRequest negotiation, verifies the hostname and trusts
+system certificate roots. Custom deployments can supply `Host`, `Port`,
+`TLSServerName` and `CACertificatePEM` as explicit routing and trust inputs.
+Connections have a fixed five-second deadline; a shorter caller deadline wins.
+There is no plaintext fallback, reconnect or automatic mutation replay.
+Ambient libpq routing, credentials and trust are ignored; a nonempty `PGSERVICE`
+is rejected before pgx parses configuration or reads a service file.
+
+The connection contract is pinned to the implemented
+[credential/database authorization](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs),
+[issued key syntax](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraScale.Authentication/Features/Platform/ApiKeys.cs),
+[public TLS edge](https://github.com/TerraScale/ts-orchestrator/blob/4c8093d0fed4b69fd31d83daa62b78301c2015e8/internal/edge/postgres.go),
+and [public connection guide](https://github.com/TerraScale/ts-docs/blob/894161603ff0cdeb18bb6f4a489394d197844b1f/docs/guides/postgres-clients.md).
+After SSLRequest, ALPN may be absent or `postgresql`. Source and fixture checks
+do not establish live authorization. The current single-session wrapper still
+has probe-only result/type/parameter limits; pooling and transaction ownership
+require separate work.
 
 ## Region latency (`client.Status`)
 
@@ -650,8 +668,7 @@ The module requires Go 1.25 and has no CGO dependency. CI selects the patched
 Go 1.27.2 toolchain and runs the pinned vulnerability scanner alongside
 formatting, vet, build and race tests.
 
-PostgreSQL connections require plain ULIDs for both `PostgresConfig.Database`
-and `PostgresConfig.KeyID`; the key ID is also the PostgreSQL username.
-API key token sources use `<26-character ULID>_<52-character secret>`:
+PostgreSQL passwords and API key token sources use
+`<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`:
 the ULID alone is the OAuth client ID. Credential prefixes identify secret
 formats and are never part of an entity ID.
