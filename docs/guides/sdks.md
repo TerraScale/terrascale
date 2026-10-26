@@ -12,7 +12,7 @@ Use a TerraBase SDK to store and query JSON documents in a project database. Eac
 | --- | --- | --- | --- |
 | JavaScript / TypeScript | `@terrascale/sdk@0.0.13`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
 | C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Build the package from source; [quickstart](/getting-started/csharp) |
-| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.3` |
+| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.5` |
 | Python | `terrascale`, `TerraScale` / `AsyncTerraScale` | Python ≥3.10, httpx | `pip install` from Git; [quickstart](/getting-started/python) |
 | Rust | `terrascale::v1`, `Client::for_project` | Rust 2021 edition, Tokio | Git tag `v0.0.2`; not on crates.io yet |
 
@@ -84,7 +84,7 @@ Imports below use the `@terrascale/sdk` prefix. Framework utilities do not suppl
 ### Go
 
 ```bash
-go get terrascale.tech/sdk@v0.0.3
+go get terrascale.tech/sdk@v0.0.5
 ```
 
 Import `terrascale.tech/sdk/v1`. `New(Config)` takes a `BaseURL` (or a `Resolver`) and a `Token`. `Database(projectId, name)` and named collections scope document operations; `ExecuteSQL`, `QuerySQL` and `BatchSQL` run [SQL](/guides/sql-http#from-the-sdks).

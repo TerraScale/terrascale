@@ -22,14 +22,18 @@ The package is available on [public npm registry](https://registry.npmjs.org/@te
 
 ## 2. Supply connection details
 
-Exchange your dashboard API key for a 60-second access token (`expires_in: 60`), then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The example creates the collection when it does not exist yet. It reads environment variables; it does not load an `.env` file.
+Use Bash, `curl` and `jq` with shell tracing off. Exchange your dashboard API key for a 60-second access token (`expires_in: 60`), then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The example creates the collection when it does not exist yet. It reads environment variables; it does not load an `.env` file.
 
 ```bash
-read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
-export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
-  -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" -d grant_type=client_credentials \
-  https://auth.terrascale.tech/terrascale/oauth/token \
-  | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
+set +x
+set -o pipefail
+read -rs TERRASCALE_API_KEY &&  # paste the key, then press Enter
+TERRASCALE_ACCESS_TOKEN="$(
+  printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
+    curl -sS --fail-with-body --config - -d grant_type=client_credentials \
+      https://auth.terrascale.tech/terrascale/oauth/token |
+    jq -er '.access_token | select(type == "string" and length > 0)'
+)" && export TERRASCALE_ACCESS_TOKEN
 export TERRASCALE_API_URL='https://api.terrascale.tech'
 export TERRASCALE_PROJECT_ID='YOUR_PROJECT_ID'
 export TERRASCALE_DATABASE_NAME='YOUR_DATABASE_NAME'
