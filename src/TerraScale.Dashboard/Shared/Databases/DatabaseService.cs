@@ -232,6 +232,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                 (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
+            // A collaborator without saved placement discovers only its exact project in each region.
+            if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId)) homes = catalog.ToArray();
             var listings = await Task.WhenAll(homes.Select(async home =>
             {
                 try { return (home, Listed: await backend.ListAsync(scope, home, cancellationToken)); }
@@ -275,6 +277,11 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                     }
                 foreach (var record in imported.Where(record => !target.Databases.ContainsKey(record.Id) && target.Databases.Values.All(database => database.Name != record.Name)))
                     target.Databases[record.Id] = record;
+            }
+            if (!context.Organization!.ContainsMember(context.UserId))
+            {
+                Apply(project);
+                return;
             }
             ProjectRecord? saved = null;
             await accounts.UpdateOrganizationAsync(context, org =>

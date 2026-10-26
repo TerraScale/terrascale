@@ -179,11 +179,9 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         var account = await EnsureAsync(session, cancellationToken);
         // The organization this view selects also needs its members and ownership transfer; they load with its projects.
         var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
-        // Its projects, members and transfer start before ts-auth's organization list answers, and are used only once
-        // that list grants the caller a role there. ts-auth authorizes each of these reads with the caller's own token.
+        // Prefetch projects only: the organization list must prove an organization role before access reads start.
         var early = accessFor is { Length: > 0 } && TerraScaleIds.IsValid(accessFor)
-            ? (Projects: Deferred(() => platform.ListProjectsAsync(session, accessFor, cancellationToken)), Access: Deferred(() => FetchAccessAsync(session, accessFor, cancellationToken)))
-            : default;
+            ? Deferred(() => platform.ListProjectsAsync(session, accessFor, cancellationToken)) : null;
         // A refusal for an organization the list then leaves out is only ever a discarded task, never this call's failure.
         static async Task<T> Deferred<T>(Func<Task<T>> read) => await read();
         var lives = await listing;
@@ -192,18 +190,17 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
         async Task HydrateSelectedAsync(OrganizationRecord org)
         {
-            if (!org.MfaRequired) ApplyAccess(org, session, prefetched.TryGetValue(org.Id, out var access) ? access : await FetchAccessAsync(session, org.Id, cancellationToken));
+            if (!org.MfaRequired && org.ContainsMember(session.UserId)) ApplyAccess(org, session, prefetched.TryGetValue(org.Id, out var access) ? access : await FetchAccessAsync(session, org.Id, cancellationToken));
         }
-        // A project collaborator has no organization role (role null) and no organization view.
-        var loaded = await Task.WhenAll(lives.Where(live => live.Role is { Length: > 0 } && TerraScaleIds.IsValid(live.Id)).Select(async live =>
+        var loaded = await Task.WhenAll(lives.Where(live => TerraScaleIds.IsValid(live.Id) && (live.Role is null or "owner" or "admin" or "member" or "viewer")).Select(async live =>
         {
             // Only a platform admin, checked against the signed access token on every request, sees the platform organization.
             var platformOrg = PlatformDatabases.IsPlatform(live.Id);
             if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin") return null;
-            var selected = live.Id == accessFor && early.Projects is not null;
-            var access = live.Id == accessFor ? selected ? early.Access : FetchAccessAsync(session, live.Id, cancellationToken) : null;
-            var stored = OrganizationStateAsync(live, cancellationToken);
-            var projects = selected ? early.Projects! : platform.ListProjectsAsync(session, live.Id, cancellationToken);
+            var collaborator = live.Role is null;
+            var access = !collaborator && live.Id == accessFor ? FetchAccessAsync(session, live.Id, cancellationToken) : null;
+            var stored = OrganizationStateAsync(live, cancellationToken, create: !collaborator);
+            var projects = live.Id == accessFor && early is not null ? early : platform.ListProjectsAsync(session, live.Id, cancellationToken);
             var org = await stored;
             // ts-auth refuses an organization that requires two-factor to a caller without it; the
             // organization stays listed, keeps its stored projects and is blocked when selected.
@@ -211,6 +208,14 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             try { listed = await projects; }
             catch (AccountAccessException error) when (error.Code == TsAuthGateway.MfaRequiredCode) { org.MfaRequired = true; }
             Hydrate(org, live, listed, session);
+            if (collaborator)
+            {
+                if (org.Status != "active" || org.Archived || !org.MfaRequired && org.Projects.Count == 0) return null;
+                // Request-only container: no organization settings, identities, billing or audit authority escape.
+                return new OrganizationRecord { Id = org.Id, Name = org.Name, Slug = org.Slug, CreatedAt = org.CreatedAt,
+                    Kind = "", PlanId = "", BillingStatus = "", MfaRequired = org.MfaRequired,
+                    Projects = org.Projects.ToDictionary(item => item.Key, item => CollaboratorProject(item.Value)) };
+            }
             await plans.PublishAsync(org, cancellationToken);
             if (platformOrg)
             {
@@ -265,12 +270,13 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     }
 
     // An organization created outside the dashboard starts as a business workspace that needs billing.
-    private async Task<OrganizationRecord> OrganizationStateAsync(TerraScaleAuthPlatformOrganization live, CancellationToken cancellationToken)
+    private async Task<OrganizationRecord> OrganizationStateAsync(TerraScaleAuthPlatformOrganization live, CancellationToken cancellationToken, bool create = true)
     {
         var document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken);
         if (document is null)
         {
             var created = new OrganizationRecord { Id = live.Id, Name = live.Name, Slug = Slug(live.Name), Kind = "business", BillingStatus = "billing_required", OwnerUserId = live.CreatedBy, CreatedAt = live.CreatedAt };
+            if (!create) return created;
             try
             {
                 await state.PutAsync(OrganizationsCollection, live.Id, JsonSerializer.SerializeToElement(created), TerraBasePrecondition.Absent, cancellationToken);
@@ -293,20 +299,35 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         org.Name = live.Name;
         org.Slug = Slug(live.Name);
         org.CreatedAt = live.CreatedAt;
-        Member(org, session, live.Role!);
-        if (projects is null) return;
+        if (live.Role is not null) Member(org, session, live.Role);
+        if (projects is null) { if (live.Role is null) org.Projects = new(); return; }
         var saved = org.Projects;
         org.Projects = new();
-        foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id) && !org.DeletedProjectIds.Contains(project.Id)))
+        foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id) && !org.DeletedProjectIds.Contains(project.Id) &&
+            (live.Role is not null || project.Role is "viewer" or "member" or "admin")))
         {
             var project = saved.GetValueOrDefault(remote.Id) ?? new ProjectRecord { Id = remote.Id, CreatedAt = remote.CreatedAt };
+            if (live.Role is null && project.Status != "active") continue;
+            project.Id = remote.Id;
             project.OrganizationId = live.Id;
             project.Name = remote.Name;
             project.Slug = Slug(remote.Name);
             project.CreatedAt = remote.CreatedAt;
+            project.Role = remote.Role;
             org.Projects[remote.Id] = project;
         }
     }
+
+    private static ProjectRecord CollaboratorProject(ProjectRecord project) => new()
+    {
+        Id = project.Id, OrganizationId = project.OrganizationId, Name = project.Name, Slug = project.Slug,
+        Role = project.Role, CreatedAt = project.CreatedAt, Region = project.Region, BackupRegion = project.BackupRegion,
+        Regions = project.Regions, Status = project.Status, IsDefault = project.IsDefault,
+        Databases = project.Databases.Where(item => TerraScaleIds.IsValid(item.Key) && item.Key == item.Value.Id && item.Value.ProjectId == project.Id)
+            .ToDictionary(item => item.Key, item => new DatabaseRecord { Id = item.Value.Id, ProjectId = project.Id,
+                Name = item.Value.Name, Region = item.Value.Region, Regions = item.Value.Regions, Endpoint = item.Value.Endpoint,
+                Status = item.Value.Status, AllRegions = item.Value.AllRegions, CreatedAt = item.Value.CreatedAt })
+    };
 
     // Members, the owner and a pending ownership transfer as ts-auth holds them now. Stored
     // member entries contribute only display names; they never decide membership.

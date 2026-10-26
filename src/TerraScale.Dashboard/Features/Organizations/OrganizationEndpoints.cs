@@ -32,6 +32,8 @@ public static class OrganizationEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);
+            if (context.Organization is not null && context.Role.Length == 0)
+                return Results.Text("Organization membership is required.", statusCode: StatusCodes.Status403Forbidden);
             if (http.Request.Query["tab"] == "billing" && http.Request.Query["payment"] == "success" && context.Role == "owner")
             {
                 await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>().ConfirmAsync(context, http.RequestAborted);
@@ -109,6 +111,7 @@ public static class OrganizationEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
+            if (context.Role != "owner") return Results.StatusCode(403);
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try
@@ -142,6 +145,8 @@ public static class OrganizationEndpoints
 
     private static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null)
     {
+        if (context.Organization is not null && context.Role.Length == 0)
+            throw new AccountAccessException("Organization membership is required.");
         var tab = tabOverride ?? (http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString());
         if (tab is not ("projects" or "members" or "invitations" or "audit" or "sso" or "billing" or "danger")) tab = "organization";
         var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
