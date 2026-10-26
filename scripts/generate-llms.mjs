@@ -27,7 +27,7 @@ const routes = [
   ['/guides/orm-prisma', 'Use Prisma ORM 7 with the libSQL adapter: schema, migrations, queries and transactions'],
   ['/guides/orm-sqlalchemy', 'Use SQLAlchemy 2 with sqlalchemy-libsql: models, create_all, queries and transactions'],
   ['/guides/errors', 'Typed errors, SDK retry behavior and uncertain mutation reconciliation'],
-  ['/guides/rename-database', 'Rename by immutable database ID, connection strings and name conflicts'],
+  ['/guides/rename-database', 'Upcoming database rename: immutable ID, Go ts CLI usage, connection strings and name conflicts'],
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
   ['/guides/functions', 'Deploy JavaScript functions, call them over HTTPS, trigger them on changes or cron, read logs'],
   ['/guides/file-storage', 'Project file buckets, signed uploads and downloads, owner and role permissions, and shared storage allowances'],

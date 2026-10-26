@@ -29,11 +29,16 @@ SDK calls: Go `client.RenameDatabase(ctx, projectId, databaseId, "orders_new")`;
 
 .NET exposes `Task<TerraBaseManagedDatabase> TerraBaseProjectClient.RenameDatabaseAsync(string databaseId, string name, CancellationToken cancellationToken = default)`: call `await project.RenameDatabaseAsync(databaseId, "orders_new", cancellationToken)` on the client bound to your project ULID.
 
-The CLI exchanges the API key read from stdin for a scoped project token; keep the key in a private file, never in arguments or shell history:
+The shipped Go `ts` CLI gains `db rename` in this upcoming release. Use its existing [sign-in and project selection](/ja/cli#sign-in):
+
 ```sh
-terrascale db rename <projectULID> <databaseULID> <new-name> < <private-api-key-file>
-alias ts=terrascale
+ts auth login
+ts -project <projectULID> db rename <databaseULID> orders_new
 ```
+
+With one accessible project, omit `-project`; otherwise pass a project name or ID before `db rename`. The database operand accepts a canonical uppercase ULID or a resolvable current name. A current name is resolved once through database metadata, then the CLI sends PATCH to the returned immutable ID with only the new name in the body. Name resolution also requires `databases:read`. The CLI prints the new name and unchanged ID on success.
+
+For automation, use the CLI's existing `TERRASCALE_API_KEY` authentication described in [CLI sign-in](/ja/cli#sign-in). It exchanges that key for a scoped project token; organization keys require `-project <projectULID>`. Do not pass credentials as command arguments. Rename does not read an API key from stdin.
 
 Do not automatically retry validation or duplicate-name conflicts. After a lost response or uncertain mutation, GET metadata by immutable ID before explicitly retrying: Go `client.Database(projectId, databaseId).Info(ctx)`, JavaScript `client.databases.get(databaseId)`, Python `client.database(database_id).info()` (await with the async client), Rust `client.database(database_id).get_database().await`, or .NET `await project.GetDatabaseAsync(databaseId)`. Existing-resource selectors accept a current name or canonical ULID; new names must pass name validation.
 
