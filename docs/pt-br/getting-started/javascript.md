@@ -73,7 +73,7 @@ Success prints `PASS_TERRABASE_CRUD_QUERY`. The assertions verify persisted fiel
 
 ## 5. Continue safely
 
-For a long-running server, use the complete [renewing token provider](/examples/server-token-provider/README.txt), which pins published SDK 0.0.10.
+For a long-running server, use the complete [renewing token provider](/examples/server-token-provider/README.txt), which pins published SDK 0.0.13.
 
 Generate [TypeScript document models](/pt-br/guides/schema-validation#generate-typescript-document-models) from a declared collection schema.
 
