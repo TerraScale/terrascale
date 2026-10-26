@@ -20,4 +20,3 @@ const (
 	ErrInvalidClient   ErrorCode = "invalid_client"   // 401: the client's id or secret
 	ErrRateLimited     ErrorCode = "rate_limited"     // 429: see APIError.RetryAfter
 )
-
