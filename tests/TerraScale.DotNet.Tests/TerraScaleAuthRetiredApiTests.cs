@@ -74,4 +74,21 @@ public sealed class TerraScaleAuthRetiredApiTests
                 Content = new StringContent("""[{"id":"fixture-membership","role":"member","created_at":8,"organization":{"id":"fixture-org","name":"Fixture","slug":"fixture","created_at":7}}]""", Encoding.UTF8, "application/json")
             });
     }
+
+    [Test]
+    public async Task LegacyInstanceFederationAndDirectoriesHaveNoPublicFactoriesOrDtos()
+    {
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("Connections")).IsNull();
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("Directories")).IsNull();
+        foreach (var name in new[]
+        {
+            "TerraScaleAuthConnectionsClient", "TerraScaleAuthConnection", "TerraScaleAuthConnectionPage",
+            "TerraScaleAuthCreateOidcConnection", "TerraScaleAuthCreateSamlConnection", "TerraScaleAuthUpdateConnection",
+            "TerraScaleAuthDirectoriesClient", "TerraScaleAuthDirectory", "TerraScaleAuthDirectoryPage",
+            "TerraScaleAuthDirectorySecret", "TerraScaleAuthCreateDirectory"
+        })
+        {
+            await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
+        }
+    }
 }

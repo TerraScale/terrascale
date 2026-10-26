@@ -89,3 +89,5 @@ The unsupported `auth.Billing` client and its exclusive plan, seat-quota, checko
 Instance `auth.ApiKeys` and its exclusive `sk_` DTOs are retired. Use only existing producer-backed `Platform` organization/project key operations for their documented authority. Their models, CIDRs, credentials and routes are preserved; no legacy key is silently reinterpreted.
 
 The legacy instance `auth.Organizations` client and its exclusive membership, invitation and domain DTOs are retired. `TerraScaleAuthOrganization` remains only because the not-yet-retired user membership result embeds it. Existing `Platform` organization/member/invitation and `Projects` APIs retain their exact authority and DTOs.
+
+The unsupported instance `auth.Connections` (OIDC/SAML) and `auth.Directories` (SCIM) clients and their exclusive DTOs are retired. This removes only the old instance management authority; supported organization OIDC SSO administration and project provider/export APIs keep their own contracts and DTOs. No SAML or SCIM adapter is introduced.

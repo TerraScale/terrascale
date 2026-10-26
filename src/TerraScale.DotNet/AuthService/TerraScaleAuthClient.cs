@@ -58,8 +58,6 @@ public sealed class TerraScaleAuthClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
-        Connections = new TerraScaleAuthConnectionsClient(this);
-        Directories = new TerraScaleAuthDirectoriesClient(this);
         JwtTemplates = new TerraScaleAuthJwtTemplatesClient(this);
         Webhooks = new TerraScaleAuthWebhooksClient(this);
         AuditEvents = new TerraScaleAuthAuditClient(this);
@@ -75,12 +73,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Session revocation.</summary>
     public TerraScaleAuthSessionsClient Sessions { get; }
-
-    /// <summary>OIDC and SAML enterprise SSO connections.</summary>
-    public TerraScaleAuthConnectionsClient Connections { get; }
-
-    /// <summary>SCIM directory provisioning endpoints and token rotation.</summary>
-    public TerraScaleAuthDirectoriesClient Directories { get; }
 
     /// <summary>Custom-claim JWT templates and token minting.</summary>
     public TerraScaleAuthJwtTemplatesClient JwtTemplates { get; }

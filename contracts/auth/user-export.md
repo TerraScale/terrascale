@@ -3,7 +3,7 @@
 `auth.Projects.ExportUsersAsync(accessToken, projectId, limit, after)` calls
 `GET /v1/{project}/users/export` with the caller's platform sign-in token and
 returns one JSON `TerraScaleAuthUserExportPage(Items, Next, CreatedBefore)`.
-The name avoids `TerraScaleAuthDirectoryPage`, which is the SCIM directory list.
+The project export DTO is distinct from retired legacy SCIM directory models.
 Items are `TerraScaleAuthDirectoryUser(Id, Email, EmailVerified, CreatedAt,
 Disabled, LinkedProviders)` with `TerraScaleAuthLinkedProvider(Provider,
 ClientId, Subject)`: the producer's allowlist, with no credentials, MFA,
