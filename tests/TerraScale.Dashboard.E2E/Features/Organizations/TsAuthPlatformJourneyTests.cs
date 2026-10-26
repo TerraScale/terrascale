@@ -169,7 +169,7 @@ public sealed class TsAuthPlatformJourneyTests
         using var client = platform.Client();
         using var login = await HttpJourney.LoginAsync(client, user.Email, user.Password);
         var org = platform.Producer.AddOrganization("Overlapping roles", platform.Principal("overlap-owner").Subject);
-        var project = platform.Producer.AddProject(org, "Explicit grant", platform.Principal("overlap-owner").Subject);
+        var project = platform.Producer.AddProject(org, "Explicit grant", user.Subject);
         platform.Producer.AddMember(org, user.Subject, user.Email, organizationRole);
         platform.Producer.AddCollaborator(org, user.Subject, project, grant);
         using var response = await client.GetAsync("/api/v1/dashboard/context?organizationId=" + org + "&projectId=" + project);
@@ -931,14 +931,14 @@ public sealed class TsAuthPlatformJourneyTests
         public void RemoveProject(string organizationId, string projectId) { lock (gate) Find(organizationId)!.Projects.RemoveAll(project => project.Id == projectId); }
         public bool Exists(string organizationId) { lock (gate) return Find(organizationId) is not null; }
         public string AddProject(string organizationId, string name, string creator)
-        { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); return project.Id; } }
+        { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); AddCollaborator(organizationId, creator, project.Id, "admin"); return project.Id; } }
         public void AddMember(string organizationId, string userId, string email, string role) { lock (gate) Find(organizationId)!.Members[userId] = new(email, role, DateTimeOffset.UtcNow); }
         public void AddCollaborator(string organizationId, string userId, string? projectId = null, string role = "viewer")
         { lock (gate) { var org = Find(organizationId)!; if (!org.Collaborators.ContainsKey(userId)) org.Collaborators[userId] = []; if (projectId is not null) org.Collaborators[userId][projectId] = role; } }
         public void RemoveGrant(string org, string user, string project) { lock (gate) Find(org)!.Collaborators[user].Remove(project); }
         public void RequireMfa(string org) { lock (gate) Find(org)!.RequireMfa = true; }
         public void Enroll(string userId, int recoveryCodes) { lock (gate) enrolled[userId] = recoveryCodes; }
-        public void RemoveMember(string organizationId, string userId) { lock (gate) Find(organizationId)!.Members.Remove(userId); }
+        public void RemoveMember(string organizationId, string userId) { lock (gate) { var org = Find(organizationId)!; org.Members.Remove(userId); org.Collaborators.Remove(userId); } }
         public string? Role(string organizationId, string userId) { lock (gate) return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role; }
         public string InvitationId(string organizationId, string token) { lock (gate) return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id; }
         public string? InvitationStatus(string organizationId, string invitationId) { lock (gate) return Find(organizationId)!.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId)?.Status; }
@@ -1093,6 +1093,7 @@ public sealed class TsAuthPlatformJourneyTests
                     if (organization.Projects.Any(project => project.Name == Field("name"))) return Error(HttpStatusCode.Conflict, "name_taken", "Name taken.");
                     var created = new Project(ids.NewId(), Field("name"), caller.UserId, DateTimeOffset.UtcNow);
                     organization.Projects.Add(created);
+                    AddCollaborator(organization.Id, caller.UserId, created.Id, "admin");
                     return Json(Wire(organization, created, caller.UserId), HttpStatusCode.Created);
                 case (["invitations"], "POST"):
                     if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
@@ -1157,7 +1158,7 @@ public sealed class TsAuthPlatformJourneyTests
             role = org.Members.GetValueOrDefault(userId)?.Role,
             require_mfa = org.RequireMfa
         };
-        // The creator holds project admin; otherwise the organization role implies the project role (owner → admin).
+        // Current organization membership and explicit grants alone authorize (owner implies project admin).
         private static object Wire(Organization org, Project project, string userId) => new
         {
             id = project.Id,
@@ -1170,7 +1171,7 @@ public sealed class TsAuthPlatformJourneyTests
         };
         private static string? EffectiveRole(Organization org, Project project, string user)
         {
-            var implied = project.CreatedBy == user || org.Members.GetValueOrDefault(user)?.Role == "owner"
+            var implied = org.Members.GetValueOrDefault(user)?.Role == "owner"
                 ? "admin" : org.Members.GetValueOrDefault(user)?.Role;
             var granted = org.Collaborators.GetValueOrDefault(user)?.GetValueOrDefault(project.Id);
             static int Rank(string? role) => role switch { "admin" => 3, "member" => 2, "viewer" => 1, _ => 0 };
