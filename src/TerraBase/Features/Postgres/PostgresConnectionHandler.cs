@@ -466,7 +466,14 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         case PgError error:
                             return error;
                         case PgResult[] results:
-                            Array.ForEach(results, result => Write(output, result, [], describe: true));
+                            foreach (var result in results)
+                            {
+                                if (Write(output, result, [], describe: true) is { } encodeError)
+                                {
+                                    return encodeError;
+                                }
+                            }
+
                             break;
                     }
                 }

@@ -64,6 +64,8 @@ internal static partial class PostgresStatements
         ["application_name"] = applicationName,
         ["extra_float_digits"] = "1",
         ["search_path"] = "public",
+        ["transaction_isolation"] = "serializable",
+        ["default_transaction_isolation"] = "serializable",
     };
 
     public static string Version => $"PostgreSQL {ServerVersion} (TerraBase)";
@@ -163,8 +165,6 @@ internal static partial class PostgresStatements
                     // BIGINT, not PostgreSQL's int4: generated integer keys pass 2^31 (relational-sql.md section 3).
                     output[at[s]] = "BIGINT";
                     break;
-                case Word { QuoteStyle: null } word when Is(word, "RETURNING"):
-                    return Unsupported("RETURNING");
                 case Word { QuoteStyle: null } word when Is(word, "now") && s + 2 < at.Length && tokens[at[s + 1]] is LeftParen && tokens[at[s + 2]] is RightParen:
                     output[at[s]] = "CURRENT_TIMESTAMP";
                     output[at[++s]] = output[at[++s]] = "";
@@ -366,7 +366,9 @@ internal static partial class PostgresStatements
     {
         if (kind == PgKind.Show)
         {
-            var name = ShowPattern().Match(text).Groups[1].Value;
+            var name = string.Join('_', ShowPattern().Match(text).Groups[1].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            name = name.Equals("transaction_isolation_level", StringComparison.OrdinalIgnoreCase) ? "transaction_isolation"
+                : name.Equals("time_zone", StringComparison.OrdinalIgnoreCase) ? "TimeZone" : name;
             return settings.TryGetValue(name, out var shown)
                 ? new[] { new PgResult([new(name, TextOid)], [[SqlValue.Of(shown)]], "SHOW") }
                 : new PgError("42704", "unrecognized configuration parameter");
@@ -465,7 +467,7 @@ internal static partial class PostgresStatements
     }, error.Message);
 
     /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
-    public static bool Binary(int oid) => oid is 16 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 3802;
+    public static bool Binary(int oid) => oid is 16 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 3802;
 
     /// <summary>
     /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
@@ -477,6 +479,11 @@ internal static partial class PostgresStatements
         if (value.Kind == SqlValueKind.Null)
         {
             return true;
+        }
+
+        if (oid is 1082 or 1114 or 1184)
+        {
+            return value.Kind == SqlValueKind.Text && PostgresTemporal.TryEncode(value.Text ?? "", oid, binary, out bytes);
         }
 
         var text = value.Kind switch
@@ -576,12 +583,14 @@ internal static partial class PostgresStatements
                     (20, 8) => SqlValue.Of(BinaryPrimitives.ReadInt64BigEndian(value)),
                     (700, 4) => Real(BinaryPrimitives.ReadSingleBigEndian(value)),
                     (701, 8) => Real(BinaryPrimitives.ReadDoubleBigEndian(value)),
+                    (1082 or 1114 or 1184, _) => PostgresTemporal.Decode(oid, value),
                     (3802, > 0) when value[0] == 1 => Text(Utf8.GetString(value.AsSpan(1))),
                     (0 or TextOid or 114 or 705 or 1042 or 1043, _) => Text(Utf8.GetString(value)),
                     _ => null,
                 }
                 : (oid, Utf8.GetString(value)) switch
                 {
+                    (1082 or 1114 or 1184, var text) => PostgresTemporal.Parse(oid, text),
                     (16, var text) => Bool(text) is { } flag ? SqlValue.Of(flag ? 1L : 0L) : null,
                     (20 or 21 or 23, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
                     (700 or 701, var text) => double.TryParse(text, NumberStyles.Float, Invariant, out var real) ? Real(real) : null,
@@ -623,7 +632,7 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\ASET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|\s+TO\s+)\s*(.*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex SetPattern();
 
-    [GeneratedRegex(@"\ASHOW\s+([A-Za-z_][A-Za-z0-9_]*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\ASHOW\s+(transaction\s+isolation\s+level|time\s+zone|[A-Za-z_][A-Za-z0-9_]*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ShowPattern();
 
     [GeneratedRegex(@"\ADISCARD\s+ALL\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

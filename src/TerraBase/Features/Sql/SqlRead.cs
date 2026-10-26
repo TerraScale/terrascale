@@ -341,19 +341,19 @@ internal static class SqlRead
 
     /// <summary>
     /// Declared types of the result columns that name a table column directly (<c>*</c>, <c>t.*</c>, <c>c</c>, <c>t.c</c>,
-    /// aliased or not), as SQLite reports them; null for every other column, or for all when the shape is not a plain SELECT.
+    /// aliased or not), plus BOOLEAN for EXISTS; null for other columns or non-SELECT shapes.
     /// </summary>
     public static string?[] DeclTypes(ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, int count)
     {
         var types = new string?[count];
-        if (read.Query.Body is not SetExpression.SelectExpression { Select: { From: { } from } select })
+        if (read.Query.Body is not SetExpression.SelectExpression { Select: var select })
         {
             return types;
         }
 
         // Each FROM table by its alias (or name), in order; derived tables and CTEs have no declared types.
         var sources = new List<(string Alias, SqlTableDefinition? Table)>();
-        foreach (var factor in from.SelectMany(join => (join.Joins ?? []).Select(item => item.Relation).Prepend(join.Relation)))
+        foreach (var factor in (select.From ?? []).SelectMany(join => (join.Joins ?? []).Select(item => item.Relation).Prepend(join.Relation)))
         {
             var table = factor is TableFactor.Table { Name.Values: [var name] } ? name.Value.ToLowerInvariant() : null;
             var alias = factor?.Alias?.Name.Value.ToLowerInvariant() ?? table;
@@ -387,6 +387,11 @@ internal static class SqlRead
 
         string? Column(Expression expression)
         {
+            if (expression is Expression.Exists)
+            {
+                return "BOOLEAN";
+            }
+
             var (qualifier, name) = expression switch
             {
                 Expression.Identifier { Ident: var ident } => (null, ident.Value),
