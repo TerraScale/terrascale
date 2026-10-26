@@ -20,7 +20,8 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// API-key exchange failed before a database request was sent. The code
+    /// API-key exchange failed before the pending attempt or replay was sent;
+    /// any preceding request was refused with 401. The code
     /// is SDK-owned; upstream bodies, headers and transport text are omitted.
     #[error("terrabase: token exchange: {code} (HTTP {status:?})")]
     TokenExchange {

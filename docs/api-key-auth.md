@@ -13,7 +13,7 @@ A 403 never triggers refresh. Transport failures and other statuses retain the e
 
 Raw changes feeds acquire a cached or refreshed token whenever opened. Typed feeds do so on reconnect, retaining their last delivered cursor in `Last-Event-ID`. A refused connection refreshes once after 401; another refusal ends the feed normally with an error.
 
-`Error::TokenExchange { status, code }` distinguishes `token_exchange_refused`, `invalid_token_response`, and `token_transport_error`. The pending data request has not been sent, so `is_uncertain()` is false.
+`Error::TokenExchange { status, code }` distinguishes `token_exchange_refused`, `invalid_token_response`, and `token_transport_error`. The pending attempt or replay has not been sent; any preceding request was refused with 401, so `is_uncertain()` is false.
 Errors expose no upstream body, error text, credential, or token. Grants require a nonempty Bearer token and positive integer `expires_in`; oversized, malformed, or already stale grants are rejected.
 
 DECISION: A dedicated constructor preserves bearer-token compatibility. The issuer and refresh margin are fixed with no new settings. Exchange follows Python's first-party project-key contract; TypeScript's generic OIDC resource/scope helper serves a separate grant interface. Loopback HTTP tests substitute the issuer through private test access, without a production override.
