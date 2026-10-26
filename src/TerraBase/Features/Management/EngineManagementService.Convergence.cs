@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -192,8 +193,14 @@ internal sealed partial class EngineManagementService
                 continue;
             }
 
-            await PutAsync(transaction, Databases(database.ProjectId), database.Id, database with { Name = name }, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                .ConfigureAwait(false);
+            var json = EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(database with { Name = name }, TerraBaseJsonContext.Default.ManagedDatabase), database.Id, nested: true);
+            FieldOperation[] fields =
+            [
+                new(FieldOperationKind.Set, "name", JsonSerializer.SerializeToElement(name, Id)),
+                new(FieldOperationKind.Set, "previousName", JsonSerializer.SerializeToElement(database.PreviousName!, Id)),
+                new(FieldOperationKind.Set, "conflictOf", JsonSerializer.SerializeToElement(database.ConflictOf!, Id)),
+            ];
+            _ = await transaction.PatchAsync(Databases(database.ProjectId), database.Id, json, fields, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.Id, Id, cancellationToken).ConfigureAwait(false);
             await RecordAsync(transaction, organizationId, ConflictActor, "database.name_conflict", database.Id,
                 $"{database.PreviousName} is held by {database.ConflictOf}; this database is kept as {name}", cancellationToken).ConfigureAwait(false);
@@ -313,11 +320,10 @@ internal sealed partial class EngineManagementService
                 return false;
             }
 
-            var named = await GetAsync(transaction, DatabaseNames(record.ProjectId), current.Name, Id, cancellationToken).ConfigureAwait(false);
+            var named = await NameHolderAsync(transaction, record.ProjectId, current.Name, cancellationToken).ConfigureAwait(false);
             if (named == current.Id
-                || (named is not null && string.CompareOrdinal(named, current.Id) < 0
-                    && await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } rival
-                    && rival.Name == current.Name))
+                || (named is not null && (string.CompareOrdinal(named, current.Id) < 0
+                    || await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)))
             {
                 return false;
             }

@@ -106,6 +106,7 @@ public sealed class WriterHoldTests
         (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         using var release = new ManualResetEventSlim();
+        var bulkStarted = 0;
         List<Task> busy = [];
         try
         {
@@ -114,7 +115,11 @@ public sealed class WriterHoldTests
                 for (var i = 0; i < 2; i++)
                 {
                     engine.Io.Admit();
-                    busy.Add(engine.Io.RunAsync(release.Wait, CancellationToken.None));
+                    busy.Add(engine.Io.RunAsync(() =>
+                    {
+                        Interlocked.Increment(ref bulkStarted);
+                        release.Wait();
+                    }, CancellationToken.None));
                 }
             }
 
@@ -122,7 +127,9 @@ public sealed class WriterHoldTests
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Running == 1 && engine.Io.Queued == 1));
             var read = await api.GetAsync(id).WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(engine.Io.Running).IsEqualTo(1);
+            // The read's completion can precede its pool counter decrement, and maintenance shares that counter.
+            // Neither blocked bulk call can finish before release: exactly one started, leaving the other queued.
+            await Assert.That(Volatile.Read(ref bulkStarted)).IsEqualTo(1);
         }
         finally
         {
