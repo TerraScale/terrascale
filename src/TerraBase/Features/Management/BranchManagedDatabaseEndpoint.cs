@@ -31,10 +31,14 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken) =>
+        BranchAsync(HttpContext, request, management, options, ManagementRoute.Value(HttpContext, "database"), cancellationToken);
+
+    internal static async ValueTask<IResult> BranchAsync(
+        HttpContext context, NameRequest request, IManagementService management, TerraBaseOptions options, string sourceId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var placement = await DatabaseRegions.ElsewhereAsync(HttpContext, management, options.Region);
+        var placement = await DatabaseRegions.ElsewhereAsync(context, management, options.Region);
         if (placement is not Done)
         {
             return placement switch
@@ -49,9 +53,9 @@ public sealed class BranchManagedDatabaseEndpoint(IManagementService management,
         return ManagementRoute.CheckDatabaseName(request) switch
         {
             Validation error => ErrorResponse.From(error),
-            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), name, cancellationToken) switch
+            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), sourceId, name, cancellationToken) switch
             {
-                ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
+                ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(context, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(context))),
                 NotFound error => ManagementRoute.DatabaseNotFound(error),
                 Forbidden error => ErrorResponse.From(error),
                 Conflict error => ErrorResponse.From(error),
