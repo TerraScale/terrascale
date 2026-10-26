@@ -27,7 +27,7 @@ There is no Java SDK yet; call the HTTP API directly from those languages.
 
 1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), select **Create account**, and enter the code sent to your email.
 2. Finish setup: choose a plan (or continue without a payment method), then name your first project and pick its region.
-3. Open **Databases**, select **New database**, enter a name (lowercase letters, digits and inner hyphens) and create it.
+3. Open **Databases**, select **New database**, enter a name starting with a lowercase letter (then lowercase letters, digits and inner hyphens), and keep the default of all serving regions or explicitly select at least two. Single-region databases are not supported. Select **Create database**.
 4. Open **API keys**, select **Create credential**, then **API key**. Name it, limit **Database access** to that database, choose **Read and write** and select **Create key**. Copy the key when the dashboard shows it and keep it in your secret manager.
 5. Open **Organization** and copy the **Current project** ID.
 

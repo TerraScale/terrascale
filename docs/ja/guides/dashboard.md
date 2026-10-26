@@ -15,7 +15,7 @@ Use the dashboard's native account pages to manage access to TerraScale. Use Ter
 
 1. Sign in at [dash.terrascale.tech](https://dash.terrascale.tech/login), or [create an account](https://dash.terrascale.tech/register).
 2. Select the organization and project you want to use. The **Organization** page shows the **Current project** ID.
-3. Open **Databases** and create a database, or select an existing one.
+3. Open **Databases** and create a database, or select an existing one. Creation defaults to all currently serving regions; an explicit placement needs at least two. **All regions: copies follow new regions automatically** also includes regions added later. See [placement](/ja/concepts/replication#placement); single-region databases are not supported.
 4. Open **API keys**, select **Create credential**, then **API key**. Name it, limit **Database access** to that database and choose the minimum permissions. Select **Create key**.
 5. Copy the key when it is shown and place it in your application's secret store.
 
