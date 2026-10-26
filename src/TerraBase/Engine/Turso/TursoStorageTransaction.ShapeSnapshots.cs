@@ -330,7 +330,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
     public async ValueTask InsertShapeSnapshotPageAsync(
         ShapeSnapshotDefinition shape, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
             // The page was built by a long-lived reader that may predate a committed drop: check lineage in this writer.
@@ -359,7 +359,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
 
     public async ValueTask DeleteIncompleteShapeSnapshotsAsync(string handle, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
             var command = Command("""

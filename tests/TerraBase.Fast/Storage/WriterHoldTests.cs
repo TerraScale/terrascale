@@ -304,7 +304,7 @@ public sealed class WriterHoldTests
     }
 
     // This server's writer holds; its meter is the factory's one instance of the TerraBase meter.
-    private sealed class WriterHolds : IDisposable
+    internal sealed class WriterHolds : IDisposable
     {
         private readonly MeterListener _listener = new();
         private readonly ConcurrentQueue<(string Holder, double Seconds)> _holds = new();

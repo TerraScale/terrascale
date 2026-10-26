@@ -36,7 +36,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             throw new ArgumentException("a shape needs its lineage identity, collection and 16-byte resume scope", nameof(shape));
         }
 
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() => SealShapeChunk(shape, offset, through, remote, memory, cancellationToken), cancellationToken,
             mutation: true).ConfigureAwait(false);
     }

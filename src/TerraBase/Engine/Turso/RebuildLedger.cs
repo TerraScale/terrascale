@@ -1244,7 +1244,8 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
         }
 
         await using var transaction = await system.BeginRebuildTransactionAsync(cancellationToken, full).ConfigureAwait(false);
-        await transaction.SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        // SYSTEM writes only _tb_rebuild; the rewrite refreshes it under the writer. The intent journal is never rewritten.
+        await transaction.SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         var result = await transaction.LedgerAsync(call, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return result;

@@ -32,7 +32,7 @@ internal sealed partial class TursoStorageTransaction
     /// <summary>Records <paramref name="peer"/>'s reported stable stamp (uncaptured bookkeeping), and that it was heard from.</summary>
     internal async ValueTask RecordStableAsync(ReplicaId peer, Hlc stable, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
             var update = Command("UPDATE _tb_peers SET stable = max(stable, $stable), seen = $seen WHERE node = $node;");

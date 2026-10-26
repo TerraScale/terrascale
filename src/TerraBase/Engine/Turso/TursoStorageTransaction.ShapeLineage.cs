@@ -138,7 +138,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
 
     public async ValueTask<ShapeSweepStep> SweepShapeHandleAsync(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
-        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             // Classified and deleted in this one writer transaction: a writer that publishes after it sees the same lineage.
