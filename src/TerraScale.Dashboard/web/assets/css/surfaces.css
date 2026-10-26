@@ -566,14 +566,13 @@
   height: 6px;
 }
 
-/* Tabs. Labels carry no side padding so the first one lines up with the
-   content edge; the underline spans the label. */
+/* Wrap sections so every destination, active state and focus ring stays
+   visible on deep links without horizontal scrolling. */
 .ts-tabs {
   display: flex;
-  gap: var(--ts-s6);
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 0 var(--ts-s6);
   border-bottom: 1px solid var(--ts-line);
-  scrollbar-width: none;
 }
 
 .ts-toolbar .ts-tabs {
