@@ -95,6 +95,8 @@
     {"operation": "listFunctionDeliveries", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/deliveries", "contract": "function-invocations.json"},
     {"operation": "getExportSchedule", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/export-schedule", "contract": "export-schedules.json"},
     {"operation": "setExportSchedule", "method": "PUT", "path": "/v1/projects/{project}/databases/{database}/export-schedule", "contract": "export-schedules.json"},
-    {"operation": "getProjectMetrics", "method": "GET", "path": "/v1/projects/{project}/metrics", "contract": "project-metrics.json"}
+    {"operation": "getProjectMetrics", "method": "GET", "path": "/v1/projects/{project}/metrics", "contract": "project-metrics.json"},
+    {"operation": "getCollectionRules", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/rules", "contract": "collection-rules.json"},
+    {"operation": "putCollectionRules", "method": "PUT", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/rules", "contract": "collection-rules.json"}
   ]
 }

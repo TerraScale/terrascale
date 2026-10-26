@@ -105,6 +105,8 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "listCollections", client => Db(client).ListCollectionsAsync());
         yield return ("documents", "createCollection", client => Db(client).CreateCollectionAsync("users"));
         yield return ("documents", "getCollection", client => Db(client).GetCollectionAsync("users"));
+        yield return ("documents", "getCollectionRules", client => Db(client).GetCollectionRulesAsync("users"));
+        yield return ("documents", "putCollectionRules", client => Db(client).SetCollectionRulesAsync("users", new(null, new(false, false, []), new(false, false, []))));
         yield return ("documents", "dropCollection", client => Db(client).DropCollectionAsync("users"));
         yield return ("documents", "declareCollectionSchema", client => Db(client).DeclareSchemaAsync("users", schema));
         yield return ("documents", "getCollectionSchema", client => Db(client).GetSchemaAsync("users"));
