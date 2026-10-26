@@ -10,6 +10,7 @@ namespace TerraScale.DotNet;
 public sealed class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
 {
     private const int MaxRequestBytes = 16 * 1024;
+    private const int MaxExportCursorLength = 8192;
     private static TerraScaleAuthIntegrationJsonContext Json => TerraScaleAuthIntegrationJsonContext.Default;
 
     /// <summary>GET /v1/{project}/settings (viewer).</summary>
@@ -44,6 +45,28 @@ public sealed class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
         CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/users" + PageQuery("q", query, limit, after),
             Json.TerraScaleAuthPlatformPageTerraScaleAuthProjectUser, HttpStatusCode.OK, cancellationToken);
+
+    /// <summary>GET /v1/{project}/users/export (admin): one bounded JSON page of the project's end-user directory.
+    /// ts-auth checks the admin role and commits a <c>project.users_exported</c> audit event before answering
+    /// <b>every</b> page; an audit failure returns no data. Pass the previous page's <see cref="TerraScaleAuthUserExportPage.Next"/>
+    /// as <paramref name="after"/>; null Next means the export is complete. The scan uses the first page's
+    /// <see cref="TerraScaleAuthUserExportPage.CreatedBefore"/> creation cutoff and is <b>not a transaction snapshot</b>:
+    /// later accounts are excluded, deletions disappear and fields reflect each page's read. Save each page before
+    /// persisting its cursor and deduplicate by user id. No credentials or sessions are exported. Sent once, never
+    /// retried, because every request is audited.</summary>
+    /// <param name="accessToken">The caller's terrascale sign-in token.</param>
+    /// <param name="projectId">The project ULID.</param>
+    /// <param name="limit">Page size, 1 to 100; null uses the producer default of 100.</param>
+    /// <param name="after">The opaque cursor from the previous page, at most 8192 characters.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    public Task<TerraScaleAuthUserExportPage> ExportUsersAsync(
+        string accessToken, string projectId, int? limit = null, string? after = null, CancellationToken cancellationToken = default)
+    {
+        if (after is { Length: > MaxExportCursorLength })
+            throw new ArgumentException("Export cursor must be at most 8192 characters.", nameof(after));
+        return SendAsync(HttpMethod.Get, accessToken, projectId, "/users/export" + PageQuery("q", null, limit, after),
+            Json.TerraScaleAuthUserExportPage, HttpStatusCode.OK, cancellationToken);
+    }
 
     /// <summary>GET /v1/{project}/users/{user} (viewer).</summary>
     public Task<TerraScaleAuthProjectUser> GetUserAsync(

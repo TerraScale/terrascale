@@ -44,6 +44,7 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthProjectProviderUpdate))]
 [JsonSerializable(typeof(TerraScaleAuthProjectUser))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>))]
+[JsonSerializable(typeof(TerraScaleAuthUserExportPage))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>))]
 [JsonSerializable(typeof(TerraScaleAuthProjectOAuthClient))]
 [JsonSerializable(typeof(TerraScaleAuthProjectCreateOAuthClient))]

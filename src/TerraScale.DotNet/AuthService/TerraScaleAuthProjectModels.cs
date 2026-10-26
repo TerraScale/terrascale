@@ -9,7 +9,8 @@ public sealed record TerraScaleAuthProjectMethods(
     [property: JsonPropertyName("sign_up")] bool SignUp);
 
 /// <summary>A project tenant's hosted-page branding. Null clears a value: LogoUrl is an https URL, ThemeColor is
-/// <c>#rrggbb</c> and Name is 1 to 64 characters.</summary>
+/// <c>#rrggbb</c> and Name is 1 to 64 characters. Name, LogoUrl, ThemeColor and EmailMessage also brand verification,
+/// sign-in and password-reset mail; the sender stays TerraScale.</summary>
 public sealed record TerraScaleAuthProjectBranding(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("logo_url")] string? LogoUrl,
@@ -18,7 +19,14 @@ public sealed record TerraScaleAuthProjectBranding(
     [property: JsonPropertyName("default_theme"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DefaultTheme = null,
     [property: JsonPropertyName("footer_links"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TerraScaleAuthProjectFooterLink>? FooterLinks = null,
     [property: JsonPropertyName("background_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BackgroundColor = null,
-    [property: JsonPropertyName("text_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TextColor = null);
+    [property: JsonPropertyName("text_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TextColor = null)
+{
+    /// <summary>Optional plain-text message in authentication emails: at most 500 characters, newlines allowed and no
+    /// other control characters. HTML and template expressions are shown as text, never executed. Omitted when null;
+    /// because a sent branding replaces the branding, leaving it null in an update clears it.</summary>
+    [JsonPropertyName("email_message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EmailMessage { get; init; }
+}
 
 /// <summary>A labelled HTTPS footer link underneath the hosted authentication card.</summary>
 public sealed record TerraScaleAuthProjectFooterLink(
@@ -85,6 +93,31 @@ public sealed record TerraScaleAuthProjectUser(
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("disabled")] bool Disabled);
+
+/// <summary>One page of <c>GET /v1/{project}/users/export</c>. Next is the opaque cursor for the following page and null
+/// at the end. CreatedBefore is the creation cutoff fixed by the first page; this is a creation-cutoff scan, not a
+/// transaction snapshot.</summary>
+public sealed record TerraScaleAuthUserExportPage(
+    [property: JsonPropertyName("items")] IReadOnlyList<TerraScaleAuthDirectoryUser> Items,
+    [property: JsonPropertyName("next")] string? Next,
+    [property: JsonPropertyName("created_before")] DateTimeOffset CreatedBefore);
+
+/// <summary>An exported end user: allowlisted public identity fields only, never passwords, MFA, sessions, tokens or keys.
+/// EmailVerified means email possession was proven at account creation; disabled users are included.</summary>
+public sealed record TerraScaleAuthDirectoryUser(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("email")] string Email,
+    [property: JsonPropertyName("email_verified")] bool EmailVerified,
+    [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+    [property: JsonPropertyName("disabled")] bool Disabled,
+    [property: JsonPropertyName("linked_providers")] IReadOnlyList<TerraScaleAuthLinkedProvider> LinkedProviders);
+
+/// <summary>A verified social provider identity of an exported user: provider, public client id and subject. Provider
+/// credentials are never exported.</summary>
+public sealed record TerraScaleAuthLinkedProvider(
+    [property: JsonPropertyName("provider")] string Provider,
+    [property: JsonPropertyName("client_id")] string ClientId,
+    [property: JsonPropertyName("subject")] string Subject);
 
 /// <summary>A live project tenant end-user session.</summary>
 public sealed record TerraScaleAuthProjectSession(
