@@ -109,6 +109,21 @@ Write transactions other than client commits and applies, summed over the three 
 - Back to back load (no rate cap) is not a fair comparison: the branch completed 2.6x the writes (137.6 vs 52.8 writes/s),
   because client writes no longer wait behind bookkeeping.
 
+Second run, the final code (count-bounded deferral, receiver arrival stamp): main `1d823d85` vs branch `fcf41a08`, same
+method. The host was busier: some runs of both versions sustained only 7-20 of the 40 writes/s. Per-run median (min-max), ms:
+
+| Direction | main p50 | main p99 | branch p50 | branch p99 |
+| --- | --- | --- | --- | --- |
+| sjc -> fra | 118.0 (114.2-192.0) | 407.3 (243.1-996.4) | 91.6 (88.8-91.9) | 437.9 (170.1-641.9) |
+| fra -> sjc | 129.4 (112.6-137.1) | 728.4 (298.6-834.6) | 92.0 (90.2-94.5) | 307.6 (140.6-362.0) |
+| sjc -> gru | 135.1 (124.9-180.4) | 479.4 (181.1-1095.1) | 106.4 (102.3-632.1) | 319.6 (240.2-4230.8) |
+| fra -> gru | 149.5 (136.0-155.5) | 297.2 (202.9-848.3) | 119.1 (118.8-119.8) | 486.8 (316.7-757.5) |
+| gru -> sjc | 124.2 (109.8-740.9) | 356.6 (249.7-2598.4) | 105.9 (105.3-146.3) | 502.6 (236.8-1038.8) |
+| gru -> fra | 140.8 (124.1-235.1) | 491.3 (261.3-1005.4) | 113.4 (112.4-159.4) | 174.4 (169.0-1000.5) |
+
+Write transactions other than client commits and applies: main 29,701, branch 6,847 (-77 %). p50 lower on the branch in all
+six directions (6-37 ms); p99 again unresolved by this host.
+
 ## Still open
 
 - `-> gru` on the new build: FR1's container probe.
