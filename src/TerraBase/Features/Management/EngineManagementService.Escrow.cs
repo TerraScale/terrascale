@@ -61,8 +61,10 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
     private sealed record AllowanceCheck(Func<PlanTier, long> Limit, string Region, IReadOnlyList<string> Serving, DateTimeOffset? Registering = null);
 
     // An organization's allowance in one region: its rights, the live databases, the genesis region (null while a serving
-    // region is unregistered), its own escrow, and the cumulative grants it counts from each other region.
-    private sealed record EscrowView(long Rights, long Live, string? Genesis, DatabaseEscrowShare Own, Dictionary<string, long> Known);
+    // region is unregistered), its own escrow, the cumulative grants it counts from each other region, and every
+    // registered region.
+    private sealed record EscrowView(
+        long Rights, long Live, string? Genesis, DatabaseEscrowShare Own, Dictionary<string, long> Known, IReadOnlyCollection<string> Registered);
 
     private static string DatabaseEscrow(string organizationId) => $"organizations/{organizationId}/database_escrow";
 
@@ -133,7 +135,7 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
         }
 
         var rights = (genesis == allowance.Region ? allowed : 0) + known.Values.Sum() - own.Granted.Values.Sum() - mine;
-        return new EscrowView(rights, live, genesis, own, known);
+        return new EscrowView(rights, live, genesis, own, known, regions.Keys);
     }
 
     private static async IAsyncEnumerable<(string Id, T Value)> KeyedAsync<T>(
@@ -190,7 +192,8 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
 
         // A grant whose reply was lost may have replicated here meanwhile.
         var lacking = need - view.Rights;
-        var unreachable = false;
+        // A registered region that is not serving now (its node is down) may hold units too.
+        var unreachable = view.Registered.Any(region => !allowance.Serving.Contains(region));
         foreach (var region in allowance.Serving.Skip(1).OrderBy(region => region == view.Genesis ? 0 : 1).ThenBy(region => region, StringComparer.Ordinal))
         {
             var known = view.Known.GetValueOrDefault(region);
