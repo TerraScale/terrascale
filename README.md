@@ -1,7 +1,7 @@
 # TerraScale Go SDK (`terrascale.tech/sdk`)
 
 Package `v1` is the TerraBase client for project JWTs: databases, collections,
-documents, queries, transactions, read-only SQL and database change streams.
+documents, queries, transactions, relational SQL and database change streams.
 It also implements the proposed shape-reads v1 client, with local conformance
 coverage; deployed shape endpoints are not qualified. See the
 [shapes contract](contracts/shapes.md) for protocol provenance and limits.
@@ -30,6 +30,15 @@ Document point inputs and API entity references continue to require ULIDs.
 
 The SDK owns no persistent collections, databases or KV records. This contract
 alignment requires no stored-data deletion or migration.
+
+## Source and module availability
+
+The published `v0.0.5` module ([source `b2b7a55a`](https://github.com/TerraScale/ts-go/tree/b2b7a55a66da4dd0db6588d27d571efe2177f31c))
+includes full-text/vector queries but predates `Database.Export`. Current source includes
+streaming document export and newer fixes; install an immutable commit with
+`go get terrascale.tech/sdk@<full-commit>` and retain the generated pseudo-version.
+Use that revision's API and contract files. Source, fixture and package build results do
+not establish production qualification for every method. Releases remain `0.0.X`.
 
 ## Zero-configuration operating contract
 
@@ -132,16 +141,18 @@ queries. Mutations return uncertain outcomes without a replay: use
 `errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
-`500 internal_error` are never retried. First-party retry budgets must be fixed
-in code; existing tuning options remain implementation inventory. Public
+`500 internal_error` are never retried. Ordinary requests have a fixed 30-second total
+budget and 64 MiB response cap; shape exchanges have a 45-second budget. Attempts are finite.
+A server cooldown is never shortened: `RetryBudgetError` retains the typed API error and
+full cooldown when it cannot fit the remaining deadline. Earlier caller cancellation wins. Public
 database creation is POST and is never replayed after a transient rejection.
 Point document operations use `/documents/by-key?id=…`, with the document's
 ULID as the query value. Keys never enter path segments.
 Listing and generated creation use GET and POST `/documents`, respectively.
 The old `/documents/{id}` point routes are removed.
-The pinned server still implements If-Match/ETags and lacks deduplicated PUT,
-read-write SQL and RFC 9457 errors. TS-748 describes future producer changes;
-this client does not assume those changes have shipped.
+The server implements If-Match/ETags and relational SQL, including writes and DDL through
+`ExecuteSQL`, `QuerySQL` and `BatchSQL`. It does not provide mutation deduplication or a
+universal RFC 9457 response; preserve the documented typed errors and uncertain outcomes.
 
 ### Collection shapes
 
@@ -400,12 +411,12 @@ If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
 context; it resends the exact body without repeating existence checks or
 creating a new commit ID. Retain the handle until the outcome is resolved.
 
-Public client gaps include backups, branches/placement updates, index tooling,
-JSON schema, saved queries and query shapes. Existing hidden aliases do not
-prove public JWT compatibility for those methods. Historical collection shape
-routes were removed; the SDK's new v1 subscription follows the proposed
-[shape protocol](contracts/shapes.md). Query `explain` and `Idempotency-Key`
-remain unserved.
+Public `v1` methods cover backups, branches/placement, indexes, JSON schema, saved
+queries and query shapes. `Query.Explain` returns the public document-query plan;
+SQL Explain is a separate operation. Method presence does not establish deployed
+JWT compatibility or complete live coverage. Collection subscriptions follow the
+[shape protocol](contracts/shapes.md), independently qualified from the .NET shape
+client. `Idempotency-Key` remains unsupported.
 
 ### Replication and analytics (TS-762)
 
@@ -456,8 +467,8 @@ boundaries. ts-auth calls go to one fixed global origin, `https://auth.terrascal
 and every tenant issues from `https://auth.terrascale.tech/<slug>`. There is no
 regional discovery or failover. `TSAuthBaseURL` overrides the origin only for
 dev and test deployments; an issuer must be that origin plus the slug.
-The platform management API, API key tokens and headless sign-in are in
-`terrascale.tech/sdk/tsauth`.
+The supported platform management API, API-key tokens and device flow are in
+`terrascale.tech/sdk/tsauth`. Legacy headless declarations are inventoried below.
 
 Schema and SQL builders construct and validate statements locally and do not
 execute SQL over HTTP. The pgx-backed PostgreSQL client connects to
@@ -490,7 +501,7 @@ require separate work.
 `https://status.terrascale.tech/api/latency` endpoint. Pass a region code such
 as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
 restricting the available regions. Override the origin with `Config.StatusBaseURL`
-(HTTPS, or HTTP on loopback and `.test` origins for development). Status calls
+(HTTPS, or HTTP on loopback for development). Status calls
 need no credentials.
 
 ```go
@@ -516,9 +527,10 @@ measurement, while a pointer to zero is a measured zero. Consensus may also be
 `nil`. `Samples` is an integer count. Status is `operational`, `degraded`, `down`,
 or `planned`. These are probe measurements, not the caller's own browser ping.
 
-The client shares the SDK's bounded HTTP transport, `RequestTimeout`, retries
-on transient failures (`MaxRetryAttempts`, `RetryDelay`, and `Retry-After`),
-and `*sdk.APIError` responses. Retries default to zero; redirects are refused.
+The client shares the root SDK's fixed 30-second request deadline, 16 MiB response
+cap, bounded safe-read retries and `*sdk.APIError` responses. Full `Retry-After`
+is preserved; `RetryBudgetError` refuses a retry that cannot fit the deadline.
+Mutations and quota failures are not replayed; redirects are refused.
 The service briefly caches responses; the SDK adds no cache.
 [`status_example_test.go`](status_example_test.go) contains a compilable example.
 
@@ -589,34 +601,14 @@ Management tests use the pinned local contract,
 `tsauth/testdata/platform-api.openapi.json`. They do not establish deployed
 platform compatibility; see the qualification limits in the matrix.
 
-### ts-auth headless sign-in
+### Legacy headless declarations
 
-`tsauth.NewHeadless(HeadlessConfig{ClientID, ClientSecret})` is ts-auth's
-headless API (TS-582) for a first-party confidential client that signs users
-in on its own pages, as ts-dashboard does: `SignInWithPassword`,
-`SignInWithEmailCode` (with the `pendingToken` of `SignUp` for a sign-up
-code), `StartEmailCode`, `ResendEmailCode`, `SignUp`, `StartPasswordReset`,
-`CompletePasswordReset`, `Refresh` and `Revoke`. Every sign-in and step
-takes the end user's IP address, which ts-auth's rate limits key on. Grants
-answer `*tsauth.Tokens` or a `*tsauth.Error` (`invalid_grant` for any wrong
-credential); the JSON steps fail with `*tsauth.APIError` (`ErrInvalidCode`,
-`ErrInvalidPassword`, `ErrRateLimited` with `RetryAfter`, `ErrInvalidClient`).
-`ResendEmailCode(ctx, email, clientIP, pendingToken)` uses the same email-code
-endpoint; pass the `SignUp` token to preserve the pending sign-up, or `""`
-for a sign-in code. Invalid pending tokens succeed without sending an email
-to prevent account enumeration. Respect `APIError.RetryAfter` before retrying.
-
-Issuers and service origins require HTTPS outside loopback test servers.
-Injecting an HTTP transport does not permit non-loopback HTTP origins.
-First-party confidential client secrets must be created and delivered
-automatically; this SDK docs change does not implement that delivery.
-
-```go
-h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
-tokens, err := h.SignInWithPassword(ctx, email, password, clientIP, []string{"openid", "email", "offline_access"})
-project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-dashboard", ClientSecret: secret,
-	SubjectToken: func(context.Context) (string, error) { return tokens.AccessToken, nil }, Organization: orgID, Project: projectID})
-```
+`tsauth.NewHeadless` still exists in this source, but its historical password/email-code
+grants and `/headless/v1/...` routes are not served by the current auth contract.
+Do not build new sign-in flows on those methods or treat their fake-server tests as
+production coverage. Use hosted sign-in or a registered OIDC client, and the shipped
+`tsauth.Device` flow for the CLI. Callbacks and grants remain client-specific;
+client credentials do not imply authorization to collect user passwords.
 
 ### ts CLI (`cmd/ts`)
 
