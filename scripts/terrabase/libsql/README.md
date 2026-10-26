@@ -51,4 +51,11 @@ library for linux/amd64, linux/arm64 and darwin/arm64). The Python wheels cover 
 
 ## Validation status
 
-All four scripts pass against a SQLite-backed Hrana mock (2026-10-22). They have not yet run against TerraBase.
+All four pinned scripts passed against production TerraBase on 2026-10-26: parameters, joins, batches,
+read-your-writes, commit and rollback. The full workflows used a forwarding relay capped at 2.78 SQL
+requests per second; each official client also passed a separate direct canonical HTTPS `SELECT 1`
+with normal TLS verification and no relay. These checks preceded the queued SQL edge-case fixes.
+
+All four rejected expired access tokens and read successfully after reconnecting with a fresh token.
+This proves explicit read recovery, not uninterrupted transactions across token expiry. Each script's
+proof tables were removed and their absence checked through the live SQL catalog.

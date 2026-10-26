@@ -11,8 +11,9 @@ internal readonly union HranaCommand(SqlCommand, HranaError);
 /// <summary>Runs one HTTP request's stream requests against its stream, bounding the response it builds.</summary>
 /// <param name="stream">The request's stream.</param>
 /// <param name="memory">Admits stored statements.</param>
+/// <param name="time">The request deadline clock.</param>
 /// <param name="statements">What <see cref="Statements"/> counted for the request; a sequence may run the rest of the allowance.</param>
-internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements)
+internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements, TimeProvider time)
 {
     /// <summary>
     /// SQL statements (execute requests and batch steps) per HTTP request, the core's per-request limit; the core bounds a
@@ -25,7 +26,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
 
     private static readonly HranaError Protocol = new("the request is not a valid Hrana request", "PROTOCOL_ERROR");
 
+    private readonly long _started = time.GetTimestamp();
+
     private long _responseBytes;
+
+    private bool Expired => time.GetElapsedTime(_started) > SqlLimits.MaxRequestTime;
 
     // Statements a sequence may run beyond its own count; the first sequence of a request takes all of them.
     private int _spare = Math.Max(0, MaxStatements - statements);
@@ -49,8 +54,10 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
                 return await SequenceAsync(request, cancellationToken).ConfigureAwait(false) is { } failure
                     ? HranaResult.Failed(failure)
                     : HranaResult.Ok(new HranaResponse("sequence"));
+            case "describe" when Expired:
+                return HranaResult.Failed(HranaError.From(SqlErrors.Interrupt));
             case "describe":
-                return Command(new HranaStmt(request.Sql, request.SqlId)) switch
+                return Command(new HranaStmt(request.Sql, request.SqlId), bind: false) switch
                 {
                     HranaError error => HranaResult.Failed(error),
                     SqlCommand command => await stream.Session.DescribeAsync(command, cancellationToken).ConfigureAwait(false) switch
@@ -141,6 +148,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
     /// <summary>Runs one statement into a wire result, refusing results past the response bound.</summary>
     public async ValueTask<HranaStmtOutcome> ExecuteAsync(HranaStmt stmt, CancellationToken cancellationToken)
     {
+        if (Expired)
+        {
+            return HranaError.From(SqlErrors.Interrupt);
+        }
+
         // Past the bound nothing runs: a statement that ran and then reported an error would invite a duplicate retry.
         if (_responseBytes > MaxResponseBytes)
         {
@@ -180,6 +192,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
     // The core splits the text and runs its statements in order, stopping at the first failure.
     private async ValueTask<HranaError?> SequenceAsync(HranaRequest request, CancellationToken cancellationToken)
     {
+        if (Expired)
+        {
+            return HranaError.From(SqlErrors.Interrupt);
+        }
+
         var text = request switch
         {
             { Sql: { } sql, SqlId: null } => sql,
@@ -207,7 +224,7 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
 
     private static readonly HranaError UnknownSql = new("sql_id does not name a stored statement", "SQL_NOT_FOUND");
 
-    private HranaCommand Command(HranaStmt stmt)
+    private HranaCommand Command(HranaStmt stmt, bool bind = true)
     {
         var sql = stmt switch
         {
@@ -239,7 +256,51 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
                 return argument?.Value is { } refused ? Refused(refused) : Protocol;
             }
 
-            named[name[0] is ':' or '@' or '$' ? name[1..] : name] = value;
+            if (!named.TryAdd(name, value))
+            {
+                return new HranaError("named arguments must have unique names", "ARGS_INVALID");
+            }
+        }
+
+        if (bind)
+        {
+            switch (SqlParse.Parse(sql))
+            {
+                case SqlError error:
+                    return HranaError.From(error);
+                case ParsedSql parsed:
+                    // SQLite numbers through the highest slot, including ?NNN gaps. Repeated names share a slot.
+                    // Keep this stricter Hrana contract out of the HTTP SQL core, where unbound values are NULL.
+                    var expected = new HashSet<string>(StringComparer.Ordinal);
+                    var bindings = new Dictionary<string, SqlValue>(StringComparer.Ordinal);
+                    for (var i = 0; i < parsed.Params.Count; i++)
+                    {
+                        var supplied = i < args.Length;
+                        if (parsed.Params[i] is [':' or '@' or '$', ..] name)
+                        {
+                            expected.Add(name);
+                            expected.Add(name[1..]);
+                            if (named.TryGetValue(name, out var bound) || named.TryGetValue(name[1..], out bound))
+                            {
+                                bindings.Add(name, bound);
+                                supplied = true;
+                            }
+                        }
+
+                        if (!supplied)
+                        {
+                            return new HranaError("a value is required for every parameter slot", "ARGS_INVALID");
+                        }
+                    }
+
+                    if (args.Length > parsed.Params.Count || named.Keys.Any(name => !expected.Contains(name)))
+                    {
+                        return new HranaError("an argument does not match a statement parameter", "ARGS_INVALID");
+                    }
+
+                    named = bindings;
+                    break;
+            }
         }
 
         return new SqlCommand(sql, args, named);

@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Hrana;
 
 /// <summary><c>POST …/databases/{database}/libsql/v3/cursor</c>: one batch streamed as newline-delimited JSON.</summary>
-internal sealed class HranaCursorEndpoint(ITenantDirectory tenants, IHranaStreams streams, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
+internal sealed class HranaCursorEndpoint(ITenantDirectory tenants, IHranaStreams streams, IMemoryBudget memory, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const string MediaType = "application/x-ndjson";
 
@@ -58,7 +58,8 @@ internal sealed class HranaCursorEndpoint(ITenantDirectory tenants, IHranaStream
 
         // Every step runs before the first line: the baton's suffix states whether the batch left a transaction open.
         // The core materializes each result anyway, and the executor bounds their total size.
-        var executor = new HranaExecutor(stream, memory, batch.Steps.Count);
+        stream.Session.BeginRequest();
+        var executor = new HranaExecutor(stream, memory, batch.Steps.Count, time);
         var results = new HranaStmtResult?[batch.Steps.Count];
         var errors = new HranaError?[batch.Steps.Count];
         string baton;
