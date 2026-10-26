@@ -31,5 +31,5 @@ public sealed record OnboardingPage(DocumentModel Document, string CsrfToken,
 {
     public IReadOnlyList<OnboardingStep> Steps => OnboardingProgress.Steps(Step);
     public int CurrentStep => Steps.Select((step, index) => (step, index)).FirstOrDefault(item => item.step.Current).index + 1;
-    public int Progress => CurrentStep * 100 / 3;
+    public int Progress => Steps.Count(step => step.Completed) * 100 / Steps.Count;
 }
