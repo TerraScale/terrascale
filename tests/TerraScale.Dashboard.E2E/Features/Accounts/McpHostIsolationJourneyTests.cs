@@ -41,7 +41,10 @@ public sealed class McpHostIsolationJourneyTests(DashboardRootFixture fixture)
 
         var discovery = await Task.WhenAll(HttpJourney.McpAsync(first.Client, firstSecret, "tools/list", new { }),
             HttpJourney.McpAsync(second.Client, secondSecret, "tools/list", new { }));
-        await Assert.That(discovery[0].GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
+        var inventory = discovery[0].GetProperty("result").GetProperty("tools").EnumerateArray().ToArray();
+        await Assert.That(inventory.Select(tool => tool.GetProperty("name").GetString())).Contains("get_context");
+        await Assert.That(inventory.All(tool => tool.TryGetProperty("inputSchema", out _))).IsTrue();
+        await Assert.That(inventory.Single(tool => tool.GetProperty("name").GetString() == "get_context").TryGetProperty("outputSchema", out _)).IsTrue();
         await Assert.That(JsonElement.DeepEquals(discovery[0].GetProperty("result"), discovery[1].GetProperty("result"))).IsTrue();
         var overviews = await Task.WhenAll(CallAsync(first.Client, firstSecret, "get_overview", new { }),
             CallAsync(second.Client, secondSecret, "get_overview", new { }));
