@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet;
 
@@ -142,7 +143,7 @@ public static partial class AuthenticationConsole
 
     private static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects, string key)
     {
-        if (AuthenticationSection.Find(key) is null) return Results.NotFound();
+        if (AuthenticationSection.Find(key) is null) return await NotFoundEndpoints.PageAsync(http, sessions, accounts);
         var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
         if (context is null) return AccountEndpoints.LoginRedirect(http);
         if (context.Project is null) return HttpRedirects.SeeOther("/");
