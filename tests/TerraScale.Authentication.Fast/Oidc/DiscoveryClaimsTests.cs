@@ -38,8 +38,8 @@ public sealed class DiscoveryClaimsTests(TerraBaseFixture fixture)
         await Assert.That(identity.TryGetClaim("email", out _)).IsEqualTo(email);
         await Assert.That(identity.TryGetClaim("email_verified", out _)).IsEqualTo(email);
         await Assert.That(identity.GetClaim("nonce").Value).IsEqualTo("discovery-test-nonce");
-        await Assert.That(info.EnumerateObject().Select(property => property.Name).ToArray())
-            .IsEquivalentTo(email ? ["sub", "email", "email_verified"] : ["sub"]);
+        string[] expectedInfo = email ? ["sub", "email", "email_verified"] : ["sub"];
+        await Assert.That(info.EnumerateObject().Select(property => property.Name).ToArray()).IsEquivalentTo(expectedInfo);
 
         // These are the standard claims emitted by the supported code flow, not internal authorization state.
         string[] standard = ["iss", "sub", "aud", "exp", "iat", "auth_time", "email", "email_verified", "azp", "nonce", "at_hash", "jti", "client_id", "scope"];

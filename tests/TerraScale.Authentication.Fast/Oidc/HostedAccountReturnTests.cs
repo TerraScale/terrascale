@@ -22,7 +22,7 @@ public sealed class HostedAccountReturnTests(TerraBaseFixture fixture)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var user = (await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync("terrascale", "security@example.test", Passwords.Hash(Password)))!;
+        var user = (await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync("terrascale", "security@example.test", Passwords.Hash(Password), CancellationToken.None))!;
         using var initial = await oidc.PostFormAsync("/ui/terrascale/sign-in/password", new() { ["email"] = user.Email, ["password"] = Password });
         var oldSession = OidcHarness.SessionCookie(initial)!;
         await Assert.That(oldSession).IsNotNull();
@@ -90,7 +90,7 @@ public sealed class HostedAccountReturnTests(TerraBaseFixture fixture)
         var (_, token) = await oidc.SignInUserAsync("owner@example.test");
         var project = await oidc.CreateProjectAsync(token, await oidc.CreateOrganizationAsync(token), "Isolated project");
         const string Email = "end-user@example.test";
-        await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync(project, Email, Passwords.Hash(Password));
+        await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync(project, Email, Passwords.Hash(Password), CancellationToken.None);
         var next = nested ? Security : Account;
         foreach (var path in new[] { "sign-in", "reset" })
         {
