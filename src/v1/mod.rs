@@ -23,6 +23,7 @@
 //! # let _ = (w, doc); Ok(()) }
 //! ```
 
+mod auth;
 mod backups;
 mod changes;
 mod client;
