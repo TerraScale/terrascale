@@ -127,6 +127,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     private async Task<AccountContext> Fresh(string? organizationId, string? projectId, bool manage)
     {
         var context = await AccountScope.RefreshAsync(accounts, DashboardMcp.Scope(http.HttpContext, organizationId, projectId), Cancellation, requireProject: true);
+        if (context.Role.Length == 0) throw new AccountAccessException("Organization membership is required.");
         if (manage && !context.CanManage) throw new AccountAccessException("Organization management is required.");
         return context;
     }

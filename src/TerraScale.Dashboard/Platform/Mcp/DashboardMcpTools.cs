@@ -31,22 +31,18 @@ public sealed class DashboardMcpTools
         var context = await accounts.GetContextAsync(Account().Session, Cancellation);
         return new(new(context.UserId, context.Account.Name, context.Account.Email, null),
             new(context.Account.ActiveOrganizationId, context.Account.ActiveProjectId),
-            context.Organizations.Select(org => new DashboardMcpOrganization(org.Id, org.Name, org.Kind, org.Status,
-                org.RoleFor(context.UserId), org.PlanId, PlanCatalog.For(org)?.Name ?? "",
-                org.BillingStatus, org.CanManage(context.UserId), org.CanProvision(context.UserId), org.DeletionRequested,
-                org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
-                    new DashboardMcpProject(project.Id, project.Name, project.Region, project.BackupRegion, project.Regions.ToArray(),
-                        project.IsDefault, project.Databases.Count)).ToArray())).ToArray());
+            context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null })).ToArray());
     }
 
     [McpServerTool(Name = "get_organization", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read the selected organization's details and projects.")]
     public async Task<DashboardMcpOrganizationDetails> Organization(string? organizationId = null, string? projectId = null)
         => OrganizationDetails(await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation));
 
-    [McpServerTool(Name = "select_organization", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Select an organization you belong to in the dashboard.")]
+    [McpServerTool(Name = "select_organization", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Select an accessible organization workspace, including one reached through a project grant.")]
     public async Task<DashboardMcpSelection> SelectOrganization(string organizationId)
     {
-        var context = await AccountScope.RefreshAsync(accounts, Scope(organizationId, null), Cancellation);
+        var scoped = Scope(organizationId, null);
+        var context = await AccountScope.RefreshAsync(accounts, scoped, Cancellation, requireProject: scoped.Role.Length == 0);
         await accounts.SwitchOrganizationAsync(context.Session, organizationId, Cancellation);
         var account = (await accounts.GetContextAsync(context.Session, Cancellation)).Account;
         return new(account.ActiveOrganizationId, account.ActiveProjectId);
@@ -55,14 +51,11 @@ public sealed class DashboardMcpTools
     [McpServerTool(Name = "select_project", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Select a project you can access in the dashboard.")]
     public async Task<DashboardMcpSelection> SelectProject(string projectId)
     {
-        var context = await accounts.GetContextAsync(Account().Session, Cancellation);
-        var organizations = context.Organizations.Where(org => org.ContainsMember(context.UserId) &&
-            org.Projects.TryGetValue(projectId, out var project) && project.OrganizationId == org.Id).ToArray();
-        if (organizations.Length != 1) throw new AccountAccessException("Project is unavailable.", 404);
-        var organizationId = organizations[0].Id;
-        await accounts.UpdateAccountAsync(context.Session, account =>
-        { account.ActiveOrganizationId = organizationId; account.ActiveProjectId = projectId; }, Cancellation);
-        return new(organizationId, projectId);
+        var context = await accounts.GetContextAsync(Account().Session, Cancellation, projectId: projectId);
+        context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: true);
+        if (context.Organization!.MfaRequired) throw new AccountAccessException("Organization is unavailable.", 404);
+        var selected = await accounts.SwitchProjectAsync(context.Session, projectId, Cancellation);
+        return new(selected.Account.ActiveOrganizationId, selected.Account.ActiveProjectId);
     }
 
     [McpServerTool(Name = "create_organization", UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Create a business organization and select it for billing setup.")]
@@ -81,7 +74,7 @@ public sealed class DashboardMcpTools
             PlanCatalog.For(org)?.Name ?? "", org.BillingStatus,
             org.CanManage(context.UserId), org.CanProvision(context.UserId), org.DeletionRequested,
             org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
-                new DashboardMcpProject(project.Id, project.Name, project.Region, project.BackupRegion, project.Regions.ToArray(), project.IsDefault, project.Databases.Count)).ToArray(),
+                ProjectSummary(context, project)).ToArray(),
             org.Slug, org.CreatedAt == DateTimeOffset.MinValue ? null : org.CreatedAt,
             org.Members.Values.Count(member => member.Status == "active"),
             org.Invitations.Values.Count(invitation => invitation.Status == "pending" && invitation.ExpiresAt > time.GetUtcNow()),
@@ -94,10 +87,16 @@ public sealed class DashboardMcpTools
     private static DashboardMcpOrganization OrganizationSummary(AccountContext context)
     {
         var org = context.Organization!;
-        return new(org.Id, org.Name, org.Kind, org.Status, org.RoleFor(context.UserId), org.PlanId,
-            PlanCatalog.For(org)?.Name ?? "", org.BillingStatus,
-            org.CanManage(context.UserId), org.CanProvision(context.UserId), org.DeletionRequested,
+        var member = org.ContainsMember(context.UserId);
+        return new(org.Id, org.Name, member ? org.Kind : null, member ? org.Status : null, member ? org.RoleFor(context.UserId) : null,
+            member ? org.PlanId : null, member ? PlanCatalog.For(org)?.Name ?? "" : null, member ? org.BillingStatus : null,
+            org.CanManage(context.UserId), org.CanProvision(context.UserId), member ? org.DeletionRequested : null,
             org.Projects.Values.OrderBy(project => project.Name, StringComparer.Ordinal).Select(project =>
-                new DashboardMcpProject(project.Id, project.Name, project.Region, project.BackupRegion, project.Regions.ToArray(), project.IsDefault, project.Databases.Count)).ToArray());
+                ProjectSummary(context, project)).ToArray());
     }
+
+    private static DashboardMcpProject ProjectSummary(AccountContext context, ProjectRecord project) =>
+        new(project.Id, project.Name, project.Region, project.BackupRegion, project.Regions.ToArray(), project.IsDefault, project.Databases.Count,
+            PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : project.Role,
+            (context with { Project = project }).CanWriteProjectData);
 }

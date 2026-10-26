@@ -77,7 +77,7 @@ public static class DashboardMcp
         services.AddMcpServer(options =>
         {
             options.ServerInfo = new() { Name = "terrascale-dashboard", Title = "TerraScale Dashboard", Version = "1.0.0" };
-            options.ServerInstructions = "TerraScale dashboard tools manage organizations, projects, databases, data, credentials, billing and profile. Calls are stateless: pass organizationId and projectId to choose a scope or omit them to use your current dashboard selection. Call get_context first to discover accessible IDs.";
+            options.ServerInstructions = "TerraScale dashboard tools manage organizations, projects, databases, data, credentials, billing and profile. Omit scope IDs to use your saved selection. organizationId alone uses its selected or default accessible project, or the first accessible project. projectId alone stays within the selected organization; select_project can switch across accessible organizations. Explicit tool scopes never change the saved selection. Call get_context first to discover accessible IDs. Organization details, billing, overview, usage and notifications require organization membership; project grants alone do not authorize these aggregates.";
         }).WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
             .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, cancellationToken) =>
             {
@@ -165,12 +165,20 @@ public static class DashboardMcp
     {
         var context = McpScope.Account(http);
         var organization = string.IsNullOrEmpty(organizationId) ? context.Organization : context.Organizations.SingleOrDefault(item => item.Id == organizationId);
-        if (organization is null || organization.RoleFor(context.UserId).Length == 0) throw new AccountAccessException("Organization is unavailable.", 404);
+        if (organization is null || organization.Status != "active" || organization.Archived || organization.MfaRequired)
+            throw new AccountAccessException("Organization is unavailable.", 404);
         var project = string.IsNullOrEmpty(projectId)
-            ? organization.Id == context.Organization?.Id ? context.Project : organization.Projects.Values.FirstOrDefault(item => item.IsDefault)
+            ? organization.Id == context.Organization?.Id && context.Project is not null ? organization.Projects.GetValueOrDefault(context.Project.Id)
+                : string.IsNullOrEmpty(organizationId) ? null
+                : organization.Projects.Values.Where(item => item.Status == "active" && item.OrganizationId == organization.Id &&
+                    (organization.ContainsMember(context.UserId) || item.Role is "viewer" or "member" or "admin"))
+                    .OrderByDescending(item => item.IsDefault).ThenBy(item => item.Id, StringComparer.Ordinal).FirstOrDefault()
             : organization.Projects.GetValueOrDefault(projectId);
-        if (!string.IsNullOrEmpty(projectId) && project is null || project is not null && project.OrganizationId != organization.Id)
+        if (!string.IsNullOrEmpty(projectId) && project is null || project is not null && (project.OrganizationId != organization.Id || project.Status != "active"))
             throw new AccountAccessException("Project is unavailable.", 404);
-        return new(context.Session, context.Account, context.Organizations, organization, project);
+        if (organization.RoleFor(context.UserId).Length == 0 &&
+            (PlatformDatabases.IsPlatform(organization.Id) || project?.Role is not ("viewer" or "member" or "admin")))
+            throw new AccountAccessException("Project is unavailable.", 404);
+        return context with { Organization = organization, Project = project };
     }
 }
