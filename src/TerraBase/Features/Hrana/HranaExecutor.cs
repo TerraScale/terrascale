@@ -50,7 +50,7 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
                     ? HranaResult.Failed(failure)
                     : HranaResult.Ok(new HranaResponse("sequence"));
             case "describe":
-                return Command(new HranaStmt(request.Sql, request.SqlId)) switch
+                return Command(new HranaStmt(request.Sql, request.SqlId), bind: false) switch
                 {
                     HranaError error => HranaResult.Failed(error),
                     SqlCommand command => await stream.Session.DescribeAsync(command, cancellationToken).ConfigureAwait(false) switch
@@ -207,7 +207,7 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
 
     private static readonly HranaError UnknownSql = new("sql_id does not name a stored statement", "SQL_NOT_FOUND");
 
-    private HranaCommand Command(HranaStmt stmt)
+    private HranaCommand Command(HranaStmt stmt, bool bind = true)
     {
         var sql = stmt switch
         {
@@ -239,7 +239,51 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
                 return argument?.Value is { } refused ? Refused(refused) : Protocol;
             }
 
-            named[name[0] is ':' or '@' or '$' ? name[1..] : name] = value;
+            if (!named.TryAdd(name, value))
+            {
+                return new HranaError("named arguments must have unique names", "ARGS_INVALID");
+            }
+        }
+
+        if (bind)
+        {
+            switch (SqlParse.Parse(sql))
+            {
+                case SqlError error:
+                    return HranaError.From(error);
+                case ParsedSql parsed:
+                    // SQLite numbers through the highest slot, including ?NNN gaps. Repeated names share a slot.
+                    // Keep this stricter Hrana contract out of the HTTP SQL core, where unbound values are NULL.
+                    var expected = new HashSet<string>(StringComparer.Ordinal);
+                    var bindings = new Dictionary<string, SqlValue>(StringComparer.Ordinal);
+                    for (var i = 0; i < parsed.Params.Count; i++)
+                    {
+                        var supplied = i < args.Length;
+                        if (parsed.Params[i] is [':' or '@' or '$', ..] name)
+                        {
+                            expected.Add(name);
+                            expected.Add(name[1..]);
+                            if (named.TryGetValue(name, out var bound) || named.TryGetValue(name[1..], out bound))
+                            {
+                                bindings.Add(name, bound);
+                                supplied = true;
+                            }
+                        }
+
+                        if (!supplied)
+                        {
+                            return new HranaError("a value is required for every parameter slot", "ARGS_INVALID");
+                        }
+                    }
+
+                    if (args.Length > parsed.Params.Count || named.Keys.Any(name => !expected.Contains(name)))
+                    {
+                        return new HranaError("an argument does not match a statement parameter", "ARGS_INVALID");
+                    }
+
+                    named = bindings;
+                    break;
+            }
         }
 
         return new SqlCommand(sql, args, named);
