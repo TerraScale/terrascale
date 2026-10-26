@@ -34,8 +34,10 @@ type migration struct {
 }
 
 // migrations reads migrationsDir in version order.
-func migrations() ([]migration, error) {
-	entries, err := os.ReadDir(migrationsDir)
+func migrations() ([]migration, error) { return readMigrations(migrationsDir) }
+
+func readMigrations(dir string) ([]migration, error) {
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -47,7 +49,7 @@ func migrations() ([]migration, error) {
 		if e.IsDir() || !migrationFile.MatchString(e.Name()) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(migrationsDir, e.Name()))
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -69,12 +71,14 @@ func migrationVersion(name string) uint64 {
 }
 
 // newMigration writes the next empty migration file.
-func newMigration(name string, out io.Writer) error {
+func newMigration(name string, out io.Writer) error { return newMigrationIn(migrationsDir, name, out) }
+
+func newMigrationIn(dir, name string, out io.Writer) error {
 	slug := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(name), "_"), "_")
 	if slug == "" {
 		return errors.New("migration name needs a letter or digit")
 	}
-	ms, err := migrations()
+	ms, err := readMigrations(dir)
 	if err != nil {
 		return err
 	}
@@ -82,10 +86,10 @@ func newMigration(name string, out io.Writer) error {
 	if len(ms) > 0 {
 		next = migrationVersion(ms[len(ms)-1].name) + 1
 	}
-	if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(migrationsDir, fmt.Sprintf("%04d_%s.sql", next, slug))
+	path := filepath.Join(dir, fmt.Sprintf("%04d_%s.sql", next, slug))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
@@ -96,6 +100,11 @@ func newMigration(name string, out io.Writer) error {
 	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			Path string `json:"path"`
+		}{path})
 	}
 	_, err = fmt.Fprintln(out, path)
 	return err
@@ -127,12 +136,17 @@ func noTable(err error) bool {
 }
 
 // migrateUp applies each pending migration in its own transaction together
-// with its history row, so a failed or concurrent run applies nothing.
+// with its history row. Earlier migrations can remain committed if a later one fails.
 func migrateUp(ctx context.Context, db *v1.Database, out io.Writer) error {
 	ms, err := migrations()
 	if err != nil {
 		return err
 	}
+	return applyMigrations(ctx, db, ms, out)
+}
+
+func applyMigrations(ctx context.Context, db *v1.Database, ms []migration, out io.Writer) error {
+	items := []string{}
 	if _, err := db.ExecuteSQL(ctx, "CREATE TABLE IF NOT EXISTS "+historyTable+
 		" (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"); err != nil {
 		return err
@@ -160,8 +174,18 @@ func migrateUp(ctx context.Context, db *v1.Database, out io.Writer) error {
 		if _, err := db.BatchSQL(ctx, batch); err != nil {
 			return fmt.Errorf("%s: %w", m.name, err)
 		}
-		fmt.Fprintf(out, "Applied %s\n", m.name)
+		if jsonMode(out) {
+			items = append(items, m.name)
+		} else {
+			fmt.Fprintf(out, "Applied %s\n", m.name)
+		}
 		n++
+	}
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			Database string   `json:"database"`
+			Applied  []string `json:"applied"`
+		}{db.Name(), items})
 	}
 	if n == 0 {
 		fmt.Fprintf(out, "%s is up to date\n", db.Name())
@@ -174,12 +198,23 @@ func migrateStatus(ctx context.Context, db *v1.Database, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	return migrationStatus(ctx, db, ms, out)
+}
+
+func migrationStatus(ctx context.Context, db *v1.Database, ms []migration, out io.Writer) error {
+	type entry struct {
+		Name  string `json:"name"`
+		State string `json:"state"`
+	}
+	items := []entry{}
 	done, err := applied(ctx, db)
 	if err != nil {
 		return err
 	}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "MIGRATION\tSTATE")
+	if !jsonMode(out) {
+		fmt.Fprintln(w, "MIGRATION\tSTATE")
+	}
 	for _, m := range ms {
 		state := "pending"
 		if sum, ok := done[m.name]; ok {
@@ -189,10 +224,21 @@ func migrateStatus(ctx context.Context, db *v1.Database, out io.Writer) error {
 			}
 			delete(done, m.name)
 		}
-		fmt.Fprintf(w, "%s\t%s\n", m.name, state)
+		if jsonMode(out) {
+			items = append(items, entry{m.name, state})
+		} else {
+			fmt.Fprintf(w, "%s\t%s\n", m.name, state)
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(done)) {
-		fmt.Fprintf(w, "%s\tapplied, file missing\n", name)
+		if jsonMode(out) {
+			items = append(items, entry{name, "applied_missing_file"})
+		} else {
+			fmt.Fprintf(w, "%s\tapplied, file missing\n", name)
+		}
+	}
+	if jsonMode(out) {
+		return emitJSON(out, items)
 	}
 	return w.Flush()
 }

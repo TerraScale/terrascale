@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -16,9 +17,20 @@ import (
 // Pass this writer unchanged to command helpers; never capture textual output.
 type jsonOutput struct {
 	io.Writer
+	progress io.Writer
 	failed   bool
 	stream   bool
 	terminal bool
+}
+
+func progressOutput(out io.Writer) io.Writer {
+	if w, ok := out.(*jsonOutput); ok {
+		if w.progress != nil {
+			return w.progress
+		}
+		return os.Stderr
+	}
+	return out
 }
 
 func jsonMode(out io.Writer) bool {

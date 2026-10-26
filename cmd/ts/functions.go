@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -79,12 +80,21 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, fn)
+		}
 		fmt.Fprintf(out, "Deployed function %s\n", fn.Name)
 		return nil
 	case "functions list":
 		list, err := db.Functions(ctx)
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			if list == nil {
+				list = []v1.Function{}
+			}
+			return emitJSON(out, list)
 		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tTRIGGER\tCRON\tUPDATED")
@@ -108,6 +118,12 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			}
 		}
 		res, err := db.InvokeFunction(ctx, args[0], body)
+		if jsonMode(out) {
+			if err != nil {
+				return err
+			} // Never emit a failure body before the error envelope.
+			return emitFunctionResponse(out, res)
+		}
 		// A handler's non-2xx body, unlike a TerraBase error, has no error envelope.
 		if api := (*v1.APIError)(nil); errors.As(err, &api) {
 			var env struct{ Error json.RawMessage }
@@ -127,6 +143,12 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			if logs == nil {
+				logs = []v1.FunctionLog{}
+			}
+			return emitJSON(out, logs)
+		}
 		enc := json.NewEncoder(out)
 		for _, l := range logs {
 			if err := enc.Encode(l); err != nil {
@@ -138,10 +160,34 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 		if err := db.DeleteFunction(ctx, args[0]); err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Name    string `json:"name"`
+				Deleted bool   `json:"deleted"`
+			}{args[0], true})
+		}
 		fmt.Fprintf(out, "Deleted function %s\n", args[0])
 		return nil
 	}
 	return errUsage
+}
+
+// A handler can return JSON or arbitrary bytes. Preserve its payload as typed
+// JSON when valid, otherwise as base64; this never parses CLI status prose.
+func emitFunctionResponse(out io.Writer, body []byte) error {
+	result := struct {
+		Body       json.RawMessage `json:"body,omitempty"`
+		BodyBase64 string          `json:"bodyBase64,omitempty"`
+	}{}
+	switch {
+	case len(body) == 0:
+		result.Body = json.RawMessage("null")
+	case json.Valid(body):
+		result.Body = body
+	default:
+		result.BodyBase64 = base64.StdEncoding.EncodeToString(body)
+	}
+	return emitJSON(out, result)
 }
 
 // functionSource returns the source file a deploy reads, a dir's index.js,
