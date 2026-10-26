@@ -18,9 +18,11 @@ public sealed class ExternalLinkJourneyTests(DashboardRootFixture fixture)
         {
             foreach (Match anchor in Anchors.Matches(await File.ReadAllTextAsync(view)))
             {
-                // Includes literal, protocol-relative, and interpolated external URLs.
+                // Literal URLs (including URLs inside Razor expressions), plus audited dynamic destinations.
                 var attributes = anchor.Groups["attributes"].Value;
-                if (!Regex.IsMatch(attributes, "https?://|href=[\"']//", RegexOptions.IgnoreCase)) continue;
+                var dynamicDestinations = new[] { "HomeConnectSnippets.ApiUrl", "@info.ConsoleUrl", "href=\"@value\"", "@invoice.HostedUrl", "@invoice.PdfUrl", "@data.State.PaymentUrl", "@TsAuthGateway.RequestSignInCodeUrl" };
+                if (!Regex.IsMatch(attributes, "https?://|href=[\"']//", RegexOptions.IgnoreCase) &&
+                    !dynamicDestinations.Any(destination => attributes.Contains(destination, StringComparison.Ordinal))) continue;
                 count++;
                 await Assert.That(attributes).Contains("@(ExternalLink.Attributes)").Because(view);
                 await Assert.That(anchor.Groups["body"].Value).Contains("@(ExternalLink.Hint)").Because(view);
@@ -40,7 +42,7 @@ public sealed class ExternalLinkJourneyTests(DashboardRootFixture fixture)
         var persona = scenario.Personas.Seeded;
         using var login = await HttpJourney.LoginAsync(client, persona.Email, persona.Password);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        foreach (var path in new[] { "/", "/?tab=connect", "/support", "/organizations/choose", "/organization?tab=billing", "/imports", "/databases/" + ReferenceFixtures.PrimaryId + "/functions", "/databases/" + ReferenceFixtures.PrimaryId, "/missing-external-link-proof" })
+        foreach (var path in new[] { "/", "/?tab=connect", "/support", "/auth", "/auth/social", "/organizations/choose", "/organization?tab=billing", "/imports", "/databases/" + ReferenceFixtures.PrimaryId + "/functions", "/databases/" + ReferenceFixtures.PrimaryId, "/missing-external-link-proof" })
         {
             using var response = await client.GetAsync(path);
             var html = await response.Content.ReadAsStringAsync();
@@ -54,7 +56,8 @@ public sealed class ExternalLinkJourneyTests(DashboardRootFixture fixture)
         foreach (Match anchor in Anchors.Matches(html))
         {
             var attributes = anchor.Groups["attributes"].Value;
-            var href = WebUtility.HtmlDecode(Regex.Match(attributes, "\\bhref=\"([^\"]*)\"").Groups[1].Value);
+            var hrefMatch = Regex.Match(attributes, "\\bhref=([\"'])(.*?)\\1");
+            var href = WebUtility.HtmlDecode(hrefMatch.Groups[2].Value);
             if (!Uri.TryCreate(origin, href, out var url) || url.Scheme is not ("http" or "https")) continue;
             if (url.Authority == origin.Authority)
             {
