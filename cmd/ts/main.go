@@ -3,8 +3,8 @@
 // the signed-in user. Run ts help for every command.
 //
 // Project commands act in the user's only project; -project <name or id>
-// picks one when the user reaches several, and -org <name or id> picks the
-// organization of projects create.
+// picks one when the user reaches several, and -org <name or id> restricts
+// project selection to one unambiguous organization.
 package main
 
 import (
@@ -41,7 +41,11 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   context show | clear                    inspect or clear saved selectors
   context set <org> <project> [<database>] save verified selectors; @ uses saved DB
   orgs                                    list every accessible organization
+  orgs create <name> | info <org>          create or inspect an organization
+  orgs rename <org> <name>                rename an organization (admin)
   projects                                list the projects you can reach
+  projects info <project>                 inspect a project; -org restricts lookup
+  projects rename <project> <name>        rename a project (admin)
   projects create <name>                  create a project (and an organization
                                           when you have none)
   usage [<db>]                            print the project's or a database's
@@ -151,6 +155,11 @@ var commands = map[string][]int{
 	"billing":           {0},
 	"projects":          {0},
 	"orgs":              {0},
+	"orgs create":       {1},
+	"orgs info":         {1},
+	"orgs rename":       {2},
+	"projects info":     {1},
+	"projects rename":   {2},
 	"context show":      {0},
 	"context clear":     {0},
 	"context set":       {2, 3},
@@ -337,7 +346,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
-		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || name == "orgs" || name == "context set" {
+		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
 			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
 		}
 		if _, err := contextDatabase(operands, ""); err != nil {
@@ -385,7 +394,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "context set" {
 		return selectCLIContext(ctx, u, token, operands, out)
 	}
-	if name != "whoami" && name != "orgs" && name != "projects" && name != "projects create" {
+	if name != "whoami" && !strings.HasPrefix(name, "orgs") && !strings.HasPrefix(name, "projects") {
 		path, err := contextPath()
 		if err != nil {
 			return err
@@ -415,8 +424,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return whoami(ctx, u, token, out)
 	case "orgs":
 		return listOrganizations(ctx, u, out)
+	case "orgs create", "orgs info", "orgs rename":
+		return organizationLifecycle(ctx, u, name, operands, out)
 	case "projects":
-		return listProjects(ctx, u, out)
+		return listProjects(ctx, u, *org, out)
+	case "projects info", "projects rename":
+		return projectLifecycle(ctx, u, *org, name, operands, out)
 	case "projects create":
 		return createProject(ctx, u, *org, operands[0], out)
 	}
@@ -579,6 +592,14 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 // projects yields every project the user reaches, in every organization.
 func projects(ctx context.Context, u *tsauth.User, organization string) iter.Seq2[tsauth.Project, error] {
 	return func(yield func(tsauth.Project, error) bool) {
+		if organization != "" {
+			selected, err := selectOrganization(ctx, u, organization)
+			if err != nil {
+				yield(tsauth.Project{}, err)
+				return
+			}
+			organization = selected.ID
+		}
 		for org, err := range pages(func(after string) (*v1.Page[tsauth.Organization], error) {
 			p, err := u.Organizations(ctx, tsauth.PageOptions{Limit: 100, After: after})
 			return (*v1.Page[tsauth.Organization])(p), err
@@ -587,7 +608,7 @@ func projects(ctx context.Context, u *tsauth.User, organization string) iter.Seq
 				yield(tsauth.Project{}, err)
 				return
 			}
-			if organization != "" && org.ID != organization && org.Name != organization {
+			if organization != "" && org.ID != organization {
 				continue
 			}
 			for p, err := range pages(func(after string) (*v1.Page[tsauth.Project], error) {
@@ -602,13 +623,13 @@ func projects(ctx context.Context, u *tsauth.User, organization string) iter.Seq
 	}
 }
 
-func listProjects(ctx context.Context, u *tsauth.User, out io.Writer) error {
+func listProjects(ctx context.Context, u *tsauth.User, organization string, out io.Writer) error {
 	items := []tsauth.Project{}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if !jsonMode(out) {
 		fmt.Fprintln(w, "NAME\tID\tORGANIZATION\tROLE")
 	}
-	for p, err := range projects(ctx, u, "") {
+	for p, err := range projects(ctx, u, organization) {
 		if err != nil {
 			return err
 		}

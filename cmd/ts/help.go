@@ -11,6 +11,8 @@ var commandSyntax = map[string]string{
 	"billing":    "billing",
 	"auth login": "auth login", "auth logout": "auth logout", "whoami": "whoami",
 	"orgs": "orgs", "projects": "projects", "projects create": "projects create <name>",
+	"orgs create": "orgs create <name>", "orgs info": "orgs info <name|id>", "orgs rename": "orgs rename <name|id> <new-name>",
+	"projects info": "projects info <name|id>", "projects rename": "projects rename <name|id> <new-name>",
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
 	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
