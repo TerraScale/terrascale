@@ -626,6 +626,9 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 }
 
 func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var body io.Reader
@@ -647,6 +650,9 @@ func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, author
 	req.Header.Set("Accept", "application/json")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	res, err := hc.Do(req)
 	if err != nil {
