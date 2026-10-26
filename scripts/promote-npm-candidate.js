@@ -693,10 +693,10 @@ function verifyQualificationReceipt(context) {
     ["root", "admin", "betterAuthWorkerd"],
     "npm browser graph evidence",
   );
+  const hasBetterAuthExport = Object.hasOwn(packageJson.exports, "./better-auth");
   for (const graph of [
     receipt.boundaries.browserEntrypointGraphs.root,
     receipt.boundaries.browserEntrypointGraphs.admin,
-    receipt.boundaries.browserEntrypointGraphs.betterAuthWorkerd,
   ]) {
     if (
       !Array.isArray(graph) ||
@@ -706,10 +706,14 @@ function verifyQualificationReceipt(context) {
       throw new Error("npm qualification browser graph evidence is invalid.");
     }
   }
+  const betterAuthGraph = receipt.boundaries.browserEntrypointGraphs.betterAuthWorkerd;
+  if (!Array.isArray(betterAuthGraph) || betterAuthGraph.some((entry) => typeof entry !== "string") ||
+      (hasBetterAuthExport ? betterAuthGraph.length < 1 : betterAuthGraph.length !== 0))
+    throw new Error("npm qualification Better Auth graph contradicts the packed export boundary.");
   if (
     JSON.stringify(receipt.boundaries.exports) !==
       JSON.stringify(packageJson.exports) ||
-    receipt.boundaries.betterAuthExport !== "node-and-workerd-server-only" ||
+    receipt.boundaries.betterAuthExport !== (hasBetterAuthExport ? "node-and-workerd-server-only" : "absent") ||
     receipt.boundaries.packedSecretScan !== "passed"
   ) {
     throw new Error("npm qualification package-boundary evidence is invalid.");

@@ -1,5 +1,10 @@
 # Better Auth producer feasibility audit
 
+Scope decision, 2026-10-26: TS-1026 and TS-1085 are parked in Backlog until the
+replication goal addresses the auth invariant design with TS-1007. Version 0.0.14
+removes the public `./better-auth` stub; the adapter is planned. The audit below
+records the earlier 0.0.9 source inspection, including the then-exported stub.
+
 2026-10-26. Outcome: blocked on public producer contracts; no adapter implementation is justified.
 Read the full TS-1026, TS-1007 and TS-757 issues/comments and applicable AGENTS.md files.
 Producer evidence: fetched `TerraScale/terrascale origin/main` at

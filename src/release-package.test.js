@@ -30,6 +30,7 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     for (const entry of ["src/index.js", "src/v1/terrabase-v1.js", "types/index.d.ts", "sdk-v1-route-manifest.json", "sdk-public-v1-route-manifest.json"])
       assert.ok(listing.includes(`package/${entry}\n`), entry);
     assert.doesNotMatch(listing, /^package\/(?:test|scripts|contracts|node_modules)\/|\.test\.js$/mu);
+    assert.doesNotMatch(listing, /^package\/(?:src\/better-auth\.js|types\/better-auth\.d\.ts)$/mu);
     await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));
     await npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "typescript@5.9.3"], consumer);
     const manifest = JSON.parse(await readFile(path.join(consumer, "node_modules/@terrascale/sdk/package.json"), "utf8"));
@@ -45,6 +46,10 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     await run(process.execPath, ["shape-identity.js"], { cwd: consumer });
     await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
       "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
+    for (const conditions of [[], ["--conditions=workerd"]]) {
+      await run(process.execPath, [...conditions, "--input-type=module", "--eval",
+        "import assert from 'node:assert/strict'; await assert.rejects(import('@terrascale/sdk/better-auth'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
+    }
     const declarations = await readFile(path.join(root, "types/index.d.ts"), "utf8");
     assert.doesNotMatch(declarations, /node:sqlite|local\/|database-types|discovery\.js/u);
   } finally {

@@ -61,9 +61,8 @@ const packageDirectory = path.join(workspace, "package");
 const consumer = path.join(workspace, "consumer");
 const startedAt = new Date().toISOString();
 const consumerJourney = String.raw`import assert from "node:assert/strict";
-import { createTerraBaseClient, terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "@terrascale/sdk";
+import { createTerraBaseClient, TerraScaleCapabilityUnavailableError } from "@terrascale/sdk";
 import { requireTerraScaleAdministration } from "@terrascale/sdk/admin";
-import { requireTerraScaleBetterAuth } from "@terrascale/sdk/better-auth";
 import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 const scope = { tenant: "00000000000000000000000001", database: "00000000000000000000000002", shard: 1n };
 const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terrascale.tech", apiKey: "qualification-constructor-only" });
@@ -72,8 +71,7 @@ assert.equal(typeof client.prepareCommit, "function");
 for (const name of ["request", "documents", "executeSql", "sync", "http"]) assert.equal(name in client, false);
 assert.equal(typeof createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "qualification" }), "object");
 assert.throws(requireTerraScaleAdministration, TerraScaleCapabilityUnavailableError);
-assert.throws(requireTerraScaleBetterAuth, TerraScaleCapabilityUnavailableError);
-assert.ok(terraScaleReleaseBlockers.betterAuth.required.includes("bounded transactions"));
+await assert.rejects(import("@terrascale/sdk/better-auth"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
 `;
 
 try {
@@ -160,10 +158,8 @@ try {
   const graphs = {
     root: await browserGraph(packageDirectory, "src/index.js"),
     admin: await browserGraph(packageDirectory, "src/admin.js"),
-    betterAuthWorkerd: await browserGraph(
-      packageDirectory,
-      "src/better-auth.js",
-    ),
+    // Retain the v1 receipt field; no adapter export means no adapter graph.
+    betterAuthWorkerd: [],
   };
 
   await mkdir(consumer);
@@ -172,10 +168,6 @@ try {
     JSON.stringify({
       private: true,
       type: "module",
-      // The clean auth consumer explicitly installs the documented optional peer.
-      dependencies: {
-        "@better-auth/core": manifest.peerDependencies["@better-auth/core"],
-      },
     }),
   );
   await runNpm(
@@ -376,7 +368,7 @@ try {
     boundaries: {
       exports: manifest.exports,
       browserEntrypointGraphs: graphs,
-      betterAuthExport: "node-and-workerd-server-only",
+      betterAuthExport: "absent",
       packedSecretScan: "passed",
     },
     contract,
@@ -512,26 +504,8 @@ function qualifyManifest(manifest) {
         `${name} unexpectedly has a Node-only/default condition.`,
       );
   }
-  for (const name of ["./better-auth"]) {
-    const entry = manifest.exports?.[name];
-    if (
-      typeof entry?.node !== "string" ||
-      typeof entry?.workerd !== "string" ||
-      typeof entry?.types !== "string"
-    )
-      throw new Error(
-        `${name} must expose explicit Node and Workerd server conditions.`,
-      );
-    if (entry.browser !== null || "import" in entry || "default" in entry)
-      throw new Error(`${name} must block browser and generic imports.`);
-    if (
-      Object.keys(entry).indexOf("workerd") >
-      Object.keys(entry).indexOf("browser")
-    )
-      throw new Error(
-        `${name} must resolve Workerd before its shared browser condition.`,
-      );
-  }
+  if (Object.hasOwn(manifest.exports, "./better-auth"))
+    throw new Error("The planned Better Auth adapter must not be a public export.");
   for (const name of ["./local", "./postgres"]) {
     const entry = manifest.exports?.[name];
     if (
@@ -563,6 +537,7 @@ function qualifyContents(files, manifest) {
     /\.map$/u,
     /\.test\./u,
     /capture/iu,
+    /^(?:src\/better-auth\.js|types\/better-auth\.d\.ts)$/u,
   ];
   for (const file of files)
     for (const pattern of forbidden)
@@ -578,7 +553,6 @@ function qualifyContents(files, manifest) {
     "types/index.d.ts",
     "src/admin.js",
     "types/admin.d.ts",
-    "src/better-auth.js",
   ]) {
     if (!files.includes(required))
       throw new Error(`Required packed path is missing: ${required}`);
@@ -632,8 +606,8 @@ async function browserGraph(directory, entry) {
   const pending = [entry];
   while (pending.length > 0) {
     const relative = /** @type {string} */ (pending.pop());
-    if (entry !== "src/better-auth.js" && relative === "src/better-auth.js") {
-      throw new Error(`${entry} exposes the server-only Better Auth adapter.`);
+    if (relative === "src/better-auth.js") {
+      throw new Error(`${entry} reaches the removed Better Auth entrypoint.`);
     }
     if (visited.has(relative)) continue;
     visited.add(relative);

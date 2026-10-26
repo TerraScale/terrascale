@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.14 — remove the planned Better Auth stub
+
+The package no longer exports `./better-auth` or ships its always-throwing stub.
+The server-only database adapter is planned after the replication and public auth
+primitive work; it is not an available SDK capability. Management and administration
+operations remain available through their named entrypoints.
+
 ## 0.0.13 — current import contracts
 
 Imports support the published NDJSON format and collection option. Job and preview

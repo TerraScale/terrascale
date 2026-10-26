@@ -1,6 +1,6 @@
 {
   "name": "@terrascale/sdk",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "JavaScript SDK, typed with JSDoc, for project-scoped C# TerraBase v1 and hosted TerraScale identity.",
   "type": "module",
   "license": "Apache-2.0",
@@ -52,12 +52,6 @@
     "./tanstack": {
       "types": "./types/tanstack/index.d.ts",
       "import": "./src/tanstack/index.js"
-    },
-    "./better-auth": {
-      "types": "./types/better-auth.d.ts",
-      "workerd": "./src/better-auth.js",
-      "browser": null,
-      "node": "./src/better-auth.js"
     },
     "./local": {
       "types": "./types/local/index.d.ts",

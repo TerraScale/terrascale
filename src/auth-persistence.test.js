@@ -1,13 +1,6 @@
 import { expect, test } from "vitest";
-import {
-  requireTerraScaleBetterAuth,
-  terraScaleReleaseBlockers,
-} from "./better-auth.js";
-import { TerraScaleCapabilityUnavailableError } from "./management-contracts.js";
-test("production auth persistence fails closed and retains every security/transaction obligation", () => {
-  expect(requireTerraScaleBetterAuth).toThrow(
-    TerraScaleCapabilityUnavailableError,
-  );
+import { terraScaleReleaseBlockers } from "./management-contracts.js";
+test("planned production auth persistence retains its security and transaction obligations", () => {
   expect(terraScaleReleaseBlockers.betterAuth.required).toEqual(
     expect.arrayContaining([
       "unique insert",

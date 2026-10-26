@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "vitest";
-test("public package keeps Node persistence/SQL and Better Auth server conditions separate from browser imports", async () => {
+test("public package omits planned Better Auth and keeps legacy persistence outside browser imports", async () => {
   const manifest = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
   expect(manifest.exports["."].import).toBe("./src/index.js");
-  expect(manifest.exports["./better-auth"].browser).toBeNull();
+  expect(manifest.exports["./better-auth"]).toBeUndefined();
   expect(manifest.exports["./local"].browser).toBeNull();
   expect(manifest.exports["./local"].node).toBe("./src/local/index.js");
   expect(manifest.exports["./postgres"]).toEqual({
