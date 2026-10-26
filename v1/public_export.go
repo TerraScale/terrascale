@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // ExportOptions resumes after a complete exported document. Both fields must
@@ -21,7 +22,7 @@ type ExportOptions struct {
 	AfterID         string
 }
 
-// ExportDocument is one live document, with its collection and canonical ULID.
+// ExportDocument is one live document, with its collection and stored document or SQL row key.
 type ExportDocument struct {
 	Collection string          `json:"collection"`
 	ID         string          `json:"id"`
@@ -44,7 +45,7 @@ func (d *Database) Export(ctx context.Context, options ExportOptions) iter.Seq2[
 		if err == nil && (options.AfterCollection != "" || options.AfterID != "") {
 			err = checkName("collection", options.AfterCollection)
 			if err == nil {
-				err = checkID(options.AfterID)
+				err = entityid.StoredKey(options.AfterID)
 			}
 			q.Set("after_collection", options.AfterCollection)
 			q.Set("after_id", options.AfterID)
@@ -108,7 +109,7 @@ func (d *Database) Export(ctx context.Context, options ExportOptions) iter.Seq2[
 					err = checkName("collection", document.Collection)
 				}
 				if err == nil {
-					err = checkID(document.ID)
+					err = entityid.StoredKey(document.ID)
 				}
 				if err == nil && len(document.Document) == 0 {
 					err = errors.New("missing document")

@@ -14,23 +14,24 @@ func TestDocumentKeyResponseValidation(t *testing.T) {
 		name, key string
 		omit      bool
 		valid     bool
+		stored    bool
 	}{
 		{name: "missing", omit: true},
 		{name: "empty"},
-		{name: "UUID", key: "0190a6e4-7c3b-7d2e-8f00-0123456789ab"},
-		{name: "prefix", key: "doc_" + testProject},
-		{name: "lowercase", key: strings.ToLower(testProject)},
-		{name: "overflow", key: "81ARZ3NDEKTSV4RRFFQ69G5FAV"},
+		{stored: true, name: "UUID", key: "0190a6e4-7c3b-7d2e-8f00-0123456789ab"},
+		{stored: true, name: "prefix", key: "doc_" + testProject},
+		{stored: true, name: "lowercase", key: strings.ToLower(testProject)},
+		{stored: true, name: "overflow", key: "81ARZ3NDEKTSV4RRFFQ69G5FAV"},
 		{name: "NUL", key: "a\x00b"},
 		{name: "newline", key: "a\nb"},
 		{name: "C1 control", key: "a\u0085b"},
 		{name: "too long ASCII", key: strings.Repeat("a", 257)},
 		{name: "too long BMP", key: strings.Repeat("界", 257)},
 		{name: "too long astral", key: strings.Repeat("😀", 129)},
-		{name: "raw punctuation", key: " /a%2Fb?#+ "},
-		{name: "decomposed Unicode", key: "e\u0301"},
-		{name: "BMP boundary", key: strings.Repeat("界", 256)},
-		{name: "astral boundary", key: strings.Repeat("😀", 128)},
+		{stored: true, name: "raw punctuation", key: " /a%2Fb?#+ "},
+		{stored: true, name: "decomposed Unicode", key: "e\u0301"},
+		{stored: true, name: "BMP boundary", key: strings.Repeat("界", 256)},
+		{stored: true, name: "astral boundary", key: strings.Repeat("😀", 128)},
 		{name: "ULID", key: testProject, valid: true},
 	}
 	for _, tc := range cases {
@@ -83,8 +84,12 @@ func TestDocumentKeyResponseValidation(t *testing.T) {
 				case "tx_delete":
 					_, err = db.Tx().Delete("users", testProject).Commit(t.Context())
 				}
-				if (err == nil) != tc.valid {
-					t.Fatalf("valid = %v, error = %v", tc.valid, err)
+				valid := tc.valid
+				if operation == "list" || operation == "query" || operation == "sql" {
+					valid = valid || tc.stored
+				}
+				if (err == nil) != valid {
+					t.Fatalf("valid = %v, error = %v", valid, err)
 				}
 			})
 		}

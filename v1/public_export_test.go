@@ -57,7 +57,7 @@ func TestExportRequiresCompleteStream(t *testing.T) {
 		{"broken HTTP", exportRecord, "application/x-ndjson", 200, 1, true},
 		{"malformed", "{\n", "application/x-ndjson", 200, 0, true},
 		{"missing document", `{"collection":"users","id":"01ARZ3NDEKTSV4RRFFQ69G5FD0"}` + "\n", "application/x-ndjson", 200, 0, true},
-		{"invalid id", strings.Replace(exportRecord, "01ARZ3NDEKTSV4RRFFQ69G5FD0", "not-an-id", 1), "application/x-ndjson", 200, 0, true},
+		{"invalid id", strings.Replace(exportRecord, "01ARZ3NDEKTSV4RRFFQ69G5FD0", "bad\\u0001", 1), "application/x-ndjson", 200, 0, true},
 		{"oversized", strings.Repeat("x", 2048) + "\n", "application/x-ndjson", 200, 0, true},
 		{"wrong media", exportRecord, "application/json", 200, 0, true},
 		{"denied", `{"error":{"code":"forbidden_scope","message":"denied"}}`, "application/json", 403, 0, true},

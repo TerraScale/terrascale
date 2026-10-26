@@ -408,6 +408,9 @@ func (col *Collection) Get(ctx context.Context, id string, opts ...ReadOption) (
 	if _, err := col.db.c.call(ctx, req, nil, &doc); err != nil {
 		return nil, err
 	}
+	if err := entityid.DocumentKey(doc.ID); err != nil {
+		return nil, fmt.Errorf("terrabase: invalid point response ID: %w", err)
+	}
 	return &doc, nil
 }
 

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -29,6 +31,29 @@ func Check(id string) error {
 
 // DocumentKey checks a document ID: every document key is a canonical ULID.
 func DocumentKey(key string) error { return Check(key) }
+
+// StoredKey validates a stored read/checkpoint key, including user-chosen SQL
+// primary keys. Length follows the producer's UTF-16 string length, without
+// normalizing or changing the key. It must never validate document point input.
+func StoredKey(key string) error {
+	if key == "" || !utf8.ValidString(key) {
+		return errors.New("stored key must be 1 to 256 UTF-16 code units without control characters")
+	}
+	units := 0
+	for _, r := range key {
+		if unicode.IsControl(r) {
+			return errors.New("stored key must not contain control characters")
+		}
+		units++
+		if r > 0xffff {
+			units++
+		}
+		if units > 256 {
+			return errors.New("stored key exceeds 256 UTF-16 code units")
+		}
+	}
+	return nil
+}
 
 // Model checks explicitly tagged fields of SDK protocol models. Raw JSON,
 // map keys, timestamps and untagged scalar values remain application data.
@@ -63,6 +88,9 @@ func checkModel(v reflect.Value) error {
 			mode, check := field.Tag.Get("ulid"), Check
 			if keyMode := field.Tag.Get("documentkey"); keyMode != "" {
 				mode, check = keyMode, DocumentKey
+			}
+			if storedMode := field.Tag.Get("storedkey"); storedMode != "" {
+				mode, check = storedMode, StoredKey
 			}
 			if mode != "" {
 				if value.Kind() == reflect.Pointer {
