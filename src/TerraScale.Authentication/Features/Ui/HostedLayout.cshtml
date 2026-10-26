@@ -32,7 +32,14 @@
 <nav class="foot-links" aria-label="Footer">
 @foreach (var (label, url) in Model.Footer)
 {
+@if (Model.IsExternalFooterUrl(url))
+{
+<a href="@url" target="_blank" rel="noopener noreferrer">@label</a>
+}
+else
+{
 <a href="@url">@label</a>
+}
 }
 </nav>
 <div class="foot-row">

@@ -87,6 +87,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
 
+    /// <summary>The correlation ID shared with the response's X-Request-ID header.</summary>
+    public string RequestId { get; init; } = string.Empty;
+
+    /// <summary>The public origin used to classify footer destinations.</summary>
+    public Uri? PublicOrigin { get; init; }
+
     /// <summary>A short bold headline over <see cref="Error"/>.</summary>
     public string? ErrorTitle { get; init; }
 
@@ -175,7 +181,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         ArgumentNullException.ThrowIfNull(model);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context) });
+        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin });
         page.StatusCode = statusCode;
         return page;
     }
