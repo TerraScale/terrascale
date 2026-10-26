@@ -285,10 +285,15 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var now = DateTimeOffset.UtcNow;
-        foreach (var record in (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 100)).Items)
+        var issuedRecords = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 100)).Items;
+        await Assert.That(issuedRecords.Select(record => record.Document.GetProperty("type").GetString())).IsEquivalentTo(
+            [TokenTypeIdentifiers.Private.AuthorizationCode, TokenTypeIdentifiers.RefreshToken, TokenTypeIdentifiers.AccessToken, TokenTypeIdentifiers.IdentityToken]);
+        var eligibleIds = issuedRecords.Where(record => record.Document.GetProperty("type").GetString()
+            is TokenTypeIdentifiers.Private.AuthorizationCode or TokenTypeIdentifiers.RefreshToken).Select(record => record.Id).ToArray();
+        foreach (var record in issuedRecords)
         {
             var token = record.Document.Deserialize(OidcJson.Default.OidcToken)!;
-            token.CreationDate = now.AddDays(-31);
+            token.CreationDate = now - OidcRetention.ProofLifetime;
             token.ExpirationDate = now.AddDays(-1);
             await Assert.That(await store.CompareAndPutAsync(AuthStore.OidcTokenCollection, token.InstanceId!, token.Id!,
                 JsonSerializer.SerializeToElement(token, OidcJson.Default.OidcToken), record.Version)).IsTrue();
@@ -297,15 +302,24 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         foreach (var record in (await oidc.Database.ListDocumentsAsync(AuthStore.OidcAuthorizationCollection, limit: 100)).Items)
         {
             var grant = record.Document.Deserialize(OidcJson.Default.OidcAuthorization)!;
-            grant.CreationDate = now.AddDays(-31);
+            grant.CreationDate = now - OidcRetention.ProofLifetime;
             await Assert.That(await store.CompareAndPutAsync(AuthStore.OidcAuthorizationCollection, grant.InstanceId!, grant.Id!,
                 JsonSerializer.SerializeToElement(grant, OidcJson.Default.OidcAuthorization), record.Version)).IsTrue();
         }
 
+        // Even old, expired unknown types are retained; a recognized token without finite expiry is retained too.
+        var unknown = Token(OidcIssuer.InstanceId, now - OidcRetention.ProofLifetime);
+        unknown.Type = "unknown-retention-test";
+        await SeedAsync(store, unknown);
+        var nonExpiring = Token(OidcIssuer.InstanceId, now - OidcRetention.ProofLifetime);
+        nonExpiring.ExpirationDate = null;
+        await SeedAsync(store, nonExpiring);
+        var retained = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 100)).Items
+            .Where(record => !eligibleIds.Contains(record.Id, StringComparer.Ordinal)).ToArray();
         using var before = await oidc.RefreshAsync(issued.GetProperty("refresh_token").GetString()!);
         await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         var retention = oidc.Server.App.Services.GetRequiredService<OidcRetention>();
-        await Assert.That(await retention.PruneTokensAsync(now, null, CancellationToken.None)).IsGreaterThan(0);
+        await Assert.That(await retention.PruneTokensAsync(now, null, CancellationToken.None)).IsEqualTo((long)eligibleIds.Length);
         await Assert.That(await retention.PruneAuthorizationsAsync(now, null, CancellationToken.None)).IsGreaterThan(0);
         await isolated.Server.StopCleanlyAsync();
         await isolated.Server.RestartAsync();
@@ -314,7 +328,13 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         using var access = await oidc.UserInfoAsync(issued.GetProperty("access_token").GetString()!, replica.Client);
         await Assert.That(access.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection)).Items.Count).IsEqualTo(0);
+        foreach (var id in eligibleIds)
+        {
+            await Assert.That(await oidc.Database.GetDocumentAsync(AuthStore.OidcTokenCollection, id)).IsNull();
+        }
+
+        var remaining = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 100)).Items;
+        await Assert.That(remaining.Select(record => (record.Id, record.Version))).IsEquivalentTo(retained.Select(record => (record.Id, record.Version)));
     }
 
     private static OidcToken Token(string tenant, DateTimeOffset created) => new()

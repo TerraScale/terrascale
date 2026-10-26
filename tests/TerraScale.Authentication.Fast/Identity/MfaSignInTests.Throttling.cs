@@ -54,21 +54,25 @@ public sealed partial class MfaSignInTests
             ["email"] = "untrusted@example.test",
         });
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-        await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+        await Assert.That(OidcHarness.SessionCookie(refused) is null).IsTrue();
         var seconds = refused.Headers.RetryAfter!.Delta!.Value;
         await Assert.That(seconds.TotalSeconds).IsGreaterThan(0);
         var html = await refused.Content.ReadAsStringAsync();
-        await Assert.That(html).Contains($"name=\"challenge\" value=\"{WebUtility.HtmlEncode(challenge)}\"");
-        await Assert.That(html).Contains($"name=\"next\" value=\"{Next}\"");
-        await Assert.That(html).Contains("id=\"retry-hint\"");
-        await Assert.That(html).Contains("<time datetime=");
-        await Assert.That(html).DoesNotContain(codes[0]);
-        await Assert.That(html).DoesNotContain("untrusted@example.test");
+        var hidden = ChallengePattern().Matches(html);
+        var preservesChallenge = hidden.Count == 1 && WebUtility.HtmlDecode(hidden[0].Groups[1].Value) == challenge;
+        // Boolean diagnostics never serialize the sealed challenge or the credential-bearing response HTML.
+        await Assert.That(preservesChallenge).IsTrue();
+        await Assert.That(html.Contains($"name=\"next\" value=\"{Next}\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(html.Contains("id=\"retry-hint\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(html.Contains("<time datetime=", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(html.Contains(codes[0], StringComparison.Ordinal)).IsFalse();
+        await Assert.That(html.Contains("untrusted@example.test", StringComparison.Ordinal)).IsFalse();
 
         using var forged = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new()
         { ["challenge"] = "forged-challenge", ["code"] = codes[0], ["next"] = "https://evil.example" });
-        await Assert.That(await forged.Content.ReadAsStringAsync()).DoesNotContain("forged-challenge");
-        await Assert.That(await forged.Content.ReadAsStringAsync()).DoesNotContain("https://evil.example");
+        var forgedHtml = await forged.Content.ReadAsStringAsync();
+        await Assert.That(forgedHtml.Contains("forged-challenge", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(forgedHtml.Contains("https://evil.example", StringComparison.Ordinal)).IsFalse();
 
         clock.UtcNow += seconds;
         if (accountBudget)
@@ -76,7 +80,7 @@ public sealed partial class MfaSignInTests
             // The 15-minute budget outlasts the 5-minute challenge: require primary authentication again.
             using var expired = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = codes[0], ["next"] = Next });
             await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-            await Assert.That(await expired.Content.ReadAsStringAsync()).Contains("Sign-in expired");
+            await Assert.That((await expired.Content.ReadAsStringAsync()).Contains("Sign-in expired", StringComparison.Ordinal)).IsTrue();
             challenge = await ChallengeAsync(oidc, user.Email);
         }
 

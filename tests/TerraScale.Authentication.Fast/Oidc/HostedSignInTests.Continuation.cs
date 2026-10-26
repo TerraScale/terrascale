@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using TerraScale.Authentication.Features.Identity;
@@ -62,6 +63,9 @@ public sealed partial class HostedSignInTests
         await context.AddCookiesAsync([new Microsoft.Playwright.Cookie { Name = "tsauth_session", Value = session, Url = OidcHarness.PublicOrigin, HttpOnly = true, Secure = true, SameSite = SameSiteAttribute.Lax }]);
         var violations = new List<string>();
         var page = await OpenSignInAsync(context, oidc.Server, violations);
+        // The shared proxy uses Request.Headers, which can omit security-related headers.
+        // Preserve the browser's actual Origin/cookie on the native approval POST.
+        await page.RouteAsync("**/ui/terrascale/device", route => ForwardContinuationFormAsync(route, oidc.Server));
         await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/device?user_code={Uri.EscapeDataString(device.GetProperty("user_code").GetString()!)}");
         await Assert.That(await page.Locator(".facts").TextContentAsync()).Contains("ts-cli");
         var permissions = await page.GetByRole(AriaRole.List, new() { Name = "Requested permissions" }).TextContentAsync();
@@ -70,7 +74,15 @@ public sealed partial class HostedSignInTests
         await Assert.That(permissions).DoesNotContain("Write collections");
         await Assert.That(await page.EvaluateAsync<int>("document.documentElement.scrollWidth")).IsLessThanOrEqualTo(width);
         await page.GetByRole(AriaRole.Button, new() { Name = "Approve", Exact = true }).FocusAsync();
-        await page.Keyboard.PressAsync("Enter");
+        var approved = await page.RunAndWaitForResponseAsync(() => page.Keyboard.PressAsync("Enter"),
+            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == DeviceFlow.PagePath);
+        var posted = QueryHelpers.ParseQuery(approved.Request.PostData ?? string.Empty);
+        await Assert.That(posted["decision"] == "approve").IsTrue();
+        await Assert.That(posted["user_code"] == device.GetProperty("user_code").GetString()).IsTrue();
+        var headers = await approved.Request.AllHeadersAsync();
+        await Assert.That(headers.TryGetValue("origin", out var origin) && origin == OidcHarness.PublicOrigin).IsTrue();
+        await Assert.That(headers.TryGetValue("cookie", out var cookie) && cookie.Contains("tsauth_session=", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(approved.Status).IsEqualTo((int)HttpStatusCode.OK);
         await page.GetByRole(AriaRole.Heading, new() { Name = "Device connected", Exact = true }).WaitForAsync();
         await Assert.That(violations).IsEmpty();
     }
@@ -91,28 +103,83 @@ public sealed partial class HostedSignInTests
         {
             Interlocked.Increment(ref requests);
             entered.TrySetResult();
-            await release.Task;
-            await route.FallbackAsync();
+            try
+            {
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await ForwardContinuationFormAsync(route, oidc.Server);
+            }
+            catch (TimeoutException)
+            {
+                await route.AbortAsync();
+            }
+            catch (PlaywrightException) when (page.IsClosed)
+            {
+                // Failure cleanup closes the page after releasing its held request.
+            }
         });
-        var submission = page.GetByRole(AriaRole.Button, new() { Name = "Use a password instead", Exact = true }).ClickAsync();
         try
         {
+            // Observe both native button activations in the current document, before navigation can
+            // make another DOM query wait for the response this test deliberately holds.
+            var observed = await page.EvaluateAsync<bool[]>("""
+() => {
+  var form = document.querySelector('form[action="/ui/terrascale/sign-in"]');
+  var button = form.querySelector('button[formaction="/ui/terrascale/sign-in/password"]');
+  var attempts = [];
+  form.addEventListener('submit', event => attempts.push({ cancelled: event.defaultPrevented, submitter: event.submitter === button }));
+  button.click();
+  var busy = form.getAttribute('aria-busy') === 'true';
+  var announced = document.getElementById('submission-status').textContent.includes('Submitting');
+  button.click();
+  return [busy, announced, attempts.length === 2, attempts[0]?.cancelled === false,
+    attempts[1]?.cancelled === true, attempts.every(attempt => attempt.submitter)];
+}
+""").WaitAsync(TimeSpan.FromSeconds(10));
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.That(await page.Locator("form[aria-busy=true]").CountAsync()).IsEqualTo(1);
-            await Assert.That(await page.Locator("#submission-status").TextContentAsync()).Contains("Submitting");
-            await page.EvaluateAsync("document.querySelector('form[action=\"/ui/terrascale/sign-in\"]').requestSubmit()");
+            foreach (var holds in observed)
+            {
+                await Assert.That(holds).IsTrue();
+            }
+
             await Assert.That(requests).IsEqualTo(1);
+            var submission = page.WaitForResponseAsync(response => response.Request.Method == "POST"
+                && new Uri(response.Url).AbsolutePath == "/ui/terrascale/sign-in/password", new() { Timeout = 15000 });
+            release.TrySetResult();
+            await Assert.That((await submission).Status).IsEqualTo((int)HttpStatusCode.OK);
+            await page.GetByRole(AriaRole.Heading, new() { Name = "Enter your password", Exact = true }).WaitForAsync();
+            await page.GoBackAsync();
+            await Assert.That(await page.Locator("form[aria-busy=true]").CountAsync()).IsEqualTo(0);
+            await Assert.That(violations).IsEmpty();
         }
         finally
         {
             release.TrySetResult();
+            await page.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private static async Task ForwardContinuationFormAsync(IRoute route, AuthTestServer server)
+    {
+        var headers = await route.Request.AllHeadersAsync();
+        using var request = new HttpRequestMessage(new HttpMethod(route.Request.Method), new Uri(route.Request.Url).PathAndQuery);
+        if (route.Request.PostDataBuffer is { } body)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.TryAddWithoutValidation("Content-Type", headers["content-type"]);
         }
 
-        await submission;
-        await Assert.That(await page.Locator("h1").TextContentAsync()).IsEqualTo("Enter your password");
-        await page.GoBackAsync();
-        await Assert.That(await page.Locator("form[aria-busy=true]").CountAsync()).IsEqualTo(0);
-        await Assert.That(violations).IsEmpty();
+        foreach (var header in headers.Where(header => header.Key is "origin" or "cookie"))
+        {
+            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var response = await server.Client.SendAsync(request, deadline.Token);
+        var responseHeaders = response.Headers.Concat(response.Content.Headers)
+            .Where(header => header.Key is not ("Content-Length" or "Transfer-Encoding"))
+            .ToDictionary(header => header.Key, header => string.Join(", ", header.Value));
+        await route.FulfillAsync(new() { Status = (int)response.StatusCode, Headers = responseHeaders,
+            BodyBytes = await response.Content.ReadAsByteArrayAsync(deadline.Token) });
     }
 
     [Test]
