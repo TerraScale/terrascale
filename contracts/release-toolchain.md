@@ -9,9 +9,17 @@ The existing test and release jobs cache only the pinned govulncheck v1.9.0
 executable, never advisory results. Its Go 1.27.3 trimpath build is checksum-verified
 on every use and self-scanned; only trusted-main CI saves the scanner cache.
 Every ready PR (including documentation-only changes) queries the current Go advisory
-feed. Automatic discovery covers every committed Go module; module scans cover the SDK and CLI dependency graphs and fail for
-any known advisory, regardless of severity or source reachability. Source symbol
-analysis covers every package and includes tests. Dependency manifests and the consumer floor are unchanged.
+feed. Automatic discovery covers every committed Go module. Source symbol analysis
+covers every package and includes tests. `go list -deps -test` independently
+discovers imported modules; one package per module becomes an explicit scan root
+so internal-test package deduplication cannot hide test-only dependencies.
+The gate rejects every affected advisory
+in its SARIF results, including module-only notes and imported-package findings
+without reachable vulnerable symbols. Scanner errors and missing, malformed or
+incomplete reports fail the job. SARIF is emitted only after successful analysis;
+its level describes reachability and is never used to filter advisories.
+Dependency manifests and the consumer floor are unchanged. Modules with no source
+packages fail analysis rather than receiving an automatic exemption.
 
 GoReleaser runs `scripts/check-release-binary.sh` on each Linux, macOS and
 Windows amd64/arm64 binary before packaging or publication. The hook checks the

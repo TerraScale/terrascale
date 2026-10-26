@@ -1,7 +1,7 @@
 name: CLI release
 on:
   pull_request:
-    paths: ['cmd/ts/**', 'scripts/install.sh', 'scripts/test-release.py', 'scripts/check-release-binary.sh', 'scripts/install-govulncheck.sh', 'scripts/audit-dependencies.sh', '.go-version', '.goreleaser.yaml', '.github/workflows/release.yml', 'go.mod', 'go.sum', 'v1/**', 'tsauth/**']
+    paths: ['cmd/ts/**', 'scripts/install.sh', 'scripts/test-release.py', 'scripts/check-release-binary.sh', 'scripts/check-advisory-report.py', 'scripts/install-govulncheck.sh', 'scripts/audit-dependencies.sh', '.go-version', '.goreleaser.yaml', '.github/workflows/release.yml', 'go.mod', 'go.sum', 'v1/**', 'tsauth/**']
   push:
     tags: ['v0.0.*']
 permissions:
