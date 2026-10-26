@@ -17,6 +17,7 @@ public sealed class TerraScaleAuthProjectsContractTests
     [Arguments("set_provider")]
     [Arguments("delete_provider")]
     [Arguments("list_users")]
+    [Arguments("export_users")]
     [Arguments("get_user")]
     [Arguments("disable_user")]
     [Arguments("enable_user")]
@@ -48,6 +49,7 @@ public sealed class TerraScaleAuthProjectsContractTests
             "set_provider" => projects.SetProviderAsync(Token, project, "google", JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectProviderUpdate)!),
             "delete_provider" => projects.DeleteProviderAsync(Token, project, "google"),
             "list_users" => projects.ListUsersAsync(Token, project, query: "synthetic@example", limit: 2, after: "opaque+/cursor="),
+            "export_users" => projects.ExportUsersAsync(Token, project, limit: 2, after: "opaque+/cursor="),
             "get_user" => projects.GetUserAsync(Token, project, user),
             "disable_user" => projects.DisableUserAsync(Token, project, user),
             "enable_user" => projects.EnableUserAsync(Token, project, user),
@@ -65,6 +67,7 @@ public sealed class TerraScaleAuthProjectsContractTests
             Task<TerraScaleAuthProjectSettings> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectSettings),
             Task<TerraScaleAuthProjectUser> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectUser),
             Task<TerraScaleAuthProjectOAuthClient> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectOAuthClient),
+            Task<TerraScaleAuthUserExportPage> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthUserExportPage),
             Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthPlatformPageTerraScaleAuthProjectUser),
             Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthPlatformPageTerraScaleAuthProjectSession),
             Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectOAuthClient>> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthPlatformPageTerraScaleAuthProjectOAuthClient),
@@ -154,6 +157,86 @@ public sealed class TerraScaleAuthProjectsContractTests
     }
 
     [Test]
+    public async Task UserExportFollowsTheEscapedCursorAcrossTwoPagesWithOneRequestEach()
+    {
+        var ids = new TerraScaleIdGenerator();
+        var (project, first, second) = (ids.NewId(), ids.NewId(), ids.NewId());
+        const string cursor = "eyJj+/=&x";
+        using var handler = new CaptureHandler(HttpStatusCode.OK,
+            $$"""{"items":[{"id":"{{first}}","email":"a@example.test","email_verified":true,"created_at":"2026-10-13T00:00:00+00:00","disabled":false,"linked_providers":[]}],"next":"{{cursor}}","created_before":"2026-10-25T00:00:00+00:00"}""",
+            $$"""{"items":[{"id":"{{second}}","email":"b@example.test","email_verified":true,"created_at":"2026-10-14T00:00:00+00:00","disabled":true,"linked_providers":[{"provider":"google","client_id":"public-client","subject":"sub"}]}],"next":null,"created_before":"2026-10-25T00:00:00+00:00"}""");
+        using var http = new HttpClient(handler);
+        var projects = Client(http).Projects;
+        var page = await projects.ExportUsersAsync(Token, project, limit: 1);
+        await Assert.That(handler.Uri!.PathAndQuery).IsEqualTo($"/v1/{project}/users/export?limit=1");
+        await Assert.That(page.Next).IsEqualTo(cursor);
+        var last = await projects.ExportUsersAsync(Token, project, limit: 1, after: page.Next);
+        await Assert.That(handler.Uri!.PathAndQuery).IsEqualTo($"/v1/{project}/users/export?limit=1&after=eyJj%2B%2F%3D%26x");
+        await Assert.That(last.Next).IsNull();
+        await Assert.That(last.CreatedBefore).IsEqualTo(page.CreatedBefore);
+        await Assert.That(last.Items[0].Id).IsEqualTo(second);
+        await Assert.That(last.Items[0].Disabled).IsTrue();
+        await Assert.That(last.Items[0].LinkedProviders[0]).IsEqualTo(new TerraScaleAuthLinkedProvider("google", "public-client", "sub"));
+        await Assert.That(handler.Calls).IsEqualTo(2);
+        await Assert.That(handler.Method).IsEqualTo("GET");
+        await Assert.That(handler.Body).IsNull();
+    }
+
+    [Test]
+    [Arguments(HttpStatusCode.Forbidden, "forbidden_role")]
+    [Arguments(HttpStatusCode.NotFound, "not_found")]
+    [Arguments(HttpStatusCode.ServiceUnavailable, "temporarily_unavailable")]
+    public async Task UserExportRefusalSurfacesOnceWithoutRetry(HttpStatusCode status, string code)
+    {
+        var project = new TerraScaleIdGenerator().NewId();
+        using var handler = new CaptureHandler(status, $$"""{"error":"{{code}}","error_description":"refused"}""");
+        using var http = new HttpClient(handler);
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Projects.ExportUsersAsync(Token, project));
+        await Assert.That(exception!.StatusCode).IsEqualTo(status);
+        await Assert.That(exception.ErrorCode).IsEqualTo(code);
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task UserExportRejectsInvalidInputBeforeDispatchAndHonoursCancellation()
+    {
+        var project = new TerraScaleIdGenerator().NewId();
+        using var handler = new CaptureHandler(HttpStatusCode.OK, "{}");
+        using var http = new HttpClient(handler);
+        var projects = Client(http).Projects;
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => projects.ExportUsersAsync(Token, project, limit: 0));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => projects.ExportUsersAsync(Token, project, limit: 101));
+        await Assert.ThrowsAsync<ArgumentException>(() => projects.ExportUsersAsync(Token, project, after: ""));
+        await Assert.ThrowsAsync<ArgumentException>(() => projects.ExportUsersAsync(Token, project, after: new string('a', 8193)));
+        await Assert.ThrowsAsync<ArgumentException>(() => projects.ExportUsersAsync(Token, "../terrascale"));
+        await Assert.ThrowsAsync<ArgumentException>(() => projects.ExportUsersAsync(" ", project));
+        await Assert.ThrowsAsync<ArgumentException>(() => projects.ExportUsersAsync("token with space", project));
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => projects.ExportUsersAsync(Token, project, cancellationToken: cancelled.Token));
+        await Assert.That(handler.Calls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task BrandingEmailMessageRoundTripsAndIsOmittedWhenNull()
+    {
+        var project = new TerraScaleIdGenerator().NewId();
+        using var handler = new CaptureHandler(HttpStatusCode.OK, $$$"""
+            {"project_id":"{{{project}}}","issuer":"i","discovery_url":"d","sign_in_url":"s","methods":{"passcode":true,"password":true,"sign_up":true},
+            "branding":{"name":"Paperwork","logo_url":null,"theme_color":"#2158e8","email_message":"Welcome <b>{{name}}</b>\nSee you soon."},"counts":{"users":0,"clients":0},"providers":[]}
+            """);
+        using var http = new HttpClient(handler);
+        var projects = Client(http).Projects;
+        const string message = "Welcome <b>{{name}}</b>\nSee you soon.";
+        var result = await projects.UpdateSettingsAsync(Token, project, new(Branding: new("Paperwork", null, "#2158e8") { EmailMessage = message }));
+        using var sent = JsonDocument.Parse(handler.Body!);
+        await Assert.That(sent.RootElement.GetProperty("branding").GetProperty("email_message").GetString()).IsEqualTo(message);
+        await Assert.That(result.Branding.EmailMessage).IsEqualTo(message);
+        await projects.UpdateSettingsAsync(Token, project, new(Branding: new("Paperwork", null, null)));
+        await Assert.That(handler.Body).IsEqualTo("""{"branding":{"name":"Paperwork","logo_url":null,"theme_color":null}}""");
+    }
+
+    [Test]
     public async Task ClientSecretIsRedactedFromFormatting()
     {
         const string secret = "fixture-client-secret-canary";
@@ -172,7 +255,7 @@ public sealed class TerraScaleAuthProjectsContractTests
         RetryDelay = TimeSpan.Zero
     });
 
-    private sealed class CaptureHandler(HttpStatusCode status, string body) : HttpMessageHandler
+    private sealed class CaptureHandler(HttpStatusCode status, params string[] bodies) : HttpMessageHandler
     {
         public Uri? Uri { get; private set; }
         public string? Method { get; private set; }
@@ -185,7 +268,7 @@ public sealed class TerraScaleAuthProjectsContractTests
             Calls++; Uri = request.RequestUri; Method = request.Method.Method; Authorization = request.Headers.Authorization;
             MediaType = request.Content?.Headers.ContentType?.MediaType;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(status) { Content = new StringContent(bodies[Math.Min(Calls, bodies.Length) - 1], Encoding.UTF8, "application/json") };
         }
     }
 }
