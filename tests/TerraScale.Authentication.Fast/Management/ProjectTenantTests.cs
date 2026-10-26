@@ -26,7 +26,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     public async Task Served_project_schemas_match_snake_case_HTTP_bodies_and_camel_case_is_rejected()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
-        var (_, token, _, root) = await this.ProjectAsync(oidc);
+        var (_, token, project, root) = await this.ProjectAsync(oidc);
         using var response = await oidc.Client.GetAsync("/openapi/v1.json");
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var document = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
@@ -78,6 +78,14 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(client.GetProperty("client_secret").GetString()).IsNotNull();
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token,
             new { request.name, request.type, request.redirect_uris, redirectUris = request.redirect_uris })).IsEqualTo((400, "invalid_request"));
+
+        // A renamed parent (linked_providers) must not leave its nested provider schema in camelCase.
+        await oidc.Server.App.Services.GetRequiredService<Users>().FromProviderAsync(project,
+            new LinkedProvider("oidc", "public-client", "verified-subject"), this.Email(2), true, default);
+        var directory = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export", token);
+        await Assert.That(directory.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(directory.GetProperty("items")[0].GetProperty("linked_providers")[0].GetProperty("client_id").GetString()).IsEqualTo("public-client");
+        await SchemaMatchesAsync(schemas, ResponseSchema(paths.GetProperty("/v1/{project}/users/export").GetProperty("get"), "200"), directory);
 
         var update = new
         {
@@ -208,8 +216,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         var (_, token, project, root) = await this.ProjectAsync(oidc);
-        var body = new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = new[] { "https://app.example.test/callback", "http://localhost:3000/cb" } };
+        var body = new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = new[] { "https://app.example.test/callback", "http://localhost:3000/cb", "http://127.0.0.1:3000/cb", "http://[::1]:3000/cb" } };
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token, body, HttpStatusCode.Created);
+        await Assert.That(created.GetProperty("redirect_uris").EnumerateArray().Select(uri => uri.GetString()!).ToArray()).IsEquivalentTo(body.redirect_uris);
         var clientId = created.GetProperty("client_id").GetString()!;
         var secret = created.GetProperty("client_secret").GetString()!;
         await Assert.That(secret.Length).IsEqualTo(48);
@@ -222,6 +231,15 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(stored!.Document.GetRawText()).DoesNotContain(secret);
         await Assert.That(stored.Document.GetProperty("instanceId").GetString()).IsEqualTo(project);
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token, body with { redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
+        foreach (var invalid in new[]
+        {
+            "https://user@example.test/callback", "https://user:password@example.test/callback",
+            "http://user@localhost:3000/cb", "http://user@127.0.0.1:3000/cb", "http://user@[::1]:3000/cb",
+        })
+        {
+            await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token,
+                body with { redirect_uris = [invalid] })).IsEqualTo((400, "invalid_request"));
+        }
 
         var settings = await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", token);
         await Assert.That(settings.GetProperty("methods").GetProperty("sign_up").GetBoolean()).IsTrue();

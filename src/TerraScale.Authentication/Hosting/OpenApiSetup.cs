@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
@@ -67,26 +68,7 @@ public static partial class OpenApiSetup
         {
             options.AddSchemaTransformer((schema, context, _) =>
             {
-                // These endpoints serialize explicitly with their own snake_case contexts, not
-                // the global HTTP JSON options used by OpenAPI. Include their nested DTOs, but
-                // leave every other auth contract (and the persisted settings) untouched.
-                var wire = ProjectTenantJson.Default.GetTypeInfo(context.JsonTypeInfo.Type)
-                    ?? DirectoryExportJson.Default.GetTypeInfo(context.JsonTypeInfo.Type);
-                if (wire is not null && schema.Properties is { Count: > 0 } properties)
-                {
-                    var names = wire.Properties.Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
-                    var renamed = properties.Keys.ToDictionary(name => name, name =>
-                    {
-                        var candidate = wire.Options.PropertyNamingPolicy!.ConvertName(name);
-                        return names.Contains(candidate) ? candidate : name;
-                    }, StringComparer.Ordinal);
-                    schema.Properties = properties.ToDictionary(property => renamed[property.Key], property => property.Value, StringComparer.Ordinal);
-                    if (schema.Required is { } required)
-                    {
-                        schema.Required = required.Select(name => renamed.GetValueOrDefault(name, name)).ToHashSet(StringComparer.Ordinal);
-                    }
-                }
-
+                MatchProjectWireSchema(schema, context.JsonTypeInfo);
                 return Task.CompletedTask;
             });
             options.AddOperationTransformer((operation, context, _) =>
@@ -184,6 +166,53 @@ public static partial class OpenApiSetup
                 return Task.CompletedTask;
             });
         });
+
+    // These endpoints use explicit snake_case contexts instead of the global HTTP JSON options.
+    // Transform children first: ASP.NET looks them up by their original names after our callback,
+    // so renaming a parent property first would hide its entire subtree from that traversal.
+    private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
+    {
+        var wire = ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type);
+        if (wire is null || (input is OpenApiSchemaReference reference ? reference.Target : input) is not OpenApiSchema schema)
+        {
+            return;
+        }
+
+        foreach (var alternative in schema.OneOf ?? [])
+        {
+            MatchProjectWireSchema(alternative, type);
+        }
+
+        if (schema.Items is { } items && type.ElementType is { } element)
+        {
+            MatchProjectWireSchema(items, type.Options.GetTypeInfo(element));
+        }
+
+        if (schema.Properties is not { Count: > 0 } properties)
+        {
+            return;
+        }
+
+        var names = wire.Properties.Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+        var renamed = properties.Keys.ToDictionary(name => name, name =>
+        {
+            var candidate = wire.Options.PropertyNamingPolicy!.ConvertName(name);
+            return names.Contains(candidate) ? candidate : name;
+        }, StringComparer.Ordinal);
+        foreach (var property in type.Properties)
+        {
+            if (properties.TryGetValue(property.Name, out var child))
+            {
+                MatchProjectWireSchema(child, type.Options.GetTypeInfo(property.PropertyType));
+            }
+        }
+
+        schema.Properties = properties.ToDictionary(property => renamed[property.Key], property => property.Value, StringComparer.Ordinal);
+        if (schema.Required is { } required)
+        {
+            schema.Required = required.Select(name => renamed.GetValueOrDefault(name, name)).ToHashSet(StringComparer.Ordinal);
+        }
+    }
 
     // Descriptions for every tag the API uses; add an entry with each new feature tag.
     private static readonly Dictionary<string, string> TagDescriptions = new(StringComparer.Ordinal)

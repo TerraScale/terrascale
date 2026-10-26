@@ -27,7 +27,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var owner = faker.Internet.Email().ToLowerInvariant();
         var (_, ownerToken) = await oidc.SignInUserAsync(owner);
         var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), faker.Commerce.ProductName());
-        var clientId = await RegisterClientAsync(oidc, project);
+        var application = await oidc.OkAsync(HttpMethod.Post, $"/v1/{project}/clients", ownerToken,
+            new { name = "Example app", type = "public", redirect_uris = new[] { Callback } }, HttpStatusCode.Created);
+        var clientId = application.GetProperty("client_id").GetString()!;
         var issuer = $"{OidcHarness.PublicOrigin}/{project}";
 
         using var discovery = await oidc.Client.GetAsync($"/{project}/.well-known/openid-configuration");
@@ -96,6 +98,27 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
 
         using var machine = await oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials", ["client_id"] = clientId }, null, null, tenant: project);
         await Assert.That(machine.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        // Project clients can end their own grant through the endpoint discovery advertises.
+        var rotated = await OidcHarness.JsonAsync(refreshed);
+        using var revoked = await oidc.PostFormAsync($"/{project}/oauth/revoke", new()
+        {
+            ["client_id"] = clientId,
+            ["token"] = rotated.GetProperty("refresh_token").GetString()!,
+            ["token_type_hint"] = "refresh_token",
+        });
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var revokedInfo = await oidc.Client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"/{project}/oauth/userinfo")
+        {
+            Headers = { { "Authorization", $"Bearer {rotated.GetProperty("access_token").GetString()}" } },
+        });
+        await Assert.That(revokedInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        using var revokedRefresh = await oidc.PostTokenAsync(new()
+        {
+            ["grant_type"] = "refresh_token", ["client_id"] = clientId,
+            ["refresh_token"] = rotated.GetProperty("refresh_token").GetString()!,
+        }, null, null, tenant: project);
+        await Assert.That(revokedRefresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
 
     [Test]

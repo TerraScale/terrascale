@@ -132,7 +132,7 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
             DisplayName = name,
             Permissions =
             {
-                Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession,
+                Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession, Permissions.Endpoints.Revocation,
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
                 Permissions.Prefixes.Scope + Scopes.OpenId, Permissions.Scopes.Email, Permissions.Scopes.Profile, Permissions.Prefixes.Scope + Scopes.OfflineAccess,
             },
