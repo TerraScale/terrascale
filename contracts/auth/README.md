@@ -30,7 +30,7 @@ Task<TerraScaleAuthTokenResponse> auth.Oidc.RequestClientCredentialsTokenAsync(
 
 Exchange uses the same confidential client that owns SubjectToken. **No database parameter exists in this producer's exchange grant.** A project API key can carry a database restriction; an organization API key optionally selects one project at token issuance. Key ID is a 26-character ULID (the producer ApiKeySecretBody comment incorrectly says 24). Full key string is client secret. The new optional project argument precedes CancellationToken in RequestClientCredentialsTokenAsync: existing positional fourth-argument cancellation callers must name that argument or supply project first. This is an explicit source API compatibility change in the 0.0.X candidate. Scope may be omitted from token responses. `IssuedTokenType` is optional RFC 8693 metadata. Sign-in scopes are only openid/email/profile/offline_access; action scopes come from exchange, never from hosted sign-in.
 
-Use existing Oidc.RefreshTokenAsync, RevokeTokenAsync and GetUserInfoAsync for restoration/logout. Revocation ends the whole sign-in in ts-auth; offline validation still accepts issued tokens until expiry. Introspection is not served: its method/result have been removed, and the omitted discovery endpoint is nullable. Scoped producer provenance is in oidc-discovery-provenance.json. Retained instance Organizations/ApiKeys clients represent an older contract and must not be used for platform management.
+Use existing Oidc.RefreshTokenAsync, RevokeTokenAsync and GetUserInfoAsync for restoration/logout. Revocation ends the whole sign-in in ts-auth; offline validation still accepts issued tokens until expiry. Introspection is not served: its method/result have been removed, and the omitted discovery endpoint is nullable. Scoped producer provenance is in oidc-discovery-provenance.json. Retained instance Organizations represent an older contract and must not be used for platform management.
 
 ## Dashboard collaboration operation map
 
@@ -82,6 +82,8 @@ Package all `contracts/auth` manifests/fixtures with the SDK candidate and regis
 
 `auth.Projects` is `TerraScaleAuthProjectsClient` for the producer's project tenant management API (`docs/auth/project-tenant-management.md` section 2, base `/v1/{project}`). Every method takes the caller's terrascale sign-in `accessToken` and the project ULID first and an optional `CancellationToken` last; viewer reads, admin changes, 404 hides projects the caller cannot see and 403 `forbidden` reports a role too low. Lists return `TerraScaleAuthPlatformPage<T>`. `TerraScaleAuthProjectOAuthClient.ClientSecret` appears only when creating a confidential client and is redacted from `ToString`. `fixtures/project-tenant.json` holds the HTTP-fake fixtures, with each operation's method, path and status; producer parity remains unproven. `ExportUsersAsync` returns one audited, admin-only directory page; see `user-export.md`.
 
-## Retired instance billing
+## Retired instance clients
 
 The unsupported `auth.Billing` client and its exclusive plan, seat-quota, checkout and portal DTOs have been removed. Its five operations used the legacy instance management key and `/v1/{slug}/billing...` routes; they are not wrappers for current public platform or dashboard billing. No replacement endpoint or adapter is provided. `Platform`, `Projects`, `Oidc` and their existing constructors/DTOs remain intact in this retirement phase.
+
+Instance `auth.ApiKeys` and its exclusive `sk_` DTOs are retired. Use only existing producer-backed `Platform` organization/project key operations for their documented authority. Their models, CIDRs, credentials and routes are preserved; no legacy key is silently reinterpreted.

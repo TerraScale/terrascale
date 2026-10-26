@@ -16,4 +16,18 @@ public sealed class TerraScaleAuthRetiredApiTests
             await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
         }
     }
+
+    [Test]
+    public async Task LegacyInstanceApiKeysHaveNoPublicFactoryOrRemainingDtos()
+    {
+        await Assert.That(typeof(TerraScaleAuthClient).GetProperty("ApiKeys")).IsNull();
+        foreach (var name in new[]
+        {
+            "TerraScaleAuthApiKeysClient", "TerraScaleAuthApiKey", "TerraScaleAuthApiKeyPage",
+            "TerraScaleAuthCreatedApiKey", "TerraScaleAuthCreateApiKey"
+        })
+        {
+            await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet." + name)).IsNull();
+        }
+    }
 }

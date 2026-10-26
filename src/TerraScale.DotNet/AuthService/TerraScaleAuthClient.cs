@@ -58,7 +58,6 @@ public sealed class TerraScaleAuthClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
-        ApiKeys = new TerraScaleAuthApiKeysClient(this);
         Organizations = new TerraScaleAuthOrganizationsClient(this);
         Connections = new TerraScaleAuthConnectionsClient(this);
         Directories = new TerraScaleAuthDirectoriesClient(this);
@@ -77,9 +76,6 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Session revocation.</summary>
     public TerraScaleAuthSessionsClient Sessions { get; }
-
-    /// <summary>Management API key creation, listing, and revocation.</summary>
-    public TerraScaleAuthApiKeysClient ApiKeys { get; }
 
     /// <summary>Organizations, memberships, invitations, and enrollment domains.</summary>
     public TerraScaleAuthOrganizationsClient Organizations { get; }
