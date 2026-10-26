@@ -12,6 +12,8 @@ namespace TerraBase.Fast.Replication;
 /// <summary>Real HTTP and socket clients of three regions; every source is checked through every reader.</summary>
 public sealed class EndpointReplicationTests
 {
+    private static readonly string[] Endpoints = ["documents", "sql", "postgres", "hrana", "wire"];
+
     [Test]
     [Arguments("documents")]
     [Arguments("sql")]
@@ -69,7 +71,7 @@ public sealed class EndpointReplicationTests
     private static Task EverywhereAsync(List<Clients> readers, string table, string id, string? expected) =>
         TerraBaseTestServer.EventuallyAsync(async _ =>
         {
-            var copies = await Task.WhenAll(readers.SelectMany(reader => new[] { "documents", "sql", "postgres", "hrana", "wire" }
+            var copies = await Task.WhenAll(readers.SelectMany(reader => Endpoints
                 .Select(endpoint => reader.ReadAsync(endpoint, table, id))));
             return copies.All(copy => copy.Ready && copy.Value == expected);
         }, timeout: TimeSpan.FromSeconds(30));
@@ -87,8 +89,12 @@ public sealed class EndpointReplicationTests
             var key = await machine.Api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, null, "documents:read", "documents:write");
             var postgres = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
             {
-                Host = "127.0.0.1", Port = machine.Api.Server.PostgresPort, Username = "wire", Password = key,
-                Database = "main", SslMode = SslMode.Disable,
+                Host = "127.0.0.1",
+                Port = machine.Api.Server.PostgresPort,
+                Username = "wire",
+                Password = key,
+                Database = "main",
+                SslMode = SslMode.Disable,
             }.ConnectionString);
             try
             {
