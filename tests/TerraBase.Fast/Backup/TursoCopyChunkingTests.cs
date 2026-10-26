@@ -73,7 +73,7 @@ public sealed class TursoCopyChunkingTests
             await Assert.That(Scalar(target, "SELECT min(id) FROM events;")).IsEqualTo(3L);
             await Assert.That(Scalar(target, "SELECT max(id) FROM events;")).IsEqualTo(150L);
             await Assert.That(Scalar(target, "SELECT count(*) FROM events WHERE id % 3 != 0;")).IsEqualTo(0L);
-            await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 15;")).IsNull();
+            await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 15;")).IsEqualTo(DBNull.Value);
             await Assert.That(Scalar(target, "SELECT count(*) FROM events WHERE note IS NULL;")).IsEqualTo(10L);
             await Assert.That(Scalar(target, "SELECT note FROM events WHERE id = 3;")).IsEqualTo("\u00e9\ud83c\udf0d" + new string('n', 41));
             await Assert.That(Scalar(target, "SELECT hex(payload) FROM markers WHERE name = 'marker-4';")).IsEqualTo("04010203");
