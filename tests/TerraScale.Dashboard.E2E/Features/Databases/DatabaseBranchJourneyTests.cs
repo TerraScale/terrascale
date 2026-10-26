@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Shared.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
@@ -66,6 +67,16 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/databases");
         var sourceId = await CreateAsync(client, csrf, sourceName);
+        var branchPage = WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + sourceId + "/branches"));
+        await Assert.That(branchPage).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
+        await Assert.That(branchPage).Contains(DatabaseService.NameHint);
+        foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
+        {
+            using var rejected = await BranchAsync(client, csrf, sourceId, name);
+            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(await rejected.Content.ReadAsStringAsync()).Contains("must start with a lowercase letter");
+        }
+        await Assert.That(calls).IsEqualTo(0).Because("Invalid names must be rejected before reaching the branch provider.");
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = sourceId, ["name"] = "users" }))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);

@@ -251,9 +251,12 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     public static string ValidName(string name)
     {
         name = name.Trim();
-        if (!NamePattern().IsMatch(name)) throw new AccountAccessException("Database names use 1–63 lowercase letters, digits, and inner hyphens.", 422);
+        if (!NamePattern().IsMatch(name)) throw new AccountAccessException(NameHint, 422);
         return name;
     }
+
+    public const string NameInputPattern = @"(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?";
+    public const string NameHint = "Database names must start with a lowercase letter and use 1–63 lowercase letters, digits, and inner hyphens. Reserved names: con, prn, aux, nul, com0–com9, lpt0–lpt9.";
 
     public static string PreviewName(string name) => name[..Math.Min(name.Length, 48)].TrimEnd('-') + "-preview-branch";
     public static string Path(string id, string tab = "overview", string collection = "") => "/databases/" + Uri.EscapeDataString(id) + (tab == "overview" ? "" : "/" + tab) + (collection.Length == 0 ? "" : "?collection=" + Uri.EscapeDataString(collection));
@@ -303,6 +306,6 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     private static bool SameReplicas(IReadOnlyList<DatabaseRegion> left, IReadOnlyList<DatabaseRegion> right) =>
         left.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal)
             .SequenceEqual(right.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal), StringComparer.Ordinal);
-    [GeneratedRegex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\A" + NameInputPattern + @"\z", RegexOptions.CultureInvariant)]
     private static partial Regex NamePattern();
 }
