@@ -1364,7 +1364,8 @@ public sealed partial class TsAuthPlatformJourneyTests
             issuer = "https://auth.terrascale.tech/" + project.Id,
             created_by = project.CreatedBy,
             created_at = project.CreatedAt,
-            role = EffectiveRole(org, project, userId)
+            role = EffectiveRole(org, project, userId),
+            allowed_cidrs = Array.Empty<string>()
         };
         private static string? EffectiveRole(Organization org, Project project, string user)
         {

@@ -367,7 +367,8 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
             name = org.Name,
             created_by = org.CreatedBy,
             created_at = org.CreatedAt,
-            role = org.Members.GetValueOrDefault(userId)?.Role
+            role = org.Members.GetValueOrDefault(userId)?.Role,
+            require_mfa = false
         };
         // The creator holds project admin; otherwise the organization role implies the project role (owner → admin).
         private static object Wire(Organization org, Project project, string userId) => new
@@ -378,7 +379,8 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
             issuer = "https://auth.terrascale.tech/" + project.Id,
             created_by = project.CreatedBy,
             created_at = project.CreatedAt,
-            role = project.CreatedBy == userId || org.Members.GetValueOrDefault(userId)?.Role is "owner" or "admin" ? "admin" : org.Members.GetValueOrDefault(userId)?.Role
+            role = project.CreatedBy == userId || org.Members.GetValueOrDefault(userId)?.Role is "owner" or "admin" ? "admin" : org.Members.GetValueOrDefault(userId)?.Role,
+            allowed_cidrs = Array.Empty<string>()
         };
         private Organization? Find(string id) => organizations.FirstOrDefault(org => org.Id == id);
         private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status)
