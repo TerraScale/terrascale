@@ -62,12 +62,15 @@ public sealed class SqlCheckJourneyTests(DashboardRootFixture fixture)
         {
             if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return Task.FromResult<IResult?>(null);
             Interlocked.Increment(ref executions);
-            return Task.FromResult<IResult?>(Results.Json(new { results = new[] { new
+            return Task.FromResult<IResult?>(Results.Json(new
             {
-                columns = new[] { new { name = "n", decltype = "INTEGER" }, new { name = "n", decltype = "TEXT" } },
-                rows = Enumerable.Range(0, 201).Select(_ => new object?[] { 9007199254740993L, null }).ToArray(),
-                rows_affected = 201, last_insert_rowid = (long?)null
-            } } }));
+                results = new[] { new
+                {
+                    columns = new[] { new { name = "n", decltype = "INTEGER" }, new { name = "n", decltype = "TEXT" } },
+                    rows = Enumerable.Range(0, 201).Select(_ => new object?[] { 9007199254740993L, null }).ToArray(),
+                    rows_affected = 201, last_insert_rowid = (long?)null
+                } }
+            }));
         });
         using var client = scenario.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);

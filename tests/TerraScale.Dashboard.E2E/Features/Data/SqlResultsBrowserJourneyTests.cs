@@ -23,12 +23,15 @@ public sealed class SqlResultsBrowserJourneyTests(DashboardE2EFixture fixture)
         {
             if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return Task.FromResult<IResult?>(null);
             Interlocked.Increment(ref executions);
-            return Task.FromResult<IResult?>(Results.Json(new { results = new[] { new
+            return Task.FromResult<IResult?>(Results.Json(new
             {
-                columns = new[] { new { name = "n", decltype = "INTEGER" }, new { name = "n", decltype = "TEXT" }, new { name = "amount", decltype = "INTEGER" }, new { name = "text", decltype = "TEXT" }, new { name = "empty", decltype = "TEXT" } },
-                rows = Enumerable.Range(0, count).Select(index => new object?[] { 9007199254740993L + index, null, -3, index == 0 ? "=1+1,\"quoted\"\nline" : index == 1 ? hostile : "null", "" }).ToArray(),
-                rows_affected = count, last_insert_rowid = (long?)null
-            } } }));
+                results = new[] { new
+                {
+                    columns = new[] { new { name = "n", decltype = "INTEGER" }, new { name = "n", decltype = "TEXT" }, new { name = "amount", decltype = "INTEGER" }, new { name = "text", decltype = "TEXT" }, new { name = "empty", decltype = "TEXT" } },
+                    rows = Enumerable.Range(0, count).Select(index => new object?[] { 9007199254740993L + index, null, -3, index == 0 ? "=1+1,\"quoted\"\nline" : index == 1 ? hostile : "null", "" }).ToArray(),
+                    rows_affected = count, last_insert_rowid = (long?)null
+                } }
+            }));
         });
         using var client = scenario.CreateClient();
         var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
