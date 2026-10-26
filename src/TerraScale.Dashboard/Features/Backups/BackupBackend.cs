@@ -113,7 +113,7 @@ public sealed class BackupBackend(IHttpClientFactory factory, IProjectAccessToke
         {
             (409, "database_limit") => "Your organization has reached its database limit. Remove an unused database or upgrade your plan, then restore again.",
             (409, "name_taken") => "That database name is already in use. Choose a different name for the restored database.",
-            (404, "not_found") when path.EndsWith("/restore", StringComparison.Ordinal) => "That restore point is no longer available. Refresh the backup list and choose another snapshot.",
+            (404, "not_found") when path.EndsWith("/restore", StringComparison.Ordinal) => "That snapshot could not be opened. Refresh the backup list and try again. If it is still listed, contact support.",
             (429 or 503, "capacity") => "Backup capacity is temporarily unavailable. Wait a moment, then try again.",
             (400, "invalid_request") when path.EndsWith("/backup-policy", StringComparison.Ordinal) => "Set snapshot retention from 1 to 35 days and use a valid 5-field UTC cron schedule.",
             (400, "invalid_request") when path.EndsWith("/restore", StringComparison.Ordinal) => "Choose a valid name for the restored database: 1 to 63 lowercase letters, numbers, hyphens or underscores, starting with a letter.",

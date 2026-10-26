@@ -16,7 +16,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
     [Test]
     [Arguments(409, "database_limit", "restore", "Remove an unused database or upgrade your plan")]
     [Arguments(409, "name_taken", "restore", "Choose a different name")]
-    [Arguments(404, "not_found", "restore", "choose another snapshot")]
+    [Arguments(404, "not_found", "restore", "snapshot could not be opened")]
     [Arguments(429, "capacity", "restore", "Wait a moment")]
     [Arguments(503, "capacity", "restore", "Wait a moment")]
     [Arguments(400, "invalid_request", "policy", "Set snapshot retention from 1 to 35 days")]
@@ -66,8 +66,16 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         var snapshot = await CallAsync(client, secret, "create_backup", new { databaseId = id });
         var backupId = snapshot.GetProperty("id").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/profile");
-        var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId,
-            ["name"] = "safe-restore", ["fullBackupCron"] = "0 3 * * *", ["incrementalBackupCron"] = "", ["retentionDays"] = "7" };
+        var form = new Dictionary<string, string>
+        {
+            ["_csrf"] = csrf,
+            ["databaseId"] = id,
+            ["backupId"] = backupId,
+            ["name"] = "safe-restore",
+            ["fullBackupCron"] = "0 3 * * *",
+            ["incrementalBackupCron"] = "",
+            ["retentionDays"] = "7"
+        };
         foreach (var html in new[] { false, true })
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/backups/" + action) { Content = new FormUrlEncodedContent(form) };
