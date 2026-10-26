@@ -32,11 +32,12 @@ public sealed class PointInTimeEntitlementTests
         }, time);
         var organization = await api.CreateOrganizationAsync("Recovery placement");
         var project = await api.CreateProjectAsync(organization, "Copies");
-        using var client = ProjectClient(api, organization, project);
-        var created = await JsonAsync(client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"),
+        var client = api.Client;
+        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+        var created = await JsonAsync(client.PostAsJsonAsync(Uri(databases),
             new { name = "main", replicaRegions = Fra }, cancellationToken), HttpStatusCode.Created);
         await ShipAsync(api, time, TimeSpan.FromSeconds(10), cancellationToken);
-        var route = $"/v1/projects/{project}/databases/main/point-in-time";
+        var route = $"{databases}/{created.GetProperty("id").GetString()}/point-in-time";
         var window = await JsonAsync(client.GetAsync(Uri(route), cancellationToken));
         var restored = await JsonAsync(client.PostAsJsonAsync(Uri(route + "/restore"),
             new { pointInTime = window.GetProperty("latest").GetDateTimeOffset(), name = "copy" }, cancellationToken), HttpStatusCode.Created);
