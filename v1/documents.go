@@ -17,16 +17,17 @@ import (
 	"terrascale.tech/sdk/internal/entityid"
 )
 
-// Database is a handle to one database of a project, by name. It performs no I/O.
+// Database is a handle to one database of a project, by current name or immutable
+// ULID. It performs no I/O.
 type Database struct {
 	c       *Client
 	project string
 	name    string
 }
 
-// Database returns a handle to the named database of a project. project is
-// the project id from the Management API; the API key's organization selects
-// the tenant.
+// Database returns a handle by current name or immutable ULID within a project.
+// project is the project ID from the Management API; the API key's organization
+// selects the tenant.
 func (c *Client) Database(project, name string) *Database {
 	return &Database{c: c, project: project, name: name}
 }
@@ -34,14 +35,14 @@ func (c *Client) Database(project, name string) *Database {
 // Project returns the project id.
 func (d *Database) Project() string { return d.project }
 
-// Name returns the database name.
+// Name returns the database selector used to construct the handle.
 func (d *Database) Name() string { return d.name }
 
 func (d *Database) path(extra ...string) ([]string, error) {
 	if err := checkID(d.project); err != nil {
 		return nil, fmt.Errorf("terrabase: project ID: %w", err)
 	}
-	if err := checkName("database", d.name); err != nil {
+	if err := checkDatabaseSelector(d.name); err != nil {
 		return nil, err
 	}
 	return append([]string{"v1", "projects", d.project, "databases", d.name}, extra...), nil
@@ -59,6 +60,9 @@ type DatabaseInfo struct {
 // Create creates the database in its project. An existing name fails with
 // ErrNameTaken. Needs the databases:write scope.
 func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
+	if err := checkName("database", d.name); err != nil {
+		return nil, err
+	}
 	p, err := d.path()
 	if err != nil {
 		return nil, err
