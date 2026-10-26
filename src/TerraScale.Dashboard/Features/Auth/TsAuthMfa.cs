@@ -31,8 +31,9 @@ public sealed class OrganizationMfaRequiredException(string organizationName, IR
 // platform client with the user's own bearer. Move them to ts-dotnet once it ships them.
 public sealed partial class TsAuthGateway : ITsAuthMfa
 {
+    public const string AccountSecurityReturn = "https://dash.terrascale.tech/profile?tab=security";
     public const string MfaRequiredCode = "mfa_required";
-    public static readonly string ManageMfaUrl = new Uri(AuthOrigin, "ui/" + Tenant + "/security").ToString();
+    public static readonly string ManageMfaUrl = new Uri(AuthOrigin, "ui/" + Tenant + "/security?next=" + Uri.EscapeDataString(AccountSecurityReturn)).ToString();
 
     public async Task<AccountMfaStatus?> GetAccountMfaAsync(SessionRecord session, CancellationToken cancellationToken)
     {
@@ -40,8 +41,7 @@ public sealed partial class TsAuthGateway : ITsAuthMfa
         {
             using var body = await MfaCallAsync(HttpMethod.Get, "account/mfa", session, null, cancellationToken);
             var root = body.RootElement;
-            var manage = root.TryGetProperty("manage_url", out var url) && Uri.TryCreate(url.GetString(), UriKind.Absolute, out var parsed) &&
-                parsed.Scheme == Uri.UriSchemeHttps && parsed.Host == AuthOrigin.Host ? parsed.ToString() : ManageMfaUrl;
+            var manage = ManageMfaUrl;
             return new(root.GetProperty("enabled").GetBoolean(), root.TryGetProperty("recovery_codes_remaining", out var codes) ? codes.GetInt32() : 0, manage);
         }
         catch (Exception error) when (Unreported(error, cancellationToken)) { return null; }
