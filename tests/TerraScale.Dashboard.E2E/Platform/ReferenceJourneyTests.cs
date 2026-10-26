@@ -83,10 +83,10 @@ public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
         var body = await billing.Content.ReadAsStringAsync();
         await Assert.That(body).Contains("14 recorded invoices");
         await Assert.That(WebUtility.HtmlDecode(body)).Contains("Visa •••• 4242, expires 08/28");
-        await Assert.That(body).Contains("US$ 20.00 / monthly");
+        await Assert.That(body).Contains("$20.00 / monthly");
         await Assert.That(body).Contains(">Choose plan</button>");
         await Assert.That(body).Contains("in_01JCA3RH5N7Q9T2W4Y6A8C2EG");
-        await Assert.That(body).Contains("USD 41.40");
+        await Assert.That(body).Contains("$41.40");
         await Assert.That(body.Contains("Payment history could not be loaded.", StringComparison.Ordinal)).IsFalse();
         using var secondPage = await client.GetAsync("/organization?tab=billing&page=2");
         await Assert.That(secondPage.StatusCode).IsEqualTo(HttpStatusCode.OK);

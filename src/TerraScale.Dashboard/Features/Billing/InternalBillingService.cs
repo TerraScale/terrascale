@@ -4,8 +4,9 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
+using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.DotNet.TerraBase;
+using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
@@ -163,7 +164,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
                 StorageCents = storageCharge,
                 TotalCents = total,
                 CapReached = reached,
-                Alert = reached ? $"Internal spending cap reached: estimated bill {InternalBill.Money(total)}, cap {InternalBill.Money(organization.SpendCapCents)}. Report only; services remain active." : null
+                Alert = reached ? $"Internal spending cap reached: estimated bill {MoneyFormat.Money(total)}, cap {MoneyFormat.Money(organization.SpendCapCents)}. Report only; services remain active." : null
             };
         }
         catch (OverflowException) { return initial with { Error = coherent ? InvalidAmount : MissingUsage }; }

@@ -3,19 +3,20 @@ using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Mcp;
+using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.Usage;
 
 public sealed record UsageToolAllowance(string Name, string Allowance, long Limit,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Used, bool Measured,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Percent);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? Percent);
 public sealed record UsageToolProject(string Id, string Name, string Region, int DatabaseCount,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LogicalBytes, bool Unavailable,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? SharePercent, bool Selected);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? SharePercent, bool Selected);
 public sealed record UsageToolDatabase(string Id, string Name, string Region, string Status,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Documents,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LogicalBytes, bool Unavailable,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? SharePercent, bool Metered,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? SharePercent, bool Metered,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Reads,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Writes);
 public sealed record UsageToolTotals(bool Available, string Source, string Error, string Range,
@@ -84,7 +85,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             var bytes = reading?.LogicalBytes;
             return new UsageToolProject(project.Id, project.Name, project.Region.Length > 0 ? project.Region : "Not configured",
                 project.Databases.Count, bytes, bytes is null,
-                Share(bytes, storage), project.Id == context.Project?.Id);
+                ValueFormat.Percent(bytes, storage), project.Id == context.Project?.Id);
         }).ToArray();
         var listed = selected?.Databases.Where(database => databaseId.Length == 0 || database.Id == databaseId).ToArray() ?? [];
         var databaseReadings = listed.ToDictionary(database => database.Id,
@@ -99,7 +100,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             var bytes = databaseBytes[database.Id];
             return new UsageToolDatabase(database.Id, database.Name, database.Region,
                 context.Project!.Databases[database.Id].Status, reading?.Documents ?? fact?.Documents, bytes, bytes is null,
-                Share(bytes, databaseTotal), reading is not null, reading?.Period.Reads, reading?.Period.Writes);
+                ValueFormat.Percent(bytes, databaseTotal), reading is not null, reading?.Period.Reads, reading?.Period.Writes);
         }).ToArray();
         var error = measured.Scope.State switch
         {
@@ -141,9 +142,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
     }
 
     private static UsageToolAllowance Allowance(string name, string? label, long limit, long? used) => new(name, label ?? "Limit not published", limit, used, used is not null,
-        used is not null && limit > 0 ? (int)Math.Min(int.MaxValue, Math.Round(used.Value / (double)limit * 100, MidpointRounding.AwayFromZero)) : null);
-    private static int? Share(long? part, long? total) => part is null || total is null ? null : part <= 0 || total <= 0 ? 0
-        : Math.Max(1, (int)Math.Round(part.Value / (double)total.Value * 100, MidpointRounding.AwayFromZero));
+        used is not null && limit > 0 ? ValueFormat.Percent(used, limit) : null);
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }

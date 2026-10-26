@@ -1,10 +1,10 @@
-using TerraScale.Dashboard.Platform.Observability;
-using System.Net;
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Analytics;
-using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Features.Usage;
+using TerraScale.Dashboard.Platform.Observability;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Home;
 
@@ -169,7 +169,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
                     {
                         var value = median.GetDouble();
                         if (!double.IsFinite(value) || value < 0) throw new JsonException("Invalid region latency.");
-                        latency = value.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + " ms";
+                        latency = TerraScale.Dashboard.Shared.Formatting.MetricFormat.Latency(value);
                     }
                     measurements[code] = (item.GetProperty("status").GetString() ?? "Not reported", latency);
                 }

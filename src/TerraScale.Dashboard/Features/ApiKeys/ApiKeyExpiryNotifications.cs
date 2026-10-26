@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
 
@@ -20,7 +21,7 @@ public static class ApiKeyExpiryNotifications
             ProjectId = key.ProjectId,
             Type = Type,
             Title = $"API key {key.Name} expires on {key.ExpiresAt!.Value.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)}",
-            Body = $"Requests with this key fail after {key.ExpiresAt.Value.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", CultureInfo.InvariantCulture)}. Create a replacement key and move your applications to it.",
+            Body = $"Requests with this key fail after {ValueFormat.UtcDate(key.ExpiresAt.Value)}. Create a replacement key and move your applications to it.",
             Severity = "warning",
             Status = "Unread",
             Url = Url(key),

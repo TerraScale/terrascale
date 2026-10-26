@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.Billing.Invoices;
 
@@ -72,19 +73,6 @@ public static class InvoiceHistory
 
     public static string SafeUrl(string? raw) => Uri.TryCreate(raw, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
         uri.Host.Length > 0 && uri.UserInfo.Length == 0 ? uri.AbsoluteUri : "";
-    public static string Amount(long minorUnits, string currency)
-    {
-        // Stripe charge amounts keep ISK and UGX in their special two-decimal representation.
-        var zeroDecimal = currency.ToLowerInvariant() is "bif" or "clp" or "djf" or "gnf" or "jpy" or "kmf" or "krw" or
-            "mga" or "pyg" or "rwf" or "vnd" or "vuv" or "xaf" or "xof" or "xpf";
-        return (minorUnits / (zeroDecimal ? 1m : 100m)).ToString(zeroDecimal ? "F0" : "F2", CultureInfo.InvariantCulture);
-    }
-    public static string Money(long cents, string currency = "usd") => currency.Equals("usd", StringComparison.OrdinalIgnoreCase)
-        ? "$" + Amount(cents, currency)
-        : currency.Length == 0 ? Amount(cents, currency) + " (currency unreported)"
-        : currency.ToUpperInvariant() + " " + Amount(cents, currency);
-
-    public static string Plural(int count, string noun) => count.ToString(CultureInfo.InvariantCulture) + " " + noun + (count == 1 ? "" : "s");
 
     public static InvoiceSummary Summarize(IReadOnlyList<BillingInvoice> invoices, DateTimeOffset now, InvoiceRenewal? renewal = null)
     {
@@ -92,7 +80,7 @@ public static class InvoiceHistory
             "No current billing period is recorded.", "Not recorded", "No invoices are recorded.");
         if (renewal is { } next && next.At > now) summary = summary with
         {
-            NextInvoice = next.Ends ? "None scheduled" : Money(next.AmountCents, next.Currency) + " base fee",
+            NextInvoice = next.Ends ? "None scheduled" : MoneyFormat.Money(next.AmountCents, next.Currency) + " base fee",
             NextDetail = next.Ends ? "The subscription ends on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
                 : "Base subscription at renewal on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture) + ". Usage, credits, discounts and taxes may change the final invoice."
         };
@@ -127,7 +115,7 @@ public static class InvoiceHistory
         var upcoming = open.Where(invoice => invoice.CreatedAt >= now).OrderBy(invoice => invoice.CreatedAt).FirstOrDefault();
         if (upcoming is not null) summary = summary with
         {
-            NextInvoice = Money(upcoming.AmountCents, upcoming.Currency),
+            NextInvoice = MoneyFormat.Money(upcoming.AmountCents, upcoming.Currency),
             NextDetail = "Recorded open invoice dated " + upcoming.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
         };
         if (invoices.Count > 0)
@@ -137,8 +125,8 @@ public static class InvoiceHistory
             foreach (var invoice in open) amount = checked(amount + Math.Max(0, invoice.RemainingCents ?? invoice.AmountCents));
             summary = summary with
             {
-                OutstandingDetail = Plural(open.Length, "open invoice") + " in recorded history",
-                Outstanding = open.Length == 0 ? "0 open invoices" : currencies.Length > 1 ? "Multiple currencies" : Money(amount, currencies[0])
+                OutstandingDetail = ValueFormat.Plural(open.Length, "open invoice") + " in recorded history",
+                Outstanding = open.Length == 0 ? "0 open invoices" : currencies.Length > 1 ? "Multiple currencies" : MoneyFormat.Money(amount, currencies[0])
             };
         }
         return summary;

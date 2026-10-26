@@ -1,18 +1,18 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json;
+using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
 public sealed class InvoiceFactsJourneyTests
 {
     [Test]
-    [Arguments("usd", 1234L, 234L, "USD 12.34", "$2.34")]
+    [Arguments("usd", 1234L, 234L, "$12.34", "$2.34")]
     [Arguments("jpy", 1500L, 500L, "JPY 1500", "JPY 500")]
     [Arguments("clp", 1234L, 234L, "CLP 1234", "CLP 234")]
     public async Task StripeInvoiceHistoryRetainsOriginalTotalButOutstandingUsesActualRemainingChargeUnits(string currency, long amount, long remaining, string totalLabel, string balanceLabel)

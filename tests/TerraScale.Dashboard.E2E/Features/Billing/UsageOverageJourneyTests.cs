@@ -21,12 +21,12 @@ public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
         using var completed = await client.GetAsync(checkout.Headers.Location);
         using var callback = await client.GetAsync(completed.Headers.Location);
         await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await AssertSpendingAsync(client, "Operation units above Starter's included allowance are billed at $5 per million operation units.");
+        await AssertSpendingAsync(client, "Operation units above Starter's included allowance are billed at $5.00 per million operation units.");
         using var me = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
         var organizationId = me.RootElement.GetProperty("organizationId").GetString()!;
 
         await Assert.That((await ReportAsync(client, StarterAllowance)).Length).IsEqualTo(0).Because("Usage within the allowance is not billed.");
-        await Assert.That(await UsageAsync(client)).IsEqualTo("Usage this period: $0.00 so far, within Starter's 250,000 included operation units. Units above them cost $5 per million.");
+        await Assert.That(await UsageAsync(client)).IsEqualTo("Usage this period: $0.00 so far, within Starter's 250,000 included operation units. Units above them cost $5.00 per million.");
 
         var created = (await ReportAsync(client, StarterAllowance + 123_456)).Single();
         await Assert.That(created.GetProperty("quantity").GetInt64()).IsEqualTo(123_456);
@@ -64,7 +64,7 @@ public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
     {
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/usage?tab=settings"));
         await Assert.That(html).Contains(disclosure);
-        await Assert.That(html).Contains("$5 per million operation units");
+        await Assert.That(html).Contains("$5.00 per million operation units");
         await Assert.That(html).Contains("Customer hard spending caps are unavailable.");
         await Assert.That(html).Contains("href=\"/organization?tab=billing\">Manage billing and upgrade</a>");
         await Assert.That(html.Contains("paid overages are not supported", StringComparison.OrdinalIgnoreCase)).IsFalse();

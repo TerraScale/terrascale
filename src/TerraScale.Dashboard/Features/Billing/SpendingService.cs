@@ -1,4 +1,3 @@
-using System.Globalization;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing;
@@ -49,6 +48,4 @@ public sealed class SpendingService(AccountService accounts, TimeProvider time, 
         }).ToArray();
         return new(org.Id, org.InternalBilling is null ? 0 : org.SpendCapCents, projects);
     }
-    public static string Dollars(long cents) => cents <= 0 ? "" : (cents / 100m).ToString("F2", CultureInfo.InvariantCulture);
-    public static string CapLabel(long cents) => cents <= 0 ? "No limit" : "$" + Dollars(cents);
 }

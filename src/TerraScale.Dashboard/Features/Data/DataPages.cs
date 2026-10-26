@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
 
@@ -38,8 +39,8 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
     public string NextPath => BrowsePath(("cursor", ""), ("page", (Browse.Page + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)));
     public string FirstPath => BrowsePath(("cursor", ""), ("page", ""));
     public string Summary => Error.Length > 0 ? "Document results unavailable." : Search.Length > 0
-        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Browse.Documents.Count:N0} matches in {Browse.Scanned:N0} documents checked this scan · ") + (Browse.More ? "Partial search. Continue searching the collection." : "End of collection reached.")
-        : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Browse.Documents.Count:N0} documents on page {Browse.Page:N0} · ") + (Browse.More ? "More documents available." : "End of collection reached.");
+        ? $"{ValueFormat.Plural(Browse.Documents.Count, "match", "matches")} in {ValueFormat.Plural(Browse.Scanned, "document")} checked this scan · " + (Browse.More ? "Partial search. Continue searching the collection." : "End of collection reached.")
+        : $"{ValueFormat.Plural(Browse.Documents.Count, "document")} on page {Browse.Page.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} · " + (Browse.More ? "More documents available." : "End of collection reached.");
     public string EmptyTitle => Error.Length > 0 ? "Documents could not be loaded." : Search.Length > 0
         ? Browse.More ? "No matches in this scan." : Browse.Cursor.Length > 0 ? "No more matches." : "No documents match your search."
         : Browse.Cursor.Length > 0 ? "No more documents." : "This collection has no documents yet.";

@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Extensions.Primitives;
 using TerraScale.Dashboard.Features.Billing.Invoices;
+using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.Billing.Plans;
 
@@ -10,8 +11,6 @@ public sealed record BillingPlanReview(BillingPlan? Plan, string Interval, strin
 public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPlanState? State, BillingPlanReview? Review, string Error)
 {
     public static string Name(string key) => PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key)?.Name ?? key;
-    public static string Money(long cents, string currency = "usd") => currency.Equals("usd", StringComparison.OrdinalIgnoreCase)
-        ? (cents < 0 ? "-" : "") + "US$ " + Math.Abs(cents / 100m).ToString("F2", CultureInfo.InvariantCulture) : InvoiceHistory.Money(cents, currency);
     public static string Scheduled(DateTimeOffset? at) => at is null ? "at the next renewal" : "on " + at.Value.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
     public static async Task<BillingPlanPresentation> ForAsync(BillingPage page, StripeBilling billing, IQueryCollection query, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -41,7 +40,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
             else
             {
                 if (key == "free") interval = "";
-                price = Money(interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) + (interval.Length == 0 ? "" : interval == "annual" ? " / year" : " / month");
+                price = MoneyFormat.Money(interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) + (interval.Length == 0 ? "" : interval == "annual" ? " / year" : " / month");
                 if (!subscribed)
                 {
                     effect = binding?.TrialUsed != true && plan.TrialDays > 0 ? "After Stripe confirms the " + plan.TrialDays + "-day trial" : "After Stripe confirms checkout";
@@ -52,7 +51,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
                     {
                         var quote = await billing.PreviewPlanChangeAsync(context, key, interval, cancellationToken);
                         effect = quote.Immediate ? "After Stripe confirms the change and payment" : "At renewal on " + quote.EffectiveAt.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
-                        estimate = quote.Immediate ? Money(quote.AmountDueCents, quote.Currency) + " estimated by Stripe (including " + Money(quote.ProrationCents, quote.Currency) + " in prorations)" : "No charge today";
+                        estimate = quote.Immediate ? MoneyFormat.Money(quote.AmountDueCents, quote.Currency) + " estimated by Stripe (including " + MoneyFormat.Money(quote.ProrationCents, quote.Currency) + " in prorations)" : "No charge today";
                     }
                     catch (AccountAccessException access) { errorMessage = access.Message; }
                     catch (Exception error) when (error is Stripe.StripeException or HttpRequestException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
