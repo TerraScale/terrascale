@@ -25,7 +25,7 @@ Run `/mcp`, select **terrascale** and choose **Authenticate**. Your browser open
 
 Other clients that support MCP authorization, such as claude.ai custom connectors and Cursor, start the same sign-in when you add the URL `https://mcp.terrascale.tech/`.
 
-Sign-in creates a personal access token named `MCP: <client name>`. It lasts 90 days, counts toward the 25-token limit, and appears on **Profile → Access tokens**, where you can revoke it. When it expires, the client asks you to sign in again.
+Sign-in creates a personal access token named `MCP: <client name>`. It lasts up to 90 days, counts toward the 25-token limit, and appears on **Profile → Access tokens**, where you can revoke it. The client's registration can expire sooner after inactivity, as described below. When access expires, the client asks you to sign in again.
 
 Check the connection:
 
@@ -33,6 +33,14 @@ Check the connection:
 Use TerraScale get_context to show my accessible organizations and projects.
 Do not change anything.
 ```
+
+### Registration expiry and reconnecting
+
+A new OAuth client registration expires after 24 hours if sign-in never completes. After sign-in completes, the registration expires after 30 days without a successful sign-in, token issuance or authenticated request using one of its tokens. Opening the consent page, denying access or sending an invalid token does not extend that period.
+
+An expired registration stops its associated tokens from authenticating, even if their 90-day token deadline has not arrived. Remove and add TerraScale again in your client, then authenticate to create a new registration. Personal access tokens created separately in the dashboard keep their selected expiry.
+
+For custom MCP client integrations, use authorization-server discovery rather than constructing client IDs. Dynamic registration returns a canonical uppercase, 26-character ULID as `client_id`; keep it unchanged. Registration JSON is limited to 16 KiB, including whitespace and UTF-8 encoding. Oversized bodies return HTTP `413`; malformed or unsupported registration metadata returns an OAuth JSON error with HTTP `400`. Registration management endpoints are not advertised; knowing a public client ID does not authorize changing or deleting it.
 
 ## 2. Or use a personal access token
 
