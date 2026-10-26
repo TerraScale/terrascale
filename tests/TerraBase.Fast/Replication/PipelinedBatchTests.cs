@@ -6,6 +6,7 @@ using Grpc.Core.Interceptors;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
@@ -271,6 +272,45 @@ public sealed class PipelinedBatchTests
         await Assert.That(string.Join(", ", gate.Calls(receiver.Tenant).Select(applied => applied.Groups))).IsEqualTo("1, 3")
             .Because("the three batches queued behind the held one apply in one transaction");
         await receiver.AssertStoredAsync(docs[..4], stored: true);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task A_chunk_between_coalesced_inline_batches_preserves_the_chain_and_refuses_followers_when_unread(bool readable)
+    {
+        var gate = new ApplyGate();
+        var bucket = new MemoryObjectStore();
+        await using var receiver = await Receiver.StartAsync(gate, services => services.AddSingleton<IObjectStore>(bucket.For("gru")));
+        var docs = Enumerable.Range(0, 5).Select(_ => EntityIds.New().ToString()).ToArray();
+        var frames = docs.Select((id, index) => Batch(receiver.Sender, (ulong)index + 1, (ulong)index + 2, receiver.Origin, id)).ToArray();
+        var envelope = frames[2].Batch.Groups;
+        var key = LogChunks.Prefix + "sjc-machine/" + Ulid.NewUlid();
+        var (sealedBytes, seal) = LogChunks.Seal(key, envelope.Span);
+        frames[2].Batch.Chunk = new LogChunk
+        {
+            Key = key,
+            Seal = ByteString.CopyFrom(seal),
+            Length = (uint)sealedBytes.Length,
+            Decoded = (uint)ApplicationEnvelope.DecodedLength(envelope.Span),
+        };
+        frames[2].Batch.Groups = ByteString.Empty;
+        if (readable)
+        {
+            bucket.Objects[key] = sealedBytes;
+        }
+
+        await receiver.QueueBehindHeldAsync(frames);
+        gate.Release();
+        var acks = await AcksAsync(receiver.Call, 6, receiver.Deadline);
+        await Assert.That(string.Join(", ", acks.Select(ack => (ack.ChangeId, ack.Refused)))).IsEqualTo(readable
+            ? "(1, False), (2, False), (3, False), (4, False), (5, False), (6, False)"
+            : "(1, False), (2, False), (3, False), (0, True), (0, True), (0, True)");
+        await Assert.That(acks[3].ChunkUnread).IsEqualTo(!readable);
+        await Assert.That(string.Join(", ", gate.Calls(receiver.Tenant).Select(applied => applied.Groups))).IsEqualTo(readable ? "1, 2, 1, 2" : "1, 2")
+            .Because("inline neighbors coalesce on each side; the chunk applies on its own turn");
+        await receiver.AssertStoredAsync(docs[..2], stored: true);
+        await receiver.AssertStoredAsync(docs[2..], stored: readable);
     }
 
     [Test]

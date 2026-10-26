@@ -25,7 +25,7 @@ public sealed class SystemDatabasePowerLossTests
             ["ops"] = new JsonArray(
                 new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"power-{organization}" },
                 new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString() }),
+                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString(), ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
         });
         using var created = await node.Client.PostAsJsonAsync("/admin/api-keys", new JsonObject
         {

@@ -124,22 +124,25 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.Cluster)]
-    public async Task E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add_expected_to_fail()
+    public async Task E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add()
     {
         await Gaps.RunAsync("E11", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
             var id = EntityIds.New().ToString();
-            var uri = cluster.Document(id);
-            await Converge.SeedAsync(cluster, uri, new JsonObject { ["a"] = "base", ["b"] = "base", ["n"] = 0 });
+            var uri = new Uri($"{cluster.DatabasePath}/collections/e11/documents/by-key?id={id}", UriKind.Relative);
+            _ = await SqlAsync(cluster, Cluster.Gru, "CREATE TABLE e11 (id TEXT PRIMARY KEY, a TEXT, b TEXT, n INTEGER NOT NULL)");
+            _ = await SqlAsync(cluster, Cluster.Gru, $"INSERT INTO e11 (id, a, b, n) VALUES ('{id}', 'base', 'base', 0)");
+            _ = await SettledAsync(cluster, uri, "SQL table and seed row", copies => copies.Gru?["n"]?.ToJsonString() == "0");
             await Task.WhenAll(
-                SqlAsync(cluster, Cluster.Gru, $"""UPDATE "{cluster.Collection}" SET a = 'gru' WHERE _id = '{id}'"""),
+                SqlAsync(cluster, Cluster.Gru, $"UPDATE e11 SET a = 'gru' WHERE id = '{id}'"),
                 Docs.PatchAsync(cluster[Cluster.Sjc], uri, new JsonObject { ["b"] = "sjc" }));
-            var both = await SettledAsync(cluster, uri, "SQL update versus patch");
+            var both = await SettledAsync(cluster, uri, "SQL update versus patch",
+                copies => copies.Gru?["a"]?.GetValue<string>() == "gru" && copies.Gru["b"]?.GetValue<string>() == "sjc");
             Expected.Check(both.Gru!["a"]?.GetValue<string>() == "gru" && both.Gru["b"]?.GetValue<string>() == "sjc", $"both edits survive; {both}");
-            var increment = $"""UPDATE "{cluster.Collection}" SET n = n + 1 WHERE _id = '{id}'""";
+            var increment = $"UPDATE e11 SET n = n + 1 WHERE id = '{id}'";
             await Task.WhenAll(SqlAsync(cluster, Cluster.Gru, increment), SqlAsync(cluster, Cluster.Sjc, increment));
-            var added = await SettledAsync(cluster, uri, "SQL increments");
+            var added = await SettledAsync(cluster, uri, "SQL increments", copies => copies.Gru?["n"]?.ToJsonString() == "2");
             Expected.Check(added.Gru!["n"]?.ToJsonString() == "2", $"n = n + 1 in both regions gives 2; {added}");
         });
     }
@@ -243,11 +246,11 @@ public sealed class LatticeE2ETests
         return tombstones;
     }
 
-    // /sql takes a project token (databases:read), never the documents API key: Cluster.Sql.
+    // Relational writes use the document API credential and the current /sql/execute statement envelope.
     private static async Task<JsonNode?> SqlAsync(Cluster cluster, string region, string sql)
     {
-        using var client = cluster.Sql(region);
-        return await Docs.PostAsync(client, new Uri($"{cluster.DatabasePath}/sql", UriKind.Relative), new JsonObject { ["sql"] = sql });
+        return await Docs.PostAsync(cluster[region], new Uri($"{cluster.DatabasePath}/sql/execute", UriKind.Relative),
+            new JsonObject { ["statements"] = new JsonArray(new JsonObject { ["sql"] = sql }) });
     }
 
     // An op of section 13: inc takes "by", the others "value".
