@@ -41,14 +41,27 @@ hosted pages to sign in. The code is in `Platform/Mcp/McpOAuth.cs`.
    (`token_endpoint_auth_method: none`).
 4. `POST /oauth/register` is RFC 7591 dynamic registration. It accepts
    1–10 redirect URIs: `https`, `http` on a loopback host (any port), or a
-   private app scheme such as `cursor:`.
+   private app scheme such as `cursor:`. Send UTF-8 JSON with an
+   `application/json` content type. Metadata is limited to 16 KiB of actual
+   request-body bytes, including whitespace, even without `Content-Length`
+   or with chunked transfer. Oversized metadata returns OAuth JSON `413`
+   (`invalid_client_metadata`); malformed JSON or invalid metadata returns
+   `400`. Successful registration returns a canonical uppercase ULID
+   `client_id`; authorization accepts that exact identity, without an
+   `mcp_` compatibility alias. A registration expires 24 hours after creation
+   unless a fresh hosted sign-in completes. Afterward it expires after 30 days
+   without a successful fresh sign-in, token issuance, or fully validated bound
+   bearer request. Consent, discovery, and rejected requests do not renew it.
+   Closure is terminal: add/register the server again and sign in to recover.
+   Native PATs and existing tokens without explicit MCP client binding retain
+   their own expiration semantics.
 5. `GET /oauth/authorize` shows a consent page with the client's name and
    where it returns. **Sign in and allow** starts a fresh ts-auth
    authorization. When that finishes, the client's redirect URI gets a
    single-use code that lasts 5 minutes, plus `state` and `iss`. A `resource`
    (RFC 8707) must name this MCP server.
 6. `POST /oauth/token` redeems the code with the PKCE verifier and returns a
-   bearer access token that lasts 90 days. There is no refresh token. When it
+   bearer access token that lasts at most 90 days. There is no refresh token. When it
    expires, the client signs in again.
 
 The access token is a personal access token named `MCP: <client name>`. It

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
@@ -37,7 +38,7 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         try
         {
             credential = await sessions.CreateCredentialAsync(fresh, expiresAt, cancellationToken);
-            return await StoreAsync(context.UserId, name, expiresAt, credential, cancellationToken);
+            return await StoreAsync(context.UserId, name, expiresAt, credential, null, cancellationToken);
         }
         catch
         {
@@ -50,13 +51,24 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
 
     // An MCP OAuth client's token: its fresh grant was stored as a credential when
     // the client's own ts-auth authorization round trip finished.
-    public async Task<CreatedProfileToken> IssueGrantedAsync(string userId, string name, DateTimeOffset expiresAt, string credentialId, CancellationToken cancellationToken)
+    public async Task<CreatedProfileToken> IssueGrantedAsync(string userId, string name, DateTimeOffset expiresAt, string credentialId, string mcpClientId, CancellationToken cancellationToken)
     {
-        try { return await StoreAsync(userId, name, expiresAt, credentialId, cancellationToken); }
+        CreatedProfileToken? created = null;
+        try
+        {
+            if (await McpRegistrations.ReadActiveAsync(state, time, mcpClientId, cancellationToken) is not { FirstSignInCompletedAt: not null })
+                throw new AccountAccessException("The MCP client registration expired. Add the server again.", 401);
+            created = await StoreAsync(userId, name, expiresAt, credentialId, mcpClientId, cancellationToken);
+            // No cross-document atomicity claim: recheck after storage, before publishing the secret.
+            if (await McpRegistrations.TouchAsync(state, time, mcpClientId, cancellationToken) is null)
+                throw new AccountAccessException("The MCP client registration expired. Add the server again.", 401);
+            return created;
+        }
         catch
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            await ForgetGrantAsync(credentialId, cleanup.Token);
+            if (created is null) await ForgetGrantAsync(credentialId, cleanup.Token);
+            else await RevokeAsync(userId, created.Token.Id, cleanup.Token);
             throw;
         }
     }
@@ -67,11 +79,11 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         await sessions.DeleteCredentialAsync(credentialId, cancellationToken);
     }
 
-    private async Task<CreatedProfileToken> StoreAsync(string userId, string name, DateTimeOffset expiresAt, string credential, CancellationToken cancellationToken)
+    private async Task<CreatedProfileToken> StoreAsync(string userId, string name, DateTimeOffset expiresAt, string credential, string? mcpClientId, CancellationToken cancellationToken)
     {
         var secret = "tspat_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var token = new ProfileToken(Guid.CreateVersion7().ToString(), name, secret[^4..], time.GetUtcNow(), expiresAt);
-        var stored = new StoredToken(token, Hash(secret), credential);
+        var stored = new StoredToken(token, Hash(secret), credential, McpClientId: mcpClientId);
         // The index alone cannot authenticate: the account's CAS-protected
         // token set must still contain the token on every request.
         await AccountEnrollment.RememberAsync(state, userId, IndexCollection, stored.SecretHash, cancellationToken);
@@ -147,7 +159,10 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         if (token is null) return null;
         var grant = await sessions.ReadCredentialAsync(token.CredentialId, cancellationToken);
         if (grant is null || grant.UserId != owner.UserId) return null;
-        return await accounts.GetContextAsync(grant, cancellationToken);
+        var context = await accounts.GetContextAsync(grant, cancellationToken);
+        // Issuer, credential subject, and account validity precede registration activity.
+        if (token.McpClientId is { } clientId && await McpRegistrations.TouchAsync(state, time, clientId, cancellationToken) is null) return null;
+        return context;
     }
 
     private async Task<TokenSet> ReadAsync(string userId, CancellationToken cancellationToken)
@@ -189,5 +204,5 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         public List<StoredToken> Tokens { get; set; } = [];
     }
     public sealed record TokenOwner(string UserId, string TokenId);
-    public sealed record StoredToken(ProfileToken Token, string SecretHash, string CredentialId, DateTimeOffset? RevokedAt = null);
+    public sealed record StoredToken(ProfileToken Token, string SecretHash, string CredentialId, DateTimeOffset? RevokedAt = null, string? McpClientId = null);
 }
