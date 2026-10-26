@@ -6,7 +6,8 @@ published [`@terrascale/sdk`](https://www.npmjs.com/package/@terrascale/sdk).
 ## Use it
 
 The package is not published to npm yet, so run the scaffolder from a checkout
-of this repository:
+of this repository. Use Node.js 22 or 24 and npm 11 or newer, as required by
+the generated app's SDK:
 
 ```bash
 git clone https://github.com/TerraScale/ts-docs.git

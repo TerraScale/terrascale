@@ -12,6 +12,8 @@ const routes = [
   ['/getting-started/csharp', 'C# quickstart with the SDK package built from source'],
   ['/getting-started/go', 'Go SDK installation and document, query, SQL and changes quickstart'],
   ['/getting-started/python', 'Python SDK installation and sync/async document, query, SQL and vector quickstart'],
+  ['/getting-started/browser-todos', 'Browser todos with an existing end-user session and collection owner rules'],
+  ['/getting-started/browser-backend-tokens', 'Connect an existing app backend session to project-scoped end-user tokens'],
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
   ['/guides/authentication', 'API keys, token exchange and scoped access'],
   ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
@@ -39,7 +41,7 @@ const routes = [
 const text = `# TerraScale documentation
 
 > TerraBase stores project-scoped JSON documents. The JavaScript SDK
-> @terrascale/sdk@0.0.9 is on npm, the Go module terrascale.tech/sdk@v0.0.2
+> @terrascale/sdk@0.0.9 is on npm, the Go module terrascale.tech/sdk@v0.0.3
 > is on the Go proxy, and the C# package builds from source. Exchange a
 > dashboard API key at https://auth.terrascale.tech/terrascale/oauth/token and
 > call https://api.terrascale.tech.

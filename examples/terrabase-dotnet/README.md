@@ -5,7 +5,7 @@ read, version-check, update, query and delete one JSON document. It sends every
 request through the SDK and keeps application data in TerraBase.
 
 Requires .NET SDK 10 or newer with the .NET 10 runtime installed, a verified
-C# SDK candidate package/feed, and a database plus an access token
+C# SDK package built from tag `v0.0.6` into a local feed, and a database plus an access token
 exchanged from a dashboard API key, exported as shown in
 https://docs.terrascale.tech/getting-started/csharp (API origin
 `https://api.terrascale.tech`). The app creates the collection when it does not
@@ -14,8 +14,10 @@ projects. Public NuGet publication and automatic endpoint resolution are separat
 release gates.
 
 ```bash
-dotnet build -c Release -p:TerraBaseSdkPackageVersion=EXACT_VERSION \
-  --source /absolute/path/verified-sdk-feed --source https://api.nuget.org/v3/index.json
+git clone --depth 1 --branch v0.0.6 https://github.com/TerraScale/ts-dotnet.git ../ts-dotnet
+dotnet pack ../ts-dotnet/src/TerraScale.DotNet -c Release -o ../feed
+dotnet build -c Release -p:TerraBaseSdkPackageVersion=0.0.6 \
+  --source ../feed --source https://api.nuget.org/v3/index.json
 dotnet bin/Release/net10.0/TerraBaseStarter.dll
 ```
 

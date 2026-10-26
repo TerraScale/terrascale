@@ -17,7 +17,7 @@ Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/reg
 | --- | --- | --- |
 | JavaScript / TypeScript | [JavaScript quickstart](/ru/getting-started/javascript) | `@terrascale/sdk@0.0.5` is published on npm |
 | C# | [C# quickstart](/ru/getting-started/csharp) | Package built from source; not on nuget.org yet |
-| Go | [Go quickstart](/ru/getting-started/go) | `go get terrascale.tech/sdk@v0.0.2` |
+| Go | [Go quickstart](/ru/getting-started/go) | `go get terrascale.tech/sdk@v0.0.3` |
 | Python | [Python quickstart](/ru/getting-started/python) | `pip install` from the `v0.0.1` Git tag; not on PyPI yet |
 | Rust | [SDK reference](/ru/guides/sdks#rust) | Git dependency; not on crates.io yet |
 

@@ -89,13 +89,14 @@ The delete passes the version returned by `get`; versions are opaque and must be
 
 ```python
 import asyncio
+import os
 
 from terrascale import AsyncTerraScale
 
 
 async def main() -> None:
     async with AsyncTerraScale() as ts:
-        docs = ts.database("main").collection("py_quickstart")
+        docs = ts.database(os.environ["TERRASCALE_DATABASE_NAME"]).collection("py_quickstart")
         created = await docs.create({"title": "async"})
         async for doc in docs.items(limit=100):
             print(doc.id, doc.data)

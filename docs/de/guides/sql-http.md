@@ -10,7 +10,15 @@ description: Run SQL statements against a TerraBase database with one HTTPS requ
 
 # SQL over HTTP
 
-Send SQL to a database with one `POST`. Use it from any language with an HTTP client, from serverless functions and from scripts. Tables are TerraBase collections and rows are documents, so SQL writes replicate across regions like writes through the Documents API.
+Send SQL to a database with one `POST`. Use it from any language with an HTTP client, from serverless functions and from scripts. SQL writes replicate across regions like Documents API writes.
+
+SQL tables and Documents API collections have different schemas and query contracts, but share a database naming namespace. A Documents collection named `customers` is not the SQL table expected below: `CREATE TABLE IF NOT EXISTS customers` can fail when that collection already exists. These SQL guides use `sql_customers` to keep the examples separate from the Documents quickstart.
+
+## Prerequisites
+
+Create a database and a **Read and write** API key as in [Getting started](/de/getting-started/), then complete its token exchange. In the same Bash session, set `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` and `TERRASCALE_ACCESS_TOKEN`. These examples create a SQL table in that database; use a table name that is not already a Documents collection.
+
+API-key access tokens last at most 60 seconds. Exchange the key again before expiry; use the returned `expires_in`, rather than assuming a longer lifetime. A fresh **Read and write** key is sufficient for `/sql/execute`; the older read-only `/sql` endpoint used by the Go quickstart instead needs `databases:read`.
 
 The statements, types and limits are the same as for the [libSQL clients](/de/guides/libsql-clients#supported-sql). To keep a connection open or reuse driver code, use the [libSQL clients](/de/guides/libsql-clients) or [Postgres clients](/de/guides/postgres-clients) instead.
 
@@ -25,13 +33,13 @@ Content-Type: application/json
 `{project}` is your project ID and `{database}` is the database name. The token is an access token minted from a dashboard API key (see [Authentication](/de/guides/authentication)): `documents:read` for reads, `documents:write` for writes and `CREATE`/`DROP`.
 
 ```sh
-curl -sS https://api.terrascale.tech/v1/projects/$PROJECT/databases/shop/sql/execute \
-  -H "Authorization: Bearer $TERRASCALE_TOKEN" \
+curl -sS --fail-with-body "https://api.terrascale.tech/v1/projects/$TERRASCALE_PROJECT_ID/databases/$TERRASCALE_DATABASE_NAME/sql/execute" \
+  -H "Authorization: Bearer $TERRASCALE_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"statements":[
-        {"sql":"CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"},
-        {"sql":"INSERT INTO customers (id, name) VALUES (?, ?)", "args":[1, "Ada"]},
-        {"sql":"SELECT id, name FROM customers WHERE id = :id", "named":{"id":1}}
+        {"sql":"CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"},
+        {"sql":"INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", "args":[1, "Ada"]},
+        {"sql":"SELECT id, name FROM sql_customers WHERE id = :id", "named":{"id":1}}
       ]}'
 ```
 
@@ -82,7 +90,7 @@ A failed statement rolls back the whole request and answers:
 
 ## From the SDKs
 
-The SDKs call this endpoint for you: a batch is one request and one transaction, a query maps rows to your type, and a failed statement raises a typed SQL error with the statement index and the SQLite code. Every snippet takes a database handle for `shop`, built as in the [SDK reference](/de/guides/sdks).
+The SDKs call this endpoint for you: a batch is one request and one transaction, a query maps rows to your type, and a failed statement raises a typed SQL error with the statement index and the SQLite code. Every snippet takes a database handle for your database, built as in the [SDK reference](/de/guides/sdks). Replace the illustrative `shop` name with `TERRASCALE_DATABASE_NAME`. Setup inserts replace only the synthetic rows with IDs 1 and 2; reserve `sql_customers` for this example. The final duplicate insert deliberately demonstrates a constraint error.
 
 ### JavaScript / TypeScript
 
@@ -93,14 +101,14 @@ import { SqlError } from '@terrascale/sdk'
 
 const db = client.database('shop')
 await db.batch([
-  'CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)',
-  { sql: 'INSERT INTO customers (id, name) VALUES (?, ?)', args: [1, 'Ada'] },
-  { sql: 'INSERT INTO customers (id, name) VALUES (:id, :name)', named: { id: 2, name: 'Grace' } },
+  'CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)',
+  { sql: 'INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)', args: [1, 'Ada'] },
+  { sql: 'INSERT OR REPLACE INTO sql_customers (id, name) VALUES (:id, :name)', named: { id: 2, name: 'Grace' } },
 ])
-const customers = await db.query<{ id: number; name: string }>('SELECT id, name FROM customers WHERE id > ?', [0])
+const sql_customers = await db.query<{ id: number; name: string }>('SELECT id, name FROM sql_customers WHERE id > ?', [0])
 
 try {
-  await db.execute('INSERT INTO customers (id, name) VALUES (?, ?)', [1, 'Ada'])
+  await db.execute('INSERT INTO sql_customers (id, name) VALUES (?, ?)', [1, 'Ada'])
 } catch (err) {
   if (!(err instanceof SqlError)) throw err
   console.log(err.statement, err.sqliteCode) // 0 'SQLITE_CONSTRAINT_PRIMARYKEY'
@@ -116,14 +124,14 @@ An integer beyond 2^53 comes back as an `ExactDecimal` that keeps every digit (c
 ```go
 db := c.Database(projectID, "shop")
 _, err := db.BatchSQL(ctx, []v1.SQLStatement{
-	{SQL: "CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"},
-	{SQL: "INSERT INTO customers (id, name) VALUES (?, ?)", Args: []any{1, "Ada"}},
-	{SQL: "INSERT INTO customers (id, name) VALUES (:id, :name)", Named: map[string]any{"id": 2, "name": "Grace"}},
+	{SQL: "CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"},
+	{SQL: "INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", Args: []any{1, "Ada"}},
+	{SQL: "INSERT OR REPLACE INTO sql_customers (id, name) VALUES (:id, :name)", Named: map[string]any{"id": 2, "name": "Grace"}},
 })
-rows, err := db.QuerySQL(ctx, "SELECT id, name FROM customers WHERE id > :id", v1.Named("id", 0))
+rows, err := db.QuerySQL(ctx, "SELECT id, name FROM sql_customers WHERE id > :id", v1.Named("id", 0))
 // rows[0]["id"] == int64(1); values are nil, int64, float64 or string
 
-_, err = db.ExecuteSQL(ctx, "INSERT INTO customers (id, name) VALUES (?, ?)", 1, "Ada")
+_, err = db.ExecuteSQL(ctx, "INSERT INTO sql_customers (id, name) VALUES (?, ?)", 1, "Ada")
 var sqlErr *v1.SQLError
 if errors.As(err, &sqlErr) {
 	log.Println(sqlErr.Statement, sqlErr.SQLiteCode) // 0 SQLITE_CONSTRAINT_PRIMARYKEY
@@ -137,18 +145,18 @@ if errors.As(err, &sqlErr) {
 ```csharp
 TerraBaseDatabase database = documents.Database(projectId, "shop");
 await database.ExecuteSqlBatchAsync([
-    new("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
-    new("INSERT INTO customers (id, name) VALUES (?, ?)", [1, "Ada"]),
-    new("INSERT INTO customers (id, name) VALUES (:id, :name)",
+    new("CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
+    new("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", [1, "Ada"]),
+    new("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (:id, :name)",
         Named: new Dictionary<string, TerraBaseSqlValue> { ["id"] = 2, ["name"] = "Grace" }),
 ], cancellationToken);
 
-foreach (TerraBaseSqlRecord row in await database.QuerySqlAsync("SELECT id, name FROM customers WHERE id > ?", [0], cancellationToken))
+foreach (TerraBaseSqlRecord row in await database.QuerySqlAsync("SELECT id, name FROM sql_customers WHERE id > ?", [0], cancellationToken))
     Console.WriteLine($"{row.GetInt64("id")} {row.GetString("name")}");
 
 try
 {
-    await database.ExecuteSqlAsync("INSERT INTO customers (id, name) VALUES (?, ?)", [1, "Ada"], cancellationToken);
+    await database.ExecuteSqlAsync("INSERT INTO sql_customers (id, name) VALUES (?, ?)", [1, "Ada"], cancellationToken);
 }
 catch (TerraBaseSqlException e)
 {
@@ -168,13 +176,13 @@ struct Customer { id: i64, name: String }
 
 let sql = client.database("shop").sql();
 sql.batch(vec![
-    SqlStatement::new("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
-    SqlStatement::new("INSERT INTO customers (id, name) VALUES (?, ?)").args([SqlValue::from(1), "Ada".into()]),
-    SqlStatement::new("INSERT INTO customers (id, name) VALUES (:id, :name)").named("id", 2).named("name", "Grace"),
+    SqlStatement::new("CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
+    SqlStatement::new("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)").args([SqlValue::from(1), "Ada".into()]),
+    SqlStatement::new("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (:id, :name)").named("id", 2).named("name", "Grace"),
 ]).await?;
-let customers: Vec<Customer> = sql.query("SELECT id, name FROM customers WHERE id > ?", &[0.into()]).await?;
+let sql_customers: Vec<Customer> = sql.query("SELECT id, name FROM sql_customers WHERE id > ?", &[0.into()]).await?;
 
-if let Err(err) = sql.execute("INSERT INTO customers (id, name) VALUES (?, ?)", &[1.into(), "Ada".into()]).await {
+if let Err(err) = sql.execute("INSERT INTO sql_customers (id, name) VALUES (?, ?)", &[1.into(), "Ada".into()]).await {
     if let Some(e) = err.sql() { // None for auth, quota and network failures
         println!("{} {:?} {:?}", e.code, e.statement, e.sqlite_code); // sql_error Some(0) Some("SQLITE_CONSTRAINT_PRIMARYKEY")
     }
@@ -186,7 +194,7 @@ if let Err(err) = sql.execute("INSERT INTO customers (id, name) VALUES (?, ?)", 
 The [libSQL limits](/de/guides/libsql-clients#limits) apply: reads scan their tables (about 150,000 rows at most), a result holds at most 10,000 rows and 8 MiB, and a request body is at most 1 MiB. Page large reads with a key condition and `LIMIT`:
 
 ```sql
-SELECT id, name FROM customers WHERE id > ? ORDER BY id LIMIT 1000
+SELECT id, name FROM sql_customers WHERE id > ? ORDER BY id LIMIT 1000
 ```
 
 Pass the last `id` of each page as the argument for the next one.

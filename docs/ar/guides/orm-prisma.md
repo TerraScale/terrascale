@@ -16,10 +16,27 @@ A complete app is in [`examples/orm-prisma`](https://github.com/TerraScale/ts-do
 
 ## Install
 
+Use **Node.js 24**. The complete example is an ES module project (`"type": "module"`); Node 24 executes its TypeScript entrypoint directly with `node app.ts`. To run the complete example with its committed lockfile:
+
 ```sh
-npm install @prisma/client @prisma/adapter-libsql @libsql/client
-npm install -D prisma
+git clone --depth 1 https://github.com/TerraScale/ts-docs.git
+cd ts-docs/examples/orm-prisma
+npm ci
 ```
+
+For a new project instead, initialize the module and install the same exact versions before adding the schema and source files below:
+
+```sh
+mkdir terrabase-prisma-quickstart
+cd terrabase-prisma-quickstart
+npm init -y
+npm pkg set type=module
+mkdir -p prisma
+npm install --save-exact @prisma/client@7.10.1 @prisma/adapter-libsql@7.10.1 @libsql/client@0.18.0
+npm install --save-dev --save-exact prisma@7.10.1
+```
+
+Set `TERRASCALE_API_KEY`, `TERRASCALE_PROJECT_ID` and `TERRASCALE_DATABASE` for your existing database before connecting or applying migrations. Keep the key in your server's secret store. In the complete example, `npm run migrate` applies the migration files and `npm start` runs `app.ts`; `npm run generate` must run first.
 
 ## Schema
 
@@ -73,6 +90,7 @@ TerraBase accepts the `FOREIGN KEY` constraints Prisma generates but does not en
 Prisma Migrate cannot connect to libSQL over HTTP. Generate the SQL with `prisma migrate diff` and apply it with `@libsql/client`:
 
 ```sh
+mkdir -p migrations
 npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > migrations/0001_init.sql
 npx prisma generate
 ```

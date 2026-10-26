@@ -10,8 +10,8 @@ description: Connect an existing app session to project-scoped end-user tokens w
 
 # Browser tokens from your app backend
 
-::: warning Producer rollout pending
-The end-user token producer and collection-rule rollout are **not yet live/proven**. This guide follows the coordinated producer contract; its HTTP fake tests are not deployment evidence. The browser example uses published **`@terrascale/sdk@0.0.5`**. Keep live customer access pending until the token route, rules and two-user isolation checks below pass against deployed services. An unavailable mint route is a setup failure; do not substitute a project token in the browser.
+::: tip Connect your existing backend
+The browser example uses published **`@terrascale/sdk@0.0.5`** with the end-user token endpoint and collection rules. Supply your application's validated session, then run the isolation checks below with your own test users before serving customers. An unavailable mint route is a setup failure; never substitute a project token in the browser.
 :::
 
 Connect your **existing validated application session** to the [browser todos example](/es/getting-started/browser-todos). Your backend mints a short-lived end-user JWT, your browser obtains it through a same-origin app route, and the SDK sends it directly to `https://api.terrascale.tech`. Your app continues to own sign-in, session validation, logout and account switching.
@@ -52,7 +52,7 @@ Implement `readValidatedAppSession(request, { signal })` using your app's existi
 
 The app route requires a bodyless `POST` with an `Origin` exactly equal to the configured HTTPS origin. Missing, `null`, cross-origin and prefix-matching origins fail. The expected origin comes from trusted server configuration, never `Host` or forwarded request headers. This exact Origin check supplies CSRF protection for your app's existing cookie session. Keep the app session's existing `Secure`, `HttpOnly` and `SameSite` cookie protections. The route emits no CORS permission and rejects preflight.
 
-The backend sends this request to the **pending** producer:
+The backend mints the end-user token with:
 
 ```http
 POST https://auth.terrascale.tech/v1/terrascale/projects/{project}/end-user-tokens
@@ -71,7 +71,7 @@ The producer returns `{ access_token, token_type: "Bearer", expires_in }`. The r
 
 The **complete signed compact JWT** is limited to **8192 ASCII bytes**. The producer checks the final encoded token after signing and returns `400 invalid_request` if it exceeds that cap, including when trusted role assignments make it too large. Both ends of this example accept a token exactly at the cap and reject larger tokens. This byte cap is separate from the JSON response-body bound below.
 
-The app handler allowlists the token fields and adds `user_id` from the validated session so the browser can detect an account change. Both backend and browser use a shared streaming JSON reader with a fixed **16,384-byte** response limit, including for chunked bodies without `Content-Length`; overflow cancels the reader before parsing. The handler sets `Cache-Control: no-store` on success and failure, passes a five-second cancellation deadline to the session validator and mint request, refuses redirects, and never forwards app cookies to the producer. Upstream rejection, malformed responses and network failures become generic `502`/`503` responses; no upstream error body or credential is returned or logged. It sends once without retries. A producer `404` means rollout/setup remains incomplete; widening the key is not a fix.
+The app handler allowlists the token fields and adds `user_id` from the validated session so the browser can detect an account change. Both backend and browser use a shared streaming JSON reader with a fixed **16,384-byte** response limit, including for chunked bodies without `Content-Length`; overflow cancels the reader before parsing. The handler sets `Cache-Control: no-store` on success and failure, passes a five-second cancellation deadline to the session validator and mint request, refuses redirects, and never forwards app cookies to the producer. Upstream rejection, malformed responses and network failures become generic `502`/`503` responses; no upstream error body or credential is returned or logged. It sends once without retries. A producer `404` means the project or route is unavailable; widening the key is not a fix.
 
 ## 3. Bind the browser provider to the current app session
 

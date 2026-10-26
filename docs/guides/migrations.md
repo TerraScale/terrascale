@@ -8,7 +8,7 @@ title: Schema migrations
 
 ## Commands
 
-```sh
+```text
 ts migrate new <name>                    # add the next migrations/NNNN_<name>.sql
 ts migrate up <db>                       # apply pending migrations in order
 ts migrate status <db>                   # list the migrations and their states

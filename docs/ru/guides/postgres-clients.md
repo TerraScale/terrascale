@@ -10,7 +10,7 @@ description: Connect psql, node-postgres, psycopg, pgx, Npgsql and JDBC to a Ter
 
 # Connect with psql and Postgres drivers
 
-TerraBase databases accept connections over the PostgreSQL wire protocol (version 3). Use `psql` or a standard Postgres driver: you change the connection URL, not your client code. Tables are TerraBase collections and rows are documents, so SQL writes replicate across regions like writes through the Documents API.
+TerraBase databases accept connections over the PostgreSQL wire protocol (version 3). Use `psql` or a standard Postgres driver: you change the connection URL, not your client code. SQL writes replicate across regions like Documents API writes. SQL tables and Documents API collections have different schemas and query contracts, but share a database naming namespace. The examples use `sql_customers`, separate from the Documents quickstart's `customers` collection.
 
 ::: tip Verified
 Checked on 2026-10-24 against production (`pg.terrascale.tech`) with a dashboard API key as the password: `psql` 18, `pg` 8.23.1 and `pgx` v5.11.0 ran tables, writes, joins, parameters, prepared statements, transactions and indexes; a read-only key got `42501` on writes, and a revoked key was refused within a minute.
@@ -31,20 +31,23 @@ postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=requir
 
 Use a key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP`. Create it in the dashboard, keep it in your server's secret store, and pass the URL to your application through an environment variable. Never commit it, put it on a command line or log it.
 
+Complete [Getting started](/ru/getting-started/) first and set `TERRASCALE_DATABASE_NAME` to your database name. Postgres uses the raw API key password; the 60-second lifetime of exchanged HTTP tokens does not apply to this connection. Run the psql table setup before the driver fragments. These snippets use synthetic IDs 1, 2 and 3 in a table reserved for the example.
+
 ## psql
 
 ```sh
-export DATABASE_URL='postgresql://app:YOUR_API_KEY@pg.terrascale.tech:5432/shop?sslmode=require'
+read -rs PGPASSWORD && export PGPASSWORD  # paste the API key, then press Enter
+export DATABASE_URL="postgresql://app@pg.terrascale.tech:5432/$TERRASCALE_DATABASE_NAME?sslmode=require"
 psql "$DATABASE_URL"
 ```
 
 ```sql
-CREATE TABLE customers (id integer PRIMARY KEY, name text NOT NULL);
-INSERT INTO customers (id, name) VALUES (1, 'Ada'), (2, 'Grace');
-SELECT name FROM customers WHERE id = 1;
+CREATE TABLE IF NOT EXISTS sql_customers (id integer PRIMARY KEY, name text NOT NULL);
+INSERT INTO sql_customers (id, name) VALUES (1, 'Ada'), (2, 'Grace') ON CONFLICT DO NOTHING;
+SELECT name FROM sql_customers WHERE id = 1;
 ```
 
-`\dt`, `\d`, `\d customers`, `\l` and `\dn` work. With libpq 16 or later, `sslmode=verify-full&sslrootcert=system` also verifies the server certificate against the system trust store.
+`\dt`, `\d`, `\d sql_customers`, `\l` and `\dn` work. With libpq 16 or later, `sslmode=verify-full&sslrootcert=system` also verifies the server certificate against the system trust store.
 
 ## Node.js (pg)
 
@@ -55,14 +58,14 @@ npm install pg
 ```js
 import pg from 'pg'
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, password: process.env.PGPASSWORD })
 await client.connect()
 
-await client.query('INSERT INTO customers (id, name) VALUES ($1, $2)', [3, 'Linus'])
-const { rows } = await client.query('SELECT name FROM customers WHERE id = $1', [3])
+await client.query('INSERT INTO sql_customers (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING', [3, 'Linus'])
+const { rows } = await client.query('SELECT name FROM sql_customers WHERE id = $1', [3])
 
 // A named statement is prepared once per connection and reused.
-await client.query({ name: 'customer-by-id', text: 'SELECT name FROM customers WHERE id = $1', values: [1] })
+await client.query({ name: 'customer-by-id', text: 'SELECT name FROM sql_customers WHERE id = $1', values: [1] })
 
 await client.end()
 ```
@@ -77,10 +80,10 @@ pip install "psycopg[binary]"
 import os
 import psycopg
 
-with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
-    conn.execute("INSERT INTO customers (id, name) VALUES (%s, %s)", (3, "Linus"))
+with psycopg.connect(os.environ["DATABASE_URL"], password=os.environ["PGPASSWORD"]) as conn:
+    conn.execute("INSERT INTO sql_customers (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING", (3, "Linus"))
     conn.commit()
-    row = conn.execute("SELECT name FROM customers WHERE id = %s", (3,)).fetchone()
+    row = conn.execute("SELECT name FROM sql_customers WHERE id = %s", (3,)).fetchone()
 ```
 
 psycopg opens a transaction for the first statement and holds it until `commit()`. Pass `autocommit=True` to `connect` to run each statement on its own.
@@ -103,11 +106,11 @@ import (
 conn, err := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
 defer conn.Close(ctx)
 
-tag, err := conn.Exec(ctx, "UPDATE customers SET name = $1 WHERE id = $2", "Ada L.", 1)
+tag, err := conn.Exec(ctx, "UPDATE sql_customers SET name = $1 WHERE id = $2", "Ada L.", 1)
 fmt.Println(tag.RowsAffected())
 
 var name string
-err = conn.QueryRow(ctx, "SELECT name FROM customers WHERE id = $1", 1).Scan(&name)
+err = conn.QueryRow(ctx, "SELECT name FROM sql_customers WHERE id = $1", 1).Scan(&name)
 ```
 
 ## .NET (Npgsql)
@@ -116,16 +119,16 @@ err = conn.QueryRow(ctx, "SELECT name FROM customers WHERE id = $1", 1).Scan(&na
 dotnet add package Npgsql
 ```
 
-Npgsql takes a keyword connection string, not a URL:
+Use the same `PGPASSWORD` environment variable as psql. Replace `shop` with your `TERRASCALE_DATABASE_NAME`. Npgsql takes a keyword connection string, not a URL:
 
 ```csharp
 using Npgsql;
 
 var connectionString = "Host=pg.terrascale.tech;Port=5432;Database=shop;Username=app;SSL Mode=Require;Password="
-    + Environment.GetEnvironmentVariable("TERRABASE_API_KEY");
+    + Environment.GetEnvironmentVariable("PGPASSWORD");
 await using var dataSource = NpgsqlDataSource.Create(connectionString);
 
-await using var cmd = dataSource.CreateCommand("SELECT name FROM customers WHERE id = $1");
+await using var cmd = dataSource.CreateCommand("SELECT name FROM sql_customers WHERE id = $1");
 cmd.Parameters.AddWithValue(1);
 var name = (string?)await cmd.ExecuteScalarAsync();
 ```
@@ -135,11 +138,11 @@ var name = (string?)await cmd.ExecuteScalarAsync();
 ```java
 var props = new java.util.Properties();
 props.setProperty("user", "app");
-props.setProperty("password", System.getenv("TERRABASE_API_KEY"));
+props.setProperty("password", System.getenv("PGPASSWORD"));
 props.setProperty("sslmode", "require");
 
 try (var conn = java.sql.DriverManager.getConnection("jdbc:postgresql://pg.terrascale.tech:5432/shop", props);
-     var stmt = conn.prepareStatement("SELECT name FROM customers WHERE id = ?")) {
+     var stmt = conn.prepareStatement("SELECT name FROM sql_customers WHERE id = ?")) {
     stmt.setInt(1, 1);
     try (var rs = stmt.executeQuery()) {
         while (rs.next()) System.out.println(rs.getString(1));
@@ -147,7 +150,7 @@ try (var conn = java.sql.DriverManager.getConnection("jdbc:postgresql://pg.terra
 }
 ```
 
-Use the PostgreSQL JDBC driver (`org.postgresql:postgresql`).
+Use the PostgreSQL JDBC driver (`org.postgresql:postgresql`), the same `PGPASSWORD` environment variable and your database name in place of `shop`.
 
 ## Transactions
 

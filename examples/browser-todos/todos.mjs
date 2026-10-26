@@ -20,6 +20,7 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
   let stopped = false, busy = false, writeBlocked = false, reading, timer, stream
   let refreshAgain = false
   let readEpoch = 0
+  let renderedVersions
   const element = (tag, text = '') => {
     const node = root.ownerDocument.createElement(tag)
     node.textContent = text
@@ -47,6 +48,7 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
     lifetime.abort()
     clearTimeout(timer)
     void stream?.return().catch(() => {})
+    renderedVersions = undefined
     root.replaceChildren()
     if (mounted.get(root) === dispose) mounted.delete(root)
   }
@@ -95,10 +97,15 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
   }
 
   function render(items) {
+    // Producer rules enforce ownership; this also checks every returned snapshot.
+    // An unchanged cursor refresh must preserve controls, focus and drafts.
+    for (const { document: todo } of items)
+      if (todo.userId !== userId) throw new Error('Unexpected owner')
+    const versions = JSON.stringify(items.map(({ id, version }) => [id, version]))
+    if (versions === renderedVersions && !writeBlocked) return
+    renderedVersions = versions
     list.replaceChildren()
     for (const { id, version, document: todo } of items) {
-      // Defense in depth; producer rules, not this filter, enforce ownership.
-      if (todo.userId !== userId) throw new Error('Unexpected owner')
       const row = element('li')
       const title = element('input')
       title.value = todo.title
@@ -148,6 +155,7 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
           if (cursor === null) break
         }
         if (cursor !== null) {
+          renderedVersions = undefined
           list.replaceChildren()
           status.textContent = 'This example supports 500 todos. Add pagination for larger lists.'
           return
@@ -156,6 +164,7 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
       } catch (error) {
         if (denied(error)) failure(error)
         else if (!stopped && epoch === readEpoch) {
+          renderedVersions = undefined
           list.replaceChildren()
           failure(error)
         }
@@ -181,6 +190,7 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
       if (denied(error)) failure(error)
       else if (!stopped && ['cursor_expired', 'reset', 'reset_required'].includes(error.code)) {
         readEpoch++
+        renderedVersions = undefined
         list.replaceChildren()
         await reading
         await refresh()

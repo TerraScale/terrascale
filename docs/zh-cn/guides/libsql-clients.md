@@ -10,7 +10,7 @@ description: Use the official libSQL clients for JavaScript, Go, Rust and Python
 
 # Connect with libSQL clients
 
-TerraBase databases accept SQL from the official libSQL clients (`@libsql/client`, `go-libsql`, the `libsql` Rust crate and the `libsql` Python package). The clients speak the libSQL remote protocol (Hrana) over HTTPS; you keep your existing client code and change the URL and token.
+TerraBase databases accept SQL from the official libSQL clients (`@libsql/client`, `go-libsql`, the `libsql` Rust crate and the `libsql` Python package). The clients speak the libSQL remote protocol (Hrana) over HTTPS; you keep your existing client code and change the URL and token. SQL tables have a different schema/query contract from Documents API collections, while their names share a database namespace. Use `sql_customers` below, separate from the Documents quickstart's `customers` collection.
 
 Verified on 2026-10-23 against production (`gru`) with `@libsql/client` 0.18.0, `go-libsql` (commit `3051e37e6e04`), the `libsql` crate 0.10.0 and `libsql` for Python 0.1.11: create table, parameterized insert, batch, join, and committed and rolled-back transactions.
 
@@ -20,12 +20,19 @@ Verified on 2026-10-23 against production (`gru`) with `@libsql/client` 0.18.0, 
 https://{api-origin}/v1/projects/{project}/databases/{database}/libsql/
 ```
 
-Replace `{api-origin}` with your provisioned HTTPS API origin, and `{project}` and `{database}` with your IDs.
+Replace `{api-origin}` with `api.terrascale.tech`, `{project}` with your project ID and `{database}` with your database name. Complete [Getting started](/zh-cn/getting-started/), including the **Read and write** API key and token exchange, then set these variables in the same Bash session:
+
+```bash
+export LIBSQL_URL="https://api.terrascale.tech/v1/projects/$TERRASCALE_PROJECT_ID/databases/$TERRASCALE_DATABASE_NAME/libsql/"
+export LIBSQL_TOKEN="$TERRASCALE_ACCESS_TOKEN"
+```
+
+The JavaScript example creates the SQL table used by the other language fragments. Run that setup first, or create the same table through [SQL over HTTP](/zh-cn/guides/sql-http). The setup inserts replace only the synthetic rows with IDs 1, 2 and 3; use a table reserved for this example.
 
 
 - Keep the trailing slash. `@libsql/client` resolves `v2/pipeline` relative to the URL; without the slash it drops the last path segment and the request misses your database.
 - Use the `https://` URL. Only HTTP is served; WebSocket (`wss://`) URLs are not.
-- The token is an access token minted from a project data API key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP` (the client-credentials exchange in [Authentication](/zh-cn/guides/authentication#server-applications)). The raw API key is refused with `401`. Access tokens are short-lived (`expires_in`, 15 minutes today): mint a new one and recreate the client before it expires. Keep the key in your server's secret store and never ship it or a token to a browser.
+- The token is an access token minted from a project data API key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP` (the client-credentials exchange in [Authentication](/zh-cn/guides/authentication#server-applications)). The raw API key is refused with `401`. API-key access tokens last at most 60 seconds: use the returned `expires_in`, mint a fresh token and recreate the client before it expires. Update `LIBSQL_TOKEN` after each exchange. Keep the key in your server's secret store and never ship it or a token to a browser.
 
 ## JavaScript and TypeScript
 
@@ -38,19 +45,19 @@ import { createClient } from '@libsql/client'
 
 const db = createClient({ url: process.env.LIBSQL_URL, authToken: process.env.LIBSQL_TOKEN })
 
-await db.execute('CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)')
-await db.execute({ sql: 'INSERT INTO customers (id, name) VALUES (?, ?)', args: [1, 'Ada'] })
-const { rows } = await db.execute({ sql: 'SELECT name FROM customers WHERE id = :id', args: { id: 1 } })
+await db.execute('CREATE TABLE IF NOT EXISTS sql_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)')
+await db.execute({ sql: 'INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)', args: [1, 'Ada'] })
+const { rows } = await db.execute({ sql: 'SELECT name FROM sql_customers WHERE id = :id', args: { id: 1 } })
 
 // A write batch runs as one transaction: all statements or none.
 await db.batch([
-  { sql: 'INSERT INTO customers (id, name) VALUES (?, ?)', args: [2, 'Grace'] },
-  { sql: 'INSERT INTO customers (id, name) VALUES (?, ?)', args: [3, 'Linus'] },
+  { sql: 'INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)', args: [2, 'Grace'] },
+  { sql: 'INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)', args: [3, 'Linus'] },
 ], 'write')
 
 const tx = await db.transaction('write')
 try {
-  await tx.execute({ sql: 'UPDATE customers SET name = ? WHERE id = ?', args: ['Ada L.', 1] })
+  await tx.execute({ sql: 'UPDATE sql_customers SET name = ? WHERE id = ?', args: ['Ada L.', 1] })
   await tx.commit()
 } finally {
   tx.close()
@@ -79,15 +86,15 @@ u, _ := url.Parse(os.Getenv("LIBSQL_URL"))
 u.RawQuery = url.Values{"authToken": {os.Getenv("LIBSQL_TOKEN")}}.Encode()
 db, err := sql.Open("libsql", u.String())
 
-_, err = db.ExecContext(ctx, "INSERT INTO customers (id, name) VALUES (?, ?)", 1, "Ada")
+_, err = db.ExecContext(ctx, "INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", 1, "Ada")
 var name string
-err = db.QueryRowContext(ctx, "SELECT name FROM customers WHERE id = ?", 1).Scan(&name)
+err = db.QueryRowContext(ctx, "SELECT name FROM sql_customers WHERE id = ?", 1).Scan(&name)
 
 // database/sql has no batch call; use a transaction.
 tx, err := db.BeginTx(ctx, nil)
 defer tx.Rollback()
-_, err = tx.ExecContext(ctx, "INSERT INTO customers (id, name) VALUES (?, ?)", 2, "Grace")
-_, err = tx.ExecContext(ctx, "INSERT INTO customers (id, name) VALUES (?, ?)", 3, "Linus")
+_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", 2, "Grace")
+_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", 3, "Linus")
 err = tx.Commit()
 ```
 
@@ -106,19 +113,19 @@ use libsql::{Builder, params};
 let db = Builder::new_remote(std::env::var("LIBSQL_URL")?, std::env::var("LIBSQL_TOKEN")?).build().await?;
 let conn = db.connect()?;
 
-conn.execute("INSERT INTO customers (id, name) VALUES (?1, ?2)", params![1, "Ada"]).await?;
-let mut rows = conn.query("SELECT name FROM customers WHERE id = ?1", params![1]).await?;
+conn.execute("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?1, ?2)", params![1, "Ada"]).await?;
+let mut rows = conn.query("SELECT name FROM sql_customers WHERE id = ?1", params![1]).await?;
 while let Some(row) = rows.next().await? {
     println!("{}", row.get::<String>(0)?);
 }
 
 // One transaction; the batch API takes SQL text without parameters.
 conn.execute_transactional_batch(
-    "INSERT INTO customers (id, name) VALUES (2, 'Grace'); INSERT INTO customers (id, name) VALUES (3, 'Linus');",
+    "INSERT OR REPLACE INTO sql_customers (id, name) VALUES (2, 'Grace'); INSERT OR REPLACE INTO sql_customers (id, name) VALUES (3, 'Linus');",
 ).await?;
 
 let tx = conn.transaction().await?;
-tx.execute("UPDATE customers SET name = ?1 WHERE id = ?2", params!["Ada L.", 1]).await?;
+tx.execute("UPDATE sql_customers SET name = ?1 WHERE id = ?2", params!["Ada L.", 1]).await?;
 tx.commit().await?;
 ```
 
@@ -135,11 +142,11 @@ import libsql
 conn = libsql.connect(os.environ["LIBSQL_URL"], auth_token=os.environ["LIBSQL_TOKEN"])
 
 # Like sqlite3: INSERT, UPDATE and DELETE open a transaction; commit() or rollback() ends it.
-conn.execute("INSERT INTO customers (id, name) VALUES (?, ?)", (1, "Ada"))
+conn.execute("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", (1, "Ada"))
 conn.commit()
-print(conn.execute("SELECT name FROM customers WHERE id = ?", (1,)).fetchone())
+print(conn.execute("SELECT name FROM sql_customers WHERE id = ?", (1,)).fetchone())
 
-conn.executemany("INSERT INTO customers (id, name) VALUES (?, ?)", [(2, "Grace"), (3, "Linus")])
+conn.executemany("INSERT OR REPLACE INTO sql_customers (id, name) VALUES (?, ?)", [(2, "Grace"), (3, "Linus")])
 conn.commit()
 ```
 

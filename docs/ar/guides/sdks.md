@@ -63,6 +63,7 @@ The `terrascale` crate is not on crates.io yet. Add version `0.0.2` from its tag
 cargo add terrascale --git https://github.com/TerraScale/ts-rust --tag v0.0.2
 cargo add tokio -F tokio/full
 cargo add serde_json
+cargo add serde --features derive
 ```
 
 Use `terrascale::v1`. `Client::for_project(projectId, accessToken).build()?` sends requests to `https://api.terrascale.tech`. `client.database(name).collection(name)` provides `get`, `put`, `create`, `patch`, `delete`, `query` and `pages`; `database.sql()` runs [SQL](/ar/guides/sql-http#from-the-sdks) with `execute`, `query` and `batch`. The token is the access token from the [key exchange](/ar/guides/authentication).
