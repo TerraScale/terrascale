@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
@@ -19,6 +21,60 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     private static readonly string[] InsecureRedirect = ["http://app.example.test/cb"];
 
     private readonly Faker faker = new();
+
+    [Test]
+    public async Task Directory_export_is_bounded_resumable_admin_only_and_audited_without_credentials()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (owner, token, project, root) = await this.ProjectAsync(oidc);
+        var (viewer, viewerToken) = await oidc.SignInUserAsync(this.Email(2));
+        var (_, outsiderToken) = await oidc.SignInUserAsync(this.Email(3));
+        await Assert.That(await oidc.GrantAsync(project, viewer.Id, "viewer")).IsTrue();
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        var linked = (await users.FromProviderAsync(project, new LinkedProvider("oidc", "public-client", "verified-subject"), this.Email(4), true, default))!;
+        var formula = (await users.CreateAsync(project, "+formula@example.test", "credential-must-never-leak", default))!;
+        var third = (await users.CreateAsync(project, this.Email(5)))!;
+        var first = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export?limit=1", token);
+        var next = first.GetProperty("next").GetString()!;
+        var resumed = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export?limit=1&after={Uri.EscapeDataString(next)}", token);
+        var replayed = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export?limit=1&after={Uri.EscapeDataString(next)}", token);
+        await Assert.That(replayed.ToString()).IsEqualTo(resumed.ToString());
+        // A new account after the first page's cutoff never joins this export.
+        await users.CreateAsync(project, this.Email(6));
+        var last = await oidc.OkAsync(HttpMethod.Get, $"{root}/users/export?limit=1&after={Uri.EscapeDataString(resumed.GetProperty("next").GetString()!)}", token);
+        await Assert.That(last.GetProperty("next").ValueKind).IsEqualTo(JsonValueKind.Null);
+        var records = new[] { first, resumed, last }.Select(page => page.GetProperty("items")[0]).ToArray();
+        await Assert.That(records.Select(item => item.GetProperty("id").GetString()!).ToList()).IsEquivalentTo([linked.Id, formula.Id, third.Id]);
+        foreach (var record in records)
+        {
+            await Assert.That(record.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["id", "email", "email_verified", "created_at", "disabled", "linked_providers"]);
+            await Assert.That(record.GetProperty("email_verified").GetBoolean()).IsTrue();
+        }
+
+        var identity = records.Single(record => record.GetProperty("id").GetString() == linked.Id).GetProperty("linked_providers")[0];
+        await Assert.That(identity.GetProperty("subject").GetString()).IsEqualTo("verified-subject");
+        await Assert.That(identity.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["provider", "client_id", "subject"]);
+        using var csv = await oidc.CallAsync(HttpMethod.Get, $"{root}/users/export?format=csv&limit=1", token);
+        await Assert.That(csv.Content.Headers.ContentType!.MediaType).IsEqualTo("text/csv");
+        await Assert.That(csv.Headers.Contains("X-Export-Next")).IsTrue();
+        using var allCsv = await oidc.CallAsync(HttpMethod.Get, $"{root}/users/export?format=csv", token);
+        var text = await allCsv.Content.ReadAsStringAsync();
+        await Assert.That(text).Contains("\"'+formula@example.test\"");
+        await Assert.That(text).DoesNotContain("credential-must-never-leak");
+        await Assert.That(allCsv.Headers.CacheControl!.NoStore).IsTrue();
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users/export", viewerToken)).IsEqualTo((403, "forbidden_role"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users/export", outsiderToken)).IsEqualTo((404, "not_found"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, "/v1/terrascale/users/export", token)).IsEqualTo((404, "not_found"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users/export?after=invalid", token)).IsEqualTo((400, "invalid_request"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users/export?format=xml", token)).IsEqualTo((400, "invalid_request"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users/export?limit=101", token)).IsEqualTo((400, "invalid_request"));
+        var other = await oidc.CreateProjectAsync(token, await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName()), this.faker.Commerce.ProductName());
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"/v1/{other}/users/export?after={Uri.EscapeDataString(next)}", token)).IsEqualTo((400, "invalid_request"));
+        var organization = (await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().ProjectAsync(project, default))!.Value.OrganizationId;
+        var audit = await oidc.OkAsync(HttpMethod.Get, $"/v1/terrascale/organizations/{organization}/audit-events", token);
+        await Assert.That(audit.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("action").GetString() == "project.users_exported"
+            && item.GetProperty("actor").GetString() == owner.Id && item.GetProperty("target").GetString() == project)).IsTrue();
+    }
 
     [Test]
     public async Task Viewers_read_admins_disable_and_outsiders_see_nothing()
@@ -173,6 +229,8 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
             new { branding = branding with { default_theme = "invalid" } },
             new { branding = branding with { theme_color = "#123456\n" } },
             new { branding = branding with { logo_url = "javascript:alert(1)" } },
+            new { branding = new { email_message = new string('x', 501) } },
+            new { branding = new { email_message = "unsafe\rcontrol" } },
             new { branding = branding with { footer_links = [new { label = "Unsafe", url = "javascript:alert(1)" }] } },
             new { configuration = configuration with { session_lifetime_seconds = 299 } },
             new { configuration = configuration with { redirect_urls = ["https://example.test/cb#fragment"] } },

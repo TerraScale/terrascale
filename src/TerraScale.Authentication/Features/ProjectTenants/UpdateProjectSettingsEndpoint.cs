@@ -11,7 +11,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
     public override void Configure()
     {
         Put(Root + "/settings");
-        this.Document("update_project_settings", "Change a project tenant's settings", "Omitted methods are unchanged and a sent branding replaces the branding (null clears a value). At least one of passcode and password stays on; logo_url and footer links are https, colours #rrggbb, name 1 to 64 characters, title_size 20 to 40, default_theme light/dark/system. Configuration replaces the project redirect allowlist (at most 100 exact URLs; empty adds no restriction) and session lifetime (300 to 2592000 seconds). Needs the admin project role.", "Project tenants", typeof(UpdateSettingsRequest), StatusCodes.Status200OK, typeof(SettingsBody));
+        this.Document("update_project_settings", "Change a project tenant's settings", "Omitted methods are unchanged and a sent branding replaces the branding (null clears a value). At least one of passcode and password stays on; logo_url and footer links are https, colours #rrggbb, name 1 to 64 characters, title_size 20 to 40, default_theme light/dark/system and email_message at most 500 plain-text characters (only newline controls). Name, logo and accent also brand verification, sign-in and reset emails; sender stays TerraScale. Configuration replaces the project redirect allowlist (at most 100 exact URLs; empty adds no restriction) and session lifetime (300 to 2592000 seconds). Needs the admin project role.", "Project tenants", typeof(UpdateSettingsRequest), StatusCodes.Status200OK, typeof(SettingsBody));
     }
 
     /// <inheritdoc />
@@ -26,10 +26,11 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 || new[] { branding.ThemeColor, branding.BackgroundColor, branding.TextColor }.Any(color => color is not null && !Color().IsMatch(color))
                 || branding.TitleSize is < 20 or > 40
                 || branding.DefaultTheme is not (null or "light" or "dark" or "system")
+                || branding.EmailMessage is { } message && (message.Length > 500 || message.Any(character => char.IsControl(character) && character != '\n'))
                 || branding.FooterLinks is { } links && (links.Count > 5 || links.Any(link => link is null || string.IsNullOrWhiteSpace(link.Label)
                     || link.Label.Length > 24 || link.Label.Any(char.IsControl) || !Https(link.Url))))
             {
-                throw Invalid("Invalid branding: use a name of 1 to 64 characters, https URLs, #rrggbb colours, title_size 20 to 40, light/dark/system and at most five labelled footer links.");
+                throw Invalid("Invalid branding: use a name of 1 to 64 characters, https URLs, #rrggbb colours, title_size 20 to 40, light/dark/system, at most five labelled footer links and email_message of at most 500 plain-text characters without controls except newline.");
             }
         }
 
@@ -54,6 +55,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 FooterLinks = sent.FooterLinks,
                 BackgroundColor = sent.BackgroundColor?.ToLowerInvariant(),
                 TextColor = sent.TextColor?.ToLowerInvariant(),
+                EmailMessage = sent.EmailMessage,
             } : next;
             next = request.Configuration is { } policy ? next with { Configuration = policy } : next;
             return next.Passcode || next.Password ? next : throw Invalid("At least one of passcode and password must stay on.");

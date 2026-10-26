@@ -103,6 +103,25 @@ public static partial class OpenApiSetup
                     });
                 }
 
+                if (operation.OperationId == "export_project_users")
+                {
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "format", In = ParameterLocation.Query,
+                        Description = "json (default) or csv. CSV linked_providers is a JSON array; formula-leading cells have an apostrophe prefix.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^(json|csv)$" },
+                    });
+                    if (operation.Responses!["200"] is OpenApiResponse response)
+                    {
+                        response.Content!["text/csv"] = new OpenApiMediaType { Schema = new OpenApiSchema { Type = JsonSchemaType.String } };
+                        response.Headers = new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal)
+                        {
+                            ["X-Export-Next"] = new OpenApiHeader { Description = "Opaque continuation; absent on the last page.", Schema = new OpenApiSchema { Type = JsonSchemaType.String } },
+                            ["X-Export-Created-Before"] = new OpenApiHeader { Description = "Fixed creation cutoff, not a transaction snapshot.", Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "date-time" } },
+                        };
+                    }
+                }
+
                 // OpenAPI 11 documents every reference-typed response body as oneOf [null, $ref]. No response body
                 // is null, so the plain $ref that the contract has always served is restored.
                 foreach (var response in operation.Responses?.Values ?? Enumerable.Empty<IOpenApiResponse>())

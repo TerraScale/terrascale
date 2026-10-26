@@ -12,7 +12,7 @@ public sealed record MethodsBody(bool Passcode, bool Password, bool SignUp);
 
 /// <summary>Hosted page branding; null shows the project's name and the default theme.</summary>
 public sealed record BrandingBody(string? Name, string? LogoUrl, string? ThemeColor, int? TitleSize = null, string? DefaultTheme = null,
-    IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null);
+    IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null, string? EmailMessage = null);
 
 /// <summary>A labelled HTTPS link underneath the hosted card.</summary>
 public sealed record FooterLinkBody(string Label, string Url);
@@ -95,7 +95,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         var store = services.GetRequiredService<AuthStore>();
         var issuer = OidcIssuer.Issuer(options, projectId).AbsoluteUri;
         return new(projectId, issuer, issuer + "/.well-known/openid-configuration", new Uri(options.PublicOrigin, $"ui/{projectId}/sign-in").AbsoluteUri,
-            new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor),
+            new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
             new(await store.CountAsync(AuthStore.UserCollection, projectId, cancellationToken), await store.CountAsync(AuthStore.OidcApplicationCollection, projectId, cancellationToken)),
             [.. SocialProviders.Names.Select(name => settings.Provider(name) is { } record
                 ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri)

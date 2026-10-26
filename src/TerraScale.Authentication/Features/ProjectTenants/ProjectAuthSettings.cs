@@ -21,9 +21,10 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="BackgroundColor">Optional page background colour.</param>
 /// <param name="TextColor">Optional text colour.</param>
 /// <param name="Configuration">Project redirect and absolute session policy.</param>
+/// <param name="EmailMessage">Optional plain-text message in authentication emails, never HTML or a template expression.</param>
 public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, bool SignUp = true, string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
     IReadOnlyList<SocialProviderRecord>? Providers = null, int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null,
-    string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null)
+    string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null, string? EmailMessage = null)
 {
     /// <summary>The configured <paramref name="provider"/>, or null.</summary>
     public SocialProviderRecord? Provider(string provider) => this.Providers?.FirstOrDefault(record => record.Provider == provider);

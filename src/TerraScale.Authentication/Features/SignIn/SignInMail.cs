@@ -2,6 +2,8 @@ using System.Threading.Channels;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.SignIn;
@@ -13,7 +15,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
 /// </summary>
-public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
+public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, ProjectAuthSettings projects, PlatformDirectory platform, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
     /// <summary>Codes waiting for delivery before new ones are dropped.</summary>
     public const int Capacity = 256;
@@ -102,7 +104,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                     continue;
                 }
 
-                var message = await emails.RenderAsync(outgoing.Kind, locale, outgoing.Values, await this.ConfigAsync(), cancellationToken: CancellationToken.None);
+                var message = await emails.RenderAsync(outgoing.Kind, locale, outgoing.Values, await this.ConfigAsync(outgoing.Values.Tenant, outgoing.Kind), cancellationToken: CancellationToken.None);
                 if (outgoing.Kind == AuthEmailKind.Lockout && outgoing.Values.LockoutUntil <= clock.GetUtcNow())
                 {
                     continue;
@@ -124,23 +126,45 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     /// Each queue has one worker, so a read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
     /// <see cref="ConfigBackoff"/> of emails skip the read: a stalled store costs at most one timeout per worker, not one per email.
     /// </summary>
-    private async Task<EmailConfig?> ConfigAsync()
+    private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
+        // Never inherit platform copy or a customer-controlled sender identity into project authentication mail.
+        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset
+            ? EmailConfig.Defaults(tenant) with
+            {
+                Branding = new EmailBranding { SenderName = "TerraScale", FooterText = "Sent by TerraScale Authentication." },
+            }
+            : null;
+
         if (clock.GetUtcNow().UtcTicks < Volatile.Read(ref this.configRetryAt))
         {
-            return null;
+            return defaults;
         }
 
         try
         {
             using var timeout = new CancellationTokenSource(ConfigTimeout, clock);
-            return await settings.GetAsync(OidcIssuer.InstanceId, timeout.Token);
+            if (defaults is null)
+            {
+                return await settings.GetAsync(OidcIssuer.InstanceId, timeout.Token);
+            }
+
+            var project = await projects.GetAsync(tenant, timeout.Token);
+            var name = project.Name ?? (await platform.ProjectAsync(tenant, timeout.Token))?.Value.Name;
+            return defaults with
+            {
+                Branding = defaults.Branding with
+                {
+                    BrandName = name, LogoUrl = project.LogoUrl, PrimaryColor = project.ThemeColor,
+                    FooterText = project.EmailMessage is { } copy ? copy + "\n\n" + defaults.Branding.FooterText : defaults.Branding.FooterText,
+                },
+            };
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
             Volatile.Write(ref this.configRetryAt, (clock.GetUtcNow() + ConfigBackoff).UtcTicks);
             logger.ZLogWarning(failure, $"Email configuration unavailable; sending the sign-in code with the defaults");
-            return null;
+            return defaults;
         }
     }
 
