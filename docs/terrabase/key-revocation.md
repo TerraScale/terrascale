@@ -55,12 +55,18 @@ ts-auth does not extend it. A Postgres session exchanges its key again as each 6
 do, so an idle session that is still valid stays open. Clients should treat `key_revoked` and
 `key_expired` as permanent: stop retrying and ask for a new key. Treat `auth_unavailable` as retryable.
 
-## Rollout barrier
+## Mixed versions
 
-TerraBase checks only tokens that carry `key_id`/`key_gen`, and Postgres refuses exchanged tokens without them. ts-auth
-must therefore issue those claims, and serve `/api-keys/self`, everywhere before TerraBase rolls out. After that, wait
-one previous token lifetime (60 s), so that no token issued without the claims is still alive. ts-auth auto-releases
-about 20 s after the main image build. TerraBase rolls out later through FR1.
+Deploy order does not matter. TerraBase works with a ts-auth from before key status, in either order:
+
+- A token without `key_id`/`key_gen` is checked as a token only (signature, issuer, audience, expiry, claims), as it was
+  before key status, on HTTP and on Postgres. The 60-second token lifetime bounds it.
+- When `/api-keys/self` answers 404, ts-auth predates key status, and the token's own checks stand.
+- A token carrying the claims must carry both, with `key_id` equal to `sub` and a well-formed `key_gen`. Otherwise it is
+  refused.
+
+The bounds above apply once ts-auth issues the claims and serves `/api-keys/self` everywhere, and its previous tokens
+(60 s) have expired.
 
 ## Service keys and sign-in
 

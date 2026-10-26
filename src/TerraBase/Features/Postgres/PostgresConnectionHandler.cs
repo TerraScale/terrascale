@@ -315,8 +315,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return new PgError("28000", "ip_not_allowed: " + IpAllowlists.Refusal(client));
         }
 
-        // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md).
-        var answer = (await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value;
+        // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md);
+        // a token from a ts-auth that predates key status has none to ask about.
+        var answer = key.Key is null ? null : (await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value;
         var until = (answer as KeyActive)?.Until;
         switch (answer)
         {

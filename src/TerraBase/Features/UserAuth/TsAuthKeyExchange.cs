@@ -24,8 +24,9 @@ internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_t
 /// <param name="Scopes">Granted scopes.</param>
 /// <param name="ValidTo">When the access token expires.</param>
 /// <param name="Allowlists">The key's and project's IP allowlists (<see cref="IpAllowlists"/>); empty for none.</param>
-/// <param name="Key">The token as <see cref="IKeyAuthority"/> checks it before every statement.</param>
-internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken Key);
+/// <param name="Key">The token as <see cref="IKeyAuthority"/> checks it before every statement; null from a ts-auth that
+/// predates key status (no <c>key_id</c>), whose tokens are checked as tokens only, as before.</param>
+internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key);
 
 /// <summary>A key's grant, a refused key, or ts-auth is unavailable.</summary>
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
@@ -202,9 +203,21 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt
             || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
             || !jwt.TryGetPayloadValue<string>("project_id", out var project) || !EntityIds.IsValid(project)
-            || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid)
-            || !jwt.TryGetPayloadValue<string>("key_id", out var keyId) || keyId != subject
-            || !jwt.TryGetPayloadValue<string>("key_gen", out var generation) || !KeyToken.IsGeneration(generation))
+            || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
+        {
+            return new NotFound();
+        }
+
+        // key_id and key_gen come together from a ts-auth that serves key status; neither from an older one. Like the
+        // bearer handler, a non-string value is refused rather than read as absent.
+        if (jwt.TryGetPayloadValue<object>("key_id", out var rawId) && rawId is not string
+            || jwt.TryGetPayloadValue<object>("key_gen", out var rawGeneration) && rawGeneration is not string)
+        {
+            return new NotFound();
+        }
+
+        var hasKey = jwt.TryGetPayloadValue<string>("key_id", out var keyId);
+        if ((hasKey | jwt.TryGetPayloadValue<string>("key_gen", out var generation)) && (!hasKey || keyId != subject || !KeyToken.IsGeneration(generation)))
         {
             return new NotFound();
         }
@@ -236,7 +249,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         }
 
         return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
-            new KeyToken(subject, generation, project, token));
+            hasKey ? new KeyToken(subject, generation!, project, token) : null);
     }
 
     private static Unavailable Unavailable() => new("ts-auth key exchange is unavailable");
