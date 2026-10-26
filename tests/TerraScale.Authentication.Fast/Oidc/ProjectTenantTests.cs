@@ -9,7 +9,6 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
-using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Fast.Oidc;
 
@@ -240,38 +239,4 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         }
     }
 
-    // Registers a public authorization-code client in the project tenant, as its management API does.
-    private static async Task<string> RegisterClientAsync(OidcHarness oidc, string project)
-    {
-        var services = oidc.Server.App.Services;
-        var accessor = services.GetRequiredService<IHttpContextAccessor>();
-        var context = new DefaultHttpContext();
-        context.Items[Tenancy.ItemKey] = project;
-        accessor.HttpContext = context;
-        try
-        {
-            using var scope = services.CreateScope();
-            var descriptor = new OpenIddictApplicationDescriptor
-            {
-                ClientId = AuthStore.NewId(),
-                ClientType = ClientTypes.Public,
-                ConsentType = ConsentTypes.Implicit,
-                DisplayName = "Example app",
-                Permissions =
-                {
-                    Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession, Permissions.Endpoints.Revocation,
-                    Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
-                    Permissions.Scopes.Email, Permissions.Scopes.Profile,
-                },
-                Requirements = { Requirements.Features.ProofKeyForCodeExchange },
-                RedirectUris = { new Uri(Callback) },
-            };
-            await scope.ServiceProvider.GetRequiredService<IOpenIddictApplicationManager>().CreateAsync(descriptor);
-            return descriptor.ClientId;
-        }
-        finally
-        {
-            accessor.HttpContext = null;
-        }
-    }
 }
