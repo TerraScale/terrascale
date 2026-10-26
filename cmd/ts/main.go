@@ -272,7 +272,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke", "db changes", "export"}, name) {
+	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke", "db changes", "export", "usage", "backup list", "backup create", "backup restore", "backup restore-at", "schema get", "schema set", "schema delete", "ttl get", "ttl set", "ttl delete", "index list", "index create", "index drop", "import status", "import cancel"}, name) {
 		return errors.New("structured output is not implemented for this command yet")
 	}
 	var collectionSet, yesSet, scopeSet bool
@@ -776,15 +776,25 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		fmt.Fprintf(out, "%s replicates to [%s]\n", args[0], strings.Join(m.ReplicaRegions, " "))
 		return nil
 	case "backup list":
+		items := []v1.DatabaseBackup{}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tSTATUS\tTRIGGER\tBYTES\tCREATED")
+		if !jsonMode(out) {
+			fmt.Fprintln(w, "ID\tSTATUS\tTRIGGER\tBYTES\tCREATED")
+		}
 		for b, err := range pages(func(after string) (*v1.Page[v1.DatabaseBackup], error) {
 			return db.Backups(ctx, v1.PageOptions{Limit: 100, After: after})
 		}) {
 			if err != nil {
 				return err
 			}
+			if jsonMode(out) {
+				items = append(items, b)
+				continue
+			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", b.ID, b.Status, b.Trigger, b.SizeBytes, b.CreatedAt.Format(time.RFC3339))
+		}
+		if jsonMode(out) {
+			return emitJSON(out, items)
 		}
 		return w.Flush()
 	case "backup create":
@@ -792,12 +802,18 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, b)
+		}
 		fmt.Fprintf(out, "Backup %s %s\n", b.ID, b.Status)
 		return nil
 	case "backup restore":
 		m, err := db.RestoreBackup(ctx, args[1], args[2])
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
 		}
 		fmt.Fprintf(out, "Restored %s into %s (%s)\n", args[1], m.Name, m.ID)
 		return nil
@@ -809,6 +825,9 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		m, err := db.RestorePointInTime(ctx, v1.PointInTimeRequest{PointInTime: at, Name: args[2]})
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
 		}
 		fmt.Fprintf(out, "Restored %s as of %s into %s (%s)\n", args[0], at.Format(time.RFC3339), m.Name, m.ID)
 		return nil
@@ -849,7 +868,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(out).Encode(u)
+		return emitJSON(out, u)
 	case "schema get", "schema set", "schema delete":
 		col := db.Collection(args[1])
 		var schema *v1.DeclaredCollectionSchema
@@ -868,11 +887,16 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(out).Encode(schema)
+		return emitJSON(out, schema)
 	case "ttl get":
 		path, err := db.Collection(args[1]).TTL(ctx)
 		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Path string `json:"path"`
+			}{path})
 		}
 		_, err = fmt.Fprintln(out, cmp.Or(path, "none"))
 		return err
@@ -880,11 +904,23 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err := db.Collection(args[1]).SetTTL(ctx, args[2]); err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Collection string `json:"collection"`
+				Path       string `json:"path"`
+			}{args[1], args[2]})
+		}
 		fmt.Fprintf(out, "%s expires documents at %s\n", args[1], args[2])
 		return nil
 	case "ttl delete":
 		if err := db.Collection(args[1]).DeleteTTL(ctx); err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Collection string `json:"collection"`
+				Path       string `json:"path"`
+			}{args[1], ""})
 		}
 		fmt.Fprintf(out, "%s no longer expires documents\n", args[1])
 		return nil
@@ -897,6 +933,12 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			if indexes == nil {
+				indexes = []v1.Index{}
+			}
+			return emitJSON(out, indexes)
+		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tCOLLECTION\tFIELDS\tSTATE")
 		for _, ix := range indexes {
@@ -908,11 +950,20 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, ix)
+		}
 		fmt.Fprintf(out, "Created index %s\n", ix.Name)
 		return nil
 	case "index drop":
 		if err := db.DropIndex(ctx, args[1]); err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Name    string `json:"name"`
+				Dropped bool   `json:"dropped"`
+			}{args[1], true})
 		}
 		fmt.Fprintf(out, "Dropped index %s\n", args[1])
 		return nil
@@ -925,7 +976,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(out).Encode(job)
+		return emitJSON(out, job)
 	case "collection list":
 		for cursor := ""; ; {
 			page, err := db.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
