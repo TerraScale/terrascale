@@ -15,6 +15,8 @@ with `HttpServerSessionMode.Stateless`. The server is configured in
   responses.
 - The server keeps no per-connection state. Tool calls read and write the
   same TerraBase state as the dashboard pages.
+- Authenticated `GET` and `DELETE` at either MCP endpoint return `405` with
+  `Allow: POST`; stateless transport has no standalone stream or session to delete.
 
 ## Authentication
 

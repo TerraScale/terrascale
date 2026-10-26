@@ -38,6 +38,16 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(rootInitialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()).IsEqualTo("terrascale-dashboard");
             var rootTools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { }, "/", "mcp.terrascale.tech");
             await Assert.That(rootTools.GetProperty("result").GetProperty("tools").GetArrayLength()).IsEqualTo(99);
+            foreach (var path in new[] { "/", "/mcp" })
+                foreach (var method in new[] { HttpMethod.Get, HttpMethod.Delete })
+                {
+                    using var request = new HttpRequestMessage(method, path);
+                    request.Headers.Host = "mcp.terrascale.tech";
+                    request.Headers.Add("Authorization", "Bearer " + secret);
+                    using var refused = await replica.SendAsync(request);
+                    await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.MethodNotAllowed);
+                    await Assert.That(refused.Content.Headers.Allow.ToArray()).IsEquivalentTo(new[] { "POST" });
+                }
             var current = await HttpJourney.McpAsync(replica, secret, "server/discover", new { });
             await Assert.That(current.GetProperty("result").GetProperty("supportedVersions").EnumerateArray()
                 .Any(version => version.GetString() == "2026-07-28")).IsTrue();

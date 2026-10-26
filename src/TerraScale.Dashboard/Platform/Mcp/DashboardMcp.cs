@@ -150,7 +150,15 @@ public static class DashboardMcp
             await next(context);
         });
         app.MapMcp("/mcp");
+        app.MapMethods("/mcp", [HttpMethods.Get, HttpMethods.Delete], UnsupportedStatelessMethod);
         app.MapMcp("/").RequireHost("mcp.terrascale.tech");
+        app.MapMethods("/", [HttpMethods.Get, HttpMethods.Delete], UnsupportedStatelessMethod).RequireHost("mcp.terrascale.tech");
+    }
+
+    private static IResult UnsupportedStatelessMethod(HttpContext http)
+    {
+        http.Response.Headers.Allow = "POST";
+        return Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
     }
 
     internal static AccountContext Scope(HttpContext? http, string? organizationId, string? projectId)
