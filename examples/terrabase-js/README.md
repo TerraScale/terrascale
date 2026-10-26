@@ -1,7 +1,7 @@
 # JavaScript TerraBase example
 
 Install Node 22 or 24 and npm 11 or newer, then run `npm ci` in this directory.
-This consumer pins the published `@terrascale/sdk@0.0.9` package.
+This consumer pins the published `@terrascale/sdk@0.0.16` package.
 
 Create a database and an API key in the dashboard, exchange the key for an
 access token and export `TERRASCALE_API_URL=https://api.terrascale.tech`,

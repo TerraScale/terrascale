@@ -13,7 +13,7 @@
     "live": "npm run build && node dist/typed-models/live.js"
   },
   "dependencies": {
-    "@terrascale/sdk": "0.0.13"
+    "@terrascale/sdk": "0.0.16"
   },
   "devDependencies": {
     "json-schema-to-typescript": "16.0.0",
