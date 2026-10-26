@@ -23,5 +23,18 @@ public sealed class ProjectInvitationService(AccountService accounts, ITsAuthPla
         return page;
     }
 
+    public async Task RevokeAsync(AccountContext context, string invitationId, string? after, CancellationToken cancellationToken)
+    {
+        var page = await ReadAsync(context, after, cancellationToken);
+        if (!TerraScaleIds.IsValid(invitationId)) throw new AccountAccessException("Choose a valid invitation from this project page.", 422);
+        // The provider authorizes the invitation's immutable actual project. Bind it to this
+        // selected project first, including when the caller administers multiple projects.
+        var invitation = page.Items.SingleOrDefault(item => item.Id == invitationId)
+            ?? throw new AccountAccessException("This invitation is unavailable on the selected project page. Reload before retrying.", 404);
+        if (invitation.Status is not ("pending" or "expired"))
+            throw new AccountAccessException("This invitation is no longer pending. Reload its current status.", 409);
+        await platform.RevokeInvitationAsync(context.Session, context.Organization!.Id, invitation.Id, cancellationToken);
+    }
+
     private static bool ValidCursor(string value) => value.Length is > 0 and <= 512 && !value.Any(char.IsControl);
 }
