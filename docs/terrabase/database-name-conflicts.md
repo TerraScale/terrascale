@@ -43,3 +43,15 @@ deletes a losing database it holds, so the guarantee holds once every node runs 
 Organization names (per creator) and project names (per organization) are not converged: when two regions accept one
 at once, both records stay live under their ids and nothing deletes either. The duplicate names stay visible until
 the customer renames one.
+
+## Production proof
+
+`scripts/terrabase/name-conflict-proof.sh` runs on a ts-orch host (`ssh ts-sjc-1 'bash -s' < scripts/terrabase/name-conflict-proof.sh`).
+It creates a fresh user's Starter organization and project through the internal listeners, then creates one name in gru
+and fra at the same moment until both regions accept it. In every region it then expects both databases, the conflict
+name with `previousName` and `conflictOf`, and one `database.name_conflict` audit event. Afterwards it deletes the
+databases, the project and the organization. Hobby allows one database, so a same-name race needs a plan with two or more.
+
+2026-10-26 12:11Z, batch 13 (`67537ac39`), from ts-sjc-1: `twin3` was accepted by both gru and fra. Every region kept
+`01M5W1YJQK9MDHFRH7NCPDZ41Y` (home fra) as `twin3` and `01M5W1YJSA06XFVRBSE1501B3K` (home gru) as
+`twin3-conflict-501b3k`, with one audit event. Result: PASS.
