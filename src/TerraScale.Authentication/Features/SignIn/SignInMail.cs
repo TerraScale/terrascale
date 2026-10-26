@@ -155,7 +155,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             {
                 Branding = defaults.Branding with
                 {
-                    BrandName = name, LogoUrl = project.LogoUrl, PrimaryColor = project.ThemeColor,
+                    BrandName = name,
+                    LogoUrl = project.LogoUrl,
+                    PrimaryColor = project.ThemeColor,
                     FooterText = project.EmailMessage is { } copy ? copy + "\n\n" + defaults.Branding.FooterText : defaults.Branding.FooterText,
                 },
             };

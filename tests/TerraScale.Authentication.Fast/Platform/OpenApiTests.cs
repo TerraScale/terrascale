@@ -26,6 +26,13 @@ public sealed partial class OpenApiTests
         using var response = await server.Client.SendAsync(request);
         var document = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
         var paths = document.GetProperty("paths");
+        var export = paths.GetProperty("/v1/{project}/users/export").GetProperty("get");
+        await Assert.That(export.GetProperty("parameters").EnumerateArray().Where(parameter => parameter.GetProperty("in").GetString() == "query")
+            .Select(parameter => parameter.GetProperty("name").GetString()!).ToList()).IsEquivalentTo(["limit", "after", "format"]);
+        var exported = export.GetProperty("responses").GetProperty("200");
+        await Assert.That(exported.GetProperty("content").TryGetProperty("text/csv", out _)).IsTrue();
+        await Assert.That(exported.GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/DirectoryPageBody");
+        await Assert.That(exported.GetProperty("headers").TryGetProperty("X-Export-Next", out _)).IsTrue();
 
         var userInfo = paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get");
         await Assert.That(userInfo.GetProperty("responses").GetProperty("503").GetProperty("content").GetProperty("application/json")

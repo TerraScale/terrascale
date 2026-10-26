@@ -107,7 +107,22 @@ public static partial class OpenApiSetup
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter
                     {
-                        Name = "format", In = ParameterLocation.Query,
+                        Name = "limit",
+                        In = ParameterLocation.Query,
+                        Description = "Rows per page, default 100.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "1", Maximum = "100" },
+                    });
+                    operation.Parameters.Add(new OpenApiParameter
+                    {
+                        Name = "after",
+                        In = ParameterLocation.Query,
+                        Description = "The prior next cursor, unchanged; omit to start.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, MaxLength = 8192 },
+                    });
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "format",
+                        In = ParameterLocation.Query,
                         Description = "json (default) or csv. CSV linked_providers is a JSON array; formula-leading cells have an apostrophe prefix.",
                         Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^(json|csv)$" },
                     });
