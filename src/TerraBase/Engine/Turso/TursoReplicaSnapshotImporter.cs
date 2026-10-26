@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using Google.Protobuf;
+using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
@@ -10,7 +11,7 @@ namespace TerraBase.Engine.Turso;
 
 /// <summary>A whole pinned source snapshot becomes one durable receiver transaction; incomplete streams roll back.</summary>
 internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, StorageChangeGroupSink sink, StampingStorageEngine stamps,
-    IMemoryBudget memory) : IReplicaSnapshotImporter
+    IMemoryBudget memory, TerraBaseOptions options) : IReplicaSnapshotImporter
 {
     public async Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
         IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
@@ -42,7 +43,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
             file.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
         }
 
-        await using var staged = new FileStream(Path.Combine(Path.GetTempPath(), $"terrabase-import-{Ulid.NewUlid()}.tmp"), file);
+        await using var staged = new FileStream(Path.Combine(options.DataDirectory, $".snapshot-import-{Ulid.NewUlid()}.tmp"), file);
         if (!OperatingSystem.IsWindows())
         {
             File.Delete(staged.Name); // An unlinked private spool also disappears after a process crash.

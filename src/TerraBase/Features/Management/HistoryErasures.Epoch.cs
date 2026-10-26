@@ -75,7 +75,7 @@ internal sealed partial class HistoryErasures
 
             await using var read = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
             var authCuts = await read.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
-            var systemCuts = await catalog.ReadUncheckedAsync(transaction => transaction.GetAppliedAsync(cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
+            var systemCuts = await catalog.ReadUncheckedAsync(transaction => transaction.GetAppliedAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
             progressed = origins.Any(origin => authCuts.GetValueOrDefault(new(origin)).Value > Cut(own.AuthApplied, origin)
                 || systemCuts.GetValueOrDefault(new(origin)).Value > Cut(own.SystemApplied, origin));
             if (progressed)

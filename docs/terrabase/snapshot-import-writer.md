@@ -2,7 +2,7 @@
 
 This updates the import scheduling described in [epoch recovery](erasure-epoch-recovery.md).
 Receive and validate every ordered page, the consistent collection floor, the terminal vector and clean EOF before
-opening the receiver's durable transaction. A private temporary spool admits 64 MiB of page working memory through
+opening the receiver's durable transaction. A private temporary spool in the data directory admits 64 MiB of page working memory through
 the existing memory budget, at most 65,536 frames and 1 GiB of encoded data. The file has owner-only permissions and
 is immediately unlinked on Unix; disposal, cancellation and process death release it. Excess capacity refuses the import.
 
