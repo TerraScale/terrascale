@@ -10,7 +10,9 @@ project-scoped APIs; older native and dashboard examples describe retired APIs.
 
 ## Client and IDs
 
-Use `Client::for_project(project_ulid, access_token)` against `https://api.terrascale.tech`,
+Use `Client::for_project_api_key(project_ulid, api_key)` for automatic exchange and refresh
+([authentication guide](api-key-auth.md)), or `Client::for_project(project_ulid, access_token)`
+for a static token, against `https://api.terrascale.tech`,
 or `.endpoint(origin)` for a static endpoint. `Client::builder(origin, token)`
 requires `.project(project_ulid)`. Public platform exploration uses
 `Client::for_platform(origin, access_token)` and accepts `ts-auth`/`ts-dashboard`

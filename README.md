@@ -8,8 +8,8 @@ Use an existing database name and a new collection name for this example:
 
 ```rust,no_run
 use terrascale::v1::{Client, WriteOptions};
-# pub async fn example(project: &str, access_token: &str, database_name: &str, collection_name: &str) -> terrascale::v1::Result<()> {
-let client = Client::for_project(project, access_token).build()?;
+# pub async fn example(project: &str, api_key: &str, database_name: &str, collection_name: &str) -> terrascale::v1::Result<()> {
+let client = Client::for_project_api_key(project, api_key).build()?;
 let database = client.database(database_name);
 database.create_collection(collection_name).await?;
 let items = database.collection(collection_name);
@@ -22,10 +22,11 @@ items.drop_collection().await?;
 # }
 ```
 
-The project must be a canonical uppercase ULID. Customer API keys must first be exchanged
-for a project access token through ts-auth. The project client accepts that bearer token;
-it does not currently acquire or refresh tokens. Construct a new client with a fresh token
-when it expires. Never embed credentials in source.
+The project must be a canonical uppercase ULID. Read the API key from secret storage;
+`for_project_api_key` exchanges it through ts-auth and refreshes tokens automatically,
+including across client clones and stream reconnects. Never embed credentials in source.
+See [API-key authentication](docs/api-key-auth.md) for error and refresh behavior.
+`Client::for_project` accepts an already exchanged static bearer token without refresh.
 
 Project requests use the public origin automatically. Customer credentials determine
 project, database and operation access; an endpoint does not grant authorization.
@@ -71,4 +72,4 @@ do not provide parameter binding.
 
 Project-scoped collection shapes are documented in [shape reads](docs/shape-reads.md).
 Database-wide changes are available through `Database::changes` (typed events) and
-`Database::change_bytes` (raw SSE). Keep the access token lifetime in mind when resuming streams.
+`Database::change_bytes` (raw SSE). API-key clients refresh credentials when reconnecting.
