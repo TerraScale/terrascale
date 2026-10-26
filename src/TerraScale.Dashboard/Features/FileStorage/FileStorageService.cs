@@ -44,7 +44,7 @@ public sealed class FileStorageService(AccountService accounts, IProjectAccessTo
     private async Task<TerraBaseProjectClient> ProjectAsync(AccountContext context, bool write, CancellationToken token)
     {
         context = await AccountScope.RefreshAsync(accounts, context, token, requireProject: true);
-        if (write && !context.CanWrite) throw new AccountAccessException("Write access is required.");
+        if (write && !context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         var project = context.Project!;
         var accessToken = await tokens.GetAsync(context.Session, context.Organization!.Id, project.Id,
             write ? ["documents:read", "documents:write"] : ["documents:read"], token);

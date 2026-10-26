@@ -44,7 +44,6 @@ public sealed partial class FunctionBackend(DatabaseService databases, IProjectA
     // A function that is already gone (404) needs no further delete.
     public async Task DeleteAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
     {
-        if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
         await SendAsync<JsonElement?>(context, database, HttpMethod.Delete, Segment(name), ct);
     }
 
@@ -56,6 +55,9 @@ public sealed partial class FunctionBackend(DatabaseService databases, IProjectA
     // Returns default when TerraBase answers 404 for the route or the function.
     private async Task<T?> SendAsync<T>(AccountContext context, DatabaseRecord database, HttpMethod method, string suffix, CancellationToken ct)
     {
+        context = await databases.CurrentAsync(context, ct);
+        database = DatabaseService.Database(context, database.Id);
+        if (method == HttpMethod.Delete && !context.CanWriteProjectData) throw new AccountAccessException("Write access is required.");
         var scope = DatabaseService.Scope(context);
         if (PlatformDatabases.IsPlatform(scope.OrganizationId)) throw PlatformDatabases.ReadOnly();
         var home = await databases.HomeAsync(context, database, ct);

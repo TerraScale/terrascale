@@ -198,12 +198,21 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
         return Validate(scope, await change(Import(context, home, database, scopes), ct), database);
     }
 
-    // ts-auth grants import scopes by role on every exchange (viewer read; member and admin write); no second policy here.
-    private Task<AccountContext> Manage(AccountContext context, CancellationToken ct) => databases.CurrentAsync(context, ct);
+    // Cached exchanged tokens cannot carry a previous role into the next request.
+    private async Task<AccountContext> Manage(AccountContext context, CancellationToken ct)
+    {
+        context = await databases.CurrentAsync(context, ct);
+        if (!context.CanWriteProjectData) throw new AccountAccessException("Your project role does not allow this import action.");
+        return context;
+    }
 
     // An import lives in its destination's home region.
-    private async Task<(DatabaseScope, DatabaseRegion)> RouteAsync(AccountContext context, string database, CancellationToken ct) =>
-        (DatabaseService.Scope(context), await databases.HomeAsync(context, context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database), ct));
+    private async Task<(DatabaseScope, DatabaseRegion)> RouteAsync(AccountContext context, string database, CancellationToken ct)
+    {
+        var destination = context.Project!.Databases.Values.SingleOrDefault(item => item.Name == database && item.ProjectId == context.Project.Id)
+            ?? throw new AccountAccessException("This import is unavailable.", 404);
+        return (DatabaseService.Scope(context), await databases.HomeAsync(context, destination, ct));
+    }
 
     [System.Text.RegularExpressions.GeneratedRegex("^import-[0-9a-hjkmnp-tv-z]{26}$")]
     private static partial System.Text.RegularExpressions.Regex FreshName();

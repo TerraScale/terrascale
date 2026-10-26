@@ -1104,6 +1104,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         public void RequireMfa(string org) { lock (gate) Find(org)!.RequireMfa = true; }
         public void Enroll(string userId, int recoveryCodes) { lock (gate) enrolled[userId] = recoveryCodes; }
         public void RemoveMember(string organizationId, string userId) { lock (gate) { var org = Find(organizationId)!; org.Members.Remove(userId); org.Collaborators.Remove(userId); } }
+        public string? ProjectRole(string org, string project, string user) { lock (gate) return EffectiveRole(Find(org)!, Find(org)!.Projects.Single(item => item.Id == project), user); }
         public string? Role(string organizationId, string userId) { lock (gate) return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role; }
         public string InvitationId(string organizationId, string token) { lock (gate) return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id; }
         public void ExpireInvitation(string org, string token) { lock (gate) Find(org)!.Invitations.Single(invitation => invitation.Token == token).ExpiresAt = DateTimeOffset.UtcNow.AddDays(-1); }
