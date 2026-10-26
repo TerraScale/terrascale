@@ -2,14 +2,11 @@ using System.Net;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>A public probe's status body.</summary>
+/// <summary>A public probe's three required, non-null status fields. Private build/node metadata is not part of this DTO.</summary>
 /// <param name="Status">ok, ready, shipping or unavailable.</param>
 /// <param name="Version">Service version.</param>
 /// <param name="Region">Answering region.</param>
-/// <param name="StorageFormat">On-disk format version.</param>
-/// <param name="Revision">Build source revision, or null.</param>
-/// <param name="Machine">Answering machine.</param>
-public sealed record TerraBaseStatus(string Status, string Version, string Region, string StorageFormat, string? Revision, string Machine);
+public sealed record TerraBaseStatus(string Status, string Version, string Region);
 
 /// <summary>A probe preserves both available (200) and unavailable (503) status bodies.</summary>
 /// <param name="StatusCode">HTTP status.</param>
