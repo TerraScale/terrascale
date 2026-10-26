@@ -621,7 +621,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken)
     {
-        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty))
+        if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.RollbackTo or PgKind.Empty))
         {
             return new PgError("25P02", "current transaction is aborted, commands ignored until end of transaction block");
         }
@@ -655,12 +655,34 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
+            PgKind.Savepoint or PgKind.Release or PgKind.RollbackTo => await SavepointAsync(session, statement, token).ConfigureAwait(false),
             _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
             {
                 SqlResult result => new[] { PostgresStatements.Result(statement, result) },
                 SqlError error => PostgresStatements.Error(error),
             },
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<PgOutcome> SavepointAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
+    {
+        if (session.Sql.IsAutocommit)
+        {
+            return new PgError("25P01", "savepoint commands require a transaction block");
+        }
+
+        var kind = statement.Kind switch { PgKind.Savepoint => SqlSavepointKind.Create, PgKind.Release => SqlSavepointKind.Release, _ => SqlSavepointKind.RollbackTo };
+        if (await session.Sql.SavepointAsync(kind, statement.Sql, cancellationToken).ConfigureAwait(false) is SqlError error)
+        {
+            return error.Code == "SQLITE_ERROR" ? new PgError("3B001", error.Message) : PostgresStatements.Error(error);
+        }
+
+        if (kind == SqlSavepointKind.RollbackTo)
+        {
+            session.Failed = false;
+        }
+
+        return new[] { new PgResult(null, [], kind switch { SqlSavepointKind.Create => "SAVEPOINT", SqlSavepointKind.Release => "RELEASE", _ => "ROLLBACK" }) };
     }
 
     // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only

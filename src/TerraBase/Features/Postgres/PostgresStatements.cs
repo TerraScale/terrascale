@@ -22,7 +22,7 @@ internal sealed record PgError(string Code, string Message);
 internal readonly union PgOutcome(PgResult[], PgError);
 
 /// <summary>What a statement is, decided from its text.</summary>
-internal enum PgKind { Empty, Sql, Catalog, Set, Show, Discard, Deallocate, Begin, Commit, Rollback }
+internal enum PgKind { Empty, Sql, Catalog, Set, Show, Discard, Deallocate, Begin, Commit, Rollback, Savepoint, Release, RollbackTo }
 
 /// <summary>One statement: its PostgreSQL text, and for <see cref="PgKind.Sql"/> the SQLite text with <c>$n</c> as <c>?n</c>.</summary>
 internal sealed record PgStatement(PgKind Kind, string Text, string Sql, int Parameters);
@@ -108,9 +108,13 @@ internal static partial class PostgresStatements
     private static PgOne Statement(List<Token> tokens)
     {
         var text = string.Concat(tokens.Select(token => token.ToString())).Trim();
-        PgKind? kind = text switch
+        if (Savepoint(tokens, text) is { } savepoint)
         {
-            _ when SavepointPattern().IsMatch(text) => null,
+            return savepoint;
+        }
+
+        var kind = text switch
+        {
             _ when SetPattern().IsMatch(text) => PgKind.Set,
             _ when ShowPattern().IsMatch(text) => PgKind.Show,
             _ when DiscardPattern().IsMatch(text) => PgKind.Discard,
@@ -123,10 +127,60 @@ internal static partial class PostgresStatements
         };
         return kind switch
         {
-            null => new PgError("0A000", "savepoints are not supported"),
             PgKind.Sql => Translate(text, tokens),
-            _ => new PgStatement(kind.Value, text, text, 0),
+            _ => new PgStatement(kind, text, text, 0),
         };
+    }
+
+    private static PgOne? Savepoint(List<Token> tokens, string text)
+    {
+        var words = tokens.Where(token => token is not Whitespace).ToArray();
+        bool At(int i, string value) => i < words.Length && words[i] is Word { QuoteStyle: null } word && Is(word, value);
+        var i = 1;
+        PgKind kind;
+        if (At(0, "SAVEPOINT"))
+        {
+            kind = PgKind.Savepoint;
+        }
+        else if (At(0, "RELEASE"))
+        {
+            kind = PgKind.Release;
+            i += At(i, "SAVEPOINT") ? 1 : 0;
+        }
+        else
+        {
+            i += At(i, "WORK") || At(i, "TRANSACTION") ? 1 : 0;
+            if (!At(0, "ROLLBACK") || !At(i, "TO"))
+            {
+                return null;
+            }
+
+            kind = PgKind.RollbackTo;
+            i++;
+            i += At(i, "SAVEPOINT") ? 1 : 0;
+        }
+
+        if (i != words.Length - 1 || words[i] is not Word { QuoteStyle: null or '"' } name || name.Value.Length == 0)
+        {
+            return new PgError("42601", "savepoint command requires one identifier");
+        }
+
+        var normalized = name.QuoteStyle is null ? name.Value.ToLowerInvariant() : name.Value;
+        // PostgreSQL identifiers occupy at most 63 UTF-8 bytes, without splitting a code point.
+        var end = 0;
+        for (var bytes = 0; end < normalized.Length;)
+        {
+            var rune = Rune.GetRuneAt(normalized, end);
+            bytes += rune.Utf8SequenceLength;
+            if (bytes > 63)
+            {
+                break;
+            }
+
+            end += rune.Utf16SequenceLength;
+        }
+
+        return new PgStatement(kind, text, normalized[..end], 0);
     }
 
     // PG to SQLite on tokens, so string literals, quoted identifiers and comments are never rewritten.
@@ -632,9 +686,6 @@ internal static partial class PostgresStatements
 
     [GeneratedRegex(@"\ADEALLOCATE\s+(?:PREPARE\s+)?(\w+|""[^""]+"")\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DeallocatePattern();
-
-    [GeneratedRegex(@"\A(?:SAVEPOINT|RELEASE|ROLLBACK\s+(?:WORK\s+|TRANSACTION\s+)?TO)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex SavepointPattern();
 
     // Isolation and access modes are accepted and ignored: SQL transactions are serializable (relational-sql.md section 5).
     [GeneratedRegex(@"\A(?:BEGIN|START\s+TRANSACTION)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
