@@ -32,7 +32,8 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     }
 
     /// <summary>
-    /// Creates an account without a password. The email claim and the account are written in one transaction, so a
+    /// Creates an account without a password. Callers must prove email possession first: tokens and directory exports assert email_verified.
+    /// The email claim and the account are written in one transaction, so a
     /// claim never outlives a failed creation. Returns <see langword="null"/> when the email already has an account.
     /// </summary>
     public Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
