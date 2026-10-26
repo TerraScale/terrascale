@@ -22,13 +22,6 @@ public interface IMemoryReservation : IDisposable
     long Bytes { get; }
 }
 
-/// <summary>A reservation that admits more bytes under the same table entry, against the same process and organization limits.</summary>
-internal interface IGrowableMemoryReservation : IMemoryReservation
-{
-    /// <summary>Adds bytes to this reservation; false when either limit refuses them or it was released.</summary>
-    bool TryGrow(long bytes);
-}
-
 /// <summary>
 /// Process memory admission. Reserve before reading, decoding, queueing or materializing data,
 /// and release on completion, cancellation and error. Sized by <c>memory-budget</c> (<c>docs/memory.md</c>).
@@ -47,4 +40,10 @@ public interface IMemoryBudget
     /// A null tenant charges only the process, independently of the ambient request.
     /// </summary>
     IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant);
+
+    /// <summary>
+    /// Adds bytes to a live reservation this budget issued, against the same process and organization limits but without
+    /// another reservation table entry. False when refused or unsupported; the caller then reserves anew.
+    /// </summary>
+    bool TryGrow(IMemoryReservation reservation, long bytes) => false;
 }

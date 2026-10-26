@@ -64,20 +64,22 @@ internal sealed class MemoryBudget : IMemoryBudget
         }
     }
 
-    private sealed class Reservation(MemoryBudget budget, long bytes, string? organization, long tenantLimit) : IGrowableMemoryReservation
+    public bool TryGrow(IMemoryReservation reservation, long bytes) => reservation is Reservation owned && owned.TryGrow(this, bytes);
+
+    private sealed class Reservation(MemoryBudget budget, long bytes, string? organization, long tenantLimit) : IMemoryReservation
     {
         private long _bytes = bytes;
         private int _released;
 
         public long Bytes => Volatile.Read(ref _bytes);
 
-        public bool TryGrow(long more)
+        public bool TryGrow(MemoryBudget issuer, long more)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(more);
             lock (budget._gate)
             {
                 // Growth takes no table entry, so both byte limits are the whole admission.
-                if (Volatile.Read(ref _released) != 0 || more > budget._limit - budget._reserved)
+                if (issuer != budget || Volatile.Read(ref _released) != 0 || more > budget._limit - budget._reserved)
                 {
                     return false;
                 }

@@ -9,8 +9,8 @@ namespace TerraBase.Fast.Backup;
 
 public sealed class CatalogImportReservationTests
 {
-    // Above both the per-transaction lease bound (16,384) and the process reservation table (65,536).
-    private const int Documents = 70_000;
+    // Above a result owner's 16,384 leases, which one reservation per state read exhausted below the byte limit.
+    private const int Documents = 20_000;
 
     // A restarted node re-imports a catalog it already holds: each held state it reads is admitted until the single import
     // transaction commits. The import must stay within the byte budget without one live reservation per state.

@@ -70,7 +70,7 @@ public static class QosContext
         private readonly List<IDisposable> _leases = [];
         private int _references = 1;
         private int _ownerReleased;
-        private IGrowableMemoryReservation? _growing;
+        private IMemoryReservation? _growing;
         private TenantContext? _growingTenant;
 
         /// <summary>Reserves result buffers before allocating them.</summary>
@@ -85,7 +85,7 @@ public static class QosContext
 
                 // An owner retains every read until it ends (a catalog import reads each state it holds in one transaction),
                 // so reads of one tenant grow one lease: the byte limits still bound them, the reservation tables do not.
-                if (_growing is not null && Equals(_growingTenant, tenant) && _growing.TryGrow(bytes))
+                if (_growing is not null && Equals(_growingTenant, tenant) && budget.TryGrow(_growing, bytes))
                 {
                     return;
                 }
@@ -96,10 +96,7 @@ public static class QosContext
                 }
 
                 _leases.Add(lease);
-                if (lease is IGrowableMemoryReservation growing)
-                {
-                    (_growing, _growingTenant) = (growing, tenant);
-                }
+                (_growing, _growingTenant) = (lease, tenant);
             }
         }
 
