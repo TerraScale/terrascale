@@ -1,0 +1,21 @@
+# CLI JSON output
+
+`--json` (also `-json`) selects machine output and may appear before or after
+the command. `--json=false` retains ordinary output. Flag values and operands
+after `--` are preserved.
+
+This first slice supports version, help and database list/info/create/delete/
+branch/regions. Other commands temporarily return a structured failure before
+authentication. More families will follow before the complete CLI release.
+
+Success is one JSON value followed by a newline: metadata objects, arrays for
+lists (including `[]`), `{name,deleted:true}` for deletion, `{version}` for
+version and `{commands}` mapping command names to accepted operand counts for help.
+Errors are `{error:{code,message,status?,requestId?}}`; HTTP metadata is included
+when the SDK supplies it. Messages exclude arbitrary response bodies, URLs and
+credentials. An uncertain write must be inspected before retrying.
+
+Exit status remains 0 for success, 1 for operational failure and 2 for invalid
+arguments. Stdout contains only JSON; consent prompts use stderr. Writer failures
+return nonzero and may leave incomplete output, which must not be accepted as a
+successful result. Database lists aggregate pages; they are not a snapshot.
