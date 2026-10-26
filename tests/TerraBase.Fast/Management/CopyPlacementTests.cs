@@ -16,10 +16,14 @@ public sealed class CopyPlacementTests
     private static readonly string[] Replicas = ["fra"];
 
     [Test]
-    public async Task A_snapshot_without_a_known_region_refuses_restore()
+    [Arguments(null)]
+    [Arguments("fra")]
+    public async Task Snapshot_routing_preserves_database_placement_headers_and_refuses_unknown_locations(string? region)
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru", new OtherRegions("fra").Register);
         var source = await api.CreateManagedDatabaseAsync();
+        using var placed = await api.Client.PatchAsJsonAsync(ManagementApi.Uri(source.Path), new { replicaRegions = Replicas });
+        placed.EnsureSuccessStatusCode();
         using var backup = await api.Client.PostAsync(ManagementApi.Uri(source.Path + "/backups"), null);
         backup.EnsureSuccessStatusCode();
         var id = (await backup.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
@@ -27,13 +31,22 @@ public sealed class CopyPlacementTests
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             var record = (await SystemCatalog.GetAsync(transaction, BackupCatalog.Records(source.Organization), id, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None))!;
-            await SystemCatalog.PutAsync(transaction, BackupCatalog.Records(source.Organization), id, record with { Region = null }, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None);
+            await SystemCatalog.PutAsync(transaction, BackupCatalog.Records(source.Organization), id, record with { Region = region }, TerraBaseJsonContext.Default.BackupRecord, CancellationToken.None);
             await transaction.CommitAsync(CancellationToken.None);
         }
 
         using var response = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{source.Path}/backups/{id}/restore"), new { name = "copy" });
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("backup_region_unknown");
+        await Assert.That(response.StatusCode).IsEqualTo(region is null ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.MisdirectedRequest);
+        if (region is null)
+        {
+            await Assert.That(await response.Content.ReadAsStringAsync()).Contains("backup_region_unknown");
+        }
+        else
+        {
+            await Assert.That(response.Headers.GetValues("ts-replay")).IsEquivalentTo(["region=fra"]);
+            await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Home")).IsEquivalentTo(["gru"]);
+            await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions")).IsEquivalentTo(["gru,fra"]);
+        }
     }
 
     [Test]
