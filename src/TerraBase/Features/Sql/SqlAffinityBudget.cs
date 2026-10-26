@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using Column = TerraBase.Features.Sql.SqlAffinityColumn;
 
 namespace TerraBase.Features.Sql;
@@ -32,5 +33,5 @@ internal sealed class SqlAffinityBudget
         }
     }
 
-    public static FormatException Limit() => new("SQL column metadata exceeds the preparation budget");
+    public static SqlValueTooLargeException Limit() => new("SQL column metadata exceeds the preparation budget");
 }

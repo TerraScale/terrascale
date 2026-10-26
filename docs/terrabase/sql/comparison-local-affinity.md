@@ -49,8 +49,8 @@ this change does not claim full SQLite expression compatibility.
 
 Preparation reserves 2 MiB from the foreground memory budget before copying or resolving the query. Inference is
 memoized per execution before descending into CTEs, with at most 2,000 columns per expanded shape, 1 MiB of charged
-metadata, 128 registered CTE identities, 128 query outputs, 128 set-expression bodies, 256 FROM groups, 4,096 visited AST objects and 64 AST traversal levels. Expansion beyond
-these bounds fails with `SQLITE_ERROR` and `SQL column metadata exceeds the preparation budget`, before engine execution;
+metadata, 128 registered CTE identities, 128 query outputs, 128 set-expression bodies, 256 FROM groups, 4,096 visited AST objects and 256 AST traversal levels. Expansion beyond
+these bounds fails with `SQLITE_TOOBIG` and `SQL column metadata exceeds the preparation budget`, before engine execution;
 failed memory admission returns `SQLITE_NOMEM`. Repeated references share inferred shapes rather than expanding recursively.
 
 This corrects read results shared by HTTP SQL, Hrana/libSQL and PostgreSQL adapters. Request/response schemas,

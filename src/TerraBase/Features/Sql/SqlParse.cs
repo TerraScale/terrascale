@@ -178,6 +178,10 @@ internal static partial class SqlParse
         {
             return SqlErrors.Error(Syntax(exception.Line, exception.Column));
         }
+        catch (SqlValueTooLargeException exception)
+        {
+            return SqlErrors.TooBig(exception.Message);
+        }
         catch (FormatException exception)
         {
             return SqlErrors.Error(exception.Message);

@@ -89,6 +89,7 @@ public sealed class SqlAffinityTests
         await Assert.That(results[0].GetProperty("rows").GetRawText()).IsEqualTo("""[["1.25","text",1]]""");
         await Assert.That(results[1].GetProperty("rows").GetRawText()).IsEqualTo("""[[1.25,"real",0]]""");
         await Assert.That(results[2].GetProperty("rows").GetRawText()).IsEqualTo("[[0]]");
-        await Assert.That(results[3].GetProperty("rows").GetRawText()).IsEqualTo("""[["it''s","01"]]""");
+        await Assert.That(results[3].GetProperty("rows")[0][0].GetString()).IsEqualTo("it''s");
+        await Assert.That(results[3].GetProperty("rows")[0][1].GetString()).IsEqualTo("01");
     }
 }

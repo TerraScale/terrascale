@@ -59,6 +59,21 @@ internal static class SqlGuard
             return;
         }
 
+        // Turso names a parenthesized direct projection "(n)" instead of SQLite's "n".
+        if (node is Select select)
+        {
+            for (var i = 0; i < select.Projection.Count; i++)
+            {
+                if (select.Projection[i] is SelectItem.UnnamedExpression { Expression: Expression.Nested nested }
+                    && Unwrap(nested) is var column
+                    && column is Expression.Identifier or Expression.CompoundIdentifier)
+                {
+                    var name = column is Expression.Identifier ident ? ident.Ident : ((Expression.CompoundIdentifier)column).Idents.Last();
+                    select.Projection[i] = new SelectItem.ExpressionWithAlias(nested, new Ident(name.Value, '"'));
+                }
+            }
+        }
+
         foreach (var property in node.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             if (property.GetIndexParameters().Length > 0 || property.PropertyType.IsValueType || property.PropertyType == typeof(string))

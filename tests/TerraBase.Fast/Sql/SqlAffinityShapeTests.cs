@@ -42,7 +42,7 @@ public sealed class SqlAffinityShapeTests
         await Assert.That(accepted.Json.GetProperty("results")[0].GetProperty("rows").GetRawText()).IsEqualTo("[[1]]");
         var sql = "WITH " + string.Join(", ", ctes) + " SELECT count(*) FROM q11 WHERE v = :x";
         var response = await SqlApi.SendAsync(api, api.Client, new { sql, named = new { x = "01" } });
-        await Assert.That(SqlApi.Error(response).Sqlite).IsEqualTo("SQLITE_ERROR");
+        await Assert.That(SqlApi.Error(response).Sqlite).IsEqualTo("SQLITE_TOOBIG");
         await Assert.That(response.Message).IsEqualTo("SQL column metadata exceeds the preparation budget");
         var healthy = await SqlApi.OkAsync(api, "SELECT count(*) FROM t");
         await Assert.That(healthy[0].GetProperty("rows").GetRawText()).IsEqualTo("[[1]]");

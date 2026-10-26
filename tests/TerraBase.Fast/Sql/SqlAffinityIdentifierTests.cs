@@ -65,7 +65,7 @@ public sealed class SqlAffinityIdentifierTests
         ctes.Add("extra AS(SELECT 1 AS v)");
         var rejected = await SqlApi.SendAsync(api, api.Client,
             new { sql = "WITH " + string.Join(",", ctes) + " SELECT v FROM extra" });
-        await Assert.That(SqlApi.Error(rejected).Sqlite).IsEqualTo("SQLITE_ERROR");
+        await Assert.That(SqlApi.Error(rejected).Sqlite).IsEqualTo("SQLITE_TOOBIG");
         await Assert.That(rejected.Message).IsEqualTo("SQL column metadata exceeds the preparation budget");
         var healthy = await SqlApi.OkAsync(api, "SELECT 1");
         await Assert.That(healthy[0].GetProperty("rows").GetRawText()).IsEqualTo("[[1]]");

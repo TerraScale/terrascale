@@ -170,7 +170,7 @@ internal static class SqlRead
         query = Pragmas(query);
         if (query.With?.CteTables.Count > SqlAffinityResolver.MaxCtes)
         {
-            throw new FormatException("SQL column metadata exceeds the preparation budget");
+            throw SqlAffinityBudget.Limit();
         }
 
         var ctes = query.With?.CteTables.Select(cte => cte.Alias.Name.Value).ToHashSet(SqlIdentifierComparer.Instance) ?? [];

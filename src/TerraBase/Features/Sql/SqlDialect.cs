@@ -12,6 +12,8 @@ internal sealed class SqlDialect : SQLiteDialect
     public override short GetPrecedence(Precedence precedence) => precedence switch
     {
         Precedence.Is or Precedence.Like => 20,
+        // The parser also uses this value for unary +/-; SQLite binds unary signs above concatenation.
+        Precedence.MulDivModOp => 50,
         _ => base.GetPrecedence(precedence),
     };
 
@@ -21,6 +23,7 @@ internal sealed class SqlDialect : SQLiteDialect
         LessThan or LessThanOrEqual or GreaterThan or GreaterThanOrEqual => 22,
         Pipe or Ampersand or ShiftLeft or ShiftRight => 25,
         StringConcat => 45,
+        Multiply or Divide or Modulo => 40,
         _ => base.GetNextPrecedence(parser),
     };
 

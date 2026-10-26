@@ -40,6 +40,16 @@ internal sealed class SqlAffinityResolver
         }
 
         Walk(query, [], 0);
+        // Turso does not synthesize SQLite's :N suffix for duplicate CTE output names.
+        // Bind the engine to the same bounded, deduplicated shape used by this resolver.
+        foreach (var cte in query.With?.CteTables ?? [])
+        {
+            if (Rename(Output(cte.Query, []), cte.Alias.Columns) is { } columns)
+            {
+                cte.Alias.GetType().GetProperty(nameof(cte.Alias.Columns))!.SetValue(cte.Alias,
+                    new Sequence<Ident>(columns.Select(column => new Ident(column.Name, '"'))));
+            }
+        }
     }
 
     public SqlAffinity? Resolve(Expression column, Expression? context = null)
@@ -53,7 +63,7 @@ internal sealed class SqlAffinityResolver
     // Reflection is required: the parser's visitor has no SELECT callback and skips derived tables.
     private void Walk(object node, List<Scope> scopes, int depth)
     {
-        if (depth > 64 || _visited.Count >= 4096)
+        if (depth > 256 || _visited.Count >= 4096)
         {
             throw SqlAffinityBudget.Limit();
         }
