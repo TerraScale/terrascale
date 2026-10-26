@@ -13,7 +13,7 @@
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="connect-title">Connect</h2><p class="ts-card-description">Connection URLs for @Model.Database.Name</p></div><div class="ts-card-actions"><a class="ts-link" href="/api-keys">Create an API key →</a></div></header>
 <div class="ts-card-body ts-stack-lg">
 <dl class="ts-kv"><div><dt>API URL</dt><dd class="ts-mono">@DatabaseConnections.ApiUrl</dd></div><div><dt>Project ID</dt><dd class="ts-mono">@Model.Database.ProjectId</dd></div><div><dt>Database</dt><dd class="ts-mono">@Model.Database.Name</dd></div></dl>
-<p class="ts-meta">For Document HTTP, HTTP SQL and libSQL, <a class="ts-link" href="https://docs.terrascale.tech/guides/authentication.html" @(ExternalLink.Attributes)>exchange a project API key for an access token@(ExternalLink.Hint)</a>. Send it as Authorization: Bearer &lt;access-token&gt;; renew it according to expires_in. Use documents:read for reads and documents:write for writes. Keep keys and tokens in your server's secret store.</p>
+<p class="ts-meta">For Document HTTP, HTTP SQL and libSQL, <a class="ts-link" href="https://docs.terrascale.tech/guides/authentication" @(ExternalLink.Attributes)>exchange a project API key for an access token@(ExternalLink.Hint)</a>. Send it as Authorization: Bearer &lt;access-token&gt;; renew it according to expires_in. Use documents:read for reads and documents:write for writes. Keep keys and tokens in your server's secret store.</p>
 @foreach(var connection in DatabaseConnections.For(Model.Database.ProjectId, Model.Database.Name)){
 var signal = "$_dbConnect" + connection.Id;
 <div class="ts-stack-sm" data-signals="@("{_dbConnect" + connection.Id + ": ''}")">

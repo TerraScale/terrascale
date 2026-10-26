@@ -700,7 +700,7 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
     private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
     private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
-    private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SFO", "sfo", "San Francisco", "us", new("https://sfo.api.terrascale.tech"), true)];
+    private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SJC", "sjc", "San Francisco Bay Area", "us", new("https://sjc.api.terrascale.tech"), true)];
     public void SeedFixtureDatabase(ManagedDatabase database)
     {
         if (string.IsNullOrEmpty(database.Id) || string.IsNullOrEmpty(database.ProjectId) ||

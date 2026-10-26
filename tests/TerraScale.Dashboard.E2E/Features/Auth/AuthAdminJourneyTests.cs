@@ -185,7 +185,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
                 await page.Locator("#projectName").FillAsync("Browser " + size + " Project");
                 checks.Add("unsupported project region is rejected without advancing onboarding");
             }
-            await page.Locator("#region").SelectOptionAsync(paid ? "SFO" : "GRU");
+            await page.Locator("#region").SelectOptionAsync(paid ? "SJC" : "GRU");
             await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard →");
             await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == origin + "/");
             var me = (await (await context.APIRequest.GetAsync(origin + "/api/v1/auth/me")).JsonAsync())!.Value;

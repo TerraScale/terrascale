@@ -131,6 +131,8 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         using var direct = await HttpJourney.LoginAsync(chooser, persona.Email, persona.Password, returnTo: pickerReturn);
         Check(direct.Headers.Location?.OriginalString == pickerReturn, "A direct picker sign-in does not wrap or loop its return path");
         var initial = await Page(browser, "/auth/branding");
+        Check(initial.Contains("https://docs.terrascale.tech/legal/privacy") && initial.Contains("https://docs.terrascale.tech/legal/terms"),
+            "Default legal links use the final docs URLs");
         var csrf = Csrf(initial);
         var name = "Brand " + new Faker().Random.AlphaNumeric(10);
         using var saved = await Post(browser, "branding", csrf, ("name", name), ("logo_url", "https://assets.example.com/logo.svg"),

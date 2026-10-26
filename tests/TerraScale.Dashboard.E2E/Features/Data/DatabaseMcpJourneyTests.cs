@@ -85,7 +85,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             var patchSchema = patchInputs.GetProperty("patch");
             await Assert.That(patchSchema.GetProperty("type").ToString().Contains("object", StringComparison.Ordinal)).IsTrue();
 
-            var created = await CallAsync(client, "create_database", new() { ["name"] = databaseName, ["regions"] = new[] { "GRU", "SFO" } });
+            var created = await CallAsync(client, "create_database", new() { ["name"] = databaseName, ["regions"] = new[] { "GRU", "SJC" } });
             databaseId = created.GetProperty("id").GetString()!;
             await Assert.That(created.GetProperty("name").GetString()).IsEqualTo(databaseName);
             await Assert.That(created.GetProperty("placement").GetArrayLength()).IsEqualTo(2);
@@ -94,7 +94,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(listed.GetProperty("databases").EnumerateArray().Any(db => db.GetProperty("id").GetString() == databaseId)).IsTrue();
             await ErrorAsync(replica, "create_database", new() { ["name"] = "Invalid_Name" });
             await ErrorAsync(replica, "get_database", new() { ["databaseId"] = databaseId, ["projectId"] = Guid.NewGuid().ToString() });
-            await ErrorAsync(replica, "set_database_regions", new() { ["databaseId"] = databaseId, ["regions"] = new[] { "SFO" } });
+            await ErrorAsync(replica, "set_database_regions", new() { ["databaseId"] = databaseId, ["regions"] = new[] { "SJC" } });
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + databaseId + "/documents");
             await ErrorAsync(client, "create_document", new() { ["databaseId"] = databaseId, ["collection"] = "users", ["document"] = new { name = "Before collection" } });
             var createdCollection = await CallAsync(client, "create_collection", new() { ["databaseId"] = databaseId, ["name"] = "users" });
@@ -135,10 +135,10 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             var reference = new Dictionary<string, object?>(docFields) { ["documentId"] = "01K78CVSTMER00000000000000" };
             var original = await CallAsync(replica, "get_document", new(reference) { ["includeVersion"] = true });
             var originalVersion = original.GetProperty("version").GetString()!;
-            var patched = await CallAsync(client, "patch_document", new(reference) { ["patch"] = new { profile = new { city = "SFO", remove = (object?)null } } });
+            var patched = await CallAsync(client, "patch_document", new(reference) { ["patch"] = new { profile = new { city = "SJC", remove = (object?)null } } });
             await Assert.That(patched.GetProperty("operation").GetString()).IsEqualTo("patch");
             var latest = await CallAsync(replica, "get_document", new(reference));
-            await Assert.That(latest.GetProperty("value").GetProperty("profile").GetProperty("city").GetString()).IsEqualTo("SFO");
+            await Assert.That(latest.GetProperty("value").GetProperty("profile").GetProperty("city").GetString()).IsEqualTo("SJC");
             await Assert.That(latest.GetProperty("value").GetProperty("profile").TryGetProperty("remove", out _)).IsFalse();
             await Assert.That(latest.TryGetProperty("version", out _)).IsFalse();
             await ErrorAsync(replica, "replace_document", new(reference) { ["document"] = new { name = "Lost update" }, ["version"] = originalVersion });

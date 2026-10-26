@@ -63,11 +63,17 @@ public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)
         await Assert.That(js).Contains("client.database(\"warehouse\")");
         await Assert.That(js).Contains($"project: \"{projectId}\"");
         await Assert.That(js).Contains("baseUrl: \"https://api.terrascale.tech\"");
-        foreach (var id in new[] { "connect-token", "connect-curl", "connect-csharp", "connect-go", "connect-rust" })
+        foreach (var id in new[] { "connect-token", "connect-curl", "connect-go", "connect-python", "connect-rust" })
             await Assert.That(html).Contains($"id=\"{id}\"");
         await Assert.That(html).Contains($"/v1/projects/{projectId}/databases/");
         await Assert.That(html).Contains("href=\"/api-keys\"");
         await Assert.That(html).Contains("https://docs.terrascale.tech/getting-started/");
+        await Assert.That(html).Contains("https://docs.terrascale.tech/getting-started/csharp");
+        await Assert.That(html).DoesNotContain("id=\"connect-csharp\"");
+        await Assert.That(html).Contains("https://mcp.terrascale.tech/");
+        await Assert.That(html).Contains("JavaScript, Go, Python or Rust");
+        await Assert.That(html).Contains("sslmode=verify-full&sslrootcert=system");
+        await Assert.That(html).Contains("libpq 16+");
     }
 
     [Test]

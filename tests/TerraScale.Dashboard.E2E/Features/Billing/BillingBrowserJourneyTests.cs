@@ -109,7 +109,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         var branchId = "";
         try
         {
-            var source = await ToolAsync("create_database", new { name, regions = new[] { "GRU", "SFO" } });
+            var source = await ToolAsync("create_database", new { name, regions = new[] { "GRU", "SJC" } });
             sourceId = source.GetProperty("id").GetString()!;
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + sourceId + "/documents");
             using var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()

@@ -154,7 +154,7 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         await SaveStepAsync(resumed, new() { ["step"] = "project", ["name"] = "Audit project", ["region"] = "GRU" });
         var done = await JsonAsync(first, "/api/v1/auth/me");
         await Assert.That(done.GetProperty("onboardingCompleted").GetBoolean()).IsTrue();
-        await SaveStepAsync(first, new() { ["step"] = "project", ["name"] = "Repeated submission", ["region"] = "SFO" });
+        await SaveStepAsync(first, new() { ["step"] = "project", ["name"] = "Repeated submission", ["region"] = "SJC" });
         var context = await JsonAsync(first, "/api/v1/dashboard/context");
         var projectId = done.GetProperty("projectId").GetString()!;
         var project = context.GetProperty("organizations").EnumerateArray().SelectMany(org => org.GetProperty("projects").EnumerateObject()).Single(item => item.Name == projectId).Value;

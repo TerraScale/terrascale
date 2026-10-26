@@ -74,7 +74,7 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         var changesPath = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", "projects", _, "databases", _, "changes"];
         if (uri.Host == "api.stripe.com") return await vendor.SendAsync(request, cancellationToken);
         if (uri.Host == "auth.terrascale.tech") return await apiKeys.SendAsync(request, cancellationToken);
-        if (!(uri.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" || uri.Host == "sfo.api.terrascale.tech" && changesPath) || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (!(uri.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" || uri.Host == "sjc.api.terrascale.tech" && changesPath) || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         var sessionActor = resolveToken(token);
         var scopedActor = resolveProjectToken(token);
         if (sessionActor is null && scopedActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -165,7 +165,7 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         var rows = new List<object>();
         foreach (var database in selected)
         {
-            var code = regionId.Length > 0 ? regionId switch { "gru" => "GRU", "sfo" => "SFO", _ => regionId } : database.Region;
+            var code = regionId.Length > 0 ? regionId switch { "gru" => "GRU", "sjc" => "SJC", _ => regionId } : database.Region;
             if (!database.Regions.Prepend(database.Region).Contains(code)) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
             if (segments.Last() == "analytics")
                 rows.Add(new
@@ -285,5 +285,5 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         });
     }
     private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
-    private static string RegionId(string code) => code switch { "GRU" => "gru", "SFO" => "sfo", _ => code };
+    private static string RegionId(string code) => code switch { "GRU" => "gru", "SJC" => "sjc", _ => code };
 }

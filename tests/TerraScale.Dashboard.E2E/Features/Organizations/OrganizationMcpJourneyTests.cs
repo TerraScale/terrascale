@@ -38,10 +38,10 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(inventory["create_project"].GetProperty("outputSchema").GetProperty("properties").TryGetProperty(field, out _)).IsTrue();
         await ErrorAsync(owner, secret, "create_project", new { organizationId = businessId, name = "Unpaid denied", regions = new[] { "GRU" } });
         var project = await ToolAsync(replica, secret, "create_project", new
-        { organizationId = personalId, name = "Explicit " + suffix, region = "SFO", backupRegion = "GRU", regions = new[] { "SFO", "GRU", "SFO" } });
+        { organizationId = personalId, name = "Explicit " + suffix, region = "SJC", backupRegion = "GRU", regions = new[] { "SJC", "GRU", "SJC" } });
         var projectId = project.GetProperty("id").GetString()!;
         await Assert.That(project.GetProperty("organizationId").GetString()).IsEqualTo(personalId);
-        await Assert.That(project.GetProperty("region").GetString()).IsEqualTo("SFO");
+        await Assert.That(project.GetProperty("region").GetString()).IsEqualTo("SJC");
         await Assert.That(project.GetProperty("backupRegion").GetString()).IsEqualTo("GRU");
         await Assert.That(project.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
         var afterCreate = await ContextAsync(owner, secret);
@@ -53,7 +53,7 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         var renamed = Organization(await ContextAsync(replica, secret), personalId).GetProperty("projects").EnumerateArray().Single(item => item.GetProperty("id").GetString() == projectId);
         await Assert.That(renamed.GetProperty("name").GetString()).IsEqualTo("Renamed " + suffix);
         await Assert.That(renamed.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
-        await Assert.That(renamed.GetProperty("region").GetString()).IsEqualTo("SFO");
+        await Assert.That(renamed.GetProperty("region").GetString()).IsEqualTo("SJC");
         var checkout = await ToolAsync(owner, secret, "create_checkout", new { organizationId = businessId, plan = "starter", interval = "annual" });
         using var vendor = await owner.GetAsync(checkout.GetProperty("checkoutUrl").GetString());
         await Assert.That(vendor.StatusCode).IsEqualTo(HttpStatusCode.Found);
@@ -203,7 +203,7 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         using (var renamed = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/organization/projects/" + adminProjectId + "/rename", new()
         { ["_csrf"] = adminCsrf, ["name"] = "Admin project renamed " + suffix, ["region"] = "GRU" }))
             await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await ToolAsync(member, memberSecret, "update_project", new { organizationId = businessId, projectId = adminProjectId, name = "Admin project renamed " + suffix, regions = new[] { "GRU", "SFO" } });
+        await ToolAsync(member, memberSecret, "update_project", new { organizationId = businessId, projectId = adminProjectId, name = "Admin project renamed " + suffix, regions = new[] { "GRU", "SJC" } });
         var savedProject = Organization(await ContextAsync(replica, ownerSecret), businessId).GetProperty("projects").EnumerateArray().Single(item => item.GetProperty("id").GetString() == adminProjectId);
         await Assert.That(savedProject.GetProperty("name").GetString()).IsEqualTo("Admin project renamed " + suffix);
         await Assert.That(savedProject.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
