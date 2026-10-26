@@ -24,7 +24,7 @@ func TestJSONMigrationDiffUsesTypedMetadata(t *testing.T) {
 				if changed && strings.Contains(r.URL.Path, "/branch/") {
 					columns = append(columns, map[string]string{"name": "email", "decltype": "TEXT"})
 				}
-				json.NewEncoder(w).Encode(map[string]any{"results": []any{map[string]any{"columns": columns, "rows": []any{}, "rows_affected": 0}}})
+				json.NewEncoder(w).Encode(map[string]any{"results": []any{map[string]any{"columns": columns, "rows": []any{}, "rows_affected": 0, "last_insert_rowid": nil}}})
 			}
 		})
 		var buf bytes.Buffer

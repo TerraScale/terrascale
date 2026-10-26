@@ -37,9 +37,9 @@ func TestJSONMigrationsAndCompletion(t *testing.T) {
 		}
 		results := make([]map[string]any, 0, len(req.Statements))
 		for _, statement := range req.Statements {
-			result := map[string]any{"columns": []any{}, "rows": []any{}, "rows_affected": 0}
+			result := map[string]any{"columns": []any{}, "rows": []any{}, "rows_affected": 0, "last_insert_rowid": nil}
 			if strings.HasPrefix(statement.SQL, "SELECT name, checksum") {
-				result["columns"] = []map[string]string{{"name": "name"}, {"name": "checksum"}}
+				result["columns"] = []map[string]string{{"name": "name", "decltype": "TEXT"}, {"name": "checksum", "decltype": "TEXT"}}
 				result["rows"] = [][]string{{"0001_applied.sql", "sum"}}
 			}
 			results = append(results, result)
