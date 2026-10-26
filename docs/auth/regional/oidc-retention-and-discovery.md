@@ -8,7 +8,9 @@ takes multiple ticks; concurrent creation behind the cursor is picked up on the
 next traversal. Cursors are scheduling hints. Losing them on restart repeats work
 safely; an invalidated cursor restarts the traversal.
 
-Token records become eligible thirty-one days after creation, and only when expired.
+Authorization-code, device-code, user-code, refresh, access and ID-token records
+become eligible thirty-one days after creation, and only when expired. Expired
+access/ID metadata does not accumulate indefinitely after its grant's horizon.
 Ad-hoc authorization records become eligible thirty-one days after creation, whether
 valid or revoked. This horizon exceeds the supported one-minute code redemption
 or ten-minute device approval window, the maximum thirty-day project refresh family,

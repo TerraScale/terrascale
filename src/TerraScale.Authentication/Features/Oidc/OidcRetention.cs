@@ -35,7 +35,8 @@ public sealed class OidcRetention(AuthStore store, TerraBaseDatabase database, T
                 || string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(instance)
                 || token.ReferenceId is { } handle && string.IsNullOrWhiteSpace(handle)
                 || tenant is not null && tenant != instance || created > threshold || created > now - ProofLifetime || expires > now
-                || token.Type is not (TokenTypeIdentifiers.RefreshToken or TokenTypeIdentifiers.Private.AuthorizationCode or TokenTypeIdentifiers.Private.DeviceCode or TokenTypeIdentifiers.Private.UserCode)
+                || token.Type is not (TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.IdentityToken or TokenTypeIdentifiers.RefreshToken
+                    or TokenTypeIdentifiers.Private.AuthorizationCode or TokenTypeIdentifiers.Private.DeviceCode or TokenTypeIdentifiers.Private.UserCode)
                 || document.Id != AuthStore.NaturalKeyId(instance, AuthStore.OidcTokenCollection, id))
             {
                 continue;
