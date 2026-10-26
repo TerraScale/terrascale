@@ -72,7 +72,8 @@ public sealed class DatabaseRenameJourneyTests(DashboardRootFixture fixture)
         { await Assert.That(key.StatusCode).IsEqualTo(HttpStatusCode.Created); keyId = (await BodyAsync(key)).GetProperty("apiKey").GetProperty("keyId").GetString()!; }
         var path = "/databases/" + databaseId + "/settings";
         var page = await client.GetStringAsync(path);
-        await Assert.That(page).Contains("Connection strings change immediately");
+        await Assert.That(page).Contains("Update name-based connection strings");
+        await Assert.That(page).Contains("Conflicting requests accepted in different regions can change the final name");
         await Assert.That(page).Contains("There is no alias or redirect");
         foreach (var name in new[] { "1name", "con", "prn", "aux", "nul", "valid\n", " valid", "valid ", "", new string('a', 64) }
             .Concat(Enumerable.Range(0, 10).SelectMany(number => new[] { "com" + number, "lpt" + number })))
