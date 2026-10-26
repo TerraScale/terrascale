@@ -50,11 +50,28 @@ Release builds print `ts 0.0.X`; `go install` and source builds print `ts dev`.
 `ts help` (or `ts --help`) lists every command. Invalid arguments exit with
 status 2 and other failures with status 1.
 
+### Upgrade
+
+Use the same installation method to upgrade, then check the installed binary:
+
+```sh
+# Installer: rerun it to replace the binary with the latest release.
+curl -fsSL https://terrascale.tech/install.sh | sh
+# Homebrew:
+brew update && brew upgrade ts
+# Go:
+go install terrascale.tech/sdk/cmd/ts@latest
+# After your chosen method:
+ts --version
+```
+
 ### Shell completion
 
 ```sh
+mkdir -p ~/.local/share/bash-completion/completions
 ts completion bash > ~/.local/share/bash-completion/completions/ts
 ts completion zsh > "${fpath[1]}/_ts"
+mkdir -p ~/.config/fish/completions
 ts completion fish > ~/.config/fish/completions/ts.fish
 ```
 
@@ -127,6 +144,15 @@ database from the backup and leaves the source untouched. See
 [Backups and restore](/es/guides/backups-and-restore) and
 [Replication and durability](/es/concepts/replication). `db branch` takes the
 source database name first and the new branch name second.
+
+::: warning Home-only databases are read-only
+`ts db regions example none` removes every replica. Writes to the resulting home-only database fail with CLI exit status 1 and HTTP `409 placement_needs_two_regions`. Add replica regions again with `ts db regions example sjc fra` to resume writes.
+:::
+
+Branching and restoring create an additional database and require spare database
+capacity. The current Free/Hobby quota is one database; when it is full,
+`db branch`, `backup restore` and `backup restore-at` fail with HTTP
+`409 database_limit`. Increase your plan's database allowance before making a copy.
 
 ```sh
 ts backup restore-at example 2026-10-23T12:00:00Z example-at-noon
