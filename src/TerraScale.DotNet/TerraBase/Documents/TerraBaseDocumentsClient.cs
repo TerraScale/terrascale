@@ -91,7 +91,11 @@ public sealed partial class TerraBaseDatabase
         this.path = path;
     }
 
-    /// <summary>Creates the database, or returns it when it exists (<c>PUT</c>, idempotent).</summary>
+    /// <summary>
+    /// Legacy idempotent database creation (<c>PUT</c>) for a server-accepted legacy API key.
+    /// Project access tokens are refused by this producer route; use
+    /// <see cref="TerraBaseProjectClient.CreateDatabaseAsync"/> for canonical project-token creation (<c>POST</c>).
+    /// </summary>
     public async Task<TerraBaseDatabaseInfo> CreateAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Put, path, null, Json.TerraBaseDatabaseInfo, null, cancellationToken).ConfigureAwait(false)).Value;
 

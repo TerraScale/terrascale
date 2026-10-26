@@ -3,10 +3,18 @@
 The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
 both targets.
 
-Version `0.0.3` combines ts-auth platform contracts (#13) and
-TerraBase lifecycle/usage/changes contracts (#14). The package includes their
-producer artifacts; pending producer inputs remain qualified separately. Import
-APIs and the later stream-timer follow-up (#15) are excluded from this release.
+The current source package version is `0.0.12`. NuGet publication remains on hold:
+use a `ProjectReference` to an immutable checkout or `dotnet pack` into a local feed.
+Keep the source revision with the package; isolate its restore cache so a previous local
+pack with the same version cannot be reused. See the [pinned C# quickstart](https://docs.terrascale.tech/getting-started/csharp).
+
+| Artifact | Availability |
+| --- | --- |
+| Historical source tag `v0.0.6` | Relational SQL; predates full-text/vector helpers and document export |
+| Current source/local pack `0.0.12` | Full-text/vector queries, imports and streaming `ExportAsync`, plus the supported auth APIs below |
+
+These are source/API availability claims. The included producer contracts and HTTP fixtures
+carry their own pins; deployment, scope, plan and live-method qualification remain separate gates.
 
 ## Entity IDs (TS-754)
 
@@ -37,18 +45,17 @@ host clock and replace the generator to resume current timestamps; ordering
 across old and new instances is not guaranteed. Forward jumps are accepted
 because a generator can legitimately be idle for any length of time.
 
-The TerraBase document key is the entity ID. Entity payloads must not repeat
-that key in a separate `id` field. Keep IDs in document metadata and references
-to other entities in their reference fields.
+The document key is carried in document metadata. An ordinary payload field named
+`id` does not replace that key; references to other API entities still use canonical ULIDs.
 
 **Document ids are ULIDs.** TerraBase accepts only canonical ULIDs as document
 ids and answers `400 invalid_document_id` otherwise. The SDK rejects any other id
 with `ArgumentException` before sending: `GetDocumentAsync`, `PutDocumentAsync`,
 `PatchDocumentAsync`, `DeleteDocumentAsync`, the platform `GetDocumentAsync` and
 every `TerraBaseTransactionOperation` factory that takes an id (`Create`'s id is
-optional; TerraBase generates one when it is omitted). Natural keys such as
-emails become name-based ULIDs: encode the first 16 bytes of a SHA-256 over an
-unambiguous input that includes the collection. SQL queries are not restricted.
+optional; TerraBase generates one when it is omitted). Application natural keys can remain
+ordinary payload fields. SQL and PostgreSQL primary keys are user-chosen integer, text or
+composite values; the SDK does not hash or remap them to ULIDs.
 There is no migration, backfill, compatibility shim or dual-read/write path.
 This SDK owns no persisted service data and performs no production reset.
 
@@ -79,8 +86,8 @@ databases, collections, documents, queries and transactions.
 current organization, plans, projects, databases, branches, members,
 invitations, ownership transfer, audit retention and audit events.
 `TerraBaseShapeClient` follows a collection's shape protocol v1 into local state;
-see [shape reads and qualification](docs/terrabase-shapes.md). Bulk data endpoints
-are not covered yet.
+see [shape reads and qualification](docs/terrabase-shapes.md). `ExportAsync` streams live documents; import methods stage, validate and run one
+user-confirmed source upload. Export is not a database backup.
 
 ```csharp
 using System.Text.Json;
@@ -90,11 +97,11 @@ using var httpClient = new HttpClient(TerraBaseHttp.CreateHandler());
 var documents = new TerraBaseDocumentsClient(httpClient, new TerraBaseDocumentsClientOptions
 {
     BaseAddress = discoveredOrigin,
-    ApiKey = currentTerraBaseApiKey // tb_...
+    ApiKey = currentAccessToken // Authorization: Bearer; exchange the dashboard key first
 });
 
+await documents.Project(projectId).CreateDatabaseAsync("app", cancellationToken: cancellationToken); // canonical POST
 TerraBaseDatabase database = documents.Database(projectId, "app");
-await database.CreateAsync(cancellationToken); // idempotent PUT
 await database.CreateCollectionAsync("users", cancellationToken);
 
 var user = JsonSerializer.SerializeToElement(new { email = "user@example.com" });
@@ -142,16 +149,15 @@ keep the usual `TerraBaseException` types. Nothing is retried. `RunSqlAsync` is 
 subset (`databases:read`, refused for dashboard keys); prefer the methods above.
 
 One-time imports follow TerraBase's import contract (monorepo `docs/terrabase/import.md` and `import-ndjson.md` at
-`94481f1f2`; nothing here is live-qualified). Every imported row gets a generated deterministic ULID document id;
+`2cc348ec75a11079aa20547c09203e581ce70cb8`; nothing here is live-qualified). Every imported row gets a generated deterministic ULID document id;
 source primary keys (and NDJSON `id`, `_id` or `$oid`) stay ordinary fields. The user exports with their own tools
 (`pg_dump --format=plain`, a rollback-journal SQLite/Turso file from `VACUUM INTO`, or NDJSON) and uploads it: TerraBase never
 connects to the source or receives its credentials. Create a new, empty destination database for each import with
 `Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name and the same ts-auth
 project access token (a database created through `TerraBaseManagementClient` is reachable by a project token only once
-TerraBase has verified its project binding). The pinned import contract requires a destination without replicas;
-that requirement conflicts with minimum-two-region placement and remains a producer compatibility gap. The example
-below describes that pinned contract, not a supported single-region creation workflow. Every import call must still
-use a client pinned to the destination's home region:
+TerraBase has verified its project binding). The owning `ImportRoute` and `ImportJobs` accept normal replicated
+placement: the home region runs the import and replicates its writes. Do not remove replicas before importing.
+Every import call must use a client pinned to the destination's home region:
 
 ```csharp
 TerraBaseManagedDatabase destination = await documents.Project(projectId).CreateDatabaseAsync(destinationName, cancellationToken: cancellationToken);
@@ -359,26 +365,24 @@ See [TerraBase consumers](docs/terrabase-consumers.md).
 
 ## ts-auth client
 
-`TerraScaleAuthClient` implements the existing instance-scoped ts-auth
-management and OIDC APIs: users, sessions, SSO,
-directories, JWT templates, webhooks, audit, instance settings and
-OAuth clients. `TerraScaleAuthWebhookVerifier` verifies webhook HMAC-SHA256
-signatures. Management calls use the instance key and `/v1/{slug}/...` routes;
-OIDC calls use the published `/{slug}/oauth/...` surface.
+`TerraScaleAuthClient` exposes shipped Platform, project sign-in configuration and OIDC
+operations. Platform methods use the signed-in user's bearer and role; project backend
+operations carry their documented project-key authority. Hosted/device or registered-client
+OIDC sign-in establishes the user's token; the SDK does not invent callbacks or sign-in grants.
+Historical instance management and headless surfaces are unsupported; retained legacy types
+are not evidence that their routes exist. See [the supported contract](contracts/auth/README.md).
 
 ```csharp
 using TerraScale.DotNet;
 
-var auth = new TerraScaleAuthClient(
-    new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }),
-    new TerraScaleAuthClientOptions
-    {
-        BaseAddress = new Uri("https://auth.terrascale.tech"),
-        ApiKey = currentAuthManagementKey,
-        InstanceSlug = "acme"
-    });
-
-var user = await auth.Users.CreateAsync(email: "user@example.com");
+using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false });
+var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
+{
+    BaseAddress = new Uri("https://auth.terrascale.tech"),
+    InstanceSlug = "terrascale"
+});
+var organizations = await auth.Platform.ListOrganizationsAsync(signInAccessToken,
+    cancellationToken: cancellationToken);
 ```
 
 The auth client calls its `BaseAddress` directly; there is no regional discovery or proxy switch. This does not
@@ -405,7 +409,7 @@ dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.cspro
 Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit over HTTP fakes and cover the TerraBase
 clients (route manifest, regional contract, responses) and the retained ts-auth contract.
 
-[Package release](docs/package-release.md) describes how a tagged version is
-packed once, pushed to GitHub Packages and restored into a clean installed-package
-consumer, and how the same bytes reach nuget.org. Live-service qualification is
-a separate gate; neither a source build nor a publication implies it.
+[Package release](docs/package-release.md) records the release procedure; it does not authorize
+publication. NuGet remains on hold. Source/local-pack consumers must verify the loaded SDK DLL
+matches their pinned package, then qualify their actual service flow. Client-side validation does
+not establish server admission or plan enforcement; retain scope, role, placement and quota errors.
