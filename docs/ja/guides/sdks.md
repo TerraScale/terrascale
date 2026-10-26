@@ -82,7 +82,7 @@ Imports below use the `@terrascale/sdk` prefix. Framework utilities do not suppl
 
 ### C#
 
-`TerraScale.DotNet` is not on nuget.org yet. Build version `0.0.6` (tag `v0.0.6`) from the public [ts-dotnet](https://github.com/TerraScale/ts-dotnet) source into a local package feed, the way the [C# quickstart](/ja/getting-started/csharp) builds its pinned version.
+`TerraScale.DotNet` is not on nuget.org yet. Build version `0.0.12` from source revision `e786f2e38b34985293446fd1eb5bfa602e041b85` into a local package feed, as shown in the [C# quickstart](/ja/getting-started/csharp).
 
 `Database(projectId, databaseName)` returns a handle with `CreateDocumentAsync`, `GetDocumentAsync`, `PutDocumentAsync`, `PatchDocumentAsync`, `DeleteDocumentAsync`, `QueryAsync` and `TransactAsync`; `ExecuteSqlAsync`, `QuerySqlAsync` and `ExecuteSqlBatchAsync` run [SQL](/ja/guides/sql-http#from-the-sdks). A caller-owned `HttpClient` must disable redirects and cookies; use `TerraBaseHttp.CreateHandler()` and dispose the transport yourself.
 
@@ -114,6 +114,18 @@ cargo add serde --features derive
 ```
 
 Use `terrascale::v1`. `Client::for_project(projectId, accessToken).build()?` sends requests to `https://api.terrascale.tech`. `client.database(name).collection(name)` provides `get`, `put`, `create`, `patch`, `delete`, `query` and `pages`; `database.sql()` runs [SQL](/ja/guides/sql-http#from-the-sdks) with `execute`, `query` and `batch`. The token is the access token from the [key exchange](/ja/guides/authentication).
+
+## .NET and Go feature availability
+
+Match the installed artifact to the example. A source method or HTTP fixture does not establish production qualification; each call still needs the owning service, project scope and role.
+
+| Artifact | Full-text / vector queries | Streaming document export | Installation |
+| --- | --- | --- | --- |
+| Go `v0.0.5` ([source](https://github.com/TerraScale/ts-go/tree/b2b7a55a66da4dd0db6588d27d571efe2177f31c)) | Included | Not included | Published module; used by the Go quickstart |
+| Go source [`416faaad8787ef883b7ff0be3bbbb90c5b0f8567`](https://github.com/TerraScale/ts-go/tree/416faaad8787ef883b7ff0be3bbbb90c5b0f8567) | Included | `Database.Export` | `go get terrascale.tech/sdk@416faaad8787ef883b7ff0be3bbbb90c5b0f8567`; Go records its immutable pseudo-version |
+| .NET source [`e786f2e38b34985293446fd1eb5bfa602e041b85`](https://github.com/TerraScale/ts-dotnet/tree/e786f2e38b34985293446fd1eb5bfa602e041b85), local pack `0.0.12` | Included | `TerraBaseDatabase.ExportAsync` | Source/local feed only; used by the C# quickstart |
+
+Export streams documents, not schemas, indexes or a database backup. Stop or cancel iteration to release the response; exhaust it to establish completion. See [export](/ja/guides/export). These pins do not promise complete SDK feature parity. Newer source may contain additional methods; use its own README and contract fixtures, and preserve the exact revision in your build.
 
 ## Contract and routing
 

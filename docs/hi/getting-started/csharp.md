@@ -12,7 +12,7 @@ title: C# quickstart
 Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. It creates, reads, updates, queries and deletes one synthetic document, verifies stale-version rejection and uses only the SDK for database requests.
 
 ::: info Package from source
-`TerraScale.DotNet` is not on nuget.org yet. Step 1 builds version `0.0.6` from source into a local feed.
+`TerraScale.DotNet` is not on nuget.org yet. Step 1 builds version `0.0.12` from the pinned source revision into a local feed; no publication is required.
 :::
 
 ## 1. Obtain and build the example
@@ -20,13 +20,15 @@ Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsC
 Install .NET SDK 10 or newer with the .NET 10 runtime. Download <a href="/examples/terrabase-dotnet/Program.cs" download>Program.cs</a> and <a href="/examples/terrabase-dotnet/TerraBaseStarter.csproj" download>TerraBaseStarter.csproj</a> into one directory. From that directory, build the SDK package into a `feed` directory beside it, then build the example. Continue only when every command succeeds:
 
 ```bash
-git clone --depth 1 --branch v0.0.6 https://github.com/TerraScale/ts-dotnet.git ../ts-dotnet &&
+git clone --no-checkout https://github.com/TerraScale/ts-dotnet.git ../ts-dotnet &&
+git -C ../ts-dotnet checkout --detach e786f2e38b34985293446fd1eb5bfa602e041b85 &&
 dotnet pack ../ts-dotnet/src/TerraScale.DotNet -c Release -o ../feed &&
-dotnet build -c Release -p:TerraBaseSdkPackageVersion=0.0.6 \
+dotnet build -c Release -p:TerraBaseSdkPackageVersion=0.0.12 \
+  -p:RestorePackagesPath=../packages-e786f2e \
   --source ../feed --source https://api.nuget.org/v3/index.json
 ```
 
-The project uses a package reference, with no SDK source dependency. A legacy `NativeClient` package is not interchangeable with the project-scoped Documents API.
+The project uses a package reference, with no SDK source dependency. The revision-specific package cache prevents an older local pack with the same version from being reused. A legacy `NativeClient` package is not interchangeable with the project-scoped Documents API.
 
 ## 2. Supply connection details
 
