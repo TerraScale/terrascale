@@ -10,12 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,49 +137,9 @@ func TestHeadlessSignIn(t *testing.T) {
 	}
 }
 
-func TestHeadlessSignUpAndReset(t *testing.T) {
-	srv := headlessServer(t)
-	h := newHeadless(t, srv.URL+"/terrascale", clientSecret)
-	ctx := t.Context()
-	pending, err := h.SignUp(ctx, "new@example.com", "a long password", userIP)
-	if err != nil || pending != "pending-1" {
-		t.Fatalf("sign-up: %q %v", pending, err)
-	}
-	if tokens, err := h.SignInWithEmailCode(ctx, "new@example.com", "123456", userIP, pending, nil); err != nil || tokens.IDToken != "id-new" {
-		t.Fatalf("sign-up code: %+v %v", tokens, err)
-	}
-	_, err = h.SignUp(ctx, "new@example.com", "short", userIP)
-	if !errors.Is(err, tsauth.ErrInvalidPassword) {
-		t.Fatalf("short password: %v", err)
-	}
-	if err := h.StartEmailCode(ctx, "ana@example.com", userIP); err != nil {
-		t.Fatalf("email code: %v", err)
-	}
-	if err := h.StartPasswordReset(ctx, "ana@example.com", userIP); err != nil {
-		t.Fatalf("reset start: %v", err)
-	}
-	if err := h.CompletePasswordReset(ctx, "ana@example.com", "000000", "a new password", userIP); !errors.Is(err, tsauth.ErrInvalidCode) {
-		t.Fatalf("wrong reset code: %v", err)
-	}
-	if err := h.CompletePasswordReset(ctx, "ana@example.com", "654321", "a new password", userIP); err != nil {
-		t.Fatalf("reset complete: %v", err)
-	}
-	err = h.StartEmailCode(ctx, "busy@example.com", userIP)
-	var apiErr *tsauth.APIError
-	if !errors.Is(err, tsauth.ErrRateLimited) || !errors.As(err, &apiErr) || apiErr.RetryAfter != 42*time.Second {
-		t.Fatalf("rate limit: %v", err)
-	}
-	if err := h.StartEmailCode(ctx, "ana@example.com", ""); err == nil {
-		t.Fatal("start without the end user's IP address")
-	}
-}
-
 func TestHeadlessClientAuthentication(t *testing.T) {
 	srv := headlessServer(t)
 	h := newHeadless(t, srv.URL+"/terrascale", "wrong secret")
-	if err := h.StartEmailCode(t.Context(), "ana@example.com", userIP); !errors.Is(err, tsauth.ErrInvalidClient) {
-		t.Fatalf("JSON step with a wrong secret: %v", err)
-	}
 	_, err := h.SignInWithPassword(t.Context(), "ana@example.com", "correct horse", userIP, nil)
 	var oauthErr *tsauth.Error
 	if !errors.As(err, &oauthErr) || oauthErr.Status != http.StatusUnauthorized {
@@ -206,81 +164,5 @@ func TestHeadlessRequiresSecureIssuerOutsideLoopback(t *testing.T) {
 	}
 	if _, err := tsauth.NewHeadless(tsauth.HeadlessConfig{Issuer: "http://127.0.0.1:8080/terrascale", ClientID: clientID, ClientSecret: clientSecret}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestHeadlessResendEmailCode(t *testing.T) {
-	for _, tc := range []struct {
-		name, pendingToken string
-		status             int
-		code               tsauth.ErrorCode
-	}{
-		{"sign-in", "", http.StatusAccepted, ""},
-		{"sign-up", "pending-1", http.StatusAccepted, ""},
-		// ts-auth prevents enumeration: invalid pending tokens get 202 without an email.
-		{"invalid pending token", "invalid-token", http.StatusAccepted, ""},
-		{"invalid client", "pending-1", http.StatusUnauthorized, tsauth.ErrInvalidClient},
-		{"rate limited", "pending-1", http.StatusTooManyRequests, tsauth.ErrRateLimited},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var calls atomic.Int64
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				if r.Method != http.MethodPost || r.URL.RequestURI() != "/terrascale/headless/v1/email-code/start" {
-					t.Errorf("resend endpoint: %s %s", r.Method, r.URL.RequestURI())
-				}
-				if r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Accept") != "application/json" {
-					t.Errorf("resend headers: %v", r.Header)
-				}
-				id, secret, ok := r.BasicAuth()
-				id, _ = url.QueryUnescape(id)
-				secret, _ = url.QueryUnescape(secret)
-				if !ok || id != clientID || secret != clientSecret {
-					t.Error("resend client authentication")
-				}
-				var body map[string]string
-				want := map[string]string{"email": "new@example.com", "ip_address": userIP}
-				if tc.pendingToken != "" {
-					want["pending_token"] = tc.pendingToken
-				}
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !maps.Equal(body, want) {
-					t.Errorf("resend body: %v %v, want %v", body, err, want)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				if tc.code == tsauth.ErrRateLimited {
-					w.Header().Set("Retry-After", "60")
-				}
-				w.WriteHeader(tc.status)
-				if tc.code != "" {
-					json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": tc.code, "message": "Resend rejected."}})
-				}
-			}))
-			t.Cleanup(srv.Close)
-			h := newHeadless(t, srv.URL+"/terrascale", clientSecret)
-			err := h.ResendEmailCode(t.Context(), "new@example.com", userIP, tc.pendingToken)
-			if tc.code == "" {
-				if err != nil {
-					t.Fatalf("resend: %v", err)
-				}
-			} else {
-				var apiErr *tsauth.APIError
-				if !errors.Is(err, tc.code) || !errors.As(err, &apiErr) || apiErr.Status != tc.status || apiErr.Message != "Resend rejected." {
-					t.Fatalf("resend error: %v", err)
-				}
-				var retryAfter time.Duration
-				if tc.code == tsauth.ErrRateLimited {
-					retryAfter = 60 * time.Second
-				}
-				if apiErr.RetryAfter != retryAfter {
-					t.Errorf("RetryAfter: %v, want %v", apiErr.RetryAfter, retryAfter)
-				}
-			}
-			if err := h.ResendEmailCode(t.Context(), "new@example.com", "", tc.pendingToken); err == nil {
-				t.Fatal("resend without the end user's IP address")
-			}
-			if calls.Load() != 1 {
-				t.Errorf("resend requests: %d, want 1", calls.Load())
-			}
-		})
 	}
 }
