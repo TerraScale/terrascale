@@ -183,8 +183,8 @@ hr {
 }
 
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
-   document loads (see UI/Slices/ShellDocument.cshtml). Wait before revealing the
-   full-width bar so quick navigations never flash it. A flat pulse shows an
+   document loads (see UI/Slices/ShellDocument.cshtml). Reveal the bar in the
+   first paint after the click. A flat pulse shows an
    ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {
   content: "";
@@ -193,16 +193,9 @@ body.ts-nav-pending::before {
   z-index: var(--ts-z-progress);
   height: 5px;
   background: var(--ts-accent);
-  opacity: 0;
+  opacity: 1;
   pointer-events: none;
-  animation:
-    ts-progress-reveal 100ms ease-out 80ms forwards,
-    ts-progress-pulse 1.2s ease-in-out 80ms infinite;
-}
-
-@keyframes ts-progress-reveal {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  animation: ts-progress-pulse 1.2s ease-in-out infinite;
 }
 
 @keyframes ts-progress-pulse {

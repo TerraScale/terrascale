@@ -47,6 +47,7 @@ public sealed class DatabaseDataAccessJourneyTests(DashboardRootFixture fixture)
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
             if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return null;
+            if (await DatabaseSdkScenario.EmptySqlCatalogAsync(http) is { } catalog) return catalog;
             if (Interlocked.Increment(ref sqlCalls) == 1)
             {
                 using var cancellation = http.RequestAborted.Register(() => aborted.TrySetResult());

@@ -95,6 +95,8 @@ public sealed class CollectionManagementJourneyTests(DashboardRootFixture fixtur
             foreach (var field in new Dictionary<string, string> { ["_csrf"] = csrf, ["collection"] = "items", ["operation"] = "apply", ["schema"] = draft }) content.Add(new StringContent(field.Value), field.Key);
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
             if (chunked) request.Headers.TransferEncodingChunked = true;
+            // Let a Content-Length refusal arrive before the upload, rather than racing it with a broken pipe.
+            else request.Headers.ExpectContinue = true;
             request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
             return await client.SendAsync(request);

@@ -173,6 +173,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken,
         string? organizationId = null, string? projectId = null)
     {
+        var loadedAt = ServerTiming.Now();
         // The account and ts-auth's organization list load together; a Personal organization this call just
         // created is listed again below, so the parallel list never hides it.
         var listing = platform.ListOrganizationsAsync(session, cancellationToken);
@@ -253,7 +254,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                 throw new AccountAccessException("Project belongs to another organization.");
             var selectedContext = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), selected, selectedProject);
             await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, selectedContext, cancellationToken);
-            return selectedContext with { Loaded = ServerTiming.Now() };
+            return selectedContext with { Loaded = loadedAt };
         }
         var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
         if (active is not null) await HydrateSelectedAsync(active);
@@ -275,7 +276,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         if (project is not null && project.OrganizationId != active!.Id) throw new AccountAccessException("Project belongs to another organization.");
         var context = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), active, project);
         await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, context, cancellationToken);
-        return context with { Loaded = ServerTiming.Now() };
+        return context with { Loaded = loadedAt };
     }
 
     // An organization created outside the dashboard starts as a business workspace that needs billing.

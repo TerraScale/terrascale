@@ -1,6 +1,7 @@
 using System.Net;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.Http;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
@@ -51,7 +52,8 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     private const int MaxPages = 100;
 
     public Task<IReadOnlyList<TerraScaleAuthPlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken) =>
-        PagesAsync(after => Client().Platform.ListOrganizationsAsync(Bearer(session), 100, after, cancellationToken));
+        ServerTiming.ReadAsync((this, "organizations", session.AccessToken),
+            () => PagesAsync(after => Client().Platform.ListOrganizationsAsync(Bearer(session), 100, after, cancellationToken)));
 
     public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.CreateOrganizationAsync(Bearer(session), new(name), cancellationToken));
@@ -66,7 +68,8 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
         PlatformAsync(() => Client().Platform.DeleteOrganizationAsync(Bearer(session), Id(organizationId), cancellationToken));
 
     public Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
-        PagesAsync(after => Client().Platform.ListMembersAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));
+        ServerTiming.ReadAsync((this, "members", session.AccessToken, organizationId),
+            () => PagesAsync(after => Client().Platform.ListMembersAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken)));
 
     public Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.ChangeMemberRoleAsync(Bearer(session), Id(organizationId), Id(userId), new(role), cancellationToken));
@@ -74,7 +77,11 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.RemoveMemberAsync(Bearer(session), Id(organizationId), Id(userId), cancellationToken));
 
-    public async Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "projects", session.AccessToken, organizationId),
+            () => ListProjectsCoreAsync(session, organizationId, cancellationToken));
+
+    private async Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsCoreAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     {
         try { return await PagesAsync(after => Client().Platform.ListProjectsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken)); }
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status403Forbidden && error.Code.Length == 0)
@@ -100,7 +107,8 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
         PlatformAsync(() => Client().Platform.DeleteProjectAsync(Bearer(session), Id(organizationId), Id(projectId), cancellationToken));
 
     public Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
-        PagesAsync(after => Client().Platform.ListInvitationsAsync(Bearer(session), Id(organizationId), 100, after, null, cancellationToken));
+        ServerTiming.ReadAsync((this, "invitations", session.AccessToken, organizationId),
+            () => PagesAsync(after => Client().Platform.ListInvitationsAsync(Bearer(session), Id(organizationId), 100, after, null, cancellationToken)));
 
     public Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken) =>
         CreateInvitationAsync(session, organizationId, email, role, null, cancellationToken);
@@ -130,7 +138,11 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task DeclineInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.DeclineInvitationAsync(Bearer(session), new(token), cancellationToken));
 
-    public async Task<TerraScaleAuthPlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    public Task<TerraScaleAuthPlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
+        ServerTiming.ReadAsync((this, "ownership-transfer", session.AccessToken, organizationId),
+            () => GetOwnershipTransferCoreAsync(session, organizationId, cancellationToken));
+
+    private async Task<TerraScaleAuthPlatformOwnershipTransfer?> GetOwnershipTransferCoreAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     {
         try { return await PlatformAsync(() => Client().Platform.GetOwnershipTransferAsync(Bearer(session), Id(organizationId), cancellationToken)); }
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { return null; }

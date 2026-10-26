@@ -62,7 +62,7 @@ public static class NotificationEndpoints
             await NotificationCommands.MarkAsync(accounts, context, id, http.RequestAborted);
         }
         catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-        context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted);
+        context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
         var page = NotificationPage.For(ShellModel.For(http, context, "Notifications"), form["status"], form["page"], true);
         if (http.Request.Headers["Datastar-Request"] == "true")
         {
