@@ -2,6 +2,7 @@ using Amazon.S3;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Platform;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -236,6 +237,12 @@ internal sealed class PointInTimeRestore(
 
     public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
+        // Every caller must preserve the canonical erasure boundary, even before any receipt exists.
+        if (PlatformDatabases.IsPlatform(source.OrganizationId))
+        {
+            return new Conflict("platform database historical recovery is fenced by erasure requirements", "recovery_erasure_fenced");
+        }
+
         // Pin retention before metadata awaits; the same scan discovers the window and selects the snapshot.
         var now = time.GetUtcNow();
         using var backup = await targets.RestoreAsync(source, destination, cancellationToken).ConfigureAwait(false);

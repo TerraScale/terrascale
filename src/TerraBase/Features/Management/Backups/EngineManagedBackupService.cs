@@ -7,6 +7,7 @@ using Cronos;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -153,6 +154,11 @@ internal sealed class EngineManagedBackupService(
     public async ValueTask<RestoreBackupResult> RestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken)
     {
+        if (PlatformDatabases.IsPlatform(database.OrganizationId))
+        {
+            return ErasureFenced();
+        }
+
         var owner = DatabaseOwner.Of(database);
         // The snapshot is an engine database of the backed-up database's project, which the restore copies within.
         return await catalog.ReadAsync<RestoreSourceResult>(async transaction =>
@@ -177,6 +183,11 @@ internal sealed class EngineManagedBackupService(
     public async ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
+        if (PlatformDatabases.IsPlatform(database.OrganizationId))
+        {
+            return ErasureFenced();
+        }
+
         var owner = DatabaseOwner.Of(database);
         var found = await catalog.ReadAsync<GetDatabaseResult>(
             async transaction => await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
@@ -209,6 +220,9 @@ internal sealed class EngineManagedBackupService(
             await engine.DeleteDatabaseAsync(staging, CancellationToken.None).ConfigureAwait(false);
         }
     }
+
+    // Receipt absence cannot prove safety: erasure may be pending or its SYSTEM receipt not yet replicated.
+    private static Conflict ErasureFenced() => new("platform database historical recovery is fenced by erasure requirements", "recovery_erasure_fenced");
 
     // Copies the engine database storageId of the project into a new database named name, or <source>-restore, -restore-2, ….
     private async ValueTask<RestoreBackupResult> CopyRestoredAsync(
