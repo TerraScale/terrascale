@@ -75,7 +75,8 @@
   margin-left: auto;
 }
 
-.ts-shell > .ts-fab-nav {
+.ts-shell > .ts-fab-nav,
+.ts-mobile-context {
   display: none;
 }
 
@@ -549,6 +550,23 @@ details[open] > .ts-account-trigger {
   padding-left: 34px;
 }
 
+.ts-search-context {
+  display: block;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 400;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ts-context-search-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--ts-s2);
+  padding: var(--ts-s2);
+  color: var(--ts-ink-2);
+}
+
 /* Page area. */
 .ts-inset {
   display: flex;
@@ -707,6 +725,32 @@ details[open] > .ts-account-trigger {
   }
 
   html:has(.ts-shell.nav-open) .ts-fab-nav {
+    display: none;
+  }
+
+  .ts-mobile-context {
+    position: fixed;
+    inset: var(--ts-s3) var(--ts-s3) auto 64px;
+    z-index: var(--ts-z-overlay);
+    display: grid;
+    align-content: center;
+    height: 40px;
+    padding-inline: var(--ts-s3);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius);
+    background: var(--ts-canvas);
+    color: var(--ts-ink-2);
+    font-size: var(--ts-fs-xs);
+    line-height: 16px;
+  }
+
+  .ts-mobile-context > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  html:has(.ts-shell.nav-open) .ts-mobile-context {
     display: none;
   }
 

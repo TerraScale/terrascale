@@ -1,5 +1,11 @@
 @inherits RazorSlice<ShellModel>
 @inject AssetUrls Assets
+@using TerraScale.Dashboard.Shared.Databases
+@{ var pages = SearchPages().ToArray(); }
+<div class="ts-mobile-context" data-attr:inert="$navOpen">
+    <span title="@Model.Context.Organization?.Name">Organization: @(Model.Context.Organization?.Name ?? "None selected")</span>
+    <span title="@Model.Context.Project?.Name">Project: @(Model.Context.Project?.Name ?? "None selected")</span>
+</div>
 <aside id="ts-navigation" class="ts-sidebar" aria-label="Primary navigation" tabindex="-1"
        data-attr:role="$navOpen ? 'dialog' : null" data-attr:aria-modal="$navOpen ? 'true' : null"
        data-on:keydown="(() => { if (!$navOpen || evt.key !== 'Tab') return; const controls = [...el.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')].filter(item => item.tabIndex >= 0 &amp;&amp; !item.matches(':disabled') &amp;&amp; item.checkVisibility({visibilityProperty: true}) &amp;&amp; !item.closest('[inert]')); const first = controls[0], last = controls.at(-1); if (!first) { evt.preventDefault(); el.focus(); } else if (evt.shiftKey &amp;&amp; (document.activeElement === first || document.activeElement === el)) { evt.preventDefault(); last.focus(); } else if (!evt.shiftKey &amp;&amp; document.activeElement === last) { evt.preventDefault(); first.focus(); } })()">
@@ -19,6 +25,10 @@
                 {
                     <form method="post" action="/api/v1/dashboard/switch-organization" data-show="$organizationSearch === '' || el.dataset.organizationName.toLowerCase().includes($organizationSearch.toLowerCase())" data-organization-name="@org.Name"><input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="organizationId" value="@org.Id" /><input type="hidden" name="returnUrl" value="@Model.ReturnUrl" /><button class="ts-menu-item" type="submit" data-organization-option="@org.Id" aria-current="@(org.Id == Model.Context.Organization?.Id ? "true" : null)"><span class="ts-menu-tile" data-tone="@ShellModel.Tone(org.Name)" aria-hidden="true">@ShellModel.Initial(org.Name)</span><span class="ts-menu-label">@org.Name</span>@if (org.Id == Model.Context.Organization?.Id) { <span class="ts-menu-check" aria-hidden="true">@ShellIcons.Svg("check", 15)</span> }</button></form>
                 }</div>
+                @if (Model.Context.Organizations.Count > 5)
+                {
+                    <div class="ts-context-search-empty" data-show="@NoMatches(Model.Context.Organizations.Select(org => org.Name), "$organizationSearch")"><p role="status" aria-live="polite">No organizations match</p><button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click="$organizationSearch = ''; document.getElementById('organizationSearch').focus()">Clear search</button></div>
+                }
                 @if (Model.Context.Organization is { Projects.Count: > 0 } selected)
                 {
                     <hr class="ts-menu-separator" /><div class="ts-menu-heading">Projects in @selected.Name</div>
@@ -27,6 +37,10 @@
                     {
                         <form method="post" action="/api/v1/dashboard/switch-project" data-show="$projectSearch === '' || el.dataset.projectName.toLowerCase().includes($projectSearch.toLowerCase())" data-project-name="@project.Name"><input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="projectId" value="@project.Id" /><input type="hidden" name="returnUrl" value="@Model.ReturnUrl" /><button class="ts-menu-item" type="submit" data-project-option="@project.Id" aria-current="@(project.Id == Model.Context.Project?.Id ? "true" : null)"><span class="ts-menu-tile" data-tone="@ShellModel.Tone(project.Name)" aria-hidden="true">@ShellModel.Initial(project.Name)</span><span class="ts-menu-label">@project.Name</span>@if (project.Id == Model.Context.Project?.Id) { <span class="ts-menu-check" aria-hidden="true">@ShellIcons.Svg("check", 15)</span> }</button></form>
                     }</div>
+                    @if (selected.Projects.Count > 5)
+                    {
+                        <div class="ts-context-search-empty" data-show="@NoMatches(selected.Projects.Values.Select(project => project.Name), "$projectSearch")"><p role="status" aria-live="polite">No projects match</p><button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click="$projectSearch = ''; document.getElementById('projectSearch').focus()">Clear search</button></div>
+                    }
                 }
                 <hr class="ts-menu-separator" /><a class="ts-menu-item" href="/organization?newProject=1#projects" data-tone="emerald">@ShellIcons.Svg("plus", 15)<span class="ts-menu-label">Create new project</span></a><a class="ts-menu-item" href="/organization" data-tone="indigo">@ShellIcons.Svg("boxes", 15)<span class="ts-menu-label">All workspaces</span></a>
             </div>
@@ -54,14 +68,44 @@
         </details>
     </div>
 </aside>
-<dialog id="ts-search-dialog" class="ts-dialog ts-search-dialog" closedby="any" aria-label="Search pages" data-signals="{pageSearch: ''}" data-on:keydown="(() => { if (evt.key === 'Escape') { evt.preventDefault(); evt.stopPropagation(); el.close(); return; } const items = [...el.querySelectorAll('.ts-search-results a')].filter(item => item.checkVisibility()); const at = items.indexOf(document.activeElement); if (items.length === 0) return; if (evt.key === 'Enter' &amp;&amp; at &lt; 0) { evt.preventDefault(); items[0].click(); } else if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') { evt.preventDefault(); items[evt.key === 'ArrowDown' ? (at + 1) % items.length : at &lt;= 0 ? items.length - 1 : at - 1].focus(); } })()" data-on:close="(() => { $pageSearch = ''; const target = el.returnFocusElement; setTimeout(() => (target?.matches('button, a[href], input, select, textarea, [tabindex]') &amp;&amp; target.checkVisibility() ? target : document.getElementById(innerWidth &lt; 768 &amp;&amp; !$navOpen ? 'ts-nav-toggle' : 'ts-search-toggle')).focus()); })()"><div class="ts-dialog-content"><div class="ts-input-group">@ShellIcons.Svg("search", 14)<input class="ts-input" id="ts-search-input" type="search" placeholder="Search pages" aria-label="Search pages" autofocus data-bind="pageSearch" /></div><div class="ts-search-results">@foreach (var item in Navigation.SelectMany(group => group.Items))
+<dialog id="ts-search-dialog" class="ts-dialog ts-search-dialog" closedby="any" aria-label="Search pages" data-signals="{pageSearch: ''}" data-on:keydown="(() => { if (evt.key === 'Escape') { evt.preventDefault(); evt.stopPropagation(); el.close(); return; } const items = [...el.querySelectorAll('.ts-search-results a')].filter(item => item.checkVisibility()); const at = items.indexOf(document.activeElement); if (items.length === 0) return; if (evt.key === 'Enter' &amp;&amp; at &lt; 0) { evt.preventDefault(); items[0].click(); } else if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') { evt.preventDefault(); items[evt.key === 'ArrowDown' ? (at + 1) % items.length : at &lt;= 0 ? items.length - 1 : at - 1].focus(); } })()" data-on:close="(() => { $pageSearch = ''; const target = el.returnFocusElement; setTimeout(() => (target?.matches('button, a[href], input, select, textarea, [tabindex]') &amp;&amp; target.checkVisibility() ? target : document.getElementById(innerWidth &lt; 768 &amp;&amp; !$navOpen ? 'ts-nav-toggle' : 'ts-search-toggle')).focus()); })()"><div class="ts-dialog-content"><div class="ts-input-group">@ShellIcons.Svg("search", 14)<input class="ts-input" id="ts-search-input" type="search" placeholder="Search pages" aria-label="Search pages" autofocus data-bind="pageSearch" /></div><div class="ts-search-results">@for (var index = 0; index < pages.Length; index++)
 {
-    <a class="ts-menu-item" href="@item.Url" data-show="$pageSearch === '' || '@item.Label.ToLowerInvariant()'.includes($pageSearch.toLowerCase())">@ShellIcons.Svg(item.Icon)<span class="ts-menu-label">@item.Label</span></a>
-}<p class="ts-empty" role="status" data-show="$pageSearch !== '' &amp;&amp; ![@PageLabels].some(label => label.includes($pageSearch.toLowerCase()))">No pages match</p></div></div></dialog>
+    var item = pages[index];
+    <a class="ts-menu-item" href="@item.Url" aria-label="@item.Label" aria-describedby="@("ts-page-context-" + index)" data-search-label="@item.SearchLabel" data-show="$pageSearch === '' || el.dataset.searchLabel.toLowerCase().includes($pageSearch.toLowerCase())">@ShellIcons.Svg(item.Icon)<span class="ts-menu-label"><span>@item.Label</span><small class="ts-search-context" id="@("ts-page-context-" + index)">@item.Context</small></span></a>
+}<p class="ts-empty" role="status" aria-live="polite" data-show="@NoMatches(pages.Select(item => item.SearchLabel), "$pageSearch")">No pages match</p></div></div></dialog>
 @functions {
     private bool Active(string url) => url == "/" ? Model.ReturnUrl == "/" || Model.ReturnUrl.StartsWith("/?") : Model.ReturnUrl.StartsWith(url, StringComparison.Ordinal);
     private sealed record Item(string Label, string Url, string Icon);
     private sealed record Group(string Label, Item[] Items);
     private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database"), new("Files", "/storage", "database")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
-    private static string PageLabels => string.Join(",", Navigation.SelectMany(group => group.Items).Select(item => $"'{item.Label.ToLowerInvariant()}'"));
+    private sealed record SearchPage(string Label, string Url, string Icon, string Context)
+    {
+        public string SearchLabel => Label + " " + Context;
+    }
+    private static string NoMatches(IEnumerable<string> labels, string query) =>
+        $"{query} !== '' && !{System.Text.Json.JsonSerializer.Serialize(labels)}.some(label => label.toLowerCase().includes({query}.toLowerCase()))";
+    private IEnumerable<SearchPage> SearchPages()
+    {
+        var organization = "Organization · " + (Model.Context.Organization?.Name ?? "Choose organization");
+        var project = "Project · " + (Model.Context.Organization?.Name ?? "Choose organization") + " / " + (Model.Context.Project?.Name ?? "Choose project");
+        foreach (var item in Navigation.SelectMany(group => group.Items))
+            yield return new(item.Label, item.Url, item.Icon, item.Url == "/organization" ? organization : project);
+        yield return new("Support", "/support", "circle-help", "Help");
+        yield return new("Profile", "/profile", "user-round", "Account");
+        yield return new("Notifications", "/notifications", "bell", "Account inbox");
+        if (Model.Context.Organization is not null)
+            foreach (var (key, label) in OrganizationPages)
+                yield return new(label, "/organization?tab=" + key, "building2", organization);
+        if (Model.Context.Project is null) yield break;
+        yield return new("Imports", "/imports", "database", project);
+        yield return new("Connect", "/?tab=connect", "database", project);
+        yield return new("Query subscriptions", "/subscriptions", "database", project);
+        var parts = Model.ReturnUrl.Split('?')[0].Split('/');
+        if (parts.Length < 3 || parts[1] != "databases" || !Model.Context.Project.Databases.TryGetValue(Uri.UnescapeDataString(parts[2]), out var database)) yield break;
+        var queryAt = Model.ReturnUrl.IndexOf('?');
+        var collection = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : Model.ReturnUrl[queryAt..]).GetValueOrDefault("collection").ToString();
+        foreach (var tab in DatabaseFrameModel.Tabs)
+            yield return new(tab.Label, DatabaseService.Path(database.Id, tab.Key, tab.Key is "documents" or "sql" or "schema" or "indexes" or "webhooks" ? collection : ""), "database", "Database · " + database.Name + " · " + project);
+    }
+    private static readonly (string Key, string Label)[] OrganizationPages = [("members", "Members"), ("invitations", "Invitations"), ("projects", "Projects"), ("billing", "Billing"), ("audit", "Audit"), ("sso", "Single sign-on"), ("danger", "Danger zone")];
 }
