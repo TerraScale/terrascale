@@ -42,6 +42,11 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/databases"));
         await Assert.That(html).Contains("pattern=\"" + DatabaseService.NameInputPattern + "\"");
         await Assert.That(html).Contains(DatabaseService.NameHint);
+        await Assert.That(html).Contains("Choose one home region to create copies in every currently serving region.");
+        await Assert.That(html).Contains("Choose two or more regions for explicit placement in only those regions");
+        await Assert.That(html).Contains("Without All regions, new regions are not added automatically.");
+        await Assert.That(html).Contains("All regions also follows future regions.");
+        await Assert.That(html.Contains("One region keeps the data only there", StringComparison.Ordinal)).IsFalse();
         foreach (var name in new[] { "1database", "con", "com0", "lpt9" })
         {
             using var rejected = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
@@ -61,6 +66,11 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
             await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsFalse();
             await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SFO", "GRU" });
         }
+
+        var replication = WebUtility.HtmlDecode(await client.GetStringAsync("/databases/" + databaseId + "/replication"));
+        await Assert.That(replication).Contains("is the home region and stays selected.");
+        await Assert.That(replication).Contains("With All regions cleared, save the selected regions as explicit placement.");
+        await Assert.That(replication.Contains("adding replica regions is unavailable here", StringComparison.Ordinal)).IsFalse();
 
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "orders" }))
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
