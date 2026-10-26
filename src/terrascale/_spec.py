@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,7 +15,7 @@ import httpx
 
 from . import models
 from .errors import CommitUncertainError, InvalidResponseError, TerraScaleError, response_request_id
-from .ids import validate_id
+from .ids import is_valid_id, validate_id
 
 DEFAULT_BASE_URL = "https://api.terrascale.tech"
 USER_AGENT_PREFIX = "terrascale-python/"
@@ -102,6 +103,16 @@ def name(value: str, what: str) -> str:
     return value
 
 
+def database_name(value: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[a-z][a-z0-9_-]{0,62}", value) is None:
+        raise ValueError("database names must match ^[a-z][a-z0-9_-]{0,62}$")
+    return value
+
+
+def database_selector(value: str) -> str:
+    return validate_id(value, "database") if is_valid_id(value) else database_name(value)
+
+
 def _json(r: httpx.Response) -> Any:
     return r.json() if r.content else None
 
@@ -164,7 +175,7 @@ def list_databases(project: str, limit: int | None, cursor: str | None) -> Call:
 
 def create_database(project: str, db: str, home_region: str | None, replica_regions: Sequence[str] | None,
                     all_regions: bool | None) -> Call:
-    body = {"name": name(db, "database"), **_placement(home_region, replica_regions, all_regions)}
+    body = {"name": database_name(db), **_placement(home_region, replica_regions, all_regions)}
     return Call("POST", ["v1", "projects", project, "databases"],
                 lambda r: models.Database.from_json(r.json()), body=body, success=(201,))
 
@@ -172,6 +183,12 @@ def create_database(project: str, db: str, home_region: str | None, replica_regi
 def get_database(project: str, db: str) -> Call:
     return Call("GET", ["v1", "projects", project, "databases", db], lambda r: models.Database.from_json(r.json()),
                 replay_safe=True)
+
+
+def rename_database(project: str, database_id: str, new_name: str) -> Call:
+    database_id = validate_id(database_id, "database")
+    return Call("PATCH", ["v1", "projects", project, "databases", database_id],
+                lambda r: models.Database.from_json(r.json()), body={"name": database_name(new_name)})
 
 
 def update_database(project: str, db: str, home_region: str | None, replica_regions: Sequence[str] | None,
@@ -189,7 +206,7 @@ def delete_database(project: str, db: str) -> Call:
 
 def branch_database(project: str, db: str, branch: str) -> Call:
     return Call("POST", ["v1", "projects", project, "databases", db, "branches"],
-                lambda r: models.Database.from_json(r.json()), body={"name": name(branch, "branch")}, success=(201,))
+                lambda r: models.Database.from_json(r.json()), body={"name": database_name(branch)}, success=(201,))
 
 
 # Collections -------------------------------------------------------------

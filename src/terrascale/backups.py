@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from ._spec import Call, name
+from ._spec import Call, database_name, database_selector
 from .ids import validate_id
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ class RestoredDatabase:
 
 class _Requests:
     def __init__(self, project: str, database: str):
-        self._path = ["v1", "projects", validate_id(project, "project"), "databases", name(database, "database")]
+        self._path = ["v1", "projects", validate_id(project, "project"), "databases", database_selector(database)]
 
     def _call(self, method: str, suffix: list[str], parse: Callable[[dict[str, Any]], Any], *,
               body: dict[str, Any] | None = None, params: dict[str, str] | None = None) -> Call:
@@ -101,13 +101,13 @@ class _Requests:
         return self._call("GET", ["backups"], BackupPage.from_json, params=params)
 
     def _restore(self, backup: str, new_name: str | None) -> Call:
-        body = {} if new_name is None else {"name": name(new_name, "database")}
+        body = {} if new_name is None else {"name": database_name(new_name)}
         return self._call("POST", ["backups", validate_id(backup, "backup"), "restore"], RestoredDatabase.from_json, body=body)
 
     def _recovery(self, operation: str, point_in_time: str, destination: Destination, new_name: str | None = None) -> Call:
         body = {"pointInTime": point_in_time, **self._destination(destination)}
         if new_name is not None:
-            body["name"] = name(new_name, "database")
+            body["name"] = database_name(new_name)
         parse = PointInTimePlan.from_json if operation == "plan" else RestoredDatabase.from_json
         return self._call("POST", ["point-in-time", operation], parse, body=body)
 
