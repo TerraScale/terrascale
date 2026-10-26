@@ -33,7 +33,7 @@ public sealed class AnalyticsBackendContractTests
                 requests = new { GET = 10L },
                 operations = new { read = 4L },
                 errors = 1L,
-                latency = new { p50Ms = 1d, p95Ms = 2d, p99Ms = 3d },
+                latency = new { p50Ms = .125d, p95Ms = 256d, p99Ms = 300d },
                 storageBytes = 4096L,
                 clientBandwidth = new { bytesSent = 13L, bytesReceived = 17L },
                 replicationBandwidth = new { bytesSent = 8L, bytesReceived = 9L }
@@ -53,6 +53,8 @@ public sealed class AnalyticsBackendContractTests
         var latency = AnalyticsService.Build(selection, result.Points).Charts.Single(chart => chart.Title.Contains("latency", StringComparison.Ordinal));
         await Assert.That(latency.Plot.Paths.Count).IsEqualTo(18).Because("equal database names cannot overwrite each other's percentiles");
         await Assert.That(latency.Plot.Paths.Select(path => path.Name).Distinct().Count()).IsEqualTo(18);
+        await Assert.That(latency.Title).Contains("(ms)");
+        await Assert.That(latency.Plot.Columns.SelectMany(column => column.Rows).Any(row => row.Name.StartsWith("p95", StringComparison.Ordinal) && row.Value == "256 ms")).IsTrue();
     }
 
     [Test]

@@ -112,7 +112,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
         var knownDatabaseTotal = UsageStorageSnapshot.SumCounters(databaseRows.Select(database => database.LogicalBytes));
         databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? ValueFormat.Percent(bytes, total) : null }).ToArray();
         var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, scope.Series.Select(point => point.Start).ToArray(),
-            [new("Reads", scope.Series.Select(point => point.Reads).ToArray()), new("Writes", scope.Series.Select(point => point.Writes).ToArray())]) : null;
+            [new("Reads", scope.Series.Select(point => (decimal)point.Reads).ToArray()), new("Writes", scope.Series.Select(point => (decimal)point.Writes).ToArray())]) : null;
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
             result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError,
             "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.", organizationStorage is not null, await replicationRead)

@@ -70,9 +70,9 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await ScenarioAsync("missing-latency");
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders);
             await Assert.That(await Stat("#analytics-summary", "Worst p95 latency").InnerTextAsync()).IsEqualTo("Not reported");
-            var latency = ownerPage.Locator("main .ts-card").Filter(new() { Has = ownerPage.GetByRole(AriaRole.Heading, new() { Name = "Approximate request latency percentiles (µs)", Exact = true }) });
+            var latency = ownerPage.Locator("main .ts-card").Filter(new() { Has = ownerPage.GetByRole(AriaRole.Heading, new() { Name = "Approximate request latency percentiles (ms)", Exact = true }) });
             await Assert.That(await latency.Locator(".ts-chart-marker").CountAsync()).IsEqualTo(0);
-            await latency.GetByText("No samples for Approximate request latency percentiles (µs).", new() { Exact = true }).WaitForAsync();
+            await latency.GetByText("No samples for Approximate request latency percentiles (ms).", new() { Exact = true }).WaitForAsync();
             await ScenarioAsync("zero");
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders);
             await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("0");

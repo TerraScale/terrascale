@@ -28,6 +28,7 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
         var faker = new Faker();
         var reads = 0;
         var omitOldStorage = false;
+        var staggeredStorage = false;
         var (bucket, duration) = range switch { "1h" => (60, 3600), "24h" => (3600, 86400), "7d" => (21600, 604800), _ => (86400, 2592000) };
         var to = DateTimeOffset.FromUnixTimeSeconds((DateTimeOffset.UtcNow.ToUnixTimeSeconds() / bucket + 1) * bucket);
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
@@ -45,11 +46,11 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
                     object Sample(int back) => new
                     {
                         start = to.AddSeconds(-back * bucket).ToOffset(TimeSpan.FromHours(-3)),
-                        requests = new { get = back == 2 ? scale : 0, post = back == 2 ? 2 * scale : 0 },
-                        operations = new { read = back == 2 ? 4 * scale : 0, put = back == 2 ? 5 * scale : 0, patch = back == 2 ? 6 * scale : 0, delete = back == 2 ? 7 * scale : 0 },
+                        requests = new { get = back == 1 ? scale : 0, post = back == 2 ? 2 * scale : 0 },
+                        operations = back == 2 ? new Dictionary<string, long> { ["read"] = 4 * scale, ["put"] = 5 * scale, ["patch"] = 6 * scale, ["delete"] = 7 * scale } : [],
                         errors = back == 2 ? scale : 0,
-                        latency = new { p50Ms = back == 2 ? .125 * scale : (double?)null, p95Ms = back == 2 ? 1.125 * scale : (double?)null, p99Ms = back == 2 ? 2.125 * scale : (double?)null },
-                        storageBytes = back == 2 ? 1024 * scale : (long?)null,
+                        latency = new { p50Ms = back == 2 ? .125 * scale : .0625 * scale, p95Ms = back == 2 ? 1.125 * scale : .5 * scale, p99Ms = back == 2 ? 2.125 * scale : scale },
+                        storageBytes = back == 2 ? 1024 * scale : staggeredStorage && region != "fra" ? 2048 * scale : (long?)null,
                         clientBandwidth = new { bytesSent = back == 2 ? 13 * scale : 0, bytesReceived = back == 2 ? 17 * scale : 0 },
                         replicationBandwidth = new { bytesSent = back == 2 ? 8 * scale : 0, bytesReceived = back == 2 ? 9 * scale : 0 }
                     };
@@ -64,12 +65,8 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
                             status = "healthy",
                             replicatedOps = scale,
                             lagMs = (double?)null,
-                            divergence = (bool?)null,
-                            convergenceMs = (double?)null,
-                            lastApplied = (DateTimeOffset?)null,
                             bandwidth = region == "gru" ? new[] { Meter("delta", senderReports ? 100 : 0, 0), Meter("anti_entropy", senderReports ? 20 : 0, 0) }
-                                : region == "sjc" ? new[] { Meter("delta", 0, 100), Meter("anti_entropy", 0, senderReports ? 0 : 20) } : [],
-                            series = Array.Empty<object>()
+                                : region == "sjc" ? new[] { Meter("delta", 0, 100), Meter("anti_entropy", 0, senderReports ? 0 : 20) } : []
                         };
                 }).Where(item => !path.EndsWith("/analytics", StringComparison.Ordinal) || !http.Request.Query.ContainsKey("region") ||
                     JsonSerializer.SerializeToElement(item).GetProperty("region").GetString() == http.Request.Query["region"])).ToArray();
@@ -102,20 +99,17 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
                 var before = reads;
                 var html = await Page("/analytics?range=" + range + "&database=" + database + "&region=" + region);
                 var scale = (database == "" ? 11 : database == databases[0].Id ? 1 : 10) * (region switch { "gru" => 1, "sjc" => 2, "fra" => 3, _ => 6 });
-                await Stat(html, "Requests", (3 * scale).ToString());
-                await Stat(html, "Errors", scale.ToString());
-                await Stat(html, "Operations", (22 * scale).ToString());
-                await Stat(html, "Storage", scale + ".0 KiB");
-                await Stat(html, "Client bandwidth", MetricFormat.Bytes(30 * scale));
-                await Stat(html, "Replication sent", MetricFormat.Bytes(8 * scale));
-                await Stat(html, "Replication received", MetricFormat.Bytes(9 * scale));
+                foreach (var (label, value) in new[] { ("Requests", (3 * scale).ToString()), ("Errors", scale.ToString()), ("Operations", (22 * scale).ToString()),
+                    ("Storage", MetricFormat.Bytes(1024 * scale)), ("Client bandwidth", MetricFormat.Bytes(30 * scale)), ("Replication sent", MetricFormat.Bytes(8 * scale)), ("Replication received", MetricFormat.Bytes(9 * scale)) })
+                    await Stat(html, label, value);
+                await Stat(html, "Worst p95 latency", MetricFormat.Latency(1.125 * (database == "" ? 10 : database == databases[0].Id ? 1 : 10) * (region == "" ? 3 : region == "gru" ? 1 : region == "sjc" ? 2 : 3)));
                 await Assert.That(html).Contains(" UTC: Sent " + (13 * scale).ToString("N0", CultureInfo.InvariantCulture) + ", Received " + (17 * scale).ToString("N0", CultureInfo.InvariantCulture));
                 foreach (var db in databases.Where(db => database == "" || db.Id == database))
                     foreach (var code in new[] { "gru", "sjc", "fra" }.Where(code => region == "" || code == region))
-                        foreach (var percentile in new[] { ("p50", 125), ("p95", 1125), ("p99", 2125) })
+                        foreach (var percentile in new[] { ("p50", .125), ("p95", 1.125), ("p99", 2.125) })
                         {
                             var sampleScale = db.Scale * (code == "gru" ? 1 : code == "sjc" ? 2 : 3);
-                            await Assert.That(html).Contains(percentile.Item1 + " " + db.Name + " / " + code.ToUpperInvariant() + " " + (percentile.Item2 * sampleScale).ToString("N0", CultureInfo.InvariantCulture));
+                            await Assert.That(html).Contains(percentile.Item1 + " " + db.Name + " / " + code.ToUpperInvariant() + " " + MetricFormat.Latency(percentile.Item2 * sampleScale));
                         }
                 await Assert.That(reads - before).IsEqualTo(1).Because("one regional endpoint already contains every observing region");
                 await Assert.That(html).Contains(to.AddSeconds(-bucket).UtcDateTime.ToString("MMM d HH:mm 'UTC'"));
@@ -124,29 +118,26 @@ public sealed class AnalyticsValuesJourneyTests(DashboardRootFixture fixture)
 
         var fullHome = await Page("/?range=" + range);
         var home = Section(fullHome, "analytics-summary");
-        await Stat(home, "Requests", "198");
-        await Stat(home, "Storage", "66.0 KiB");
-        await Stat(home, "Worst p95 latency", "33.8 ms");
-        await Stat(home, "Replication bandwidth", "1.3 KiB");
-        await Stat(Section(fullHome, "home-replication"), "Replication bandwidth", "1.3 KiB");
+        foreach (var (label, value) in new[] { ("Requests", "198"), ("Storage", MetricFormat.Bytes(66 * 1024)), ("Worst p95 latency", "33.8 ms"), ("Replication bandwidth", MetricFormat.Bytes(1320)) })
+            await Stat(home, label, value);
+        await Stat(Section(fullHome, "home-replication"), "Replication bandwidth", MetricFormat.Bytes(1320));
         foreach (var path in new[] { "/usage?range=" + range, "/databases/" + databases[0].Id + "/replication?range=" + range })
         {
             var html = await Page(path);
             var scale = path.StartsWith("/usage", StringComparison.Ordinal) ? 11 : 1;
-            await Stat(html, "Replicated ops", (6 * scale).ToString());
-            await Stat(html, "Replication bandwidth", scale == 11 ? "1.3 KiB" : "120 B");
-            await Stat(html, "Replication sent", MetricFormat.Bytes(senderReports ? 120 * scale : 0));
-            await Stat(html, "Replication received", MetricFormat.Bytes((senderReports ? 100 : 120) * scale));
+            foreach (var (label, value) in new[] { ("Replicated ops", (6 * scale).ToString()), ("Replication bandwidth", MetricFormat.Bytes(120 * scale)),
+                ("Replication sent", MetricFormat.Bytes(senderReports ? 120 * scale : 0)), ("Replication received", MetricFormat.Bytes((senderReports ? 100 : 120) * scale)) })
+                await Stat(html, label, value);
             await Assert.That(html).Contains("Not reported").Because("null lag and convergence are not zeros");
             await Assert.That(html).Contains("Wire bytes");
         }
         var detail = await Page("/databases/" + databases[0].Id + "?range=" + range);
-        await Assert.That(detail).Contains("fra 12,");
-        await Assert.That(detail).Contains("fra 54,");
-        await Assert.That(detail).Contains("fra 3,072,");
-        await Assert.That(detail).Contains("fra 3,375,");
-        await Assert.That(detail).Contains("fra Not reported,");
+        foreach (var value in new[] { "12", "54", "3,072", MetricFormat.Latency(3.375), "Not reported", "0" })
+            await Assert.That(detail).Contains("fra " + value + ",");
 
+        staggeredStorage = true;
+        await Stat(await Page("/analytics?range=" + range), "Storage", MetricFormat.Bytes(99 * 1024));
+        staggeredStorage = false;
         omitOldStorage = true;
         await Stat(await Page("/analytics?range=" + range), "Storage", "Not measured");
 

@@ -1,26 +1,35 @@
 using System.Globalization;
 using System.Text;
 using TerraScale.Dashboard.Shared.Charts;
+using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.Analytics;
 
-public sealed record AnalyticsSeries(string Name, long[] Values, bool[]? Missing = null);
+// Decimal preserves exact 64-bit counters alongside fractional millisecond observations.
+public sealed record AnalyticsSeries(string Name, decimal[] Values, bool[]? Missing = null);
 public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks,
     IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestDot> Markers, IReadOnlyList<RequestColumn> Columns)
 {
     public static AnalyticsLinePlot For(string label, string range, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)
+        => Build(label, range, starts, series, value => value.ToString("N0", CultureInfo.InvariantCulture), value => ChartGeometry.Compact(Math.Floor(value)), 0);
+
+    public static AnalyticsLinePlot ForLatency(string label, string range, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)
+        => Build(label, range, starts, series, value => MetricFormat.Latency((double)value), value => MetricFormat.Latency(value), -6);
+
+    private static AnalyticsLinePlot Build(string label, string range, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series,
+        Func<decimal, string> format, Func<double, string> axis, int firstPower)
     {
         if (starts.Count == 0 || series.Count == 0 || series.Any(row => row.Values.Length != starts.Count || row.Missing is { } missing && missing.Length != starts.Count))
             return new(label, "", [], [], [], [], []);
         bool Missing(AnalyticsSeries row, int index) => row.Missing?[index] == true;
         var maximum = series.SelectMany(row => row.Values.Where((value, index) => !Missing(row, index))).DefaultIfEmpty().Max();
         // Four whole, round grid steps (1, 2 or 5 × 10ⁿ each): 40 → 0, 10, 20, 30, 40 rather than 0, 12, 25, 37, 50.
-        var gridStep = Enumerable.Range(0, 20).SelectMany(power => new[] { 1d, 2d, 5d }.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= maximum);
+        var gridStep = Enumerable.Range(firstPower, 20 - firstPower).SelectMany(power => new[] { 1d, 2d, 5d }.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= (double)maximum);
         var scale = maximum == 0 ? 1 : gridStep * 4;
         double X(int index) => 48 + 660d * index / Math.Max(1, starts.Count - 1);
-        double Y(long value) => 14 + 154 * (1 - value / scale);
+        double Y(decimal value) => 14 + 154 * (1 - (double)value / scale);
         string C(double value) => ChartGeometry.Coordinate(value);
-        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? ChartGeometry.Compact(Math.Floor(scale * (4 - step) / 4)) : step == 4 ? "0" : "")).ToArray();
+        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? axis(scale * (4 - step) / 4) : step == 4 ? "0" : "")).ToArray();
         var seen = new HashSet<int>();
         var ticks = Enumerable.Range(0, 5).Select(step =>
         {
@@ -48,7 +57,7 @@ public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<
         for (var index = stepSize / 2; index < starts.Count; index += stepSize)
         {
             var header = starts[index].UtcDateTime.ToString("MMM d HH:mm 'UTC'", CultureInfo.InvariantCulture);
-            var rows = paths.Select((path, order) => new RequestTipRow(path.Name, Missing(series[order], index) ? "Not reported" : series[order].Values[index].ToString("N0", CultureInfo.InvariantCulture), path.Class, path.Dash, C(14 + 6 + 17 * (order + 1.5)))).ToArray();
+            var rows = paths.Select((path, order) => new RequestTipRow(path.Name, Missing(series[order], index) ? "Not reported" : format(series[order].Values[index]), path.Class, path.Dash, C(14 + 6 + 17 * (order + 1.5)))).ToArray();
             var width = Math.Max(header.EnumerateRunes().Count() * 6.8, 32 + (rows.Max(row => row.Name.EnumerateRunes().Count()) + rows.Max(row => row.Value.EnumerateRunes().Count())) * 6.8 + 16) + 20;
             var left = X(index) + 10 + width > 708 ? Math.Max(0, X(index) - 10 - width) : X(index) + 10;
             var dots = paths.Select((path, order) => (path, order)).Where(value => !Missing(series[value.order], index)).Select(value => new RequestDot(C(X(index)), C(Y(series[value.order].Values[index])), value.path.Class, value.path.Dash)).ToArray();
