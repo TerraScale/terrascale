@@ -54,10 +54,10 @@ public sealed class StorageQuotaTests
         var begun = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"BEGIN"}},{"type":"execute","stmt":{"sql":"DROP TABLE t"}}]}""");
         await Assert.That(Types(begun.Json)).IsEqualTo("ok:execute,ok:execute");
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-        var replay = await PostAsync(api, $$"""{"baton":"{{begun.Json.GetProperty("baton").GetString()}}","requests":[{"type":"execute","stmt":{"sql":"SELECT 1"}}]}""");
+        var replay = await PostAsync(api, $$$"""{"baton":"{{{begun.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql":"SELECT 1"}}]}""");
         await Assert.That(Types(replay.Json)).IsEqualTo("ok:execute");
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 1 }));
-        var ended = await PostAsync(api, $$"""{"baton":"{{replay.Json.GetProperty("baton").GetString()}}","requests":[{"type":"execute","stmt":{"sql":"{{finish}}"}},{"type":"close"}]}""");
+        var ended = await PostAsync(api, $$$"""{"baton":"{{{replay.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql":"{{{finish}}}"}},{"type":"close"}]}""");
         await Assert.That(Types(ended.Json)).IsEqualTo("ok:execute,ok:close");
         var reuse = await api.PutAsync(DocumentApi.NewId(), Data(21));
         if (finish == "COMMIT")
