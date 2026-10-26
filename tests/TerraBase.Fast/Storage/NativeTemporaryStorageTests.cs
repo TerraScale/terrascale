@@ -47,13 +47,14 @@ public sealed class NativeTemporaryStorageTests
             await Assert.That(() => new NativeTemporaryStorage(new TerraBaseOptions { DataDirectory = directory + "-other", StorageThreads = 1, StorageQueue = 16, MemoryBudget = 64L << 20 }).Initialize())
                 .Throws<TerraBaseConfigurationException>();
 
-            using var connection = new SqliteConnection("Data Source=:memory:");
+            // Memory databases use Turso's MemoryIO even for spill; use the filesystem backend being verified.
+            using var connection = new SqliteConnection($"Data Source={Path.Combine(temporary, "sort.db")}");
             connection.Open();
             using var command = connection.CreateCommand();
-            // Pinned Turso sizes its sorter from cache_size; payloads exceed one page and force file spill.
+            // Pinned Turso clamps cache_size to 200 pages (800 KiB); use 2 MiB to force file spill.
             command.CommandText = """
                 PRAGMA temp_store=FILE; PRAGMA cache_size=1; CREATE TABLE spill(k BLOB);
-                WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<128)
+                WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<512)
                 INSERT INTO spill SELECT randomblob(4096) FROM n;
                 """;
             command.ExecuteNonQuery();
