@@ -21,10 +21,10 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
 
     private readonly ConcurrentDictionary<string, Accepted> _entries = new(StringComparer.Ordinal);
 
-    /// <summary>What the handler accepted: its claims and project-token fields, the keys it checked, and exp.</summary>
+    /// <summary>What the handler accepted: its claims and project-token fields, the keys it checked, exp, and an API key's id and key_gen.</summary>
     internal sealed record Accepted(
         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
-        string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists);
+        string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key);
 
     public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 

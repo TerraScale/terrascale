@@ -537,6 +537,49 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }))).IsEqualTo((400, "invalid_grant"));
     }
 
+    [Test]
+    public async Task Key_tokens_report_live_revocation_rotation_and_the_keys_expiration()
+    {
+        await using var oidc = await StartAsync();
+        var (_, token) = await oidc.SignInUserAsync("key-status@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Production");
+        var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
+        const string status = "/v1/terrascale/api-keys/self";
+        var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "status", scopes = ReadOnly }, HttpStatusCode.Created);
+        var key = created.GetProperty("key").GetString()!;
+        var id = key[..26];
+        async Task<string> ExchangeAsync(string secret)
+        {
+            using var response = await oidc.ApiKeyTokenAsync(secret);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            return (await OidcHarness.JsonAsync(response)).GetProperty("access_token").GetString()!;
+        }
+
+        var access = await ExchangeAsync(key);
+        var jwt = await oidc.ValidateAsync(access, Audience);
+        await Assert.That(jwt.GetClaim("key_id").Value).IsEqualTo(id);
+        await Assert.That(jwt.GetClaim("key_gen").Value).IsEqualTo(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..16]);
+        using (var live = await oidc.CallAsync(HttpMethod.Get, status, access))
+        {
+            await Assert.That(live.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await OidcHarness.JsonAsync(live)).GetProperty("key_id").GetString()).IsEqualTo(id);
+            await Assert.That(live.Headers.CacheControl!.NoStore).IsTrue();
+        }
+
+        var rotated = await oidc.OkAsync(HttpMethod.Post, $"{keys}/{id}/rotate", token, new { previous_secret_ttl = 0 });
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, status, access)).IsEqualTo((401, "key_revoked"));
+        var fresh = await ExchangeAsync(rotated.GetProperty("key").GetString()!);
+        await oidc.OkAsync(HttpMethod.Get, status, fresh);
+        await oidc.OkAsync(HttpMethod.Delete, $"{keys}/{id}", token, status: HttpStatusCode.NoContent);
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, status, fresh)).IsEqualTo((401, "key_revoked"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, status, token)).IsEqualTo((401, "invalid_token"));
+        var expires = DateTimeOffset.UtcNow.AddSeconds(5);
+        var shortKey = (await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "short", scopes = ReadOnly, expires_at = expires }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+        var shortToken = await oidc.ValidateAsync(await ExchangeAsync(shortKey), Audience);
+        await Assert.That(new DateTimeOffset(shortToken.ValidTo, TimeSpan.Zero)).IsLessThanOrEqualTo(expires);
+    }
+
     private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience);
 
     private Task<AuthTestServer> StartReplicaAsync(OidcHarness oidc, ManualClock clock) =>

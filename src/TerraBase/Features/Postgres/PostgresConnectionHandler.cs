@@ -69,6 +69,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             if (session is not null)
             {
+                // A dashboard key's session, idle or busy, is aborted once ts-auth refuses the key: output not yet flushed
+                // is dropped with it (docs/terrabase/key-revocation.md).
+                using var refused = new CancellationTokenSource();
+                using var abort = refused.Token.Register(() => connection.Abort(new ConnectionAbortedException("the API key was refused")));
+                using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key, refused, services.GetRequiredService<TimeProvider>());
                 await ServeAsync(session, input, output, connection.ConnectionClosed).ConfigureAwait(false);
             }
         }
@@ -208,7 +213,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             do
             {
                 session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
-                    parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""));
+                    parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
+                {
+                    Key = authorized.Key,
+                };
             }
             while (!_sessions.TryAdd(session.ProcessId, session));
 
@@ -304,6 +312,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             return new PgError("28000", "ip_not_allowed: " + IpAllowlists.Refusal(client));
         }
 
+        // The key's live status, before the session starts and before every statement (docs/terrabase/key-revocation.md).
+        switch ((await services.GetRequiredService<IKeyAuthority>().CheckAsync(key.Key, cancellationToken).ConfigureAwait(false)).Value)
+        {
+            case KeyRefused refused:
+                return new PgError("28000", refused.Code + ": " + KeyAuthorityMessages.Refused(refused.Code), Fatal: true);
+            case Unavailable:
+                return new PgError("57P03", "auth_unavailable: " + KeyAuthorityMessages.Unavailable, Fatal: true);
+        }
+
         var organization = await services.GetRequiredService<IProjectCatalog>()
             .ResolveProjectAsync(key.ProjectId, key.Subject, createIn: null, cancellationToken).ConfigureAwait(false);
         if (organization is Unavailable)
@@ -314,7 +331,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return organization is string found
             ? await Tenants.FindDatabaseAsync(found, key.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) switch
             {
-                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
+                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite), key.Key),
                 Unavailable => new PgError("57P03", "the database is unavailable; retry"),
                 _ => Denied,
             }
@@ -349,6 +366,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         if (await QueryAsync(session, message.CString(), output, cancellationToken).ConfigureAwait(false) is { } error)
                         {
                             Fail(session, output, error);
+                            if (error.Fatal)
+                            {
+                                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                                return;
+                            }
                         }
 
                         await SyncAsync(session, output, cancellationToken).ConfigureAwait(false);
@@ -365,6 +387,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                         if (await ExtendedAsync(session, (char)type, message, output, cancellationToken).ConfigureAwait(false) is { } refused)
                         {
                             Fail(session, output, refused);
+                            if (refused.Fatal)
+                            {
+                                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                                return;
+                            }
+
                             failed = true;
                         }
 
@@ -381,7 +409,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     // An error inside a transaction aborts it, as in PostgreSQL: only ROLLBACK or COMMIT (which rolls back) run next.
     private static void Fail(Session session, PgWriter output, PgError error)
     {
-        output.Error(error.Code, error.Message);
+        output.Error(error.Code, error.Message, error.Fatal);
         session.Failed = !session.Sql.IsAutocommit;
     }
 
@@ -563,6 +591,13 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return new PgError("0A000", "Execute with a row limit is not supported yet");
                 }
 
+                // Rows Describe already read are sent only if the key still reaches the database now.
+                if (running.Pending is not null && await AuthorizeAsync(session.ApiKey, session.Database, session.Client, cancellationToken).ConfigureAwait(false) is PgError stale)
+                {
+                    running.Pending = null;
+                    return stale.Fatal ? stale : Denied;
+                }
+
                 var executedOutcome = running.Pending ?? await RunAsync(session, running.Statement, running.Args, cancellationToken).ConfigureAwait(false);
                 running.Pending = null;
                 if (executedOutcome is PgError executeError)
@@ -706,9 +741,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         session.Track(running);
         try
         {
-            if (await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false) is not Authorized { Database: var database })
+            var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
+            if (access is not Authorized { Database: var database })
             {
-                return Denied;
+                // A revoked or expired key ends the session; any other refusal stays the generic one.
+                return access is PgError { Fatal: true } refusal ? refusal : Denied;
             }
 
             // The HTTP pipeline's admission (QosExtensions): one organization lease, then the tenant's memory and budgets.
@@ -853,7 +890,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return bytes;
     }
 
-    private sealed record Authorized(TenantContext Database, bool CanWrite);
+    private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null);
 
     // Columns are fixed once described, so later executions send the types the client was told.
     private sealed class Prepared(PgStatement statement, int[] oids)
@@ -886,6 +923,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     // The running statement's cancellation, swapped under a lock so CancelRequest never cancels a disposed source.
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
+        /// <summary>The dashboard key's token as the session's watch checks it; null for a <c>tb_</c> key.</summary>
+        public KeyToken? Key { get; init; }
+
         private readonly Lock _gate = new();
         private CancellationTokenSource? _running;
 

@@ -48,6 +48,7 @@ public static class UserAuthExtensions
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddSingleton<IProjectAuthorityVerifier, TsAuthProjectAuthorityVerifier>();
         services.AddSingleton<TsAuthKeyExchange>();
+        services.AddSingleton<IKeyAuthority, TsAuthKeyAuthority>();
         services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, UserAuthenticationHandler>(UserAuthenticationHandler.SchemeName, configureOptions: null)
@@ -85,6 +86,34 @@ public static class UserAuthExtensions
     public static WebApplication UseTerraBaseProjectCheck(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
+        app.Use(async (context, next) =>
+        {
+            // An API key's token acts only while ts-auth says its key still does, and only as long as it does: a request
+            // still running (a slow body, a changes stream) is aborted once the key is refused (docs/terrabase/key-revocation.md).
+            if (Identity(context.User, UserAuthenticationHandler.SchemeName) is null || context.Features.Get<ProjectToken>()?.Key is not { } key)
+            {
+                await next(context).ConfigureAwait(false);
+                return;
+            }
+
+            var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
+            switch ((await authority.CheckAsync(key, context.RequestAborted).ConfigureAwait(false)).Value)
+            {
+                case KeyRefused refused:
+                    context.Response.Headers.WWWAuthenticate = $"Bearer error=\"invalid_token\", error_description=\"{refused.Code}\"";
+                    await BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, refused.Code, KeyAuthorityMessages.Refused(refused.Code), op: null).ConfigureAwait(false);
+                    return;
+                case Unavailable:
+                    context.Response.Headers.RetryAfter = "1";
+                    await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null).ConfigureAwait(false);
+                    return;
+            }
+
+            using var refusal = new CancellationTokenSource();
+            using var abort = refusal.Token.Register(context.Abort);
+            using var watch = KeyWatch.Start(authority, key, refusal, context.RequestServices.GetRequiredService<TimeProvider>());
+            await next(context).ConfigureAwait(false);
+        });
         app.Use(async (context, next) =>
         {
             // An API key's token is used only from its key's and project's allowlists, on every route.

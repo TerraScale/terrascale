@@ -68,7 +68,7 @@ internal sealed class UserAuthenticationHandler(
         var cacheKey = ValidatedTokens.KeyOf(token);
         if (validated.TryGet(cacheKey, keys, out var accepted))
         {
-            return Success(accepted);
+            return Success(accepted, token);
         }
 
         var checkedWith = keys;
@@ -109,7 +109,7 @@ internal sealed class UserAuthenticationHandler(
         {
             return AuthenticateResult.Fail("invalid token kind");
         }
-        foreach (var name in new[] { "project_id", "org_id", "database", "scope", "key_cidrs", "project_cidrs" })
+        foreach (var name in new[] { "project_id", "org_id", "database", "scope", "key_cidrs", "project_cidrs", "key_id", "key_gen" })
         {
             if (jwt.TryGetPayloadValue<object>(name, out var claim) && claim is not string)
             {
@@ -195,6 +195,19 @@ internal sealed class UserAuthenticationHandler(
             }
         }
 
+        // An API key's token names its key and key string; the project check asks ts-auth whether both still act.
+        (string Id, string Generation)? key = null;
+        var hasKey = jwt.TryGetPayloadValue<string>("key_id", out var keyId);
+        if (hasKey | jwt.TryGetPayloadValue<string>("key_gen", out var generation))
+        {
+            if (!hasKey || keyId != user || endUser || !KeyToken.IsGeneration(generation))
+            {
+                return AuthenticateResult.Fail("invalid API key claims");
+            }
+
+            key = (keyId, generation);
+        }
+
         // A platform role rides only on a user's own sign-in token, never on a project token.
         if (project is null && jwt.TryGetPayloadValue<string>(Platform.PlatformExplore.RoleClaim, out var role) && role == Platform.PlatformExplore.AdminRole)
         {
@@ -210,15 +223,16 @@ internal sealed class UserAuthenticationHandler(
         // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.
         scope = endUser ? "documents:read documents:write" : scope;
         accepted = new ValidatedTokens.Accepted(
-            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists);
+            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key);
         validated.Add(cacheKey, accepted);
-        return Success(accepted);
+        return Success(accepted, token);
     }
 
-    private AuthenticateResult Success(ValidatedTokens.Accepted accepted)
+    private AuthenticateResult Success(ValidatedTokens.Accepted accepted, string token)
     {
         var principal = new ClaimsPrincipal(new ClaimsIdentity(accepted.Claims.Select(claim => new Claim(claim.Type, claim.Value)), SchemeName));
-        Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero), accepted.Allowlists));
+        Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero), accepted.Allowlists,
+            accepted.Key is var (id, generation) ? new KeyToken(id, generation, accepted.Project, token) : null));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 

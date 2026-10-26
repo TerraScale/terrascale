@@ -723,6 +723,7 @@ internal static class LocationResults
 [JsonSerializable(typeof(ApiKeyBody))]
 [JsonSerializable(typeof(ApiKeySecretBody))]
 [JsonSerializable(typeof(ApiKeyPageBody))]
+[JsonSerializable(typeof(ApiKeyStatusBody))]
 [JsonSerializable(typeof(CreateInvitationRequest))]
 [JsonSerializable(typeof(InvitationTokenRequest))]
 [JsonSerializable(typeof(StartTransferRequest))]

@@ -42,9 +42,15 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
     /// <summary>The space-separated CIDRs every API key token of the project must be used from (absent: any address).</summary>
     public const string ProjectCidrsClaim = "project_cidrs";
 
+    /// <summary>The API key an API key's token was issued for (equal to its <c>sub</c>).</summary>
+    public const string KeyIdClaim = "key_id";
+
+    /// <summary>Which of the key's strings the token was issued for (<see cref="ApiKeys.Generation"/>), so a rotation retires it.</summary>
+    public const string KeyGenerationClaim = "key_gen";
+
     /// <summary>
-    /// The lifetime of organization and project tokens. TerraBase validates them offline, so this bounds how long one
-    /// keeps working after its key is revoked or its project or organization is deleted.
+    /// The lifetime of organization and project tokens. TerraBase validates them offline; an API key's token is also checked
+    /// against the key's live status within seconds (docs/terrabase/key-revocation.md), others only expire.
     /// </summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(60);
 
@@ -88,7 +94,19 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the key's.");
         }
 
-        var identity = Identity(key.Id, key.OrganizationId, project, requested.IsEmpty ? key.Scopes : requested, Lifetime);
+        // Never past the key's own expiry; key_id and key_gen let TerraBase ask GET /v1/terrascale/api-keys/self whether the
+        // key, and the key string the token came from, still act (docs/terrabase/key-revocation.md).
+        var now = clock.GetUtcNow();
+        var lifetime = key.ExpiresAt is { } end && end - now < Lifetime ? end - now : Lifetime;
+        if (lifetime <= TimeSpan.Zero)
+        {
+            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
+        }
+
+        var identity = Identity(key.Id, key.OrganizationId, project, requested.IsEmpty ? key.Scopes : requested, lifetime)
+            .SetClaim(KeyIdClaim, key.Id)
+            .SetClaim(KeyGenerationClaim, ApiKeys.Generation(secret))
+            .SetExpirationDate(now + lifetime);
         if (key.Database is { } database)
         {
             identity.SetClaim(DatabaseClaim, database);

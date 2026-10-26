@@ -24,7 +24,8 @@ internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_t
 /// <param name="Scopes">Granted scopes.</param>
 /// <param name="ValidTo">When the access token expires.</param>
 /// <param name="Allowlists">The key's and project's IP allowlists (<see cref="IpAllowlists"/>); empty for none.</param>
-internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists);
+/// <param name="Key">The token as <see cref="IKeyAuthority"/> checks it before every statement.</param>
+internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken Key);
 
 /// <summary>A key's grant, a refused key, or ts-auth is unavailable.</summary>
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
@@ -33,7 +34,7 @@ internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
 /// Accepts a dashboard API key (<c>&lt;key id&gt;_&lt;secret&gt;</c>, a ts-auth client credential) where a client can only send
 /// a password, as on the Postgres wire: exchanges it at ts-auth's token endpoint with the client credentials grant and
 /// validates the access token exactly like a bearer token. A grant is reused until shortly before its token expires and
-/// then exchanged again, so revoking the key stops it within one token lifetime.
+/// then exchanged again; whether its key still acts is <see cref="IKeyAuthority"/>'s answer, asked before every statement.
 /// </summary>
 internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFactory http, IIssuerKeys issuerKeys, IMemoryBudget budget, TimeProvider time)
 {
@@ -43,7 +44,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private const int MaxGrants = 4096;
 
     // Exchanged again this long before the token expires, so a statement never runs on a token about to lapse. ts-auth
-    // issues 60-second project tokens: a key exchanges about every 50 seconds and a revoked key stops within a minute.
+    // issues 60-second project tokens: a key exchanges about every 50 seconds.
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(10);
     private static readonly JsonWebTokenHandler Tokens = new();
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
@@ -177,7 +178,9 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt
             || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
             || !jwt.TryGetPayloadValue<string>("project_id", out var project) || !EntityIds.IsValid(project)
-            || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
+            || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid)
+            || !jwt.TryGetPayloadValue<string>("key_id", out var keyId) || keyId != subject
+            || !jwt.TryGetPayloadValue<string>("key_gen", out var generation) || !KeyToken.IsGeneration(generation))
         {
             return new NotFound();
         }
@@ -200,7 +203,8 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             }
         }
 
-        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists);
+        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
+            new KeyToken(subject, generation, project, token));
     }
 
     private static Unavailable Unavailable() => new("ts-auth key exchange is unavailable");

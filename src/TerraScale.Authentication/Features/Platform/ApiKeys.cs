@@ -216,6 +216,43 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             : null;
     }
 
+    /// <summary>The <c>key_gen</c> of a key string: the first 16 hex digits of its stored digest.</summary>
+    public static string Generation(string secret) => Tokens.Sha256Hex(secret)[..16];
+
+    /// <summary>
+    /// Why a token of key <paramref name="keyId"/>, issued for the key string of <paramref name="generation"/> to act in
+    /// <paramref name="projectId"/>, no longer acts (<c>key_revoked</c> or <c>key_expired</c>), or null while it still does:
+    /// the key, its organization and the project still exist, and the key string still works. Always read from the store.
+    /// </summary>
+    public async Task<string?> RefusalAsync(string keyId, string generation, string? projectId, CancellationToken cancellationToken)
+    {
+        var document = IsKeyId(keyId) ? await store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken).ConfigureAwait(false) : null;
+        if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId)
+        {
+            return "key_revoked";
+        }
+
+        if (key.ExpiresAt <= clock.GetUtcNow())
+        {
+            return "key_expired";
+        }
+
+        if (generation.Length != 16 || !this.Digests(key).Any(digest => digest.StartsWith(generation, StringComparison.Ordinal))
+            || projectId is not null && key.ProjectId is not null && key.ProjectId != projectId)
+        {
+            return "key_revoked";
+        }
+
+        // The same reads as an exchange (PlatformGrants.ApiKeyAsync), together: one storage round trip.
+        var organization = directory.OrganizationAsync(key.OrganizationId, cancellationToken);
+        var project = projectId is null ? Task.FromResult<Versioned<ProjectRecord>?>(null) : directory.ProjectAsync(projectId, cancellationToken);
+        await Task.WhenAll(organization, project).ConfigureAwait(false);
+        return await organization.ConfigureAwait(false) is null
+            || projectId is not null && (await project.ConfigureAwait(false))?.Value.OrganizationId != key.OrganizationId
+            ? "key_revoked"
+            : null;
+    }
+
     /// <summary>The digests a presented key string may match now: the current one, and the previous one in its grace.</summary>
     public IReadOnlyList<string> Digests(ApiKeyRecord key)
     {
