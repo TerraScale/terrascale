@@ -89,7 +89,8 @@ type Client struct {
 }
 
 // TokenSource supplies access tokens; TerraBase validates their claims.
-// Sources also implementing Invalidate(string) refresh once on a 401.
+// Sources also implementing Invalidate(string) refresh once on a non-permanent 401.
+// Key refusals call Reject(string, error), when supported, and never refresh.
 type TokenSource interface {
 	Token(context.Context) (string, error)
 }
@@ -173,7 +174,18 @@ func (c *Client) bearerToken(ctx context.Context, override string) (string, erro
 	return token, nil
 }
 
-func (c *Client) invalidateToken(token string) bool {
+func (c *Client) invalidateToken(token string, refusal *APIError, refreshed bool) bool {
+	if refusal.Code == ErrKeyRevoked || refusal.Code == ErrKeyExpired {
+		if source, ok := c.tokenSource.(interface{ Reject(string, error) }); ok {
+			source.Reject(token, refusal)
+		} else if source, ok := c.tokenSource.(interface{ Invalidate(string) }); ok {
+			source.Invalidate(token)
+		}
+		return false
+	}
+	if refreshed {
+		return false
+	}
 	if source, ok := c.tokenSource.(interface{ Invalidate(string) }); ok {
 		source.Invalidate(token)
 		return true
@@ -297,7 +309,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			return resp, nil
 		}
 		// Authentication refuses the request before an operation can execute.
-		if resp.status == http.StatusUnauthorized && req.token == "" && !refreshed && c.invalidateToken(outbound.token) {
+		if resp.status == http.StatusUnauthorized && req.token == "" && c.invalidateToken(outbound.token, parseAPIError(resp.status, resp.header, resp.body), refreshed) {
 			refreshed = true
 			continue
 		}
@@ -336,7 +348,7 @@ func isTransient503(e *APIError) bool {
 	}
 	switch e.Code {
 	case ErrCapacity, ErrStorageUnavailable, ErrDependenciesUnavail, ErrCommitUncertain,
-		ErrRemoteRegionUnavailable, ErrConfirmationBusy, ErrCatalogStale:
+		ErrRemoteRegionUnavailable, ErrConfirmationBusy, ErrCatalogStale, ErrAuthUnavailable:
 		return true
 	}
 	return false

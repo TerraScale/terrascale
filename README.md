@@ -689,3 +689,15 @@ PostgreSQL passwords and API key token sources use
 `<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`:
 the ULID alone is the OAuth client ID. Credential prefixes identify secret
 formats and are never part of an entity ID.
+
+### Permanent API key refusals
+
+TerraBase `401 key_revoked` and `401 key_expired` match `v1.ErrKeyRevoked` and
+`v1.ErrKeyExpired` through `errors.Is`; `*v1.APIError` retains code and message.
+They never retry or re-exchange the key. `tsauth.TokenSource` drops its cached
+token and stays refused (including concurrent exchanges); create a new source
+with a replacement key. Custom sources must implement `Reject(string, error)`
+to stop future exchanges; sources with only `Invalidate(string)` have their cache dropped.
+Token endpoint `invalid_client` is a terminal `*tsauth.Error`.
+`503 auth_unavailable` matches `v1.ErrAuthUnavailable` and follows the existing
+replay-safe request backoff and `Retry-After` policy, keeping the token cache.
