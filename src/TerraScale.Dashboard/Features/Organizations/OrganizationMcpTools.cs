@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Platform.Mcp;
 namespace TerraScale.Dashboard.Features.Organizations;
 
 [McpServerToolType]
-public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountService accounts, OrganizationOperations operations,
+public sealed partial class OrganizationMcpTools(IHttpContextAccessor http, AccountService accounts, OrganizationOperations operations,
     OrganizationLifecycleService lifecycle, InvitationService invitations, IOrganizationAccess access, TimeProvider time)
 {
     private const string OrganizationDescription = "Organization ID to act on. Defaults to the caller's current dashboard organization.";
