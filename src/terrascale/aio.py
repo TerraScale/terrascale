@@ -101,8 +101,12 @@ class AsyncTerraScale:
             if 200 <= response.status_code < 300:
                 return call.decode(response)
             err = _error(response, mutation=not call.replay_safe)
+            if response.status_code == 401 and err.code in {"key_revoked", "key_expired"}:
+                if self._source is not None:
+                    self._source.reject(err)
+                raise err
             if response.status_code == 401 and self._source is not None and not refreshed:
-                # An expired or revoked token was never processed: refresh once.
+                # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
                 continue

@@ -60,6 +60,10 @@ def test_bad_api_key_is_token_error(fake: Fake) -> None:
         client.list_databases()
     assert e.value.status == 401 and e.value.code == "invalid_client"
     assert other not in str(e.value)
+    with pytest.raises(TokenError) as again:
+        client.list_databases()
+    assert again.value.code == "invalid_client"
+    assert len(fake.requests) == 1
 
 
 def test_config_validation(monkeypatch: pytest.MonkeyPatch) -> None:
