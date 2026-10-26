@@ -30,7 +30,7 @@ const maximumBackoffAttempt = 8;
 /** @param {import("./errors.js").TerraBaseV1Error} error @returns {boolean} */
 function isRetryable(error) {
   return (error.status === 429 && error.code === "shape_busy") ||
-    (error.status === 503 && (error.code === "unavailable" || error.code === "shape_too_large"));
+    (error.status === 503 && (error.code === "unavailable" || error.code === "auth_unavailable" || error.code === "shape_too_large"));
 }
 /** @param {number} attempt @param {number | undefined} retryAfter @returns {number} */
 function retryDelay(attempt, retryAfter) {

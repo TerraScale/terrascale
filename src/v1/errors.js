@@ -70,6 +70,7 @@ export class TerraBaseV1Error extends Error {
 export const V1ErrorCode = Object.freeze({
   invalidRequest: "invalid_request", invalidQuery: "invalid_query", invalidCursor: "invalid_cursor",
   invalidPatch: "invalid_patch", sortRequiresIndex: "sort_requires_index", assertRequiresIndex: "assert_requires_index",
+  keyRevoked: "key_revoked", keyExpired: "key_expired", authUnavailable: "auth_unavailable",
   invalidKey: "invalid_key", forbiddenScope: "forbidden_scope", notFound: "not_found",
   unknownDatabase: "unknown_database", unknownCollection: "unknown_collection", unknownRoute: "unknown_route",
   methodNotAllowed: "method_not_allowed", patchConflict: "patch_conflict", nameTaken: "name_taken",
@@ -95,6 +96,18 @@ export class V1InvalidKeyError extends TerraBaseV1Error {
     super(init);
     this.name = "V1InvalidKeyError";
   }
+}
+
+/** `401 key_revoked`: permanent; replace the key without retrying or exchanging it. */
+export class V1KeyRevokedError extends V1InvalidKeyError {
+  /** @param {TerraBaseV1ErrorInit} init */
+  constructor(init) { super(init); this.name = "V1KeyRevokedError"; }
+}
+
+/** `401 key_expired`: permanent; replace the key without retrying or exchanging it. */
+export class V1KeyExpiredError extends V1InvalidKeyError {
+  /** @param {TerraBaseV1ErrorInit} init */
+  constructor(init) { super(init); this.name = "V1KeyExpiredError"; }
 }
 
 /** `403 forbidden_scope`: the key's scopes do not cover the request. */
@@ -147,6 +160,8 @@ function typedError(init) {
   }
   switch (init.code) {
     case "precondition_failed": return new V1PreconditionFailedError(init);
+    case "key_revoked": return new V1KeyRevokedError(init);
+    case "key_expired": return new V1KeyExpiredError(init);
     case "invalid_key": return new V1InvalidKeyError(init);
     case "forbidden_scope": return new V1ForbiddenScopeError(init);
     case "not_found": return new V1NotFoundError(init);

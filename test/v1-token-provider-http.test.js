@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { createTerraBaseClient, TerraBaseV1Error } from "../src/index.js";
+import { createTerraBaseClient, TerraBaseV1Error, V1KeyRevokedError, V1KeyExpiredError } from "../src/index.js";
 import { fixture, json, project } from "./helpers/v1-http.js";
 
 const first = "first.payload.signature";
@@ -131,4 +131,35 @@ describe("per-request bearer token providers over HTTP", () => {
     expect(token).toHaveBeenCalledTimes(1);
     expect(requests).toHaveLength(1);
   });
+  test.each([["key_revoked", V1KeyRevokedError], ["key_expired", V1KeyExpiredError]])(
+    "%s is typed without retrying or resolving the provider again", async (code, type) => {
+      const { baseUrl, requests } = await fixture((_request, response) => {
+        response.setHeader("www-authenticate", 'Bearer error="invalid_token"');
+        json(response, { error: { code, message: "Replace the key." } }, 401);
+      });
+      const token = vi.fn(() => first);
+      const docs = createTerraBaseClient({ project, baseUrl, token }).database("app").collection("users");
+      const error = await docs.get("01ARZ3NDEKTSV4RRFFQ69G5FA2").catch(error => error);
+      expect(error).toBeInstanceOf(type);
+      expect(error).toMatchObject({ status: 401, code });
+      expect(error.message).toContain("Replace the key.");
+      expect(requests).toHaveLength(1);
+      expect(token).toHaveBeenCalledTimes(1);
+    });
+
+  test("auth_unavailable retries safe reads while retaining the token", async () => {
+    let calls = 0;
+    const { baseUrl, requests } = await fixture((_request, response) => {
+      if (++calls === 1) {
+        response.setHeader("retry-after", "1");
+        json(response, { error: { code: "auth_unavailable", message: "Try later." } }, 503);
+      } else json(response, document);
+    });
+    const token = vi.fn(() => first);
+    const docs = createTerraBaseClient({ project, baseUrl, token }).database("app").collection("users");
+    await expect(docs.get("01ARZ3NDEKTSV4RRFFQ69G5FA2")).resolves.toEqual(document);
+    expect(requests).toHaveLength(2);
+    expect(token).toHaveBeenCalledTimes(1);
+  });
+
 });

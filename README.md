@@ -511,3 +511,15 @@ Hosted OAuth resource requests use one exact registered HTTPS `resource`. `oidc.
 `oauthClients` and `oauthResources` provide the producer's snake_case policy records and named management operations. Resource PATCH requires `expected_auth_epoch`; client PATCH accepts it. JSON epochs outside JavaScript's exact integer range are rejected. Client PATCH returns a bare client view unless `rotate_secret` is true, when it returns the client and its one-time secret. Resource create/PATCH always return the resource and nullable one-time introspection secret.
 
 Use `oidc.introspectResource` with independently configured `issuer`, exact `audience`, `introspection_client_id`, and `introspection_secret`. It uses resource Basic authentication only, with each credential component form encoded before Base64. An active result requires the exact configured issuer/audience, `Bearer`, integer timestamps valid at the local clock with no default skew, and the required user/service session shape. Inactive results contain only `active: false`. Resource results expose no internal epochs, refresh family, or token-use fields. The provider checks current durable token/session/resource state; an active principal or scope does not grant project ownership or management authority. Product authorization remains at the caller's existing authorization boundary. ts-auth has one global issuer per tenant, `{apiBaseUrl}/{slug}` (the platform issuer is `https://auth.terrascale.tech/terrascale`, with no regional host and no trailing slash); every call goes to `apiBaseUrl`. Platform tokens for TerraBase use audience `https://api.terrascale.tech` and only the scopes `databases:read`, `databases:write`, `documents:read` and `documents:write`, sent as one space-separated `scope` string.
+
+### Permanent API key errors
+
+`401 key_revoked` and `401 key_expired` throw `V1KeyRevokedError` and
+`V1KeyExpiredError` (subclasses of `V1InvalidKeyError`). Their `code` and message
+are preserved. Replace the key: neither error retries or triggers token exchange.
+The SDK has no exchanged-token cache; caller-owned providers must discard the
+refused token and stop exchanging that key.
+Safe GET requests retry `503 auth_unavailable` at most twice with backoff and
+`Retry-After`, retaining the token. Waits over 30 seconds surface the error.
+Shape subscriptions also include it in their existing backoff. Mutations remain
+single-attempt.
