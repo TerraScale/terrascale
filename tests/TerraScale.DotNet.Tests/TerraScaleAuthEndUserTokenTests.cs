@@ -19,6 +19,13 @@ public sealed class TerraScaleAuthEndUserTokenTests
     {
         using var contract = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "contracts/auth/end-user-tokens.json")));
         var operation = contract.RootElement.GetProperty("operation");
+        using var routes = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "contracts/auth/routes.json")));
+        var route = routes.RootElement.GetProperty("operations").EnumerateArray()
+            .Single(item => item.GetProperty("operation_id").GetString() == operation.GetProperty("operationId").GetString());
+        await Assert.That(route.GetProperty("method").GetString()).IsEqualTo(operation.GetProperty("method").GetString());
+        await Assert.That(route.GetProperty("path").GetString()).IsEqualTo(operation.GetProperty("path").GetString());
+        await Assert.That(route.GetProperty("sdk_method").GetString()).IsEqualTo("Projects.MintEndUserTokenAsync");
+        await Assert.That(route.GetProperty("contract").GetString()).IsEqualTo("end-user-tokens.json");
         using var handler = new Handler(async (request, token) =>
         {
             await Assert.That(request.Method.Method).IsEqualTo(operation.GetProperty("method").GetString());

@@ -29,3 +29,4 @@ Authority: producer `4b6dfd03b2d814cea0b1f7d599478f6b06532b4a`,
 [`scoped-end-user-tokens.openapi.yaml`](https://github.com/TerraScale/terrascale/blob/4b6dfd03b2d814cea0b1f7d599478f6b06532b4a/docs/auth/scoped-end-user-tokens.openapi.yaml).
 The dedicated [source-derived contract](../contracts/auth/end-user-tokens.json) pins route, schemas, security and
 producer hashes. HTTP fixture tests establish SDK behavior; own production rules/refusal qualification remains pending.
+The auth route and DTO manifests include the same operation and a synthetic request/response fixture.

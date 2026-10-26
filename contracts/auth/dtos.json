@@ -3,6 +3,9 @@
   "cidr_producer": "cidr-provenance.json",
   "mfa_policy_producer": "mfa-policy-provenance.json",
   "dtos": {
+    "EndUserTokenRequest": {"sdk_type": "EndUserTokenMintRequest", "contract": "end-user-tokens.json", "fields": [{"name": "user_id", "type": "string", "nullable": false, "default": null}, {"name": "claims", "type": "EndUserTokenClaims?", "nullable": true, "default": null}]},
+    "EndUserTokenClaims": {"sdk_type": "EndUserTokenMintClaims", "contract": "end-user-tokens.json", "fields": [{"name": "roles", "type": "IReadOnlyList<string>?", "nullable": true, "default": null}]},
+    "EndUserTokenBody": {"sdk_type": "TerraScaleAuthEndUserToken", "contract": "end-user-tokens.json", "fields": [{"name": "access_token", "type": "string", "nullable": false, "default": null}, {"name": "token_type", "type": "string", "nullable": false, "default": null}, {"name": "expires_in", "type": "long", "nullable": false, "default": null}]},
     "MfaPolicyRequest": {"sdk_type": "TerraScaleAuthPlatformMfaPolicy", "fields": [{"name": "require_mfa", "type": "bool", "nullable": false, "default": null}]},
     "AccountMfaBody": {"sdk_type": "TerraScaleAuthPlatformAccountMfa", "fields": [{"name": "enabled", "type": "bool", "nullable": false, "default": null}, {"name": "recovery_codes_remaining", "type": "int", "nullable": false, "default": null}, {"name": "manage_url", "type": "string", "nullable": false, "default": null}]},
     "NameRequest": {
