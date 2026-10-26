@@ -392,14 +392,11 @@ public sealed class RegionalRoutingContractTests
     }
 
     [Test]
-    public async Task A_keyed_database_request_to_a_listed_but_gone_region_reports_unavailability()
+    public async Task A_keyed_database_request_to_an_unreachable_regional_edge_reports_unavailability()
     {
-        await using var cell = await Cell.StartAsync(["gru", "sjc"], new ClusterMember("fra-gone", "http://127.0.0.1:9/", "fra", string.Empty));
-        var api = cell.Api("gru");
-        using var service = api.Service(api.User);
-        var organization = await api.CreateOrganizationAsync("Gone regional host", service);
-        var project = await api.CreateProjectAsync(organization, "Main", service);
-        var database = new ManagedDatabaseRef(organization, project, await api.CreateDatabaseAsync(organization, project, "main", service), "main");
+        await using var cell = await TerraBase.Fast.Replication.SqlWriteReplicationTests.Cell.StartAsync();
+        var api = cell.Gru.Api;
+        var database = cell.Managed;
         using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, "documents:read"));
         foreach (var failed in new[] { false, true })
         {
@@ -444,8 +441,6 @@ public sealed class RegionalRoutingContractTests
         private FakeMemberStore Members { get; } = new();
 
         public IEnumerable<string> Regions => _machines.Keys;
-
-        public ManagementApi Api(string region) => _machines[region];
 
         // Every machine is listed before any starts, so no machine reads a list that lacks another (the peers file lists a node
         // once it is started); `gone` are listed machines that do not answer.
