@@ -1,0 +1,26 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Profile.AccountDeletionPendingPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+<main class="ts-login"><div class="ts-login-column"><div class="ts-login-panel"><div class="ts-login-stack">
+    <h1 class="ts-auth-title">@Model.Title</h1>
+    <p class="ts-auth-subtitle" role="status" aria-live="polite">@Model.Message</p>
+    @if (Model.Automatic)
+    {
+        <p class="ts-auth-subtitle">This page checks automatically up to five times, with longer pauses between checks. You can also check manually. You do not need to submit another deletion request.</p>
+    }
+    else if (!Model.Attention)
+    {
+        <p class="ts-auth-subtitle">Automatic checks have paused. Your receipt is retained. Check again when you are ready; closing this page does not cancel an accepted account closure.</p>
+    }
+    <form method="post" action="/api/v1/dashboard/profile/delete/status" data-submit-once
+          data-init="@(Model.Automatic ? $"setTimeout(() => el.requestSubmit(), {Model.DelayMilliseconds})" : null)">
+        <input type="hidden" name="_csrf" value="@Model.Csrf" />
+        <input type="hidden" name="_retry" value="@Model.Attempt" />
+        <button class="ts-btn ts-btn-primary" type="submit">Check deletion status</button>
+    </form>
+    @if (Model.Attention)
+    {
+        <a class="ts-btn ts-btn-secondary" href="/login?returnTo=%2Fprofile%3Ftab%3Ddanger">Sign in to review deletion</a>
+        <a class="ts-link" href="/profile?tab=danger">Return to profile</a>
+    }
+</div></div></div></main>
+@functions { public DocumentModel LayoutModel => Model.Document; }

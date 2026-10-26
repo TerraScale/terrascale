@@ -21,6 +21,7 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
     public DemoEnvironment Environment { get; } = new();
     public OutboxProducer Producer { get; } = new();
     public Func<HttpRequestMessage, Task>? BeforeForwardAsync { get; set; }
+    public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage?>>? OverrideForwardAsync { get; set; }
     public Func<HttpRequestMessage, HttpResponseMessage, Task>? AfterForwardAsync { get; set; }
     public string User { get; } = new TerraScaleIdGenerator().NewId();
     public string Other { get; } = new TerraScaleIdGenerator().NewId();
@@ -36,7 +37,11 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
     public static string Email(string user) => user.ToLowerInvariant() + "@example.test";
     public string Id() => new TerraScaleIdGenerator().NewId();
 
-    public static async Task<DirectAuthDeletionScenario> StartAsync(bool productionState = false)
+    // Compose the real SDK gateway in the host fixture; journeys exercise it through HTTP.
+    public static Task<DirectAuthDeletionScenario> StartReceiptStatusAsync() => StartAsync(configure: builder =>
+        builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(services => services.GetRequiredService<TsAuthGateway>())));
+
+    public static async Task<DirectAuthDeletionScenario> StartAsync(bool productionState = false, Action<WebApplicationBuilder>? configure = null)
     {
         var scenario = new DirectAuthDeletionScenario();
         await scenario.Environment.InitializeAsync();
@@ -54,6 +59,7 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
                 var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(scenario, fallback)));
             }
+            configure?.Invoke(builder);
         });
         scenario.Producer.Credentials = await scenario.App.Services.GetRequiredService<IDashboardIdentity>().ReadAsync(default);
         scenario.App.MapPost("/__test/deletions/reconcile", async () =>
@@ -95,16 +101,21 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
         return client;
     }
 
-    public HttpClient Client() => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
-    { BaseAddress = new(App.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
+    public HttpClient Client(string? deletionCookie = null)
+    {
+        var origin = new Uri(App.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
+        var cookies = new CookieContainer();
+        if (deletionCookie is not null) cookies.Add(origin, new Cookie("ts-dashboard-deletion", deletionCookie, "/"));
+        return new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = cookies }) { BaseAddress = origin };
+    }
 
     public Task<TerraBaseDocument?> GetAsync(string collection, string id) => State.GetAsync(collection, id, default);
     public async Task<AccountRecord> AccountAsync(string user) => AccountService.Read<AccountRecord>((await GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(user)))!);
-    public async Task<TerraBaseDocument> StoreDeletionOperationAsync(string subject)
+    public async Task<TerraBaseDocument> StoreDeletionOperationAsync(string subject, string? cookie = null, string? receipt = null)
     {
-        var key = AccountService.AccountStorageKey(Id());
+        var key = cookie is null ? AccountService.AccountStorageKey(Id()) : Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cookie)));
         var session = new SessionRecord(subject, "Synthetic owner", Email(subject), "synthetic-operation-grant", null, DateTimeOffset.UtcNow.AddHours(1));
-        var plaintext = JsonSerializer.SerializeToUtf8Bytes(new { Session = session, Organizations = Array.Empty<string>(), Receipt = "synthetic-receipt" });
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(new { Session = session, Organizations = Array.Empty<string>(), Receipt = receipt ?? "synthetic-receipt" });
         var nonce = RandomNumberGenerator.GetBytes(12);
         var ciphertext = new byte[plaintext.Length];
         var tag = new byte[16];
@@ -193,6 +204,7 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
             if (request.RequestUri is { Host: "auth.terrascale.tech", AbsolutePath: var path } && path.StartsWith("/v1/terrascale/deletions", StringComparison.Ordinal))
                 return await scenario.Producer.SendAsync(request, cancellationToken);
             if (scenario.BeforeForwardAsync is { } before) await before(request);
+            if (scenario.OverrideForwardAsync is { } replace && await replace(request, cancellationToken) is { } replacement) return replacement;
             var response = await HttpForwarding.SendAsync(fallback, request, cancellationToken);
             if (scenario.AfterForwardAsync is { } after) await after(request, response);
             return response;

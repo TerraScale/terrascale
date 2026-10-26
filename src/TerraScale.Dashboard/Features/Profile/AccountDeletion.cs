@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Profile;
 // the user belongs to, including project/database erasure; the dashboard then drops
 // its own records for the scope confirmed by ts-auth.
 // Paid plans of those organizations end immediately in Stripe, without a refund.
-public static class AccountDeletion
+public static partial class AccountDeletion
 {
     private const string Operations = "account_deletions";
     private const string Cookie = "ts-dashboard-deletion";
@@ -118,16 +118,6 @@ public static class AccountDeletion
             return Results.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
         }
         catch (Exception error) when (Transient(error, http)) { return Retry(http); }
-    }
-
-    public static async Task<IResult> ProgressAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity)
-    {
-        if (await ReadOperationAsync(http, state, identity) is null) return Results.Unauthorized();
-        _ = int.TryParse(http.Request.Query["retry"], out var attempt);
-        attempt = Math.Clamp(attempt, 0, 5);
-        return DeletionProgress.Create(http, new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
-        { ["_csrf"] = Csrf.Token(http), ["_retry"] = attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) }),
-            "/api/v1/dashboard/profile/delete/continue", Math.Min(30000, 2000 << attempt));
     }
 
     private static IResult Retry(HttpContext http)

@@ -68,6 +68,7 @@ public static class ProfileEndpoints
             await SaveAsync(http, sessions, accounts, true));
         endpoints.MapPost("/api/v1/dashboard/profile/delete", AccountDeletion.DeleteAsync);
         endpoints.MapGet("/account-deletion", AccountDeletion.ProgressAsync);
+        endpoints.MapPost("/api/v1/dashboard/profile/delete/status", AccountDeletion.StatusAsync);
         endpoints.MapPost("/api/v1/dashboard/profile/delete/continue", (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform,
             IDashboardState state, AccessTokens tokens, IDashboardIdentity identity) =>
             AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, identity));
