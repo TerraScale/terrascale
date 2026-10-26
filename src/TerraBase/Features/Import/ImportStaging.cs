@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
@@ -8,8 +9,8 @@ namespace TerraBase.Features.Import;
 
 /// <summary>
 /// Staged sources on this node's volume, <c>&lt;data&gt;/.import/&lt;database id&gt;/</c>, within one budget: at most 2 GiB declared
-/// over all staged sources, and an upload starts only if twice its size plus 1 GiB stays free (docs/terrabase/import.md
-/// section 8).
+/// over all staged sources. Uploads hold a shared bulk workspace claim until the retained source is deleted
+/// (docs/terrabase/disk-admission.md).
 /// </summary>
 internal sealed class ImportStaging
 {
@@ -21,14 +22,18 @@ internal sealed class ImportStaging
 
     private readonly Lock _lock = new();
     private readonly Dictionary<string, (string Organization, long Bytes)> _reserved = [with(StringComparer.Ordinal)];
+    private readonly Dictionary<string, IDisposable> _diskReservations = [with(StringComparer.Ordinal)];
+    private readonly IDiskBudget _disk;
 
-    public ImportStaging(TerraBaseOptions options)
+    public ImportStaging(TerraBaseOptions options, IDiskBudget disk)
     {
+        _disk = disk;
         Root = Path.Combine(options.DataDirectory, ".import");
         System.IO.Directory.CreateDirectory(Root);
         foreach (var manifest in Manifests())
         {
             _reserved[manifest.DatabaseId] = (manifest.OrganizationId, manifest.Bytes);
+            _diskReservations[manifest.DatabaseId] = disk.Recover(DiskBudget.WorkspaceBytes(manifest.Bytes));
         }
     }
 
@@ -65,19 +70,42 @@ internal sealed class ImportStaging
             }
 
             // No organization holds more than half of the node's staging budget.
-            var free = new DriveInfo(Root).AvailableFreeSpace;
             if (_reserved.Values.Sum(entry => entry.Bytes) + manifest.Bytes > MaxStagedBytes
-                || _reserved.Values.Where(entry => entry.Organization == manifest.OrganizationId).Sum(entry => entry.Bytes) + manifest.Bytes > MaxOrganizationBytes
-                || free < (2 * manifest.Bytes) + (1L << 30))
+                || _reserved.Values.Where(entry => entry.Organization == manifest.OrganizationId).Sum(entry => entry.Bytes) + manifest.Bytes > MaxOrganizationBytes)
             {
                 return false;
             }
 
-            System.IO.Directory.CreateDirectory(Directory(manifest.DatabaseId));
-            File.WriteAllBytes(Path.Combine(Directory(manifest.DatabaseId), "manifest.json"),
-                JsonSerializer.SerializeToUtf8Bytes(manifest, TerraBaseJsonContext.Default.ImportManifest));
-            _reserved[manifest.DatabaseId] = (manifest.OrganizationId, manifest.Bytes);
-            return true;
+            var reservation = _disk.Reserve(DiskBudget.WorkspaceBytes(manifest.Bytes));
+            try
+            {
+                System.IO.Directory.CreateDirectory(Directory(manifest.DatabaseId));
+                File.WriteAllBytes(Path.Combine(Directory(manifest.DatabaseId), "manifest.json"),
+                    JsonSerializer.SerializeToUtf8Bytes(manifest, TerraBaseJsonContext.Default.ImportManifest));
+                _reserved[manifest.DatabaseId] = (manifest.OrganizationId, manifest.Bytes);
+                _diskReservations[manifest.DatabaseId] = reservation;
+                return true;
+            }
+            catch (Exception failure)
+            {
+                try
+                {
+                    if (System.IO.Directory.Exists(Directory(manifest.DatabaseId)))
+                    {
+                        System.IO.Directory.Delete(Directory(manifest.DatabaseId), recursive: true);
+                    }
+                }
+                catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+                {
+                    throw new AggregateException("Import staging failed and its partial manifest could not be removed.", failure, cleanup);
+                }
+                finally
+                {
+                    reservation.Dispose();
+                }
+
+                throw;
+            }
         }
     }
 
@@ -150,6 +178,10 @@ internal sealed class ImportStaging
             }
 
             _reserved.Remove(databaseId);
+            if (_diskReservations.Remove(databaseId, out var reservation))
+            {
+                reservation.Dispose();
+            }
         }
     }
 

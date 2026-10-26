@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <RootNamespace>TerraBase</RootNamespace>
+    <!-- Source-generated libc interop for native temporary storage. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>terrabase</AssemblyName>
     <Version>0.1.0</Version>
     <!-- /healthz reports the source commit as revision; CI passes TERRABASE_REVISION (the image has no .git). -->

@@ -84,9 +84,9 @@ public sealed class CustomerBackupListingBoundaryTests
         var restored = await RestoreAsync(api.Client, database, database.Path, latest, "boundary-restored", cancellationToken);
         await AssertDocumentAsync(data, restored, "kept", text, cancellationToken);
         await AssertDocumentAsync(data, restored, "after", text, cancellationToken);
-        await Assert.That(snapshotReads).IsEqualTo(keyBytes == 1024 ? 1 : 0);
-        // The window and the plan read the read mark at its end, the restore its log.
-        await Assert.That(segmentReads).IsEqualTo(keyBytes == 1024 ? 3 : 0);
+        await Assert.That(snapshotReads).IsEqualTo(keyBytes == 1024 ? 2 : 0);
+        // Window/plan read marks and restore replay each size the object before downloading it to scratch.
+        await Assert.That(segmentReads).IsEqualTo(keyBytes == 1024 ? 6 : 0);
         s3.CustomerListingOverride = null;
 
         // A valid predecessor protects the live generation while retention deletes the older test generation.

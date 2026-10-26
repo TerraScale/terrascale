@@ -69,6 +69,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private const int MaxJobs = 4;
     private const int MaxCustomerJobs = 2;
 
+    private readonly IDiskBudget _disk;
+    private readonly string _systemPath;
     private readonly IWalBackup _engine;
     private readonly IStorageEngine _storage;
     private readonly BackupTargets _targets;
@@ -111,7 +113,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     public ContinuousBackup(
         IWalBackup engine, IStorageEngine storage, BackupTargets targets, TerraBaseOptions options, TimeProvider time,
         IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings, S3ObjectStore bucket,
-        Lazy<ICatalogGate> catalogGate, IDatabaseFileCatalog fileCatalog)
+        Lazy<ICatalogGate> catalogGate, IDatabaseFileCatalog fileCatalog, IDiskBudget disk)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
@@ -119,6 +121,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         (_tenants, _settings, _node, _bucket) = (tenants, settings, options.MachineId, bucket);
         _catalogGate = catalogGate;
         _fileCatalog = fileCatalog;
+        _disk = disk;
+        _systemPath = Path.Combine(options.DataDirectory, "_system.db");
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
@@ -595,11 +599,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             if (await _engine.OpenTapAsync(database, cancellationToken).ConfigureAwait(false) is { } tap)
             {
-                FileStream pending;
+                BackupScratchStream pending;
                 try
                 {
-                    pending = new FileStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
-                        FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+                    pending = new BackupScratchStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), null);
                 }
                 catch
                 {
@@ -719,11 +722,17 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 return;
             }
 
+            // A failed seal/key lookup leaves Pending and its claims intact. Flush it before admitting another read.
+            if (due && file.Pending.Length > 0)
+            {
+                await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
+            }
+
             WalRead read;
             var appended = file.Pending.Length;
             try
             {
-                read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
+                read = await ReadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -887,9 +896,49 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private IEnumerable<ShippedFile> Shipped() => _files.Values.Where(file => file.Shipping);
 
+    // Physical source bytes include WAL. This estimates amplification; it cannot bound concurrent foreground growth.
+    private async Task<long> WorkspaceAsync(ShippedFile file, CancellationToken cancellationToken)
+    {
+        var source = file.Database is { } database
+            ? await _storage.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) ?? throw new IOException("backup source disappeared")
+            : new FileInfo(_systemPath).Length + (File.Exists(_systemPath + "-wal") ? new FileInfo(_systemPath + "-wal").Length : 0);
+        return DiskBudget.WorkspaceBytes(source);
+    }
+
+    private async Task<WalRead> ReadPendingAsync(ShippedFile file, CancellationToken cancellationToken)
+    {
+        var allowance = await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false);
+        IDisposable? claim = _disk.Reserve(allowance);
+        var before = file.Pending.Length;
+        // Bound frames to a quarter of the claim, leaving room for their sealed copy and envelope overhead.
+        file.Pending.Limit = checked(before + allowance / 4);
+        try
+        {
+            var read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
+            if (file.Pending.Length > before)
+            {
+                file.PendingClaims.Add(claim);
+                claim = null;
+            }
+
+            return read;
+        }
+        catch
+        {
+            file.Pending.SetLength(before);
+            file.Pending.Position = before;
+            throw;
+        }
+        finally
+        {
+            claim?.Dispose();
+        }
+    }
+
     // A generation starts with a snapshot; the frames read before it are in it, so they are dropped.
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {
+        var claim = _disk.Reserve(await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false));
         var generation = EntityIds.New(_time);
         var snapshot = ScratchFile(".db");
         try
@@ -927,6 +976,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         finally
         {
             DeleteSnapshot(snapshot);
+            claim.Dispose();
         }
     }
 
@@ -936,9 +986,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         var snapshot = ScratchFile(".db");
         var handedOff = false;
+        IDisposable? claim = null;
         try
         {
+            var allowance = await WorkspaceAsync(file, cancellationToken).ConfigureAwait(false);
+            claim = _disk.Reserve(allowance);
             await file.StopSideAsync().ConfigureAwait(false);
+            // SnapshotAsync also drains the current log backlog. Its claim survives a failed segment upload.
+            file.PendingClaims.Add(_disk.Reserve(allowance));
+            file.Pending.Limit = checked(file.Pending.Length + allowance / 4);
             WalSnapshot captured;
             try
             {
@@ -995,22 +1051,34 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.DrilledAt = at;
             }
 
-            StartSide(file, key, snapshot, live: null, drill);
+            StartSide(file, key, snapshot, live: null, drill, claim);
             handedOff = true;
         }
         finally
         {
+            if (file.Pending.Length == 0)
+            {
+                file.ReleasePendingClaims();
+            }
+
             if (!handedOff)
             {
-                DeleteSnapshot(snapshot);
-                _snapshotSlots.Release();
+                try
+                {
+                    DeleteSnapshot(snapshot);
+                    claim?.Dispose();
+                }
+                finally
+                {
+                    _snapshotSlots.Release();
+                }
             }
         }
     }
 
     // Starts a snapshot's upload (from `snapshot`, a scratch copy it then owns) and its drill beside shipping. A manual pass
     // waits for it through the job; removal, a new destination and shutdown cancel and join it before its target goes.
-    private void StartSide(ShippedFile file, SnapshotKey key, string? snapshot, byte[]? live, bool drill)
+    private void StartSide(ShippedFile file, SnapshotKey key, string? snapshot, byte[]? live, bool drill, IDisposable? claim = null)
     {
         // Cancelled with the pass that started it (a manual pass waits for it), and with the service.
         var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token))
@@ -1018,14 +1086,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             Stored = snapshot is null ? null : new(TaskCreationOptions.RunContinuationsAsynchronously),
         };
         file.Side = side;
-        side.Completion = Task.Run(() => SideAsync(file, side, snapshot, live, drill), CancellationToken.None);
+        side.Completion = Task.Run(() => SideAsync(file, side, snapshot, live, drill, claim), CancellationToken.None);
         if (file.Job is { } job)
         {
             job.Side = side.Completion;
         }
     }
 
-    private async Task SideAsync(ShippedFile file, SideWork side, string? snapshot, byte[]? live, bool drill)
+    private async Task SideAsync(ShippedFile file, SideWork side, string? snapshot, byte[]? live, bool drill, IDisposable? claim)
     {
         var token = side.Cancellation.Token;
         if (snapshot is not null)
@@ -1044,8 +1112,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
             finally
             {
-                DeleteSnapshot(snapshot);
-                _snapshotSlots.Release();
+                try
+                {
+                    DeleteSnapshot(snapshot);
+                    claim?.Dispose();
+                }
+                finally
+                {
+                    _snapshotSlots.Release();
+                }
             }
         }
 
@@ -1078,7 +1153,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         var key = BackupLayout.Segment(file.Prefix, file.Generation!.Value, file.PendingStart, file.PendingAt);
         file.Pending.Position = 0;
-        FileStream sealedObject;
+        BackupScratchStream sealedObject;
         try
         {
             sealedObject = await SealAsync(file, key, file.Pending, cancellationToken).ConfigureAwait(false);
@@ -1092,6 +1167,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         file.Unstored = new(key, sealedObject, file.PendingAt, file.PendingMark, file.PendingEndsMarked);
         (file.PendingMark, file.PendingEndsMarked) = (null, false);
         file.Pending.SetLength(0);
+        sealedObject.TakeClaims(file.PendingClaims);
         file.PendingStart = file.Position;
         await PutUnstoredAsync(file, cancellationToken).ConfigureAwait(false);
     }
@@ -1145,11 +1221,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     // Seals content into a scratch file deleted when it closes.
-    private async Task<FileStream> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
+    private async Task<BackupScratchStream> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
     {
         var (keyId, dataKey) = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
-        var sealedObject = new FileStream(ScratchFile(".sealed"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
-            FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        var bytes = checked(content.Length + (content.Length / (1 << 20) + 1) * 24 + 62);
+        // The snapshot or pending-frame claim already covers this peak; pending ownership transfers after truncation.
+        var sealedObject = new BackupScratchStream(ScratchFile(".sealed"), null, bytes);
         try
         {
             await BackupObject.WriteAsync(content, sealedObject, key, keyId, dataKey, cancellationToken).ConfigureAwait(false);
@@ -1277,7 +1354,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At, DateTimeOffset? Mark, bool EndsMarked);
 
     /// <summary>One shipped file. The scheduler owns admission fields; its single job owns shipping state.</summary>
-    private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened, BackupTarget target)
+    private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, BackupScratchStream pending, DateTimeOffset opened, BackupTarget target)
         : IAsyncDisposable
     {
         public ShippingJob? Job { get; set; }
@@ -1300,7 +1377,18 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public IWalTap Tap { get; } = tap;
 
         /// <summary>Log bytes read and not yet sealed, from <see cref="PendingStart"/>, after <see cref="Unstored"/>.</summary>
-        public FileStream Pending { get; } = pending;
+        public BackupScratchStream Pending { get; } = pending;
+        public List<IDisposable> PendingClaims { get; } = [];
+
+        public void ReleasePendingClaims()
+        {
+            foreach (var claim in PendingClaims)
+            {
+                claim.Dispose();
+            }
+
+            PendingClaims.Clear();
+        }
 
         /// <summary>The sealed segment being stored: after a failure it is sent again, the same bytes under the same key.</summary>
         public Segment? Unstored { get; set; }
@@ -1379,6 +1467,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             Unstored = null;
             (PendingMark, PendingEndsMarked) = (null, false);
             Pending.SetLength(0);
+            ReleasePendingClaims();
         }
 
         public async ValueTask DisposeAsync()

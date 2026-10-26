@@ -787,6 +787,7 @@ public sealed partial class DatabaseRecoveryTests
             var options = new TerraBaseOptions { DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
             var services = new ServiceCollection();
             services.AddTerraBaseEngine(options);
+            services.AddSingleton<INativeTemporaryStorage, TestNativeTemporaryStorage>();
             services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
             await using var provider = services.BuildServiceProvider();
             var engine = provider.GetRequiredService<IStorageEngine>();
@@ -831,6 +832,7 @@ public sealed partial class DatabaseRecoveryTests
         externalServices.AddSingleton(externalOptions);
         externalServices.AddLogging();
         externalServices.AddTerraBaseEngine(externalOptions);
+        externalServices.AddSingleton<INativeTemporaryStorage, TestNativeTemporaryStorage>();
         externalServices.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using (var provider = externalServices.BuildServiceProvider())
         {
@@ -864,6 +866,7 @@ public sealed partial class DatabaseRecoveryTests
             services.AddSingleton(options);
             services.AddLogging();
             services.AddTerraBaseEngine(options);
+            services.AddSingleton<INativeTemporaryStorage, TestNativeTemporaryStorage>();
             services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
             await using (var provider = services.BuildServiceProvider())
             {
@@ -1610,6 +1613,7 @@ public sealed partial class DatabaseRecoveryTests
         services.AddSingleton(options);
         services.AddLogging();
         services.AddTerraBaseEngine(options);
+        services.AddSingleton<INativeTemporaryStorage, TestNativeTemporaryStorage>();
         services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using (var provider = services.BuildServiceProvider())
         {

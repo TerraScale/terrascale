@@ -65,7 +65,8 @@ try
     using var meter = new Meter("TerraBase.LiveRestoreDrill");
     var services = new ServiceCollection();
     engine = new TursoStorageEngine(options.DataDirectory, 1, 32, options.MemoryBudget, meter,
-        NullLogger<TursoStorageEngine>.Instance, new MasterKey(master), TimeSpan.FromSeconds(10));
+        NullLogger<TursoStorageEngine>.Instance, new MasterKey(master), TimeSpan.FromSeconds(10),
+        nativeTemporaryStorage: new NativeTemporaryStorage(options));
     services.AddHttpClient(S3ObjectStore.HttpClientName)
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
         .AddHttpMessageHandler(() => new ReadOnlyTransport(bucket));
@@ -86,7 +87,7 @@ try
         MasterKey = master,
     };
     using var keys = new DataKeys(readOnly, new MasterKey(master), TimeProvider.System, settings);
-    var reader = new BackupReader(engine, readOnly, keys, options);
+    var reader = new BackupReader(engine, readOnly, keys, options, engine.Disk);
     proof.Stage = "snapshot_selection";
     SnapshotKey? latest = null;
     await foreach (var snapshot in reader.SnapshotsAsync(file, stop.Token).ConfigureAwait(false))
@@ -145,7 +146,7 @@ try
     proof.ExpectedDigest = Convert.ToHexString(await engine.RestoreDrillChecksumAsync(baseline, stop.Token).ConfigureAwait(false));
     proof.Stage = "restore";
     started = Stopwatch.GetTimestamp();
-    var restored = await reader.BuildAsync(file, scope, source, DateTimeOffset.MaxValue, latest.Position, stop.Token).ConfigureAwait(false);
+    using var restored = await reader.BuildAsync(file, scope, source, DateTimeOffset.MaxValue, latest.Position, stop.Token).ConfigureAwait(false);
     proof.DownloadRestoreMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     proof.ReachedPosition = restored.Position;
     proof.EncryptedObjectAuthentication = true;

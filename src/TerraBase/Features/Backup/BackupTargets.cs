@@ -29,7 +29,7 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
     IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger,
-    S3ObjectStore bucket) : IDisposable
+    S3ObjectStore bucket, IDiskBudget disk) : IDisposable
 {
     private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);
 
@@ -92,7 +92,7 @@ internal sealed class BackupTargets(
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;
         var keys = new DataKeys(store, master, time, options.Backup!, freshKey, _customerKeyReads);
-        return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options), [new ProjectStore(platform, scope), scopedCustomer], mirror, customer);
+        return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options, disk), [new ProjectStore(platform, scope), scopedCustomer], mirror, customer);
     }
 
     // Enforce the project boundary on every operation, including keys fabricated by an untrusted S3 listing.

@@ -62,6 +62,12 @@ public static class BadRequests
                 Replace(context.Response);
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "copy_faulted", "Storage is awaiting certified recovery.", op: null).ConfigureAwait(false);
             }
+            catch (DiskCapacityException error) when (!context.Response.HasStarted)
+            {
+                Replace(context.Response);
+                context.Response.Headers.RetryAfter = "30";
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "disk_capacity", error.Message, op: null).ConfigureAwait(false);
+            }
             catch (StorageBusyException error) when (!context.Response.HasStarted)
             {
                 Replace(context.Response);

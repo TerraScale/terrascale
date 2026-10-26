@@ -93,6 +93,7 @@ internal sealed partial class TursoStorageEngine
     public async ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(file);
+        // The PITR caller retains its decoded-input workspace claim through this copy and deletion of the input.
         var (key, path) = Locate(database);
         Task<TursoDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);

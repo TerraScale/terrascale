@@ -63,7 +63,7 @@ public interface IScheduledExports
 /// </summary>
 internal sealed class ScheduledExports(
     SystemCatalog catalog, IDocumentService documents, IShipperLeases leases, IProjectBackupDestinations destinations, IServiceProvider services,
-    TerraBaseOptions options, TimeProvider time, ILogger<ScheduledExports> logger) : BackgroundService, IScheduledExports
+    TerraBaseOptions options, TimeProvider time, ILogger<ScheduledExports> logger, IStorageEngine engine, IDiskBudget disk) : BackgroundService, IScheduledExports
 {
     /// <summary>Catalog collection: database id → <see cref="ExportScheduleRecord"/>; a deleted database's entry is dropped by the next pass.</summary>
     public const string Collection = "export_schedules";
@@ -223,6 +223,7 @@ internal sealed class ScheduledExports(
             }
             else
             {
+                using var reservation = disk.Reserve(DiskBudget.WorkspaceBytes(await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) ?? 0));
                 var scratch = Path.Combine(options.DataDirectory, ".exports");
                 Directory.CreateDirectory(scratch);
                 var file = new FileStream(Path.Combine(scratch, $"{Ulid.NewUlid()}.ndjson"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 64 * 1024,
@@ -237,6 +238,10 @@ internal sealed class ScheduledExports(
                     await bucket.PutAsync(key, file, cancellationToken).ConfigureAwait(false);
                 }
             }
+        }
+        catch (DiskCapacityException failure) when (!cancellationToken.IsCancellationRequested)
+        {
+            error = "disk_capacity: " + failure.Message;
         }
         catch (Exception failure) when (!cancellationToken.IsCancellationRequested)
         {

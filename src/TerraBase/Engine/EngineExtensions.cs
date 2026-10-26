@@ -31,6 +31,7 @@ public static class EngineExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         services.TryAddSingleton(options);
+        services.TryAddSingleton<INativeTemporaryStorage, NativeTemporaryStorage>();
         services.TryAddKeyedSingleton<IMasterKey>(DatabaseMasterKey, (provider, _) =>
         {
             var configured = provider.GetRequiredService<TerraBaseOptions>();
@@ -40,6 +41,7 @@ public static class EngineExtensions
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         // The engine records metrics; AddMetrics is idempotent and the host adds it too.
         services.AddMetrics();
+        services.TryAddSingleton<IDiskBudget, DiskBudget>();
         services.AddTerraBaseMemory(options);
         services.AddLogging();
         // A factory registration lets the container own, and dispose, the engine.
@@ -53,7 +55,9 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),
-                schemaMemory: provider.GetRequiredService<IMemoryBudget>(), replicaOwner: configured.MachineId)
+                schemaMemory: provider.GetRequiredService<IMemoryBudget>(), replicaOwner: configured.MachineId,
+                nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(),
+                diskBudget: provider.GetRequiredService<IDiskBudget>())
             {
                 RequiresRemoteProof = provider.GetService<IMemberDirectory>() is not null,
             };
