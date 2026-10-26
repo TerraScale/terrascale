@@ -132,7 +132,7 @@ public sealed class DocumentBrowseBudgetContractTests
         var (service, context) = Service(documents, wire);
         var http = new DefaultHttpContext();
         http.Items[DashboardMcp.ContextKey] = context;
-        return new(new HttpContextAccessor { HttpContext = http }, service, null!);
+        return new(new HttpContextAccessor { HttpContext = http }, service, null!, null!);
     }
 
     private static (DataService, AccountContext) Service(Documents documents, Regions wire)

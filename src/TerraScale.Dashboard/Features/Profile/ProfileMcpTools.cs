@@ -16,19 +16,22 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
         var current = Account();
         var context = current.Organization is null && string.IsNullOrEmpty(organizationId) && string.IsNullOrEmpty(projectId)
             ? await accounts.GetContextAsync(current.Session, Cancellation)
-            : await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
+            : Scope(organizationId, projectId);
+        if (context.Organization is not null)
+            context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: context.Project is not null);
         var permissions = new List<string>();
         if (context.Project is not null)
         {
             permissions.Add("Access selected project");
-            if (context.CanWrite) permissions.Add("Write selected project data");
+            if (context.CanWriteProjectData) permissions.Add("Write selected project data");
         }
         if (context.CanManage) permissions.Add("Manage organization resources");
         if (context.Organization?.CanProvision(context.UserId) == true) permissions.Add("Provision organization resources");
         return new(context.UserId, context.Account.Id, context.Account.Name, context.Account.Email, context.Account.Phone,
             context.Account.Locale, context.Account.ActiveOrganizationId, context.Account.ActiveProjectId,
-            context.Organization?.Id ?? "", context.Project?.Id ?? "", context.Organization?.Name ?? "", context.Role,
-            permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled, null, await tokens.ListAsync(context, Cancellation));
+            context.Organization?.Id ?? "", context.Project?.Id ?? "", context.Organization?.Name ?? "", context.Role.Length == 0 ? null : context.Role,
+            permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled, null, await tokens.ListAsync(context, Cancellation),
+            PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : context.Project?.Role, context.CanWriteProjectData);
     }
 
     [McpServerTool(Name = "update_profile", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Update your display name and optional phone number.")]
@@ -59,14 +62,16 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
 
 public sealed record DashboardMcpProfile(string UserId, string AccountId, string Name, string Email, string Phone, string Locale,
     string ActiveOrganizationId, string ActiveProjectId, string OrganizationId, string ProjectId, string OrganizationName,
-    string Role, IReadOnlyList<string> Permissions,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Role, IReadOnlyList<string> Permissions,
     [property: Description("Whether two-factor authentication is on for your account, as ts-auth reports it; null when ts-auth did not report it, which does not mean disabled.")]
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     bool? MfaEnabled,
     [property: Description("Real passkey records are unavailable from the current owning provider contract; null does not mean no passkeys.")]
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     IReadOnlyList<DashboardMcpPasskey>? Passkeys,
-    IReadOnlyList<ProfileToken> AccessTokens);
+    IReadOnlyList<ProfileToken> AccessTokens,
+    [property: Description("Effective role for exactly projectId, independent of organization membership.")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ProjectRole, bool CanWriteProjectData);
 
 public sealed record DashboardMcpPasskey(string Id, string Name, DateTimeOffset CreatedAt);
 
