@@ -37,6 +37,7 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   help                                    print this help
   auth login | logout                     sign in with your browser, or sign out
   whoami                                  print the signed-in account
+  orgs                                    list every accessible organization
   projects                                list the projects you can reach
   projects create <name>                  create a project (and an organization
                                           when you have none)
@@ -104,7 +105,9 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           against base, by default the database
                                           it branched from
   keys list                               list the project's API keys
-  keys create <name> [<db>]               create a read/write API key, shown once;
+  keys create <name> [<db>]               create an API key, shown once;
+                                          -scope read requests read-only grants;
+                                          default scope is read-write;
                                           set its lifetime and networks with
                                           -expires 30d|90d|365d|never (default
                                           never) and -allow-cidr <cidr>,... (both
@@ -137,6 +140,7 @@ var commands = map[string][]int{
 	"auth logout":       {0},
 	"whoami":            {0},
 	"projects":          {0},
+	"orgs":              {0},
 	"projects create":   {1},
 	"usage":             {0, 1},
 	"completion":        {1},
@@ -237,6 +241,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	org := fs.String("org", "", "organization name or id")
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
+	scope := fs.String("scope", "", "keys create: read or read-write")
 	collection := fs.String("collection", "", "ndjson import: destination collection")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%s: %w", err, errUsage)
@@ -258,11 +263,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions"}, name) {
+	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs"}, name) {
 		return errors.New("structured output is not implemented for this command yet")
 	}
-	var collectionSet, yesSet bool
+	var collectionSet, yesSet, scopeSet bool
 	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "scope" {
+			scopeSet = true
+		}
 		if f.Name == "yes" {
 			yesSet = true
 		}
@@ -270,6 +278,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			collectionSet = true
 		}
 	})
+	if scopeSet && name != "keys create" {
+		return fmt.Errorf("-scope is only accepted for keys create: %w", errUsage)
+	}
 	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
 		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
 	}
@@ -288,7 +299,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
-		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" {
+		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || name == "orgs" {
 			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
 		}
 		s, err := openKey(ctx, key, *project)
@@ -300,7 +311,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	var keyReq tsauth.APIKeyRequest
 	if name == "keys create" {
 		var err error
-		if keyReq, err = newKeyRequest(operands, *expires, *allowCIDR); err != nil {
+		if keyReq, err = scopedKeyRequest(operands, *expires, *allowCIDR, *scope); err != nil {
 			return err
 		}
 	} else if *expires != "" || *allowCIDR != "" {
@@ -328,6 +339,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	switch name {
 	case "whoami":
 		return whoami(ctx, u, token, out)
+	case "orgs":
+		return listOrganizations(ctx, u, out)
 	case "projects":
 		return listProjects(ctx, u, out)
 	case "projects create":
@@ -572,7 +585,7 @@ func open(ctx context.Context, u *tsauth.User, token, project string) (*session,
 	case len(matches) == 0 && project != "":
 		return nil, fmt.Errorf("no project %q: run ts projects", project)
 	case len(matches) == 0:
-		return nil, errors.New("no project: create one at https://dash.terrascale.tech")
+		return nil, errors.New("no project: run ts projects create <name> (ts orgs lists organizations)")
 	case len(matches) > 1:
 		return nil, fmt.Errorf("%d projects match: pick one with -project <id> (ts projects lists them)", len(matches))
 	}

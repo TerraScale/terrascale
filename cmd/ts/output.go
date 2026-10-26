@@ -68,7 +68,7 @@ func jsonArguments(args []string) (rest []string, enabled bool, err error) {
 		rest = append(rest, a)
 		if strings.HasPrefix(a, "-") && !hasValue {
 			switch name {
-			case "project", "org", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit":
+			case "project", "org", "scope", "expires", "allow-cidr", "collection", "name", "trigger-collection", "events", "cron", "data", "limit":
 				if i+1 < len(args) {
 					i++
 					rest = append(rest, args[i])

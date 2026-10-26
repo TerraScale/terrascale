@@ -37,7 +37,7 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 	}
 	switch {
 	case len(matches) == 0 && org != "":
-		return fmt.Errorf("no organization %q: ts projects lists them", org)
+		return fmt.Errorf("no organization %q: ts orgs lists them", org)
 	case len(matches) == 0:
 		o, err := u.CreateOrganization(ctx, name)
 		if err != nil {
@@ -45,7 +45,7 @@ func createProject(ctx context.Context, u *tsauth.User, org, name string, out io
 		}
 		matches = append(matches, *o)
 	case len(matches) > 1:
-		return fmt.Errorf("%d organizations match: pick one with -org <id> (ts projects lists them)", len(matches))
+		return fmt.Errorf("%d organizations match: pick one with -org <id> (ts orgs lists them)", len(matches))
 	}
 	p, err := u.CreateProject(ctx, matches[0].ID, name)
 	if err != nil {
@@ -194,7 +194,7 @@ func completion(shell string, out io.Writer) error {
 		words[k] = slices.Compact(v)
 	}
 	words["completion"] = []string{"bash", "fish", "zsh"}
-	valueFlags := []string{"project", "org", "expires", "allow-cidr", "collection"}
+	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection"}
 	var valuePatterns []string
 	flags := "-h -help --help -yes --yes"
 	for _, flag := range valueFlags {
