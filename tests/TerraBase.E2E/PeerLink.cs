@@ -104,6 +104,7 @@ internal sealed class PeerLink : IAsyncDisposable
     private async Task PumpAsync(TcpClient client)
     {
         using var upstream = new TcpClient();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
         try
         {
             await upstream.ConnectAsync(Via ?? Target, _stop.Token);
@@ -120,9 +121,20 @@ internal sealed class PeerLink : IAsyncDisposable
             }
 
             var (down, up, delay) = (client.GetStream(), upstream.GetStream(), Delay);
-            await (delay > TimeSpan.Zero
-                ? Task.WhenAny(DelayAsync(down, up, delay, _stop.Token), DelayAsync(up, down, delay, _stop.Token))
-                : Task.WhenAny(down.CopyToAsync(up, _stop.Token), up.CopyToAsync(down, _stop.Token)));
+            var forward = delay > TimeSpan.Zero ? DelayAsync(down, up, delay, stop.Token) : down.CopyToAsync(up, stop.Token);
+            var reverse = delay > TimeSpan.Zero ? DelayAsync(up, down, delay, stop.Token) : up.CopyToAsync(down, stop.Token);
+            try
+            {
+                await Task.WhenAny(forward, reverse);
+            }
+            finally
+            {
+                // WhenAny observes neither child: stop the other direction and observe both reset/cancellation failures.
+                await stop.CancelAsync();
+                Abort(client);
+                Abort(upstream);
+                await Task.WhenAll(forward, reverse);
+            }
         }
         catch (Exception error) when (error is IOException or SocketException or OperationCanceledException or ObjectDisposedException)
         {
@@ -157,9 +169,9 @@ internal sealed class PeerLink : IAsyncDisposable
         finally
         {
             chunks.Writer.TryComplete();
+            // A failed read must also join the delayed writer.
+            await writing;
         }
-
-        await writing;
 
         async Task WriteAsync()
         {

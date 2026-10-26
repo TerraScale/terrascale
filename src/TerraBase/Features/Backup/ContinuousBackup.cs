@@ -1288,6 +1288,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     // forward only, to a stored snapshot's time or the time a stored read mark proves.
     private static void Prove(ShippedFile file, DateTimeOffset at)
     {
+        // Other members recover progress from object names/read marks, both stored in whole milliseconds.
+        at = DateTimeOffset.FromUnixTimeMilliseconds(at.ToUnixTimeMilliseconds());
         if (!file.Target.IncludesPlatform)
         {
             file.PlatformProgress = null;
