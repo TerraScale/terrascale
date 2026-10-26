@@ -7,6 +7,7 @@ public sealed class SqlDeleteReturningTests
 {
     [Test]
     [Arguments("DELETE FROM t RETURNING *")]
+    [Arguments("DELETE FROM t RETURNING *;")]
     [Arguments("/* RETURNING */ DELETE /* target */ FROM \"t\" -- RETURNING\n rEtUrNiNg *;")]
     [Arguments("DELETE FROM `t` RETURNING t.id AS id, v")]
     [Arguments("DELETE FROM [t] RETURNING id, v")]
@@ -47,6 +48,19 @@ public sealed class SqlDeleteReturningTests
     }
 
     [Test]
+    public async Task Quoted_end_alias_and_statement_semicolon_are_accepted()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var results = await SqlApi.OkAsync(api,
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", "INSERT INTO t VALUES (1, 'END')",
+            "DELETE FROM t RETURNING id AS \"END\", v; -- END");
+        await Assert.That(results[2].GetProperty("rows").GetRawText()).IsEqualTo("""[[1,"END"]]""");
+        await Assert.That(results[2].GetProperty("columns")[0].GetProperty("name").GetString()).IsEqualTo("END");
+        var rows = (await SqlApi.OkAsync(api, "SELECT * FROM t"))[0];
+        await Assert.That(rows.GetProperty("rows").GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Unfiltered_delete_returns_every_row_and_rolls_back_with_a_failed_http_batch()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -70,6 +84,9 @@ public sealed class SqlDeleteReturningTests
     [Arguments("DELETE FROM t RETURNING *; DELETE FROM t")]
     [Arguments("DELETE FROM t RETURNING length(v)")]
     [Arguments("DELETE FROM t RETURNING other.id")]
+    [Arguments("DELETE FROM t RETURNING * END")]
+    [Arguments("DELETE FROM t RETURNING * END; SELECT 1")]
+    [Arguments("DELETE FROM t RETURNING id AS \"END\" /* tail */ END; SELECT 1")]
     public async Task Invalid_returning_does_not_commit_any_statement_in_the_http_batch(string sql)
     {
         await using var api = await DocumentApi.StartAsync();

@@ -10,6 +10,50 @@ public sealed class HranaDeleteReturningTests
     [Test]
     [Arguments("v2")]
     [Arguments("v3")]
+    public async Task Malformed_returning_tails_are_refused_without_deleting_or_executing_a_script_prefix(string version)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", "INSERT INTO t VALUES (1, 'keep')");
+        var result = await PostAsync(api, """
+            {"requests":[
+             {"type":"execute","stmt":{"sql":"DELETE FROM t RETURNING * END; SELECT 1"}},
+             {"type":"execute","stmt":{"sql":"SELECT * FROM t"}},
+             {"type":"sequence","sql":"INSERT INTO t VALUES (2, 'prefix'); DELETE FROM t RETURNING id AS \"END\" /* tail */ END; SELECT 1;"},
+             {"type":"execute","stmt":{"sql":"SELECT * FROM t"}},
+             {"type":"describe","sql":"DELETE FROM t RETURNING * END"},
+             {"type":"execute","stmt":{"sql":"DELETE FROM t RETURNING id AS \"END\", v; -- END"}},
+             {"type":"execute","stmt":{"sql":"SELECT count(*) FROM t"}},{"type":"close"}]}
+            """, version: version);
+        await Assert.That(result.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(Types(result.Json)).IsEqualTo("error,ok:execute,error,ok:execute,error,ok:execute,ok:execute,ok:close");
+        foreach (var index in new[] { 0, 2, 4 })
+        {
+            await Assert.That(result.Json.GetProperty("results")[index].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_ERROR");
+        }
+
+        foreach (var index in new[] { 1, 3, 5 })
+        {
+            await Assert.That(Response(result.Json, index).GetProperty("result").GetProperty("rows").GetRawText())
+                .IsEqualTo("""[[{"type":"integer","value":"1"},{"type":"text","value":"keep"}]]""");
+        }
+
+        await Assert.That(Response(result.Json, 5).GetProperty("result").GetProperty("cols")[0].GetProperty("name").GetString()).IsEqualTo("END");
+        await Assert.That(Response(result.Json, 6).GetProperty("result").GetProperty("rows").GetRawText())
+            .IsEqualTo("""[[{"type":"integer","value":"0"}]]""");
+
+        var sequence = await PostAsync(api, """
+            {"requests":[
+             {"type":"sequence","sql":"INSERT INTO t VALUES (3, 'END'); DELETE FROM t RETURNING id AS \"END\"; INSERT INTO t VALUES (4, 'after');"},
+             {"type":"execute","stmt":{"sql":"SELECT * FROM t"}},{"type":"close"}]}
+            """, version: version);
+        await Assert.That(Types(sequence.Json)).IsEqualTo("ok:sequence,ok:execute,ok:close");
+        await Assert.That(Response(sequence.Json, 1).GetProperty("result").GetProperty("rows").GetRawText())
+            .IsEqualTo("""[[{"type":"integer","value":"4"},{"type":"text","value":"after"}]]""");
+    }
+
+    [Test]
+    [Arguments("v2")]
+    [Arguments("v3")]
     public async Task Delete_returning_describes_executes_splits_scripts_and_replays_across_requests(string version)
     {
         await using var api = await DocumentApi.StartAsync();

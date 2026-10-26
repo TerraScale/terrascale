@@ -21,8 +21,15 @@ internal sealed class SqlDialect : SQLiteDialect
         parser.ExpectKeyword(Keyword.FROM);
         var table = new TableWithJoins(new TableFactor.Table(parser.ParseObjectName()));
         parser.ExpectKeyword(Keyword.RETURNING);
+        var returning = parser.ParseCommaSeparated(parser.ParseSelectItem);
+        // ParseStatements treats END as an enclosing block terminator and otherwise silently discards the tail.
+        if (parser.PeekToken() is not (EOF or SemiColon))
+        {
+            throw Parser.Expected("end of statement", parser.PeekToken());
+        }
+
         return new Statement.Delete(new DeleteOperation(null, new FromTable.WithFromKeyword([table]),
-            Returning: parser.ParseCommaSeparated(parser.ParseSelectItem)));
+            Returning: returning));
     }
 
     private static bool IsUnaliasedDeleteReturning(Parser parser)
