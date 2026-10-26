@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using SqlParser;
-using SqlParser.Dialects;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
@@ -150,7 +149,7 @@ internal sealed class SqlSession(
         {
             // The whole text passes the literal and name checks before it is split.
             _ = SqlRead.Number(sql);
-            statements = new Parser().ParseSql(sql, new SQLiteDialect());
+            statements = new Parser().ParseSql(sql, new SqlDialect());
         }
         catch (FormatException error)
         {
