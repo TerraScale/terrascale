@@ -185,9 +185,15 @@ public sealed partial class HostedSignInTests
             }
 
             // The existing forwarder uses AllHeadersAsync, preserving actual Origin and cookies.
+            Console.WriteLine($"Mobile route start {route.Request.Method} {new Uri(route.Request.Url).AbsolutePath}");
             await ForwardContinuationFormAsync(route, server);
+            Console.WriteLine($"Mobile route fulfilled {route.Request.Method} {new Uri(route.Request.Url).AbsolutePath}");
         });
         var page = await context.NewPageAsync();
+        page.Response += (_, response) => Console.WriteLine($"Mobile response {response.Status} {new Uri(response.Url).AbsolutePath}");
+        page.RequestFailed += (_, request) => Console.WriteLine($"Mobile failed {request.Method} {new Uri(request.Url).AbsolutePath}");
+        page.DOMContentLoaded += (_, _) => Console.WriteLine("Mobile DOM ready");
+        page.Load += (_, _) => Console.WriteLine("Mobile load");
         var response = await page.GotoAsync($"{OidcHarness.PublicOrigin}{SignIn}");
         await Assert.That(response is not null && response.Headers.ContainsKey("content-security-policy")).IsTrue();
         return page;
