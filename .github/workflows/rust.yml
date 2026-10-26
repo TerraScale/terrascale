@@ -59,7 +59,12 @@ jobs:
       - name: Audit every locked dependency against current RustSec advisories
         run: |
           test -s Cargo.lock
-          cargo audit --deny warnings --file Cargo.lock
+          git ls-files -z -- Cargo.lock '**/Cargo.lock' > "$RUNNER_TEMP/cargo-lockfiles"
+          test -s "$RUNNER_TEMP/cargo-lockfiles"
+          while IFS= read -r -d '' lock; do
+            test -s "$lock"
+            cargo audit --deny warnings --file "$lock"
+          done < "$RUNNER_TEMP/cargo-lockfiles"
       - name: Check formatting
         if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
         run: cargo fmt --all -- --check
