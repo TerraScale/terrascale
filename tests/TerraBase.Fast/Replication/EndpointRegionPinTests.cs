@@ -15,6 +15,7 @@ public sealed class EndpointRegionPinTests
 {
     private static readonly string[] HttpEndpoints = ["documents", "sql", "hrana"];
     private static readonly string[] Sjc = ["sjc"];
+    private static readonly string[] Fra = ["fra"];
     private static readonly bool[] ReplayStates = [false, true];
     [Test]
     [Arguments(false)]
@@ -120,6 +121,12 @@ public sealed class EndpointRegionPinTests
                 await using var wire = await WireClient.ConnectAsync(machine.Api.Server.WirePort);
                 var hello = pin is null ? await wire.HelloAsync(key, project, "pinned") : await wire.HelloPinnedAsync(key, project, "pinned", pin);
                 await Assert.That(hello.Status).IsEqualTo(accepted ? 200 : 421);
+                if (accepted)
+                {
+                    var repeated = await wire.HelloPinnedAsync(key, project, "pinned", machine.Region);
+                    await Assert.That((repeated.Status, repeated.Code)).IsEqualTo((400, "unknown_operation"));
+                }
+
                 if (!accepted)
                 {
                     await Assert.That(hello.Code).IsEqualTo("wrong_region");
@@ -144,5 +151,35 @@ public sealed class EndpointRegionPinTests
             using var missing = await restricted.SendAsync(unknown);
             await Assert.That(await missing.Content.ReadAsStringAsync()).IsEqualTo(text);
         }));
+
+        if (!allRegions)
+        {
+            var machine = cell.Sjc;
+            var key = await machine.Api.Server.IssueNarrowedAsync(org, project, null, "documents:read");
+            await using var pg = new NpgsqlConnection(new NpgsqlConnectionStringBuilder
+            {
+                Host = "127.0.0.1",
+                Port = machine.Api.Server.PostgresPort,
+                Username = "wire",
+                Password = key,
+                Database = "pinned@sjc",
+                SslMode = SslMode.Disable,
+                Pooling = false,
+            }.ConnectionString);
+            await pg.OpenAsync();
+            await using var wire = await WireClient.ConnectAsync(machine.Api.Server.WirePort);
+            await Assert.That((await wire.HelloPinnedAsync(key, project, "pinned", "sjc")).Status).IsEqualTo(200);
+            var database = await created.Content.ReadFromJsonAsync<JsonElement>();
+            using var removed = await cell.Gru.Api.Client.PatchAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{org}/projects/{project}/databases/{database.GetProperty("id").GetString()}"), new { replicaRegions = Fra });
+            removed.EnsureSuccessStatusCode();
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await machine.Api.Server.Services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(org, project, "pinned", token) is ManagedDatabase record && !record.PlacedIn("sjc"));
+            await using var command = new NpgsqlCommand("SELECT 1", pg);
+            var error = await Assert.ThrowsAsync<PostgresException>(command.ExecuteScalarAsync);
+            await Assert.That(error!.SqlState).IsEqualTo("08004");
+            await Assert.That(error.MessageText).StartsWith("wrong_region:");
+            var answer = await wire.GetAsync("items", EntityIds.New().ToString());
+            await Assert.That((answer.Status, answer.Code)).IsEqualTo((421, "wrong_region"));
+        }
     }
 }

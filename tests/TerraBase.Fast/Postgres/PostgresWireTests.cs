@@ -291,6 +291,19 @@ public sealed class PostgresWireTests
         }
     }
 
+    [Test]
+    [Arguments("main@")]
+    [Arguments("main@@gru")]
+    [Arguments("main@GRU")]
+    public async Task Malformed_database_pins_fail_closed_before_key_lookup(string database)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var failure = await OpenFailureAsync(api, "invalid", database);
+        await Assert.That(failure!.SqlState).IsEqualTo("08004");
+        await Assert.That(failure.MessageText).StartsWith("misdirected_request:");
+        await Assert.That(failure.MessageText).DoesNotContain("database regions:");
+    }
+
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
         await using var source = Source(api, key, database);
