@@ -32,7 +32,6 @@ public sealed class PlatformRestoreFenceTests
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             s3.Configure(settings);
-            settings[TerraBaseTestServer.PlatformSeedKey] = "true";
             settings["auth-issuer"] = TerraBaseOptions.PlatformAuthIssuer;
             settings["auth-audience"] = TerraBaseOptions.PlatformAuthAudience;
         }, services =>
@@ -42,6 +41,7 @@ public sealed class PlatformRestoreFenceTests
             services.AddHttpClient("ts-auth").AddHttpMessageHandler(() => new GlobalIssuerRoute());
         }, time, cancellationToken);
         await api.VerifyCatalogAsync(cancellationToken);
+        // The harness omits the hosted seeder by default; this fixture seeds once after catalog verification.
         await Assert.That(await api.Server.Services.GetRequiredService<IPlatformCatalog>().EnsurePlatformAsync(cancellationToken) is Done).IsTrue();
         using var client = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
