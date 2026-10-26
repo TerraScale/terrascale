@@ -15,7 +15,14 @@ public static class BackupEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
-            try { return Results.Json(await backups.ListAsync(context, http.Request.Query["databaseId"].ToString(), http.RequestAborted)); }
+            try
+            {
+                var (limit, after) = CursorPaging.Read(http.Request);
+                var id = http.Request.Query["databaseId"].ToString();
+                var listing = await backups.ListAsync(context, id, http.RequestAborted);
+                var page = CursorPaging.Page(listing.Backups, backup => backup.Id, CursorPaging.Scope(context, "backups", id), limit, after);
+                return Results.Json(new McpBackupList(listing.Policy, page.Items, page.NextCursor, page.HasMore, page.Limit));
+            }
             catch (Exception error) when (KnownFailure(error) &&
                 (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
             { return Failure(error); }

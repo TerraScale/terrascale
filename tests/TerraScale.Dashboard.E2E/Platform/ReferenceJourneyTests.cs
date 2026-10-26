@@ -51,10 +51,10 @@ public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
         await MatchCapturedMembersAsync(mario, scenario.Personas.Seeded, manifest.RootElement.GetProperty("seeded"));
         await MatchCapturedInvitationsAsync(personal, scenario.Personas.Routes, manifest.RootElement.GetProperty("routes"));
         await MatchCapturedInvitationsAsync(mario, scenario.Personas.Seeded, manifest.RootElement.GetProperty("seeded"));
-        var databases = await JsonAsync(mario, "/api/v1/dashboard/databases");
+        var databases = await ManagementListJourney.ReadListAllAsync(mario, "/api/v1/dashboard/databases", limit: 1);
         await Assert.That(databases.GetArrayLength()).IsEqualTo(2);
-        await Assert.That(databases[0].GetProperty("name").GetString()).IsEqualTo("core-primary");
-        await Assert.That(databases[0].GetProperty("id").GetString()).IsEqualTo("0Z793APJ2ECFW2F7P6J9F2RKVY");
+        var primary = databases.EnumerateArray().Single(database => database.GetProperty("id").GetString() == "0Z793APJ2ECFW2F7P6J9F2RKVY");
+        await Assert.That(primary.GetProperty("name").GetString()).IsEqualTo("core-primary");
         var rows = (await JsonAsync(mario, "/api/v1/dashboard/data/documents?databaseId=0Z793APJ2ECFW2F7P6J9F2RKVY&collection=orders")).GetProperty("documents");
         await Assert.That(rows.GetArrayLength()).IsEqualTo(3);
         await Assert.That(rows[1].GetProperty("id").GetString()).IsEqualTo("01K78000000000000000001002");

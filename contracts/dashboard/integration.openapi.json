@@ -238,18 +238,34 @@
           "Credentials"
         ],
         "summary": "List ts-auth project keys without secrets",
-        "description": "DatabaseName is the canonical restriction. A missing local DatabaseId does not mean unrestricted access. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.",
+        "description": "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Ordinal immutable-ID order. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseName is the canonical restriction; missing local DatabaseId does not mean unrestricted access. LastUsedAt is the last token exchange (up to five minutes stale).",
         "operationId": "listDashboardCredentials",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Rows per page, 1–100; default 100. Invalid values return 422.",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Opaque nextCursor from this list with the same scope and filters. Omit for the first page.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ProjectCredentialMetadata"
-                  }
+                  "$ref": "#/components/schemas/CursorPageOfProjectCredentialMetadata"
                 }
               }
             }
@@ -259,6 +275,16 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -818,6 +844,39 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "CursorPageOfProjectCredentialMetadata": {
+        "required": [
+          "items",
+          "nextCursor",
+          "limit"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectCredentialMetadata"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "limit": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "hasMore": {
+            "type": "boolean"
           }
         }
       },

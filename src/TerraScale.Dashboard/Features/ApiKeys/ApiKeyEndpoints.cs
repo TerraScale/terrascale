@@ -17,12 +17,17 @@ public static class ApiKeyEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
-            try { return Results.Json((await keys.ListAsync(context, http.RequestAborted)).Select(ApiKeyService.CredentialMetadata).ToArray(), ApiKeyContractJson.Default.ProjectCredentialMetadataArray); }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
+            try
+            {
+                var (limit, after) = CursorPaging.Read(http.Request);
+                return Results.Json(CursorPaging.Page((await keys.ListAsync(context, http.RequestAborted)).Select(ApiKeyService.CredentialMetadata),
+                    key => key.KeyId, CursorPaging.Scope(context, "credentials", "", "", "", ""), limit, after));
+            }
+            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return DatabaseEndpoints.Failure(error); }
         }).WithGroupName("integration").WithName("listDashboardCredentials").WithTags("Credentials")
             .WithSummary("List ts-auth project keys without secrets")
-            .WithDescription("DatabaseName is the canonical restriction. A missing local DatabaseId does not mean unrestricted access. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.")
-            .Produces<ProjectCredentialMetadata[]>().Produces(401).ProducesProblem(403).ProducesProblem(503);
+            .WithDescription(CursorPaging.Description + " Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseName is the canonical restriction; missing local DatabaseId does not mean unrestricted access. LastUsedAt is the last token exchange (up to five minutes stale).")
+            .WithCursorContract().Produces<CursorPage<ProjectCredentialMetadata>>().Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", async (HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);

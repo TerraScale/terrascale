@@ -63,7 +63,7 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
         await Assert.That(rpc.GetProperty("structuredContent").GetProperty("placement").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
         // Invalid canonical placement must leave the last validated record intact.
         Volatile.Write(ref mode, "invalid");
-        var listed = await ReadAsync(client, "/api/v1/dashboard/databases");
+        var listed = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases");
         await Assert.That(listed[0].GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SFO" });
         foreach (var race in new[] { "paused", "paused-missing", "paused-all" })
         {
@@ -84,7 +84,7 @@ public sealed class DatabasePlacementRefreshJourneyTests(DashboardRootFixture fi
             var expected = allRegions ? new[] { "GRU" } : new[] { "GRU", "FRA" };
             using (var completed = await pending)
             {
-                var refreshed = (await JsonAsync(completed))[0];
+                var refreshed = (await JsonAsync(completed)).GetProperty("items")[0];
                 await Assert.That(refreshed.TryGetProperty("placementRevision", out _)).IsFalse();
                 await Assert.That(refreshed.GetProperty("allRegions").GetBoolean()).IsEqualTo(allRegions);
                 await Assert.That(refreshed.GetProperty("regions").EnumerateArray().Select(x => x.GetString()!).ToArray()).IsEquivalentTo(expected)

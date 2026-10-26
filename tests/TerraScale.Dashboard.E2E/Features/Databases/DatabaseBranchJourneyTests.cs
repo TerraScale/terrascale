@@ -275,7 +275,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
                 await Assert.That(actual.GetProperty("branchedFrom").GetString()).IsEqualTo(sourceId);
                 await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("branchCreates").GetInt32()).IsEqualTo(1);
                 await ControlAsync(producer, new { command = "database-status", organizationId, projectId, databaseId = sourceId, value = status });
-                var rows = await ReadAsync(replica, "/api/v1/dashboard/databases");
+                var rows = await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases");
                 await Assert.That(rows.EnumerateArray().Single(row => row.GetProperty("id").GetString() == sourceId).GetProperty("status").GetString()).IsEqualTo(status);
             }
             finally { Volatile.Write(ref paused, false); release.TrySetResult(); }
@@ -283,7 +283,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(refused, producer));
             // The request is refused, but TerraBase owns databases: the branch it made is listed with its own identity.
             foreach (var instance in new[] { client, replica })
-                await Assert.That((await ReadAsync(instance, "/api/v1/dashboard/databases")).EnumerateArray().Single(row => row.GetProperty("name").GetString() == "commit-branch")
+                await Assert.That((await ManagementListJourney.ReadListAllAsync(instance, "/api/v1/dashboard/databases")).EnumerateArray().Single(row => row.GetProperty("name").GetString() == "commit-branch")
                     .GetProperty("id").GetString()).IsEqualTo(actual.GetProperty("id").GetString());
             await DeleteAsync(replica, replicaCsrf, actual.GetProperty("id").GetString()!, "commit-branch");
             await DeleteAsync(client, csrf, sourceId, "commit-source");
@@ -347,7 +347,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
                     .Because(await EvidenceAsync(refused, producer));
             Volatile.Write(ref corrupt, false);
             // The altered answer is never recorded; the listing records the branch as TerraBase lists it.
-            var rows = await ReadAsync(client, "/api/v1/dashboard/databases");
+            var rows = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases");
             await Assert.That(rows.GetArrayLength()).IsEqualTo(2);
             var branch = rows.EnumerateArray().Single(row => row.GetProperty("id").GetString() != sourceId);
             await Assert.That(branch.GetProperty("name").GetString()).IsEqualTo("confirmation-branch");

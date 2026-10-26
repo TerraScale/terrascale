@@ -160,10 +160,8 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await dialog.GetByLabel("Name", new() { Exact = true }).FillAsync("audit-current-draft");
         await dialog.GetByRole(AriaRole.Button, new() { Name = "Save query", Exact = true }).ClickAsync();
         await page.WaitForURLAsync(url => url.Contains("savedQueryId=", StringComparison.Ordinal));
-        using var savedResponse = await client.GetAsync("/api/v1/dashboard/data/saved-queries");
-        await Assert.That(savedResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var savedQueries = JsonDocument.Parse(await savedResponse.Content.ReadAsStringAsync());
-        var persisted = savedQueries.RootElement.EnumerateArray().Single(query => query.GetProperty("name").GetString() == "audit-current-draft").GetProperty("sql").GetString();
+        var savedQueries = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/data/saved-queries");
+        var persisted = savedQueries.EnumerateArray().Single(query => query.GetProperty("name").GetString() == "audit-current-draft").GetProperty("sql").GetString();
         await File.WriteAllTextAsync(Path.Combine(evidence, $"saved-query-values-{width}.json"), JsonSerializer.Serialize(new
         { ConsoleDraft = draft, DialogSql = actual, PersistedSql = persisted }, new JsonSerializerOptions { WriteIndented = true }));
         var savedPath = page.Url;

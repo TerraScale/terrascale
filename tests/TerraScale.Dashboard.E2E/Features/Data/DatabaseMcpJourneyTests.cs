@@ -211,6 +211,8 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(savedIds.All(traversed.Contains)).IsTrue();
             await ErrorAsync(replica, "list_saved_queries", new() { ["after"] = "bad" });
             await ErrorAsync(replica, "list_saved_queries", new() { ["limit"] = 0 });
+            var apiQueries = await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/data/saved-queries", limit: 1);
+            await Assert.That(savedIds.All(id => apiQueries.EnumerateArray().Any(query => query.GetProperty("id").GetString() == id))).IsTrue();
             await ErrorAsync(replica, "list_saved_queries", new() { ["limit"] = 101 });
             var checkpoint = await CallAsync(replica, "list_saved_queries", new() { ["limit"] = 1 });
             var cursor = checkpoint.GetProperty("nextCursor").GetString()!;
@@ -223,8 +225,6 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(resumed.GetProperty("queries").EnumerateArray().Select(query => query.GetProperty("id").GetString()!))
                 .IsEquivalentTo(traversed.Where(id => StringComparer.Ordinal.Compare(id, removed) > 0));
             await Assert.That(resumed.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
-            using (var apiQueries = await replica.GetAsync("/api/v1/dashboard/data/saved-queries"))
-                await Assert.That((await ReadJsonAsync(apiQueries)).EnumerateArray().Any(query => query.GetProperty("id").GetString() == savedIds[0])).IsTrue();
             foreach (var id in savedIds.ToArray()) await CallAsync(replica, "delete_saved_query", new() { ["queryId"] = id });
             savedIds.Clear();
 

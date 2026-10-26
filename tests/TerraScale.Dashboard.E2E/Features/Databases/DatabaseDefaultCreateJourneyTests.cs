@@ -81,8 +81,7 @@ public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixtu
 
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "orders" }))
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
-        using (var listed = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/databases")))
-            await Assert.That(listed.RootElement.GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
         await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
     }

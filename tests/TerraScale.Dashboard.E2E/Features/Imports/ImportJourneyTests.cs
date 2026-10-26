@@ -239,7 +239,7 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         var rejected = await NextAsync(client, refused);
         await Assert.That(rejected.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wal_mode_source");
         await Assert.That(await HtmlAsync(client, "/imports/" + refused)).Contains("Make a rollback-mode copy with VACUUM INTO.");
-        var databases = await JsonAsync(await client.GetAsync("/api/v1/dashboard/databases"));
+        var databases = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases");
         var refusedId = databases.EnumerateArray().Single(item => item.GetProperty("name").GetString() == refused).GetProperty("id").GetString()!;
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = refusedId, ["confirmName"] = refused }))
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because("Deleting the destination is the cleanup for an unusable export.");
@@ -440,7 +440,7 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
     }
 
     private static async Task<int> DatabaseCountAsync(HttpClient client, string name) =>
-        (await JsonAsync(await client.GetAsync("/api/v1/dashboard/databases"))).EnumerateArray().Count(item => item.GetProperty("name").GetString() == name);
+        (await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).EnumerateArray().Count(item => item.GetProperty("name").GetString() == name);
 
     private static string Minted(string page) => Regex.Match(page, "name=\"database\" value=\"(import-[0-9a-z]{26})\"").Groups[1].Value is { Length: > 0 } name
         ? name : throw new InvalidOperationException("The import page did not mint a destination name.");
