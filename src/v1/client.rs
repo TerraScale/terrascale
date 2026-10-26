@@ -11,6 +11,7 @@ use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use super::auth::{Auth, Credential};
 use super::documents::Database;
 use super::errors::{self, Error, Result};
 
@@ -68,7 +69,7 @@ impl RetryPolicy {
 /// Builds a [`Client`].
 pub struct ClientBuilder {
     base_url: String,
-    token: String,
+    credential: Credential,
     root_cas: Vec<Vec<u8>>,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
@@ -100,7 +101,7 @@ impl ClientBuilder {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
-            token: token.into(),
+            credential: Credential::Bearer(token.into()),
             root_cas: Vec::new(),
             timeout: Some(Duration::from_secs(30)),
             connect_timeout: Some(Duration::from_secs(10)),
@@ -209,14 +210,7 @@ impl ClientBuilder {
                 "a region pin requires a static endpoint".into(),
             ));
         }
-        if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
-            return Err(Error::InvalidInput(
-                "bearer token must be nonempty without whitespace or control characters".into(),
-            ));
-        }
-        let mut auth = HeaderValue::from_str(&format!("Bearer {}", self.token))
-            .map_err(|_| Error::InvalidInput("token is not a valid header value".into()))?;
-        auth.set_sensitive(true);
+        let auth = Auth::new(self.credential, self.project.as_deref())?;
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
@@ -322,7 +316,7 @@ fn parse_base_url(raw: &str) -> Result<Url> {
 struct Inner {
     http: reqwest::Client,
     base: Url,
-    auth: HeaderValue,
+    auth: Auth,
     retry: RetryPolicy,
     max_response: usize,
     project: Option<String>,
@@ -355,6 +349,18 @@ impl Client {
     /// Use [`ClientBuilder::endpoint`] for an explicit static override.
     pub fn for_project(project: impl ToString, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new("", token).project(project)
+    }
+    /// Exchanges a first-party API key for project-scoped bearer tokens.
+    /// Tokens refresh automatically and the cache is shared by all clones.
+    /// The API key is sent only to the fixed first-party authentication origin.
+    pub fn for_project_api_key(
+        project: impl ToString,
+        api_key: impl Into<String>,
+    ) -> ClientBuilder {
+        ClientBuilder {
+            credential: Credential::ApiKey(api_key.into()),
+            ..ClientBuilder::new("", "").project(project)
+        }
     }
     /// Builds a platform-admin client with a user access token and explicit endpoint.
     pub fn for_platform(endpoint: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
@@ -525,7 +531,10 @@ impl Client {
     ) -> Result<Resp> {
         let mut req = Req::new(Method::GET, Vec::new());
         req.headers = headers.to_vec();
-        match self.attempt(&req, url, region, None, true).await {
+        match self
+            .attempt(&req, url, region, None, true, &mut false)
+            .await
+        {
             Attempt::Done(resp) => Ok(resp),
             Attempt::Failed(error, _) => Err(error),
         }
@@ -595,7 +604,6 @@ impl Client {
             .inner
             .http
             .get(url)
-            .header(AUTHORIZATION, self.inner.auth.clone())
             .header("Accept", "text/event-stream")
             // The producer ends streams after 30 minutes; dropping the future/stream cancels it.
             .timeout(Duration::from_secs(31 * 60));
@@ -607,10 +615,7 @@ impl Client {
                 .map_err(|_| Error::InvalidInput("Last-Event-ID must be a valid header".into()))?;
             request = request.header("Last-Event-ID", cursor);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| Error::Transport(describe(&error)))?;
+        let response = self.authorized(request, false, &mut false).await?;
         let status = response.status();
         let headers = response.headers().clone();
         let valid_region = region.as_deref().is_none_or(|expected| {
@@ -672,7 +677,7 @@ impl Client {
         let mut req = Req::new(Method::GET, segments);
         req.anonymous_probe = true;
         let url = self.url(&self.inner.base, &req.segments, &[])?;
-        match self.attempt(&req, &url, None, None, true).await {
+        match self.attempt(&req, &url, None, None, true, &mut false).await {
             Attempt::Done(response) => Ok(response),
             Attempt::Failed(error, _) => Err(error),
         }
@@ -715,8 +720,12 @@ impl Client {
         let replay_safe = req.replay_safe;
         let policy = &self.inner.retry;
         let mut attempt: u32 = 0;
+        let mut refreshed = false;
         loop {
-            match self.attempt(&req, &url, region, body.clone(), false).await {
+            match self
+                .attempt(&req, &url, region, body.clone(), false, &mut refreshed)
+                .await
+            {
                 Attempt::Done(resp) => return Ok(resp),
                 Attempt::Failed(err, retry_after) => {
                     let retry = attempt < policy.max_retries
@@ -759,15 +768,13 @@ impl Client {
         region: Option<&str>,
         body: Option<bytes::Bytes>,
         raw_status: bool,
+        refreshed: &mut bool,
     ) -> Attempt {
         let mut rb = self
             .inner
             .http
             .request(req.method.clone(), url.clone())
             .header("Accept", "application/json");
-        if !req.anonymous_probe {
-            rb = rb.header(AUTHORIZATION, self.inner.auth.clone());
-        }
         if let Some(region) = region {
             rb = rb.header("X-TerraScale-Region-Pin", region);
         }
@@ -779,9 +786,9 @@ impl Client {
                 .header(CONTENT_TYPE, req.content_type.unwrap_or("application/json"))
                 .body(body);
         }
-        let resp = match rb.send().await {
+        let resp = match self.authorized(rb, req.anonymous_probe, refreshed).await {
             Ok(r) => r,
-            Err(e) => return Attempt::Failed(Error::Transport(describe(&e)), None),
+            Err(e) => return Attempt::Failed(e, None),
         };
         let status = resp.status();
         let headers = resp.headers().clone();
@@ -856,6 +863,48 @@ impl Client {
         Attempt::Failed(err, retry_after)
     }
 
+    // A 401 refuses admission, so even a mutation can be sent once more.
+    // Every other retry remains subject to the existing replay-safety policy.
+    async fn authorized(
+        &self,
+        request: reqwest::RequestBuilder,
+        anonymous: bool,
+        refreshed: &mut bool,
+    ) -> Result<reqwest::Response> {
+        let transport = |e: reqwest::Error| Error::Transport(describe(&e));
+        if anonymous {
+            return request.send().await.map_err(transport);
+        }
+        let token = self.inner.auth.bearer(&self.inner.http, None).await?;
+        let replay = request.try_clone();
+        let response = request
+            .header(AUTHORIZATION, token.as_ref().clone())
+            .send()
+            .await
+            .map_err(transport)?;
+        if response.status() != StatusCode::UNAUTHORIZED
+            || *refreshed
+            || !self.inner.auth.refreshable()
+        {
+            return Ok(response);
+        }
+        let Some(replay) = replay else {
+            return Ok(response);
+        };
+        *refreshed = true;
+        drop(response);
+        let token = self
+            .inner
+            .auth
+            .bearer(&self.inner.http, Some(&token))
+            .await?;
+        replay
+            .header(AUTHORIZATION, token.as_ref().clone())
+            .send()
+            .await
+            .map_err(transport)
+    }
+
     fn response_error(
         &self,
         error: Error,
@@ -925,6 +974,10 @@ fn backoff_with(policy: &RetryPolicy, attempt: u32, random: u128) -> Duration {
     );
     half.saturating_add(jitter)
 }
+
+#[cfg(test)]
+#[path = "auth_smoke.rs"]
+mod auth_smoke;
 
 #[cfg(test)]
 mod tests {

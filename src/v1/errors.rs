@@ -20,6 +20,13 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// API-key exchange failed before a database request was sent. The code
+    /// is SDK-owned; upstream bodies, headers and transport text are omitted.
+    #[error("terrabase: token exchange: {code} (HTTP {status:?})")]
+    TokenExchange {
+        status: Option<u16>,
+        code: &'static str,
+    },
     /// A project API failure with its complete HTTP diagnostics. The inner
     /// error retains the decoded code and typed error, when present.
     #[error("{error}")]
@@ -166,6 +173,7 @@ impl Error {
     #[must_use]
     pub fn status(&self) -> Option<u16> {
         Some(match self {
+            Self::TokenExchange { status, .. } => return *status,
             Self::Response { status, .. }
             | Self::ResponseTooLarge { status, .. }
             | Self::UndecodableAck { status, .. } => *status,
@@ -191,6 +199,7 @@ impl Error {
     #[must_use]
     pub fn code(&self) -> Option<&str> {
         Some(match self {
+            Self::TokenExchange { code, .. } => code,
             Self::Response { error, .. } => return error.code(),
             Self::PreconditionFailed { .. } => "precondition_failed",
             Self::UniqueViolation { .. } => "unique_violation",
