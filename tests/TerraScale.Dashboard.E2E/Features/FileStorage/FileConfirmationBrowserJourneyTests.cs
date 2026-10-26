@@ -58,9 +58,14 @@ public sealed class FileConfirmationBrowserJourneyTests(DashboardRootFixture fix
         });
         await login.Context.CloseAsync();
         var downloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await recording.RouteAsync("https://fixture.r2.cloudflarestorage.com/files/avatar.png", async route =>
+        await recording.RouteAsync("**/api/v1/dashboard/storage/download*", async route =>
         {
-            await route.FulfillAsync(new() { ContentType = "image/png", Body = "synthetic-image", Headers = new Dictionary<string, string> { ["Content-Disposition"] = "attachment; filename=avatar.png" } });
+            // Exercise the genuine capability response; complete the attachment at this boundary because
+            // Playwright routing cannot intercept the redirected request to the external fixture host.
+            var response = await route.FetchAsync(new() { MaxRedirects = 0 });
+            await Assert.That(response.Status).IsEqualTo(303);
+            await Assert.That(response.Headers["location"]).IsEqualTo("https://fixture.r2.cloudflarestorage.com/files/avatar.png");
+            await route.FulfillAsync(new() { Status = 200, ContentType = "image/png", Body = "synthetic-image", Headers = new Dictionary<string, string> { ["Content-Disposition"] = "attachment; filename=avatar.png" } });
             downloaded.TrySetResult();
         });
         var page = await recording.NewPageAsync();
