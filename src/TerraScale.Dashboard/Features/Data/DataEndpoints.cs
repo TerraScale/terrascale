@@ -264,7 +264,7 @@ public static class DataEndpoints
                 if (dialog.Length == 0 && (http.Request.Query["edit"].ToString() is { Length: > 0 } edit))
                 {
                     var selected = await data.GetAsync(context, id, collection, edit, http.RequestAborted);
-                    dialog = "edit-document"; documentId = selected.Id; body = JsonSerializer.Serialize(selected.Document, new JsonSerializerOptions { WriteIndented = true }); version = selected.Version;
+                    dialog = "edit-document"; documentId = selected.Id; body = JsonDraft.Format(selected.Document, 1024 * 1024); version = selected.Version;
                 }
                 if (dialog.Length == 0 && (http.Request.Query["delete"].ToString() is { Length: > 0 } delete))
                 {

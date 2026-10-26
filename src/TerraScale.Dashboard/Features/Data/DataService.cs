@@ -97,9 +97,15 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         JsonElement document = default;
         if (operation != "delete")
         {
-            if (body.Length == 0 || System.Text.Encoding.UTF8.GetByteCount(body) > 1024 * 1024) throw new AccountAccessException("Enter a valid JSON document of 1 MiB or less.", 422);
-            try { using var parsed = JsonDocument.Parse(body); document = parsed.RootElement.Clone(); }
-            catch (JsonException) { throw new AccountAccessException("Enter a valid JSON document of 1 MiB or less.", 422); }
+            try
+            {
+                using var parsed = JsonDocument.Parse(body);
+                var compact = JsonDraft.Compact(parsed.RootElement, htmlSafe: false);
+                if (System.Text.Encoding.UTF8.GetByteCount(compact) > 1024 * 1024) throw new AccountAccessException("Enter a valid JSON document of 1 MiB or less. Size uses compact UTF-8 JSON.", 422);
+                using var transport = JsonDocument.Parse(compact);
+                document = transport.RootElement.Clone();
+            }
+            catch (Exception error) when (error is JsonException or InvalidOperationException) { throw new AccountAccessException("Enter a valid JSON document of 1 MiB or less.", 422); }
             if (document.ValueKind != JsonValueKind.Object) throw new AccountAccessException(operation == "patch" ? "A patch must be a JSON object; its fields are merged into the document." : "A document must be a JSON object.", 422);
         }
         var scope = DatabaseService.Scope(context);
@@ -115,6 +121,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         // A create carries no version, so TerraBase's create-only precondition failing means the ID is taken.
         catch (HttpRequestException error) when (operation == "create" && error.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed)
         { throw new AccountAccessException("A document with this ID already exists. Choose another ID or omit it to generate one.", 409); }
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge)
+        { throw new AccountAccessException("The encoded document exceeds the data API's 1 MiB request limit. Reduce its size and try again. Your draft has been kept.", 413); }
     }
 
     public async Task<TerraBaseDocument> GetAsync(AccountContext context, string databaseId, string collection, string id, CancellationToken cancellationToken)
