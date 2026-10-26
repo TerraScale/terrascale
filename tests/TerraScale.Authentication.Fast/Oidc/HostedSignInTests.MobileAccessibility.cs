@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
+using Microsoft.Net.Http.Headers;
 using OtpNet;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
@@ -105,10 +106,12 @@ public sealed partial class HostedSignInTests
             response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == SignIn + "/password");
         await page.GetByRole(AriaRole.Heading, new() { Name = "Signed in", Exact = true }).WaitForAsync();
         await page.WaitForLoadStateAsync();
-        var cookieHeader = await signedIn.HeaderValueAsync("set-cookie");
-        var issued = cookieHeader?.Split(';')[0];
-        await Assert.That(issued is not null && (await context.CookiesAsync()).Any(cookie =>
-            cookie.Name == "tsauth_session" && $"{cookie.Name}={cookie.Value}" == issued)).IsTrue();
+        var responseCookies = SetCookieHeaderValue.ParseList([.. await signedIn.HeaderValuesAsync("set-cookie")]);
+        var issued = responseCookies.SingleOrDefault(cookie => cookie.Name == "tsauth_session");
+        var browserCookies = await context.CookiesAsync();
+        Console.WriteLine($"Mobile cookie issued={issued is not null} count={browserCookies.Count} accepted={browserCookies.Any(cookie => cookie.Name == "tsauth_session" && cookie.Value == issued?.Value.ToString())}");
+        await Assert.That(issued is not null && browserCookies.Any(cookie =>
+            cookie.Name == "tsauth_session" && cookie.Value == issued.Value.ToString())).IsTrue();
         await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/device");
         await MobileFieldAsync(page, "device-code", "user_code", "one-time-code", "Device code");
         await MobileAuditAsync(page);
