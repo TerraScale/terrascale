@@ -62,7 +62,7 @@ ${routes.map(([route, title]) => `- [${title}](https://docs.terrascale.tech${rou
 `;
 const outputs = [['docs/public/llms.txt', Buffer.from(text)]];
 for (const [folder, files] of [
-  ['terrabase-js', ['quickstart.mjs', 'package.json']],
+  ['terrabase-js', ['quickstart.mjs', 'package.json', 'follow-changes.mjs']],
   ['terrabase-dotnet', ['Program.cs', 'TerraBaseStarter.csproj']],
 ]) {
   for (const file of files) outputs.push([

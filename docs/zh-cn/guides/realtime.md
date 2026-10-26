@@ -107,6 +107,8 @@ async function followChanges({ db, onChange, onReset, signal }) {
 
 The client token provider supplies a current access token on each reconnect. Apply changes idempotently before advancing the checkpoint; application failures stop consumption. Expired history stops here for an explicit rebuild.
 
+Use the maintained [SDK follower](/examples/terrabase-js/follow-changes.mjs) for checkpoint persistence, cancellable overload backoff and expired-history rebuilding. It captures a fresh position before the full re-read and then replays from it, covering writes during that read. `onChange` must be idempotent; `onCheckpoint` saves only successfully applied positions. Use a deadline signal; 401/403, terminal SSE errors, malformed data and lost connections stop. Only safe 429/503 reads retry, waiting at least `retryAfter` seconds (numeric or HTTP-date Retry-After); application failures stop. A fresh authorized token comes from the client provider.
+
 ## Sync a filtered shape
 
 A shape is a collection plus an optional `where` filter in the [query filter grammar](/zh-cn/guides/queries). Start with `offset=-1`. The server answers `307` to the first snapshot page and sets the shape's handle.
