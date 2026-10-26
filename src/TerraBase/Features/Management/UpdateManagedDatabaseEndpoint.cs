@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -18,7 +19,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
         Summary("Sets a database's replica regions");
-        Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database, or {\"allRegions\":true}: a full copy in every serving region, including regions that join later (400 placement_conflict with both). A replicaRegions list turns allRegions off; it names regions of GET /v1/regions or regions the database is already placed in (400 invalid_request naming the serving regions otherwise), so a removed region can be added back. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database, or {\"allRegions\":true}: a full copy in every serving region, including regions that join later (400 placement_conflict with both). A replicaRegions list turns allRegions off; it names regions of GET /v1/regions or regions the database is already placed in (400 invalid_request naming the serving regions otherwise), so a removed region can be added back. A platform database (ts-auth, ts-dashboard) stays in every region: anything but {"allRegions":true} answers 409 platform_placement_locked. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -52,6 +53,11 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         if (home != options.Region)
         {
             return DatabaseRegions.HomeRegion(home, database.Regions(options.Region));
+        }
+
+        if (PlatformDatabases.IsPlatform(organization) && (request.AllRegions != true || request.ReplicaRegions is not null))
+        {
+            return ErrorResponse.From(ManagementErrors.PlatformPlacementLocked);
         }
 
         Valid<IReadOnlyList<string>> checkedRegions = request.Name is not null ? new Validation("a database cannot be renamed")

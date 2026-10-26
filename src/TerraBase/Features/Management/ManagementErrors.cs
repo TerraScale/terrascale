@@ -47,6 +47,9 @@ internal static class ManagementErrors
     /// <summary>The operation belongs to the database's home region (docs/cross-region.md).</summary>
     public static readonly Conflict WrongRegion = new("the database is managed in another region: send it to its home region", "wrong_region");
 
+    /// <summary>A platform database (ts-auth, ts-dashboard) is always placed in every region; its placement cannot change.</summary>
+    public static readonly Conflict PlatformPlacementLocked = new("platform databases are placed in every region and their placement cannot change", "platform_placement_locked");
+
     /// <summary>The organization's live databases reach its plan's database allowance (https://terrascale.tech/pricing.json).</summary>
     public static Conflict DatabaseLimit(string plan, long allowed) => new(
         $"the organization's {plan} plan allows {allowed} database{(allowed == 1 ? "" : "s")}; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing",
