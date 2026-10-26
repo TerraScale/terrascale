@@ -75,7 +75,9 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
   index create <db> <collection> <field>... index 1 to 4 dotted member paths
   index drop <db> <name>                  drop an index
   import <db> <format> <file>             import a postgres_plain, sqlite or
-                                          ndjson file into a new database
+                                          ndjson file into a new database;
+                                          for plain document NDJSON, pass
+                                          -collection <name> before import
   import status | cancel <db>             print or cancel the database's import
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
                                           (a dir deploys its index.js); flags:
@@ -200,6 +202,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	org := fs.String("org", "", "organization name or id")
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
+	collection := fs.String("collection", "", "ndjson import: destination collection")
 	if fs.Parse(args) != nil {
 		return errUsage
 	}
@@ -220,6 +223,15 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
+	var collectionSet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "collection" {
+			collectionSet = true
+		}
+	})
+	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
+		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
+	}
 	switch name {
 	case "completion":
 		return completion(operands[0], out)
@@ -234,7 +246,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return s.dispatch(ctx, name, fn, operands, out)
+		return s.dispatch(ctx, name, fn, *collection, operands, out)
 	}
 	var keyReq tsauth.APIKeyRequest
 	if name == "keys create" {
@@ -279,13 +291,16 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if name == "keys create" {
 		return createKey(ctx, s, keyReq, out)
 	}
-	return s.dispatch(ctx, name, fn, operands, out)
+	return s.dispatch(ctx, name, fn, *collection, operands, out)
 }
 
 // dispatch runs a project command.
-func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, operands []string, out io.Writer) error {
+func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, collection string, operands []string, out io.Writer) error {
 	if strings.HasPrefix(name, "functions ") {
 		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
+	}
+	if name == "import" {
+		return importFile(ctx, s.tb.Database(s.project, operands[0]), operands[1], operands[2], collection, out)
 	}
 	return s.run(ctx, name, operands, out)
 }
@@ -801,8 +816,6 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		fmt.Fprintf(out, "Dropped index %s\n", args[1])
 		return nil
-	case "import":
-		return importFile(ctx, db, args[1], args[2], out)
 	case "import status", "import cancel":
 		read := db.Import
 		if name == "import cancel" {

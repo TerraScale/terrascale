@@ -9,13 +9,15 @@ import (
 	"time"
 )
 
-// ImportOptions selects missing-primary-key handling and excluded source objects.
+// ImportOptions selects missing-primary-key handling, excluded source objects
+// and the destination collection for plain-document NDJSON.
 type ImportOptions struct {
 	MissingPrimaryKey string   `json:"missingPrimaryKey,omitempty"`
 	Exclude           []string `json:"exclude,omitempty"`
+	Collection        string   `json:"collection,omitempty"`
 }
 
-// CreateImportRequest attaches postgres_plain or sqlite source to an empty database.
+// CreateImportRequest attaches postgres_plain, sqlite or ndjson source to an empty database.
 type CreateImportRequest struct {
 	Format       string         `json:"format"`
 	SourceBytes  int64          `json:"sourceBytes"`
