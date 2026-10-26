@@ -12,7 +12,7 @@ title: CLI automation and JSON
 The Go `ts` CLI is the shipped distribution. Check `ts --version` and `ts help <command>` for your installed `0.0.X` release; see [installation](../cli.md).
 
 Use `ts --json db list` for machine output. `--json` may follow the command; other global options go before it. Finite success is one JSON value plus newline; empty lists are `[]`.
-Exit codes are **0** success, **1** operational failure and **2** invalid arguments. Stdout contains only payloads; prompts/progress use stderr. Only explicit `keys create` returns a one-time secret; login never prints tokens.
+Exit codes are **0** success, **1** operational failure and **2** invalid arguments. Stdout contains only payloads; prompts/progress use stderr. Only explicit `keys create` and `keys rotate` return a one-time secret; login never prints tokens.
 
 Errors use `{"error":{"code":"invalid_arguments","message":"…"}}`, with optional HTTP `status` and safe `requestId`. Inspect uncertain writes before retrying. A writer failure can leave incomplete output even after a mutation committed.
 
@@ -24,7 +24,7 @@ The [JSON Schema](https://docs.terrascale.tech/cli-output.schema.json) maps indi
 | --- | --- |
 | `version`, `help`, `completion` | Version object; root/scoped help metadata; `{shell,script}` code asset |
 | `auth login/logout`, `whoami` | `{signedIn}`; `{sub,email}` |
-| `orgs`, `projects`, `keys list` | Metadata arrays; create/info/rename return metadata; key create returns `{api_key,key}`; revoke returns `{id,revoked}` |
+| `orgs`, `projects`, `keys list` | Metadata arrays; create/info/rename return metadata; key create/rotate return `{api_key,key}`; revoke returns `{id,revoked}` |
 | `db list/create/info/branch/regions/delete`, backups | Metadata arrays/objects; database delete returns `{name,deleted}`; restore returns database metadata |
 | `collection list/create/drop`, `doc get/put/delete/import` | Collection arrays/metadata; document envelope; write receipt; `{imported}` count |
 | `schema`, `ttl`, `index`, `usage` | Schema object; TTL path; index array/metadata/drop receipt; usage counters |
