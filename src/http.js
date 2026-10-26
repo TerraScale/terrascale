@@ -1,6 +1,6 @@
 import { resolveAccessToken, resolveTsAuthRuntimeConfig } from "./config.js";
 import { err, ok, sanitizeDiagnostic } from "./result.js";
-import { parseDatabaseJson } from "./database-codec.js";
+import { parseStrictJson } from "./strict-json.js";
 import { validateTsAuthIds } from "./ts-auth-ids.js";
 import { isValidId } from "./ids.js";
 /** @import { ResolvedTsAuthRuntimeConfig, TsAuthRuntimeConfig, FetchLike } from "./config.js" */
@@ -423,9 +423,8 @@ async function readResponseBody(response, request, signal) {
   try {
     const strictOauth = strictOauthRoute(routeName);
     if (strictOauth) {
-      // Reuse the bounded duplicate-member lexer. Native domain decoding is not
-      // involved; this is the package's private strict JSON syntax primitive.
-      parseDatabaseJson(bytes);
+      // Bound syntax depth and reject duplicate members before OAuth decoding.
+      parseStrictJson(bytes);
     }
     /** @type {unknown} */
     const value = strictOauth

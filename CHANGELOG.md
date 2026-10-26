@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.16 — remove retired SDK runtimes
+
+Delete `./local`, `./postgres`, `./schema`, `./sql`, `./tanstack` and the
+`terrascale-local` CLI, including their runtime sources, legacy bindings and
+unused peers. React/Svelte retain generic lifecycle utilities; their retired
+`createDatabaseQuery` binding is removed. Current root v1 schema/SQL and document
+codegen remain available. This is the authorized greenfield removal at 0.0.X.
+
 ## 0.0.15 — hosted request cancellation
 
 Hosted identity and OIDC methods accept an optional final request-options argument

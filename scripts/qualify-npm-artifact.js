@@ -506,21 +506,9 @@ function qualifyManifest(manifest) {
   }
   if (Object.hasOwn(manifest.exports, "./better-auth"))
     throw new Error("The planned Better Auth adapter must not be a public export.");
-  for (const name of ["./local", "./postgres"]) {
-    const entry = manifest.exports?.[name];
-    if (
-      typeof entry?.node !== "string" ||
-      typeof entry?.types !== "string" ||
-      entry.browser !== null ||
-      entry.workerd !== null ||
-      "import" in entry ||
-      "default" in entry
-    ) {
-      throw new Error(
-        `${name} must expose only explicit Node conditions and block browsers.`,
-      );
-    }
-  }
+  for (const name of ["./local", "./postgres", "./schema", "./sql", "./tanstack"])
+    if (Object.hasOwn(manifest.exports, name)) throw new Error(`${name} is retired.`);
+  if (Object.hasOwn(manifest.bin, "terrascale-local")) throw new Error("The local runtime CLI is retired.");
 }
 
 /**
@@ -538,6 +526,7 @@ function qualifyContents(files, manifest) {
     /\.test\./u,
     /capture/iu,
     /^(?:src\/better-auth\.js|types\/better-auth\.d\.ts)$/u,
+    /^(?:src|types)\/(?:local\/|tanstack\/|(?:postgres|schema|sql|database-view|database-codec|database-types)\.(?:js|d\.ts)$)/u,
   ];
   for (const file of files)
     for (const pattern of forbidden)
