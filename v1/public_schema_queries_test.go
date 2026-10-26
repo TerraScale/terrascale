@@ -177,7 +177,7 @@ func TestNearRejects(t *testing.T) {
 		"zero cosine":    {Sort: []tb.SortKey{tb.Near("/embedding", []float32{0, 0}, "")}},
 		"unknown metric": {Sort: []tb.SortKey{tb.Near("/embedding", []float32{1}, "dot")}},
 		"second key":     {Sort: []tb.SortKey{near, tb.Asc("/name")}},
-		"limit":          {Sort: []tb.SortKey{near}, Limit: 101},
+		"limit":          {Sort: []tb.SortKey{near}, Limit: 1001},
 		"cursor":         {Sort: []tb.SortKey{near}, Cursor: "next"},
 	} {
 		if _, err := col.Query(t.Context(), q); err == nil || !strings.Contains(err.Error(), "near") {
@@ -234,7 +234,7 @@ func TestGeoAndAggregateRejects(t *testing.T) {
 		"box lon":        {tb.Query{Filter: tb.WithinBox("/loc", 0, -181, 1, 1)}, "within"},
 		"near point":     {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", math.NaN(), 0)}}, "near"},
 		"near point key": {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", 0, 0), tb.Asc("/name")}}, "near"},
-		"near limit":     {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", 0, 0)}, Limit: 101}, "near"},
+		"near limit":     {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", 0, 0)}, Limit: 1001}, "near"},
 		"agg sort":       {tb.Query{Aggregate: agg, Sort: []tb.SortKey{tb.Asc("/name")}}, "aggregate"},
 		"agg project":    {tb.Query{Aggregate: agg, Project: []string{"/name"}}, "aggregate"},
 		"agg cursor":     {tb.Query{Aggregate: agg, Cursor: "next"}, "aggregate"},
