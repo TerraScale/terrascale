@@ -127,6 +127,11 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 if (command == "page") return Results.Json(await state.ReadPageAsync(clients, body.GetProperty("filtered").GetBoolean() ? filter : null,
                     1, body.TryGetProperty("cursor", out var cursor) ? cursor.GetString() : null, ct));
                 if (command == "read") return Results.Json(new { client = await state.GetAsync(clients, key, ct), budget });
+                if (command == "read-capacity") return Results.Json(new
+                {
+                    client = await state.GetAsync(clients, key, ct),
+                    grants = await Task.WhenAll(Enumerable.Range(0, 3).Select(index => state.GetAsync(grants, key + "/" + index, ct)))
+                });
                 if (command == "remove")
                 {
                     var page = await state.ReadPageAsync(clients, filter, 1, null, ct);
@@ -140,7 +145,8 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                     "too-many-counts" => Enumerable.Repeat(DashboardStateOperation.AssertCount(clients, null, null, 2), 17).ToArray(),
                     "too-large" => [DashboardStateOperation.Create(clients, key, JsonSerializer.SerializeToElement(new { text = new string('é', 2 * 1024 * 1024) }))],
                     "wildcard" => [DashboardStateOperation.Replace(grants, "budget", value, "*")],
-                    "capacity" => [DashboardStateOperation.Create(clients, key, client), DashboardStateOperation.Create(grants, key, JsonSerializer.SerializeToElement(new { text = new string('x', 2 * 1024 * 1024) }))],
+                    "capacity" => new[] { DashboardStateOperation.Create(clients, key, client) }.Concat(Enumerable.Range(0, 3)
+                        .Select(index => DashboardStateOperation.Create(grants, key + "/" + index, JsonSerializer.SerializeToElement(new { text = new string('x', 800 * 1024) })))).ToArray(),
                     "noise" => [DashboardStateOperation.Create(clients, key, JsonSerializer.SerializeToElement(new { kind = "unrelated", key }))],
                     "absent-conflict" => [DashboardStateOperation.Create(clients, key, client), DashboardStateOperation.AssertAbsent(clients, "natural-seed")],
                     "stale-delete" => [DashboardStateOperation.Delete(grants, "budget", "stale")],
@@ -462,7 +468,9 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                         return Error(412, "precondition_failed", index);
                     var version = "tbv2-" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
                     var value = kind == "delete" ? existing!.Value : op.GetProperty("document").Clone();
-                    capturedBytes += Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(id) + Encoding.UTF8.GetByteCount(value.GetRawText());
+                    var documentBytes = Encoding.UTF8.GetByteCount(value.GetRawText());
+                    Require(documentBytes <= 1024 * 1024, "Each staged document satisfies the producer's 1 MiB document limit.");
+                    capturedBytes += Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(id) + documentBytes;
                     if (capturedBytes > 2 * 1024 * 1024) return Error(503, "capacity", index);
                     writes.Add((collection, id, new(version, value, kind == "delete")));
                     results.Add(new { id, version });

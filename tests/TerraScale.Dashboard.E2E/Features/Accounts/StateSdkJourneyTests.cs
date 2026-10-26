@@ -233,7 +233,10 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         var failed = await AdmissionAsync(client, new { command = "rollback", key = "rolled-back" }, HttpStatusCode.PreconditionFailed);
         Check(failed.GetProperty("operationIndex").GetInt32() == 1, "The SDK preserves the failing operation index.");
         var capacity = await AdmissionAsync(client, new { command = "capacity", key = "capacity-rejected" }, HttpStatusCode.ServiceUnavailable);
-        Check(capacity.GetProperty("operationIndex").GetInt32() == 1 && capacity.GetProperty("errorCode").GetString() == "capacity", "Producer captured-byte refusal preserves SDK status, error code and operation index.");
+        Check(capacity.GetProperty("operationIndex").GetInt32() == 3 && capacity.GetProperty("errorCode").GetString() == "capacity", "Producer captured-byte refusal preserves SDK status, error code and operation index for individually valid documents.");
+        var rejected = await AdmissionAsync(replica, new { command = "read-capacity", key = "capacity-rejected" });
+        Check(rejected.GetProperty("client").ValueKind == JsonValueKind.Null && rejected.GetProperty("grants").EnumerateArray().All(grant => grant.ValueKind == JsonValueKind.Null),
+            "Captured-byte refusal leaves neither the candidate client nor any of its three grants.");
         var rollback = await AdmissionAsync(replica, new { command = "read", key = "rolled-back" });
         Check(rollback.GetProperty("client").ValueKind == JsonValueKind.Null && rollback.GetProperty("budget").GetProperty("document").GetProperty("count").GetInt32() == 0,
             "A late stale-version failure leaves neither the candidate client nor a budget increment.");
