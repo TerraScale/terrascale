@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Platform.Mcp;
 namespace TerraScale.Dashboard.Features.Backups;
 
 [McpServerToolType]
-public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService backups)
+public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService backups, WholeDatabaseRecovery recovery)
 {
     [McpServerTool(Name = "list_backups", Title = "List backups", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's backups and its backup policy.")]
     public async Task<McpBackupList> ListBackups(string databaseId, string? organizationId = null, string? projectId = null,
@@ -42,6 +42,18 @@ public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService back
     [McpServerTool(Name = "set_export_schedule", Title = "Set export schedule", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Schedule a database's NDJSON export to the project's bucket: a 5-field UTC cron such as 0 3 * * * (daily) or 0 3 * * 0 (weekly), or empty to turn it off. The bucket is saved in the dashboard first. Requires an owner or admin role.")]
     public Task<ExportScheduleView> SetExportSchedule(string databaseId, string cron, string? organizationId = null, string? projectId = null) =>
         backups.SetExportScheduleAsync(Scope(organizationId, projectId), databaseId, cron, Cancellation);
+
+    [McpServerTool(Name = "get_point_in_time_window", Title = "Read retained PITR window", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read actual retained UTC bounds from platform or customer backup history, with database allowance. Destination selects the source bucket, not target database configuration. Requires management access.")]
+    public Task<WholeDatabaseWindow> GetPointInTimeWindow(string databaseId, string destination = "platform", string? organizationId = null, string? projectId = null) =>
+        recovery.WindowAsync(Scope(organizationId, projectId), databaseId, destination, Cancellation);
+
+    [McpServerTool(Name = "plan_point_in_time_recovery", Title = "Preview advisory PITR metadata", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read advisory metadata only for a retained UTC point (ISO timestamp ending Z). Does not verify replay bytes, reserve history or guarantee restore. Requires management access.")]
+    public Task<TerraScale.DotNet.TerraBase.TerraBasePointInTimePlan> PlanPointInTimeRecovery(string databaseId, string pointInTime, string destination = "platform", string? organizationId = null, string? projectId = null) =>
+        recovery.PlanAsync(Scope(organizationId, projectId), databaseId, destination, pointInTime, Cancellation);
+
+    [McpServerTool(Name = "restore_database_point_in_time", Title = "Restore PITR as a new database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Restore retained UTC history into a NEW named database in the same project, leaving the source unchanged. Obtain explicit user consent for the new name, time and source bucket; confirmName must equal name. Consumes one database slot and normal storage quota. Requires management and provisioning access. If interrupted, inspect the database list before retrying.")]
+    public Task<BackupRestoreResult> RestoreDatabasePointInTime(string databaseId, string pointInTime, string name, string confirmName, string destination = "platform", string? organizationId = null, string? projectId = null) =>
+        recovery.RestoreAsync(Scope(organizationId, projectId), databaseId, destination, pointInTime, name, confirmName, Cancellation);
 
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;

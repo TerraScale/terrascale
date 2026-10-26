@@ -79,6 +79,12 @@ public sealed class BackupService(AccountService accounts, DatabaseService datab
         var scope = DatabaseService.Scope(context);
         var home = await databases.HomeAsync(context, source, ct);
         var restored = await backend.RestoreAsync(scope, home, databaseId, backupId, name.Length == 0 ? null : name, ct);
+        return await RecordRestoreAsync(context, source, home, restored, name, ct);
+    }
+
+    internal async Task<BackupRestoreResult> RecordRestoreAsync(AccountContext context, DatabaseRecord source, DatabaseRegion home, ManagedDatabase restored, string name, CancellationToken ct)
+    {
+        var scope = DatabaseService.Scope(context);
         string returnedName;
         try { returnedName = DatabaseService.ValidName(restored.Name); }
         catch (AccountAccessException error) { throw new HttpRequestException("The provider returned an invalid restored database name.", error); }

@@ -15,11 +15,18 @@ public static class DemoTestHost
         var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, origin, builder =>
         {
             TestHttps.Configure(builder);
+            builder.Services.AddSingleton<TestInitializerDiagnostics>();
             var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestTerraBasePlans(fallback, environment.Databases,
                 TerraScale.Dashboard.Platform.Persistence.TerraBaseDashboardState.Origin(builder.Environment))));
             configureScenario?.Invoke(builder);
         });
+        app.Services.GetRequiredService<TestInitializerDiagnostics>().Attach(app);
+        app.MapGet("/__test/initializer-error", (Func<IResult>)(() =>
+        {
+            try { throw new InvalidOperationException("Synthetic exception detail"); }
+            catch (InvalidOperationException error) { throw new TypeInitializationException("SyntheticInitializer", error); }
+        }));
         app.MapGet("/__test/unexpected-error", (Func<IResult>)(() => throw new InvalidOperationException("Synthetic exception detail")));
         app.MapGet("/__test/session", async (HttpContext context, DashboardSessions sessions) =>
             await sessions.ReadAsync(context) is { } session ? Results.Json(new { session.UserId }) : (IResult)Results.Unauthorized());

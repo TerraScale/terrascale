@@ -378,8 +378,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 var path = http.Request.Path.Value!;
                 if (path.StartsWith("/v1/projects/", StringComparison.Ordinal) &&
-                    (http.Request.Method == "GET" && (path.EndsWith("/replication", StringComparison.Ordinal) || path.EndsWith("/analytics", StringComparison.Ordinal) || path.Contains("/schema/", StringComparison.Ordinal)) ||
-                     http.Request.Method == "POST" && path.EndsWith("/schema/preview", StringComparison.Ordinal)))
+                    (http.Request.Method == "GET" && (path.EndsWith("/replication", StringComparison.Ordinal) || path.EndsWith("/analytics", StringComparison.Ordinal) || path.Contains("/schema/", StringComparison.Ordinal) || path.EndsWith("/point-in-time", StringComparison.Ordinal)) ||
+                     http.Request.Method == "POST" && (path.EndsWith("/schema/preview", StringComparison.Ordinal) || path.Contains("/point-in-time/", StringComparison.Ordinal))))
                 {
                     var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
                     var projectId = parts.Length >= 4 ? parts[2] : "";
@@ -388,7 +388,16 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     Require(projectId.Length > 0 && grant is not null && grant.Value.ProjectId == projectId,
                         "Project reporting and schema use an exchanged project-scoped bearer for the selected project");
                     Require(CanonicalProject(grant!.Value.OrganizationId, projectId), "Project replication bearer organization matches the canonical project");
-                    if (http.Request.Method == "POST") Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(new[] { "documents:read", "documents:write" }), "Schema preview uses both document scopes");
+                    if (path.EndsWith("/point-in-time", StringComparison.Ordinal)) Require(grant.Value.Scopes.SequenceEqual(new[] { "databases:read" }), "PITR window uses only database read authority");
+                    if (http.Request.Method == "POST")
+                    {
+                        var expected = path.EndsWith("/recovery-preview", StringComparison.Ordinal) ? new[] { "databases:write", "documents:read" }
+                            : path.EndsWith("/recover", StringComparison.Ordinal) ? new[] { "databases:write", "documents:write" }
+                            : path.EndsWith("/plan", StringComparison.Ordinal) ? new[] { "databases:read" }
+                            : path.EndsWith("/restore", StringComparison.Ordinal) ? new[] { "databases:write" }
+                            : new[] { "documents:read", "documents:write" };
+                        Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(expected), "Preview/recovery uses the exact action-scoped project grant");
+                    }
                     lock (gate)
                     {
                         var databaseId = http.Request.Query["database"].ToString();
