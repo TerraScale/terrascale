@@ -20,7 +20,7 @@ public sealed class DatabaseCatalogSyncJourneyTests(DashboardRootFixture fixture
 
         // As `ts db create`: TerraBase has the database, the dashboard never saw it.
         await Control(producer, new { command = "external-create", projectId, value = "cli-made" });
-        var listed = await ReadAsync(client, "/api/v1/dashboard/databases");
+        var listed = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases");
         var imported = listed.EnumerateArray().Single(database => database.GetProperty("name").GetString() == "cli-made");
         await Assert.That(imported.GetProperty("status").GetString()).IsEqualTo("ready");
         await Assert.That(imported.GetProperty("regions").EnumerateArray().Select(region => region.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "SFO" });
@@ -33,7 +33,7 @@ public sealed class DatabaseCatalogSyncJourneyTests(DashboardRootFixture fixture
         await Control(producer, new { command = "external-delete", projectId, value = "cli-made" });
         mcp = await CallAsync(client, secret, organizationId, projectId, "list_databases", new());
         await Assert.That(mcp.GetProperty("databases").EnumerateArray().Any(database => database.GetProperty("name").GetString() == "cli-made")).IsFalse();
-        await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
             .Any(database => database.GetProperty("name").GetString() == "cli-made")).IsFalse();
         await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
     }
@@ -68,7 +68,7 @@ public sealed class DatabaseCatalogSyncJourneyTests(DashboardRootFixture fixture
         await Control(producer, new { command = "external-delete", projectId, value = "stale" });
         deleted = await CallAsync(client, secret, organizationId, projectId, "delete_database", new() { ["databaseId"] = stale.GetProperty("id").GetString(), ["confirmName"] = "stale" });
         await Assert.That(deleted.GetProperty("deleted").GetBoolean()).IsTrue();
-        await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
             .Any(database => database.GetProperty("name").GetString() is "everywhere" or "stale")).IsFalse();
         await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
     }

@@ -74,12 +74,8 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
             "Cold startup preserves every existing document/version and collection identity without replacing records or recreating collections.");
         await ReadyAsync(coldClient); await ReadyAsync(coldReplica);
         Check((await MeAsync(coldClient)).GetProperty("accountId").GetString() == me.GetProperty("accountId").GetString(), "A pre-restart browser cookie resolves the same persisted public account identity.");
-        using (var queries = await coldReplica.GetAsync("/api/v1/dashboard/data/saved-queries"))
-        {
-            Check(queries.StatusCode == HttpStatusCode.OK, "Saved-query native read succeeds after cold replacement.");
-            using var json = JsonDocument.Parse(await queries.Content.ReadAsStringAsync());
-            Check(json.RootElement.EnumerateArray().Single().GetProperty("id").GetString() == queryId, "Saved-query identity survives both app processes being replaced.");
-        }
+        var queries = await ManagementListJourney.ReadListAllAsync(coldReplica, "/api/v1/dashboard/data/saved-queries");
+        Check(queries.EnumerateArray().Single().GetProperty("id").GetString() == queryId, "Saved-query identity survives both app processes being replaced.");
         rpc = await HttpJourney.McpAsync(coldReplica, secret, "tools/call", new { name = "get_profile", arguments = new { } });
         Check(rpc.GetProperty("result").GetProperty("structuredContent").GetProperty("locale").GetString() == "pt-BR", "The native-issued PAT remains valid on a cold replacement replica.");
 

@@ -27,6 +27,10 @@ public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(paths.GetProperty("/api/v1/dashboard/credentials/" + route).GetProperty("post")
                 .GetProperty("responses").GetProperty("400").GetProperty("content").GetProperty("application/json")
                 .GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
+        var credentials = paths.GetProperty("/api/v1/dashboard/credentials").GetProperty("get");
+        await Assert.That(credentials.GetProperty("parameters").EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!))
+            .IsEquivalentTo(new[] { "limit", "after" });
+        await Assert.That(credentials.GetProperty("responses").GetProperty("422").GetProperty("content").TryGetProperty("application/problem+json", out _)).IsTrue();
         foreach (var route in new[] { "switch-organization", "switch-project" })
         {
             var operation = paths.GetProperty("/api/v1/dashboard/" + route).GetProperty("post");
@@ -47,6 +51,9 @@ public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using var invalidLimit = await client.GetAsync("/api/v1/dashboard/credentials?limit=0");
+        await Assert.That(invalidLimit.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(invalidLimit.Content.Headers.ContentType!.MediaType).IsEqualTo("application/problem+json");
         using var me = await client.GetAsync("/api/v1/auth/me");
         await Assert.That(me.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var body = JsonDocument.Parse(await me.Content.ReadAsByteArrayAsync());

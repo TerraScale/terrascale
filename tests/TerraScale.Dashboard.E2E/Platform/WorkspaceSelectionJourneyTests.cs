@@ -49,11 +49,11 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key" + scope, new()
         { ["_csrf"] = csrf, ["name"] = "First tab key", ["scopes"] = "documents:read" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var firstKeys = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/credentials" + scope));
-        await Assert.That(firstKeys.RootElement.GetArrayLength()).IsEqualTo(1);
-        await Assert.That(firstKeys.RootElement[0].GetProperty("projectId").GetString()).IsEqualTo(first);
-        using var secondKeys = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/credentials?projectId=" + second));
-        await Assert.That(secondKeys.RootElement.GetArrayLength()).IsEqualTo(0);
+        var firstKeys = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/credentials" + scope);
+        await Assert.That(firstKeys.GetArrayLength()).IsEqualTo(1);
+        await Assert.That(firstKeys[0].GetProperty("projectId").GetString()).IsEqualTo(first);
+        var secondKeys = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/credentials?projectId=" + second);
+        await Assert.That(secondKeys.GetArrayLength()).IsEqualTo(0);
         using var unknown = await client.GetAsync("/api/v1/auth/me?projectId=" + new TerraScaleIdGenerator().NewId());
         await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var ambiguous = await client.GetAsync("/api/v1/auth/me?projectId=" + first + "&projectId=" + second);

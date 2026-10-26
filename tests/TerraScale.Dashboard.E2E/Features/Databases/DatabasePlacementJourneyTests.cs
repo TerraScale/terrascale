@@ -178,7 +178,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         }
         async Task<string> RegionsAsync()
         {
-            var databases = await ReadAsync(replica, "/api/v1/dashboard/databases");
+            var databases = await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases");
             var database = databases.EnumerateArray().Single(value => value.GetProperty("id").GetString() == databaseId);
             await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("SFO");
             return string.Join(',', database.GetProperty("regions").EnumerateArray().Select(region => region.GetString()));

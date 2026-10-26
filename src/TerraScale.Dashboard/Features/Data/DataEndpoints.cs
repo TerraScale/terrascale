@@ -112,7 +112,12 @@ public static class DataEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
-            try { return Results.Json((await saved.ListAsync(context, http.RequestAborted)).Select(PublicSavedQuery)); }
+            try
+            {
+                var (limit, after) = CursorPaging.Read(http.Request);
+                return Results.Json(CursorPaging.Page((await saved.ListAsync(context, http.RequestAborted)).Select(PublicSavedQuery),
+                    query => query.Id, CursorPaging.Scope(context, "saved-queries"), limit, after));
+            }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapGet("/api/v1/dashboard/indexes", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
@@ -303,5 +308,5 @@ public static class DataEndpoints
         return "/databases/" + Uri.EscapeDataString(id) + "/documents/" + Uri.EscapeDataString(collection) + QueryString.Create(values);
     }
 
-    private static object PublicSavedQuery(SavedQuery query) => new { id = query.Id, name = query.Name, sql = query.Sql, createdAt = query.CreatedAt };
+    private static McpSavedQuery PublicSavedQuery(SavedQuery query) => new(query.Id, query.Name, query.Sql, query.CreatedAt);
 }

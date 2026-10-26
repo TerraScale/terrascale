@@ -101,8 +101,8 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
         await Assert.That(observed.GetProperty("projectCreates").GetInt32()).IsEqualTo(baseline.GetProperty("projectCreates").GetInt32());
         await Assert.That(ProjectIdentities(observed)).IsEqualTo(baselineProjects);
         await Assert.That(observed.GetProperty("databases").GetArrayLength()).IsEqualTo(0);
-        await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
-        await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
 
         // Once the canonical producer accepts the existing scope, the same
         // ordinary account can proceed without creating another project.
@@ -113,7 +113,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await EvidenceAsync(created, producer));
             databaseId = (await BodyAsync(created)).GetProperty("id").GetString()!;
         }
-        var canonical = (await ReadAsync(replica, "/api/v1/dashboard/databases"))[0];
+        var canonical = (await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases"))[0];
         await Assert.That(canonical.GetProperty("id").GetString()).IsEqualTo(databaseId);
         await Assert.That(canonical.GetProperty("projectId").GetString()).IsEqualTo(projectId);
         await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo("GRU,SFO").Because("The successful retry keeps the explicitly requested two-region placement");

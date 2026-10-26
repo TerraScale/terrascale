@@ -35,8 +35,8 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         using var replaced = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/allowed-cidrs", new()
         { ["_csrf"] = csrf, ["keyId"] = keyId, ["allowedCidrs"] = "2001:db8::/48" });
         await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var listed = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/credentials"));
-        await Assert.That(Cidrs(listed.RootElement.EnumerateArray().Single())).IsEquivalentTo(new[] { "2001:db8::/48" });
+        var listed = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/credentials");
+        await Assert.That(Cidrs(listed.EnumerateArray().Single())).IsEquivalentTo(new[] { "2001:db8::/48" });
 
         using var network = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/project-allowed-cidrs", new()
         { ["_csrf"] = csrf, ["allowedCidrs"] = "192.0.2.0/24" });

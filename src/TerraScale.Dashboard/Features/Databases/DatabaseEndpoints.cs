@@ -38,25 +38,16 @@ public static class DatabaseEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
-            await databases.SyncAsync(context, http.RequestAborted);
-            if (context.Organization is { } organization && !organization.ContainsMember(context.UserId))
-                return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).Select(database => new
-                {
-                    database.Id,
-                    database.ProjectId,
-                    database.Name,
-                    database.Region,
-                    database.Regions,
-                    database.AllRegions,
-                    database.Endpoint,
-                    database.Status,
-                    database.CreatedAt,
-                    SpendCapCents = (long?)null,
-                    OperationLimits = (OperationLimits?)null,
-                    BackupRetentionDays = (int?)null,
-                    BranchedFrom = (string?)null
-                }).ToArray() ?? []);
-            return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).Select(DatabaseOutput).ToArray() ?? []);
+            try
+            {
+                var (limit, after) = CursorPaging.Read(http.Request);
+                await databases.SyncAsync(context, http.RequestAborted);
+                var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
+                    db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
+                var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
+                return Results.Json(new CursorPage<object>(page.Items.Select(database => DatabaseOutput(database, restricted)).ToArray(), page.NextCursor, page.Limit));
+            }
+            catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
         });
         foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
         {
@@ -140,7 +131,7 @@ public static class DatabaseEndpoints
     }
 
     // Keep the storage revision private; database responses retain their existing fields.
-    private static object DatabaseOutput(DatabaseRecord database) => new
+    private static object DatabaseOutput(DatabaseRecord database, bool restricted = false) => new
     {
         database.Id,
         database.ProjectId,
@@ -150,10 +141,10 @@ public static class DatabaseEndpoints
         database.AllRegions,
         database.Endpoint,
         database.Status,
-        database.SpendCapCents,
-        database.OperationLimits,
-        database.BackupRetentionDays,
-        database.BranchedFrom,
+        SpendCapCents = restricted ? (long?)null : database.SpendCapCents,
+        OperationLimits = restricted ? null : database.OperationLimits,
+        BackupRetentionDays = restricted ? (int?)null : database.BackupRetentionDays,
+        BranchedFrom = restricted ? null : database.BranchedFrom,
         database.CreatedAt
     };
 

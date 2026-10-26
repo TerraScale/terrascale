@@ -114,16 +114,12 @@ public sealed partial class TsAuthPlatformJourneyTests
             var json = body.RootElement.GetRawText();
             foreach (var secret in new[] { "private-", sibling, "987654" }) await Assert.That(json).DoesNotContain(secret);
         }
-        using (var listed = await client.GetAsync("/api/v1/dashboard/databases" + scope))
-        {
-            await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            using var body = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
-            await Assert.That(body.RootElement.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray())
-                .IsEquivalentTo(new string?[] { database, discovered });
-            foreach (var record in body.RootElement.EnumerateArray())
-                foreach (var field in new[] { "spendCapCents", "operationLimits", "backupRetentionDays", "branchedFrom" })
-                    await Assert.That(record.GetProperty(field).ValueKind).IsEqualTo(JsonValueKind.Null);
-        }
+        var listed = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases" + scope, limit: 1);
+        await Assert.That(listed.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray())
+            .IsEquivalentTo(new string?[] { database, discovered });
+        foreach (var record in listed.EnumerateArray())
+            foreach (var field in new[] { "spendCapCents", "operationLimits", "backupRetentionDays", "branchedFrom" })
+                await Assert.That(record.GetProperty(field).ValueKind).IsEqualTo(JsonValueKind.Null);
         using (var page = await client.GetAsync("/databases" + scope))
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-project",

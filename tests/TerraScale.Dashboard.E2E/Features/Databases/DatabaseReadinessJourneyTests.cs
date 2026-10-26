@@ -45,7 +45,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         }
         await Assert.That(refusedCreates).IsEqualTo(1);
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("creates").GetInt32()).IsEqualTo(0);
-        await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         // A region the catalog does not list cannot be chosen as a new home.
         using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO", "FRA"]))
             await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(await EvidenceAsync(wrongHome, producer));
@@ -57,7 +57,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         try
         {
             await WaitAsync(producer, "pausedCreates");
-            await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+            await Assert.That((await ManagementListJourney.ReadListAllAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         }
         finally { await ControlAsync(producer, new { command = "release-database-creates" }); }
         using (var interrupted = await pending)
@@ -75,7 +75,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
             await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await EvidenceAsync(recovered, producer));
             await Assert.That(recovered.Headers.Location?.OriginalString).IsEqualTo("/databases/" + actualId + "?created=1");
         }
-        var rows = await JsonAsync(client, "/api/v1/dashboard/databases");
+        var rows = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases");
         await Assert.That(rows.GetArrayLength()).IsEqualTo(1);
         await Assert.That(rows[0].GetProperty("id").GetString()).IsEqualTo(actualId);
         await Assert.That(rows[0].GetProperty("status").GetString()).IsEqualTo("ready");
@@ -147,7 +147,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         // A valid two-region request reaches the producer; only the chosen response field is incorrect.
         using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU", "FRA"]))
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(response, producer));
-        var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];
+        var database = (await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases"))[0];
         await Assert.That(database.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(database.GetProperty("name").GetString()).IsEqualTo(name);
         await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
@@ -199,7 +199,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
             await Assert.That(html).Contains("The database is managed in sfo · San Francisco. Nothing was changed.");
         }
         await Assert.That(string.Join(";", attempts)).IsEqualTo("gru.api.terrascale.tech pin=gru").Because("one pinned request, no retry or redirect");
-        var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];
+        var database = (await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases"))[0];
         await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
         await Assert.That(Regions(database)).IsEqualTo("GRU,SFO");
         Volatile.Write(ref misdirect, false);
@@ -248,7 +248,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         using (var response = await PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = "catalog-refused" }, ["GRU"]))
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(response, producer));
         Volatile.Write(ref invalid, false);
-        await Assert.That((await JsonAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("creates").GetInt32()).IsEqualTo(0);
         var id = await CreateAsync(client, csrf, "catalog-refused");
         await DeleteAsync(client, csrf, id, "catalog-refused");
@@ -303,7 +303,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         using var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["confirmName"] = name });
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
-        await Assert.That((await JsonAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        await Assert.That((await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
     }
     private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string path, string csrf, Dictionary<string, string> fields, string[] regions)
     {

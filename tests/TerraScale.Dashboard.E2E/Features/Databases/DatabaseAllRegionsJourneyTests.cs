@@ -163,7 +163,7 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
                 .Concat(allRegions ? [new("allRegions", "true")] : []));
             return await client.SendAsync(request);
         }
-        async Task<bool> AllRegionsAsync() => (await ReadAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
+        async Task<bool> AllRegionsAsync() => (await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/databases")).EnumerateArray()
             .Single(value => value.GetProperty("id").GetString() == databaseId).GetProperty("allRegions").GetBoolean();
         static bool IsChecked(string input) => Regex.IsMatch(input, @"\schecked(?:[ >]|=)");
         static string RegionInput(string html, string code) => Regex.Match(html, "<input[^>]+name=\"region\"[^>]+value=\"" + code + "\"[^>]*>").Value;
