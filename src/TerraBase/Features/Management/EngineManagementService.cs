@@ -438,6 +438,12 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
+        // Platform databases stay in every region with no recorded home: only the unchanged placement is accepted, and it writes nothing.
+        if (PlatformDatabases.IsPlatform(tenant.OrganizationId))
+        {
+            return allRegions && replicaRegions.Count == 0 && database.AllRegions ? database : ManagementErrors.PlatformPlacementLocked;
+        }
+
         if (database.Home(options.Region) != options.Region)
         {
             return ManagementErrors.WrongRegion;

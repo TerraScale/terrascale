@@ -258,7 +258,7 @@ public sealed class PlatformDatabasesTests
     }
 
     // Test-only transport: serve the production issuer's discovery/JWKS with this test's private signing keys.
-    private sealed class GlobalIssuerRoute : DelegatingHandler
+    internal sealed class GlobalIssuerRoute : DelegatingHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
