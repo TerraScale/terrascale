@@ -115,7 +115,8 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(revokedInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         using var revokedRefresh = await oidc.PostTokenAsync(new()
         {
-            ["grant_type"] = "refresh_token", ["client_id"] = clientId,
+            ["grant_type"] = "refresh_token",
+            ["client_id"] = clientId,
             ["refresh_token"] = rotated.GetProperty("refresh_token").GetString()!,
         }, null, null, tenant: project);
         await Assert.That(revokedRefresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
