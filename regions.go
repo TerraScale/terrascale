@@ -30,7 +30,13 @@ func (c *Client) ListRegions(ctx context.Context) (*Regions, error) {
 	status, headers, body, err := c.tsAuthRoundTrip(requestCtx, c.cfg.APIBaseURL, http.MethodGet, "/v1/regions", nil, nil, "", tsAuthAuthorization{}, "listRegions")
 	if err != nil {
 		var apiErr *APIError
-		if errors.As(err, &apiErr) {
+		if errors.As(err, &apiErr) && apiErr.Code == "response_too_large" {
+			return nil, apiErr
+		}
+		if contextErr := requestCtx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
+		if apiErr != nil {
 			return nil, apiErr
 		}
 		return nil, fmt.Errorf("sdk: GET /v1/regions (listRegions): %w", err)

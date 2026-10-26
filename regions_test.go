@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -133,6 +134,74 @@ func TestRegionCatalogResponseCapIsNotRetriedAndClosesBody(t *testing.T) {
 		t.Fatalf("response cap/lifetime: out=%v err=%v calls=%d closed=%d", out, err, calls, closed)
 	}
 }
+
+func TestRegionCatalogBodyReadErrorsPreserveContextAndMetadata(t *testing.T) {
+	for _, status := range []int{200, 503} {
+		for _, mode := range []string{"cancel", "deadline", "read"} {
+			t.Run(mode+http.StatusText(status), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+					defer cancel()
+					calls, closed, reads := 0, 0, 0
+					client, err := NewClient(Config{HTTPClient: &http.Client{Transport: pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
+						calls++
+						body := &regionBody{closed: &closed, Reader: regionReadFunc(func(p []byte) (int, error) {
+							reads++
+							if ctx.Err() != nil {
+								t.Fatal("context ended before body read began")
+							}
+							if mode == "read" {
+								return copy(p, "synthetic-region-private"), errors.New("synthetic-region-private")
+							}
+							if mode == "cancel" {
+								cancel()
+							}
+							select {
+							case <-r.Context().Done():
+								return 0, r.Context().Err()
+							case <-time.After(5 * time.Second):
+								return 0, errors.New("request context did not end")
+							}
+						})}
+						return &http.Response{StatusCode: status, Header: http.Header{"X-Request-Id": {"catalog-read"}, "Retry-After": {"3"}}, Body: body}, nil
+					})}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					out, err := client.ListRegions(ctx)
+					if out != nil || err == nil || calls != 1 || closed != 1 || reads != 1 {
+						t.Fatalf("body read/lifetime: out=%v err=%v calls=%d closed=%d reads=%d", out, err, calls, closed, reads)
+					}
+					if strings.Contains(err.Error(), "synthetic-region-private") {
+						t.Fatal("reader diagnostics or partial body escaped")
+					}
+					if mode != "read" {
+						want := context.Canceled
+						if mode == "deadline" {
+							want = context.DeadlineExceeded
+						}
+						if !errors.Is(err, want) {
+							t.Fatalf("context matching: got %v, want %v", err, want)
+						}
+						return
+					}
+					code := "response_read_failed"
+					if status == 503 {
+						code = "server_error"
+					}
+					var apiErr *APIError
+					if !errors.As(err, &apiErr) || apiErr.Status != status || apiErr.Code != code || apiErr.RequestID != "catalog-read" || apiErr.RetryAfter == nil || *apiErr.RetryAfter != 3*time.Second || apiErr.Body != "" {
+						t.Fatalf("read error metadata: %v", err)
+					}
+				})
+			})
+		}
+	}
+}
+
+type regionReadFunc func([]byte) (int, error)
+
+func (f regionReadFunc) Read(p []byte) (int, error) { return f(p) }
 
 func TestRegionIDMatchesProducerFormatWithoutClosedList(t *testing.T) {
 	for _, id := range []string{"fra", "gru", "sjc", "new-region9", "a", strings.Repeat("a", 63), " FRA "} {
