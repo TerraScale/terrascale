@@ -126,10 +126,12 @@ done < export.ndjson
 
 The token needs `documents:write` on the destination database. A `PUT` replaces a document with the same id, so restore into a new or empty database. To restore with a dry-run preview and validation instead, upload `export.ndjson` as an [NDJSON import](/pt-br/guides/import-ndjson). Document versions and history are not part of the export; restored documents get new versions. Writes count toward your plan's quotas and metering, see [pricing](/pt-br/pricing/).
 
+Scheduled customer-bucket exports are available: first configure the project’s [backup destination](/pt-br/guides/backups-and-restore#your-own-backup-bucket), then `api -X PUT -H 'Content-Type: application/json' -d '{"cron":"0 3 * * *"}' "$TERRASCALE_API_URL/v1/projects/$PROJECT/databases/$DATABASE/export-schedule"` (`databases:write`, organization writer). The five-field cron uses UTC; missing destination is `409 conflict`, invalid cron `400 invalid_request`. `GET` on the same path needs `databases:read` and returns `cron`, `updatedAt`, `lastRun` (null before the first attempt). Inspect `lastRun.status` (`succeeded`/`failed`), `startedAt`, `finishedAt`, `key`, `documents`, `bytes` and `error`; failures wait for the next cron occurrence. Each successful run writes the same snapshot NDJSON to `terrabase-exports/{project}/{databaseId}/{yyyyMMddTHHmmssZ}.ndjson`. Bucket credentials need write permission on that prefix in addition to backup permissions. Existing objects remain after database deletion; an export omits schema and history and is not a full backup.
+
 ## What is not offered
 
 - CSV, Parquet or any format other than NDJSON.
-- Asynchronous export to a storage bucket. Export is a streaming HTTP response only.
+- On-demand asynchronous export jobs.
 - Collection definitions, indexes, schemas, document versions or deleted documents.
 - A single snapshot across a resumed export.
 

@@ -1,4 +1,4 @@
-// Runnable snippet: branch a database with @terrascale/sdk 0.0.4. A branch is
+// Runnable snippet: branch a database with @terrascale/sdk 0.0.9. A branch is
 // a new database that starts as a copy of its source. The token needs
 // management access to the sandbox project.
 import { strict as assert } from "node:assert";
@@ -16,7 +16,5 @@ export async function run(sandbox: Sandbox): Promise<void> {
   const source = await sandbox.client.databases.get(sandbox.databaseName);
   const branch = await sandbox.client.databases.branch(source.name, { name: `${source.name}-preview` });
   assert.equal(branch.branchedFrom, source.id);
-  // Delete answers 409 database_replicated until the replicas are removed.
-  await sandbox.client.databases.update(branch.name, { replicaRegions: [] });
   await sandbox.client.databases.delete(branch.name);
 }

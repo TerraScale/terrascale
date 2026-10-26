@@ -20,8 +20,6 @@ export async function run(sandbox: Sandbox): Promise<void> {
     const written = await db.collection("invoices").put("01JB7Q3V0Z8K4M2N6P9R5T1W7A", { total: 42 });
     assert.ok(written.version);
   } finally {
-    // Delete answers 409 database_replicated until the replicas are removed.
-    await sandbox.client.databases.update(tenant.name, { replicaRegions: [] });
     await sandbox.client.databases.delete(tenant.name);
   }
 }
