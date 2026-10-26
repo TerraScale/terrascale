@@ -96,8 +96,9 @@ public sealed partial class TerraBaseDatabase
         (await connection.SendAsync(HttpMethod.Put, path, null, Json.TerraBaseDatabaseInfo, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>
-    /// Deletes the database and its data (<c>DELETE</c>). Branches are independent and stay. While replica regions exist,
-    /// throws <see cref="TerraBaseConflictException"/> (<c>database_replicated</c>): remove them first.
+    /// Deletes the database and its data directly in its home region (<c>DELETE</c>), without a preceding placement update.
+    /// Permanent purge authority removes every replica, including all-regions placement. Branches are independent and stay.
+    /// A 204 response records logical deletion and local cleanup; remote erasure is retried durably, not guaranteed synchronous.
     /// </summary>
     public Task DeleteAsync(CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, path, null, null, cancellationToken);

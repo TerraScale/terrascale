@@ -15,8 +15,10 @@ public sealed partial class TerraBaseDatabase
     /// <summary>
     /// Attaches an import to this new, empty database (<c>POST …/import</c>) in <see cref="TerraBaseImportState.AwaitingSource"/>.
     /// Create the database for this import first (<see cref="TerraBaseProjectClient.CreateDatabaseAsync"/> with the same
-    /// project access token), under a fresh name such as <c>import-&lt;lowercase ULID&gt;</c> and without replicas; send
-    /// every import call to its home region. Replaying the identical request returns the job; any other request throws
+    /// project access token), under a fresh name such as <c>import-&lt;lowercase ULID&gt;</c>; send every import call to its
+    /// home region. The pinned import contract requires no replicas, which conflicts with minimum-two-region placement;
+    /// this is a producer compatibility gap, not a supported single-region creation workflow.
+    /// Replaying the identical request returns the job; any other request throws
     /// <see cref="TerraBaseConflictException"/> (<c>import_exists</c>), a database with collections
     /// <c>destination_not_empty</c>, one with replica regions <c>destination_replicated</c>. Requires a ts-auth project
     /// access token of this project with <c>databases:write</c> and <c>documents:write</c>: any other credential (a

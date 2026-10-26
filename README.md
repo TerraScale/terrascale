@@ -104,7 +104,18 @@ TerraBaseWriteResult created = await database.PutDocumentAsync(
 TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, cancellationToken);
 ```
 
-`DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
+A writable database requires at least two regions. The home region is where a database is created and managed;
+it does not limit placement to that region. `Project(projectId).CreateDatabaseAsync` without `replicaRegions`
+uses every other current serving region. An explicit replica list must contain at least one region other
+than the home; an empty list on create returns 400 `placement_needs_two_regions`. `allRegions: true` instead
+follows every serving region, including regions that join later, and cannot be combined with a replica list.
+`SetDatabaseRegionsAsync` replaces the complete replica list and turns all-regions placement off.
+
+Call `DeleteAsync` directly in the database's home region, without a preceding placement update.
+Permanent purge authority removes every replica, including all-regions placement; branches remain independent.
+A 204 response records logical deletion and local cleanup. Remote erasure is retried durably, so 204 does
+not guarantee synchronous remote erasure. An empty replica-list update can temporarily make document writes
+return 409 `placement_needs_two_regions`; it is not required for deletion and does not provide supported single-region placement.
 
 Relational SQL runs on the same database handle and project access token
 ([contract](contracts/terrabase/sql-execute.md)). Each call is one transaction, all or nothing; reads need
@@ -135,10 +146,12 @@ One-time imports follow TerraBase's import contract (monorepo `docs/terrabase/im
 source primary keys (and NDJSON `id`, `_id` or `$oid`) stay ordinary fields. The user exports with their own tools
 (`pg_dump --format=plain`, a rollback-journal SQLite/Turso file from `VACUUM INTO`, or NDJSON) and uploads it: TerraBase never
 connects to the source or receives its credentials. Create a new, empty destination database for each import with
-`Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name, no replicas and the same ts-auth
+`Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name and the same ts-auth
 project access token (a database created through `TerraBaseManagementClient` is reachable by a project token only once
-TerraBase has verified its project binding). Then drive the import through it, on a client pinned to the database's
-home region:
+TerraBase has verified its project binding). The pinned import contract requires a destination without replicas;
+that requirement conflicts with minimum-two-region placement and remains a producer compatibility gap. The example
+below describes that pinned contract, not a supported single-region creation workflow. Every import call must still
+use a client pinned to the destination's home region:
 
 ```csharp
 TerraBaseManagedDatabase destination = await documents.Project(projectId).CreateDatabaseAsync(destinationName, cancellationToken: cancellationToken);
