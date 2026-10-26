@@ -5,9 +5,9 @@ an existing database and a new collection that it removes when finished.
 
 ```rust,no_run
 use terrascale::v1::{ulid_for, Client, WriteOptions};
-# pub async fn example(project: &str, access_token: &str, database_name: &str, collection_name: &str) -> terrascale::v1::Result<()> {
+# pub async fn example(project: &str, api_key: &str, database_name: &str, collection_name: &str) -> terrascale::v1::Result<()> {
 // project is a canonical uppercase ULID from ts-auth.
-let client = Client::for_project(project, access_token).build()?;
+let client = Client::for_project_api_key(project, api_key).build()?;
 let database = client.database(database_name);
 database.create_collection(collection_name).await?;
 let items = database.collection(collection_name);
@@ -32,8 +32,9 @@ any other form are rejected. `ulid_for(collection, key)` derives a stable ID fro
 before the first request. Generated creates return ULIDs.
 `Tx::create` accepts `Option<DocumentId>` and `OpResult::id()` returns `Option<DocumentId>`.
 
-The bearer credential is an already exchanged ts-auth project access token. The SDK does not
-mint credentials or grant scopes. The server validates issuer, exact audience, signed token
+The API-key client exchanges and refreshes a project access token through ts-auth.
+For an already exchanged static bearer token, use `Client::for_project`; static tokens
+are not refreshed. The SDK does not grant scopes. The server validates issuer, exact audience, signed token
 type, lifetime, canonical subject, project and database restrictions, and exact operation scopes.
 Wrong project/database is 404; invalid credentials are 401; missing scope is 403.
 Database creation uses `POST /v1/projects/{project}/databases` with `{"name":…}` and
@@ -69,6 +70,6 @@ endpoint/region overrides are limited to isolated tests and producer qualificati
 
 Database changes are available through `Database::changes` (typed events) or
 `Database::change_bytes` (raw SSE). Typed streams resume with the last cursor after a clean
-end, but the client retains its original bearer token: construct a new client with a fresh
-token before reconnecting after token expiry. See [shape reads](shape-reads.md) for collection
+end. API-key clients acquire a cached or refreshed token on reconnect; static-token clients
+need a fresh client after token expiry. See [API-key authentication](api-key-auth.md). See [shape reads](shape-reads.md) for collection
 snapshots and live polling.
