@@ -126,6 +126,7 @@ async fn text_index_requests_and_responses_keep_the_kind() {
         fields: vec!["title".into(), "article.body".into()],
         name: Some("article_text".into()),
         kind: Some(IndexKind::Text),
+        dimensions: None,
     };
     let created: Index = db.create_index(&request).await.unwrap();
     assert_eq!(created.kind, IndexKind::Text);

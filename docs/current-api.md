@@ -1,15 +1,12 @@
 # Current TerraBase HTTP contract
 
-Source snapshot: TerraScale/terrascale `e7fa366ddb289f5612c93d316b316fb92c568151`.
-Public scope is `docs/terrabase/api.md` plus `ApiReferenceExtensions.ShouldInclude`:
-76 mapped routes, including public project management, probes and platform explore.
-Hidden identity/dashboard aliases, internal/admin routes and hidden PUT database
-are outside this contract. No mapped `downloadBackup` endpoint exists.
-
-Historical README and older guides are retained verbatim under the shared-doc
-policy. Their native, unscoped and dashboard examples describe retired APIs;
-those exports, HTTP clients and executable qualification helpers are deleted.
-Use this guide for the current SDK. Tests use HTTP fakes only, never producer binaries.
+This guide describes the SDK's implemented subset of the public v1 API.
+The live [OpenAPI specification](https://api.terrascale.tech/openapi/v1.json),
+retrieved on 2026-10-26, advertises 110 operations. That count is the server's
+surface, not a claim that this SDK implements or qualifies every operation.
+Buckets/files/rules, functions, metrics and export scheduling remain coverage gaps.
+The [README](../README.md) and [document walkthrough](csharp-api.md) use current
+project-scoped APIs; older native and dashboard examples describe retired APIs.
 
 ## Client and IDs
 

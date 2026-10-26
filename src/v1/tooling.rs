@@ -15,6 +15,7 @@ pub enum IndexKind {
     #[default]
     BTree,
     Text,
+    Vector,
 }
 
 /// Optional typed body for [`Database::create_index`]; raw JSON remains supported.
@@ -27,6 +28,9 @@ pub struct IndexRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<IndexKind>,
+    /// Required vector length (1 to 4096) when `kind` is `Vector`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u32>,
 }
 
 /// Secondary index returned by the create and list routes.
@@ -38,6 +42,32 @@ pub struct Index {
     pub state: String,
     #[serde(default)]
     pub kind: IndexKind,
+    /// Vector length; absent for B-tree and text indexes.
+    #[serde(
+        default,
+        deserialize_with = "index_dimensions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dimensions: Option<u32>,
+}
+
+fn index_dimensions<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<u32>, D::Error> {
+    use serde::de::Error as _;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else { return Ok(None) };
+    let dimension = match value {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => super::types::u64_string::parse_canonical_u64(&s),
+        _ => None,
+    };
+    match dimension {
+        Some(n @ 1..=4096) => Ok(Some(n as u32)),
+        _ => Err(D::Error::custom(
+            "index dimensions must be an integer from 1 to 4096",
+        )),
+    }
 }
 
 impl Database {
@@ -99,7 +129,8 @@ impl Database {
         .await
     }
     /// `POST D/indexes`; body contains `collection`, `fields`, optional `name`
-    /// and `kind` (`btree` by default, or `text`).
+    /// and `kind` (`btree` by default, `text` or `vector`). Vector indexes also
+    /// require `dimensions` (1 to 4096).
     pub async fn create_index<T: DeserializeOwned>(&self, body: &impl Serialize) -> Result<T> {
         self.management(
             Method::POST,
