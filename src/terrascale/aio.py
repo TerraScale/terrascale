@@ -154,17 +154,19 @@ class AsyncDatabase:
                all_regions: bool | None = None) -> models.Database:
         """Change region placement. Writable databases require at least two regions.
 
-        ``replica_regions=[]`` is accepted only for immediate deletion teardown,
-        not a supported single-region database. Document writes during teardown
-        fail with HTTP 409 ``placement_needs_two_regions``.
+        ``replica_regions=[]`` can temporarily disable document writes with
+        HTTP 409 ``placement_needs_two_regions``. It does not provide supported
+        single-region placement and is not required before deletion.
         ``all_regions=True`` includes current and future serving regions.
         """
         return await self._c._send(_spec.update_database(*self._p, home_region, replica_regions, all_regions))
 
     async def delete(self) -> None:
-        """Delete the database immediately after ``update(replica_regions=[])``.
+        """Delete directly in the database's home region, without a placement update.
 
-        Otherwise the server returns HTTP 409 ``database_replicated``.
+        Deletion covers every replica, including all-regions placement. HTTP 204
+        confirms logical deletion and local cleanup; remote erasure is retried
+        durably and may complete later.
         """
         await self._c._send(_spec.delete_database(*self._p))
 
