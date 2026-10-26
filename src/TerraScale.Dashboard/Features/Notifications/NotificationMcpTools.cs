@@ -10,7 +10,10 @@ namespace TerraScale.Dashboard.Features.Notifications;
 public sealed class NotificationMcpTools(IHttpContextAccessor http, AccountService accounts)
 {
     [McpServerTool(Name = "list_notifications", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read notifications visible in your selected organization and project.")]
-    public async Task<NotificationToolList> Notifications(string status = "", int page = 1, string? organizationId = null, string? projectId = null)
+    public async Task<NotificationToolList> Notifications(
+        [Description("Use unread (case-insensitive) for unread notifications; empty, all and other values select all visible notifications.")] string status = "",
+        [Description("One-based page of 10 notifications, clamped to the available page range. Read page/pageCount from the response.")] int page = 1,
+        string? organizationId = null, string? projectId = null)
     {
         var context = await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
         if (http.HttpContext is { } request) await ApiKeyExpiryNotifications.RefreshAsync(request, context);

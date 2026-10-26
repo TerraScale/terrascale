@@ -23,8 +23,11 @@ public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService back
     public Task<BackupView> CreateBackup(string databaseId, string? organizationId = null, string? projectId = null) =>
         backups.CreateAsync(Scope(organizationId, projectId), databaseId, Cancellation);
 
-    [McpServerTool(Name = "set_backup_policy", Title = "Set backup policy", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Save a database's full-backup schedule and retention. Incremental schedules are unavailable. Requires an owner or admin role.")]
-    public Task<BackupPolicyView> SetBackupPolicy(string databaseId, string fullBackupCron, string incrementalBackupCron, int retentionDays, bool disabled = false,
+    [McpServerTool(Name = "set_backup_policy", Title = "Set backup policy", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Save a database's full-backup schedule and retention. Shorter retention can expire existing snapshots; clearing or disabling the schedule reduces future recovery coverage. Incremental schedules are unavailable. Requires an owner or admin role.")]
+    public Task<BackupPolicyView> SetBackupPolicy(string databaseId,
+        [Description("Five-field full-backup cron, up to 256 characters; empty clears the schedule.")] string fullBackupCron,
+        [Description("Snapshot retention in days, from 1 to 35.")] int retentionDays,
+        [Description("Omit or pass an empty string. Incremental schedules are unavailable.")] string incrementalBackupCron = "", bool disabled = false,
         string? organizationId = null, string? projectId = null) =>
         backups.SetPolicyAsync(Scope(organizationId, projectId), databaseId, fullBackupCron, incrementalBackupCron, retentionDays, disabled, Cancellation);
 

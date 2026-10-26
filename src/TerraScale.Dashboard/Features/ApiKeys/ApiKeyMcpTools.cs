@@ -10,8 +10,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys;
 [McpServerToolType]
 public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys, AccountService accounts)
 {
-    [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API keys and machine-to-machine (M2M) clients without their secrets.")]
-    public async Task<McpCredentialList> ListApiKeys(string kind = "", string status = "", string databaseId = "", string search = "", string? organizationId = null, string? projectId = null,
+    [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API key metadata without secrets. M2M clients are currently unavailable.")]
+    public async Task<McpCredentialList> ListApiKeys(
+        [Description("api-key or empty lists API keys; m2m currently returns no clients.")] string kind = "",
+        [Description("active, inactive, or empty for both.")] string status = "",
+        string databaseId = "", string search = "", string? organizationId = null, string? projectId = null,
         [Description(CursorPaging.Description)] int limit = 100, string after = "")
     {
         if (kind is not ("" or "api-key" or "m2m")) throw new AccountAccessException("Kind must be api-key or m2m.", 422);
@@ -27,7 +30,9 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     }
 
     [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires an owner or admin role.")]
-    public Task<ProjectApiKeySecret> CreateApiKey(string name, string[] scopes, string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null) =>
+    public Task<ProjectApiKeySecret> CreateApiKey(string name,
+        [Description("At least one of documents:read, documents:write, databases:read, databases:write. database:read and database:write are accepted aliases for document permissions.")] string[] scopes,
+        string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null) =>
         CreateCredentialAsync(Scope(organizationId, projectId), "api-key", name, scopes, databaseId, expiresInDays, allowedCidrs ?? []);
 
     [McpServerTool(Name = "set_api_key_allowed_cidrs", Title = "Set API key allowed IPs", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace the IPs or CIDR ranges (up to 32; an empty list allows any IP) that requests with an API key may come from. Requests must also match the project's list when it has one. Changes apply within 60 seconds. Requires an owner or admin role.")]

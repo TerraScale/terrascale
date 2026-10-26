@@ -47,7 +47,7 @@ public static class ApiKeyEndpoints
             .WithSummary("Create a project key and reveal its secret once")
             .WithDescription("Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
             .Accepts<CreateProjectCredentialRequest>("application/x-www-form-urlencoded")
-            .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
+            .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -61,7 +61,7 @@ public static class ApiKeyEndpoints
             .WithSummary("Revoke a project key")
             .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Already-issued tokens are validated offline and stay valid until they expire (at most 60 seconds). A failed revoke call is re-checked, so 204/303 means the key is gone.")
             .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
-            .Produces(204).Produces(303).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
+            .Produces(204).Produces(303).Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -74,7 +74,7 @@ public static class ApiKeyEndpoints
         }).WithGroupName("integration").WithName("revokeDashboardCredential").WithTags("Credentials")
             .WithSummary("Revoke a key selected by its form ID")
             .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
-            .Produces(204).Produces(303).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
+            .Produces(204).Produces(303).Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/rotate", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -95,7 +95,7 @@ public static class ApiKeyEndpoints
             .WithSummary("Rotate a project key and reveal its new secret once")
             .WithDescription("Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period; 0 stops it immediately. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.")
             .Accepts<RotateProjectCredentialRequest>("application/x-www-form-urlencoded")
-            .Produces<ProjectApiKeySecret>().Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(409).ProducesProblem(422).ProducesProblem(503);
+            .Produces<ProjectApiKeySecret>().Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(409).ProducesProblem(422).ProducesProblem(503);
         // Allowlists: a key's own list and its project's list. Browser forms; ts-auth's 400 reason for a bad entry is shown as is.
         foreach (var target in new[] { "credentials/allowed-cidrs", "credentials/project-allowed-cidrs" })
         {

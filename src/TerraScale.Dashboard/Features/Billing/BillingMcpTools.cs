@@ -41,8 +41,12 @@ public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling bil
     [McpServerTool(Name = "get_billing", Title = "Get billing", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("Show an organization's plan, billing interval and status, renewal date, scheduled or pending plan changes, checkout state, and (for the owner) payment method summary.")]
     public Task<BillingMcpSummary> Billing(string? organizationId = null, string? projectId = null) => billing.McpSummaryAsync(Scope(organizationId, projectId), Cancellation);
 
-    [McpServerTool(Name = "list_invoices", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("List organization invoices newest first, ten per page, filtered by status or issued date.")]
-    public async Task<BillingInvoiceList> Invoices(string status = "", string issued = "", int page = 1, string? organizationId = null, string? projectId = null)
+    [McpServerTool(Name = "list_invoices", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List organization invoices from Stripe newest first, ten per page, filtered by status or issued date.")]
+    public async Task<BillingInvoiceList> Invoices(
+        [Description("paid, open, void, or empty for all statuses.")] string status = "",
+        [Description("3m, 6m, 12m, a four-digit year other than 0000, or empty for all dates.")] string issued = "",
+        [Description("1-based page, ten invoices per page; clamped to available pages.")] int page = 1,
+        string? organizationId = null, string? projectId = null)
     {
         var invoices = await billing.InvoicesAsync(Scope(organizationId, projectId), Cancellation);
         return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow());

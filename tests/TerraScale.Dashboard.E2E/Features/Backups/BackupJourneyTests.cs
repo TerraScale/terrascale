@@ -26,8 +26,10 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         foreach (var name in new[] { "list_backups", "create_backup", "set_backup_policy", "restore_backup" })
             Check(tools.EnumerateArray().Any(tool => tool.GetProperty("name").GetString() == name), "Actual MCP discovery exposes the source tool: " + name);
         var policySchema = tools.EnumerateArray().Single(tool => tool.GetProperty("name").GetString() == "set_backup_policy").GetProperty("inputSchema");
-        Check(new[] { "databaseId", "fullBackupCron", "incrementalBackupCron", "retentionDays" }.All(name =>
-            policySchema.GetProperty("required").EnumerateArray().Any(field => field.GetString() == name)), "The source required policy parameters stay present, including the explicitly unsupported incremental field");
+        Check(new[] { "databaseId", "fullBackupCron", "retentionDays" }.All(name =>
+            policySchema.GetProperty("required").EnumerateArray().Any(field => field.GetString() == name)), "Required policy inputs remain explicit");
+        Check(!policySchema.GetProperty("required").EnumerateArray().Any(field => field.GetString() == "incrementalBackupCron"),
+            "Clients do not have to supply an unsupported incremental schedule");
         var source = await CallAsync(client, secret, "create_database", new { name = "backup-source", region = "GRU" });
         var id = source.GetProperty("id").GetString()!;
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
@@ -85,7 +87,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         }
         Check(!(await CallAsync(replica, secret, "get_database", new { databaseId = id })).GetProperty("backupsEnabled").GetBoolean(),
             "A provider-confirmed paused policy projects disabled rather than its old state");
-        var resumed = await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "", incrementalBackupCron = "", retentionDays = 35, disabled = false });
+        var resumed = await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "", retentionDays = 35, disabled = false });
         Check(resumed.GetProperty("fullBackupCron").GetString() == "" && resumed.GetProperty("incrementalBackupCron").GetString() == "" &&
             resumed.GetProperty("retentionDays").GetInt32() == 35, "Null producer schedules are projected as empty public strings; no incremental schedule is invented");
         using (var page = await replica.GetAsync("/databases/" + id + "/backups"))

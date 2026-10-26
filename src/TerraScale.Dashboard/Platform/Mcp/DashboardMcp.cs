@@ -2,6 +2,9 @@ using TerraScale.Dashboard.Platform.Observability;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Http.Features;
 using System.Reflection;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
@@ -45,8 +48,27 @@ public static class DashboardMcp
         return toolTypes.SelectMany(toolType => toolType.GetMethods()
             .Where(method => method.IsDefined(typeof(McpServerToolAttribute)))
             .Select(method => McpServerTool.Create(method, request => ActivatorUtilities.CreateInstance(
-                request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType), options: null)))
+                request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType),
+                options: new() { SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } })))
             .ToArray();
+    }
+
+    private static JsonNode NullableRequirements(AIJsonSchemaCreateContext context, JsonNode schema)
+    {
+        if (schema is not JsonObject { } node || node["required"] is not JsonArray required || node["properties"] is not JsonObject properties) return schema;
+        // Constructor parameters can be required for deserialization while their nullable output
+        // properties are deliberately omitted. Keep the schema aligned with the serializer's policy.
+        foreach (var property in context.TypeInfo.Properties)
+        {
+            if (!property.IsGetNullable && Nullable.GetUnderlyingType(property.PropertyType) is null) continue;
+            if (properties[property.Name] is not JsonObject field || field["type"] is not JsonArray types || !types.Any(type => type?.GetValue<string>() == "null")) continue;
+            var ignore = property.AttributeProvider?.GetCustomAttributes(typeof(JsonIgnoreAttribute), true)
+                .OfType<JsonIgnoreAttribute>().FirstOrDefault()?.Condition ?? context.TypeInfo.Options.DefaultIgnoreCondition;
+            if (ignore is not (JsonIgnoreCondition.WhenWritingNull or JsonIgnoreCondition.WhenWritingDefault)) continue;
+            for (var index = required.Count - 1; index >= 0; index--)
+                if (required[index]?.GetValue<string>() == property.Name) required.RemoveAt(index);
+        }
+        return schema;
     }
 
     public static void AddDashboardMcp(this IServiceCollection services)

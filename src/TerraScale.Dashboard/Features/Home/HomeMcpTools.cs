@@ -9,7 +9,9 @@ namespace TerraScale.Dashboard.Features.Home;
 public sealed class HomeMcpTools(IHttpContextAccessor http, AccountService accounts, IHomeMeasurements measurements)
 {
     [McpServerTool(Name = "get_overview", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read the selected project's measured operations and region health.")]
-    public async Task<HomeMcpOverview> Overview(string range = "7d", string? organizationId = null, string? projectId = null)
+    public async Task<HomeMcpOverview> Overview(
+        [Description("1h, 24h, 7d, or 30d. Defaults to 7d; unrecognized values also use 7d.")] string range = "7d",
+        string? organizationId = null, string? projectId = null)
     {
         var context = await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
         var normalized = range is "1h" or "24h" or "7d" or "30d" ? range : "7d";
