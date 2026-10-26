@@ -16,3 +16,8 @@ JSON emits typed result records as `{"type":"record","data":...}`, then
 SQL errors, read failures, interruption, output failures and an unsubmitted buffer
 at EOF/`.quit` produce nonzero exit; a failed session never emits `complete`.
 EOF is successful only after the pending buffer is submitted or explicitly reset.
+
+`ts export app` writes live `{collection,id,document}` NDJSON. Stored SQL and
+migration rows can appear with non-ULID keys; NDJSON import rejects those keys
+during preview, so a mixed-key export cannot be imported unchanged. Accepted
+records do not restore SQL table definitions, indexes or other metadata.

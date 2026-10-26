@@ -32,6 +32,8 @@ type ExportDocument struct {
 // Export streams all live documents from one server read snapshot, ordered by
 // collection then ID. It requires documents:read. Stored SQL rows and migration
 // records may appear as document representations with their original keys.
+// NDJSON import requires canonical ULID IDs; records with other stored keys
+// are rejected during import preview and cannot be imported unchanged.
 // Empty collections, table definitions, schemas, indexes, TTL rules and other
 // metadata are not included; importing records does not recreate relational
 // definitions or constraints. This is a document export, not a database backup.
