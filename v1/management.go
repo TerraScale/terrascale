@@ -139,7 +139,12 @@ type ManagedDatabase struct {
 }
 
 // Placement places a new database. Regions are region ids such as
-// gru-1, not RegionCode values. An empty HomeRegion is the called region.
+// gru-1, not RegionCode values. An empty HomeRegion is the called region,
+// where the database is managed, not a request for single-region placement.
+// A writable database requires at least two regions. Omitted ReplicaRegions
+// uses every other current serving region; an explicit list must include at
+// least one region other than the home. An explicitly empty list on create
+// returns 400 placement_needs_two_regions.
 // AllRegions places a full copy in every serving region, including regions
 // that join later; it cannot be combined with ReplicaRegions.
 type Placement struct {
@@ -536,7 +541,8 @@ func (u *ManagementUser) PrepareProjectRegistration(ctx context.Context, org Org
 }
 
 // CreateDatabase creates an empty database in a project, homed in the
-// called region.
+// called region, with copies in every other current serving region.
+// A writable database requires at least two regions.
 func (u *ManagementUser) CreateDatabase(ctx context.Context, org, project, name string) (*ManagedDatabase, error) {
 	return u.CreateDatabaseIn(ctx, org, project, name, Placement{})
 }
@@ -552,7 +558,9 @@ func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, nam
 
 // SetDatabaseRegions replaces a database's replica regions with
 // replicaRegions, the complete new list of region ids; its home region
-// never changes.
+// never changes. A writable database needs at least one replica besides the home.
+// An empty list is allowed only as transient teardown immediately before deletion;
+// document writes then return 409 placement_needs_two_regions.
 func (u *ManagementUser) SetDatabaseRegions(ctx context.Context, org, project, databaseID string, replicaRegions []string) (*ManagedDatabase, error) {
 	body := struct {
 		ReplicaRegions []string `json:"replicaRegions"`
@@ -583,6 +591,8 @@ func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID 
 
 // DeleteDatabase deletes a database, by id, and its data; its branches stay.
 // It fails with ErrDatabaseReplicated while the database has replica regions.
+// Call SetDatabaseRegions with an empty list, then delete immediately. That empty
+// update is transient teardown; document writes return 409 placement_needs_two_regions.
 func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
 	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID), nil, nil, nil)
 }

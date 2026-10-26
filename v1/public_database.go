@@ -135,8 +135,11 @@ func databaseCall[T any](ctx context.Context, d *Database, method string, query 
 	return publicCall[T](ctx, d.c, request{method: method, path: p, query: query, replaySafe: method == http.MethodGet}, in)
 }
 
-// CreateIn creates this database with explicit placement. Nil ReplicaRegions
-// lets the server select serving regions; an empty list is sent explicitly.
+// CreateIn creates this database with explicit placement. A writable database
+// requires at least two regions. Nil ReplicaRegions lets the server select every
+// other current serving region; an empty list is sent explicitly and returns
+// 400 placement_needs_two_regions. A non-empty list must include at least one
+// region other than the home. AllRegions also follows future regions.
 func (d *Database) CreateIn(ctx context.Context, placement Placement) (*ManagedDatabase, error) {
 	if _, err := d.path(); err != nil {
 		return nil, err
@@ -155,7 +158,9 @@ func (d *Database) CreateIn(ctx context.Context, placement Placement) (*ManagedD
 }
 
 // SetRegions replaces the database's replica regions from its home region.
-// An empty slice removes every replica; the home region cannot change.
+// A writable database needs at least one replica besides the home. An empty
+// slice is allowed only as transient teardown immediately before Delete;
+// document writes then return 409 placement_needs_two_regions. The home cannot change.
 func (d *Database) SetRegions(ctx context.Context, regions []string) (*ManagedDatabase, error) {
 	if regions == nil {
 		regions = []string{}

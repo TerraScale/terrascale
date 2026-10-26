@@ -73,8 +73,10 @@ func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
 }
 
 // Delete deletes the database and its data; its branches stay. It fails with
-// ErrDatabaseReplicated while the database has replica regions. Needs the
-// databases:write scope.
+// ErrDatabaseReplicated while the database has replica regions. Call SetRegions
+// with an empty slice, then delete immediately. This is transient teardown, not
+// supported single-region placement: document writes return 409 placement_needs_two_regions.
+// Needs the databases:write scope.
 func (d *Database) Delete(ctx context.Context) error {
 	p, err := d.path()
 	if err != nil {
