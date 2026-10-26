@@ -33,6 +33,7 @@ async function main() {
   assert.ok(app && style && search, 'Missing application or search assets');
 
   const routes = [
+    ['/build-info.json', 'build-info.json', 'application/json'],
     ['/', 'index.html', 'text/html'],
     ['/getting-started/javascript', 'getting-started/javascript.html', 'text/html'],
     ['/ar/getting-started/', 'ar/getting-started/index.html', 'text/html'],
@@ -46,7 +47,7 @@ async function main() {
     await checkResponse(`https://docs.terrascale.tech${route}`, readFileSync(`${dist}/${file}`), 200, contentType);
   }));
   await checkResponse('https://docs.terrascale.tech/__docs_deployment_missing__', readFileSync(`${dist}/404.html`), 404, 'text/html');
-  console.log('Workers hosted check passed: 8 pages/assets match the checked build; custom HTTP 404 works.');
+  console.log('Workers hosted check passed: 9 pages/assets match the checked build; custom HTTP 404 works.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
