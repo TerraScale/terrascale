@@ -1923,7 +1923,10 @@ public sealed partial class DatabaseRecoveryTests
         var projectDirectory = string.Empty;
         var note = string.Empty;
         var bytes = state.Faker.Random.Bytes(37);
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
+        // Preserve the injected crash state; background cleanup resumes on the real-clock restart hosts.
+        await using (var api = await state.StartAsync(services => services
+            .AddSingleton<TimeProvider>(new FakeTimeProvider(TimeProvider.System.GetUtcNow()))
+            .AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
         {
             if (armed && step == (operation == "create" ? "create.intent" : "cleanup.files"))
             {
