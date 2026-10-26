@@ -58,7 +58,9 @@ public sealed class TerraScaleAuthRetiredApiTests
         using var http = new HttpClient(handler);
         var client = new TerraScaleAuthClient(http, new()
         {
-            BaseAddress = new Uri("https://auth.example.test"), InstanceSlug = "terrascale", ApiKey = "fixture-management"
+            BaseAddress = new Uri("https://auth.example.test"),
+            InstanceSlug = "terrascale",
+            ApiKey = "fixture-management"
         });
         var memberships = await client.Users.ListOrganizationsAsync("fixture-user");
         await Assert.That(memberships[0].Organization).IsEqualTo(new TerraScaleAuthOrganization("fixture-org", "Fixture", "fixture", 7));
