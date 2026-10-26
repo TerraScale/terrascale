@@ -55,7 +55,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         return new OrganizationDone(true);
     });
 
-    [McpServerTool(Name = "remove_member", Title = "Remove member", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Remove a member from an organization and sign them out. Requires the owner or admin role.")]
+    [McpServerTool(Name = "remove_member", Title = "Remove member", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Remove a member's user access to an organization and its projects and revoke their dashboard sessions. Organization and project service keys remain active; rotate or revoke any keys known to them at /api-keys. Requires the owner or admin role.")]
     public Task<OrganizationDone> RemoveMember([Description("Member user ID from list_members.")] string userId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Member("remove", userId, organizationId, projectId);
 

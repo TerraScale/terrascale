@@ -98,6 +98,11 @@ billing where applicable; invitations still require member capacity. Members
 and viewers cannot perform these management actions. `list_members.canEdit`
 reflects the same policy as the native member controls.
 
+`remove_member` removes the member's user access to the organization and its
+projects and revokes their dashboard sessions. Organization and project service
+keys remain active, including keys they created. Rotate or revoke any keys known
+to them on [API keys](/api-keys).
+
 Starting ownership transfer, deleting an organization, managing billing and
 setting organization MFA policy remain owner-only. The nominated member can
 confirm or decline a transfer. Every mutation rechecks current membership;
