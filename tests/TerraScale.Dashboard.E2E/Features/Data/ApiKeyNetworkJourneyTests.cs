@@ -209,7 +209,7 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         using var issued = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var keyId = issued.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
         await Assert.That(issued.RootElement.GetProperty("apiKey").GetProperty("createdByUserId").GetString())
-            .IsEqualTo(environment.ApiKeys.Issued().Single().Key.CreatedBy);
+            .IsEqualTo("test-user");
         await Assert.That(issued.RootElement.GetProperty("apiKey").GetProperty("createdByEmail").GetString()).IsEqualTo("user@example.com");
         await Assert.That(Cidrs(issued.RootElement.GetProperty("apiKey"))).IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32" });
 
