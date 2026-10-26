@@ -14,6 +14,36 @@ namespace TerraBase.Fast.Backup;
 public sealed class PointInTimeEntitlementTests
 {
     [Test]
+    public async Task Point_in_time_recovery_preserves_explicit_placement(CancellationToken cancellationToken)
+    {
+        var s3 = new FakeS3();
+        var time = new ManualTime();
+        await using var api = await ManagementApi.StartAsync(settings =>
+        {
+            s3.Configure(settings);
+            settings["region"] = "gru";
+        }, services =>
+        {
+            s3.Route(services);
+            ManualBackupHosting.Configure(services);
+            new OtherRegions("fra", "sjc").Register(services);
+        }, time);
+        var organization = await api.CreateOrganizationAsync("Recovery placement");
+        var project = await api.CreateProjectAsync(organization, "Copies");
+        using var client = ProjectClient(api, organization, project);
+        var created = await JsonAsync(client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"),
+            new { name = "main", replicaRegions = new[] { "fra" } }, cancellationToken), HttpStatusCode.Created);
+        await ShipAsync(api, time, TimeSpan.FromSeconds(10), cancellationToken);
+        var route = $"/v1/projects/{project}/databases/main/point-in-time";
+        var window = await JsonAsync(client.GetAsync(Uri(route), cancellationToken));
+        var restored = await JsonAsync(client.PostAsJsonAsync(Uri(route + "/restore"),
+            new { pointInTime = window.GetProperty("latest").GetDateTimeOffset(), name = "copy" }, cancellationToken), HttpStatusCode.Created);
+        await Assert.That(restored.GetProperty("homeRegion").GetString()).IsEqualTo(created.GetProperty("homeRegion").GetString());
+        await Assert.That(restored.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString())).IsEquivalentTo(["fra"]);
+        await Assert.That(restored.GetProperty("allRegions").GetBoolean()).IsFalse();
+    }
+
+    [Test]
     [Arguments("hobby", 1)]
     [Arguments("starter", 5)]
     public async Task Project_token_restores_count_toward_the_organization_database_allowance(string plan, int limit, CancellationToken cancellationToken)
