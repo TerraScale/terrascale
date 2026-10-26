@@ -26,6 +26,7 @@ public sealed class SqlEditorCorrectnessJourneyTests(DashboardRootFixture fixtur
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
             if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return null;
+            if (await DatabaseSdkScenario.EmptySqlCatalogAsync(http) is { } catalog) return catalog;
             using var body = await JsonDocument.ParseAsync(http.Request.Body);
             await Assert.That(body.RootElement.GetProperty("statements")[0].GetProperty("sql").GetString()).IsEqualTo(sql);
             Interlocked.Increment(ref executions);
@@ -130,12 +131,13 @@ public sealed class SqlEditorCorrectnessJourneyTests(DashboardRootFixture fixtur
         TestAuth auth = null!;
         var executions = 0;
         var scope = "";
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), async http =>
         {
-            if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return Task.FromResult<IResult?>(null);
+            if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return null;
+            if (await DatabaseSdkScenario.EmptySqlCatalogAsync(http) is { } catalog) return catalog;
             scope = string.Join(',', auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.Order(StringComparer.Ordinal));
             Interlocked.Increment(ref executions);
-            return Task.FromResult<IResult?>(Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 0 } } }));
+            return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 0 } } });
         });
         using var client = scenario.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);

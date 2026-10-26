@@ -19,11 +19,12 @@ public sealed class SqlResultsBrowserJourneyTests(DashboardE2EFixture fixture)
     {
         var executions = 0;
         const string hostile = "</script><script>window.sqlCellExecuted=true</script><img src=x onerror='window.sqlCellExecuted=true'>";
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
-            if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return Task.FromResult<IResult?>(null);
+            if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return null;
+            if (await DatabaseSdkScenario.EmptySqlCatalogAsync(http) is { } catalog) return catalog;
             Interlocked.Increment(ref executions);
-            return Task.FromResult<IResult?>(Results.Json(new
+            return Results.Json(new
             {
                 results = new[] { new
                 {
@@ -31,7 +32,7 @@ public sealed class SqlResultsBrowserJourneyTests(DashboardE2EFixture fixture)
                     rows = Enumerable.Range(0, count).Select(index => new object?[] { 9007199254740993L + index, null, -3, index == 0 ? "=1+1,\"quoted\"\nline" : index == 1 ? hostile : "null", "" }).ToArray(),
                     rows_affected = count, last_insert_rowid = (long?)null
                 } }
-            }));
+            });
         });
         using var client = scenario.CreateClient();
         var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
