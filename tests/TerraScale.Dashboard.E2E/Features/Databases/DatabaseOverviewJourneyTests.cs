@@ -113,5 +113,5 @@ public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
     }
 
     private static string Summary(string html) => Regex.Match(html, "<dl class=\"ts-stats\" aria-label=\"Database summary\">(.*?)</dl>", RegexOptions.Singleline).Groups[1].Value;
-    private static string[] Counts(string html) => Regex.Matches(Summary(html), "<dd class=\"ts-stat-value\">([^<]*)</dd>").Take(2).Select(match => match.Groups[1].Value).ToArray();
+    private static string[] Counts(string html) => Regex.Matches(Summary(html), "<dd class=\"ts-stat-value\"[^>]*>([^<]*)</dd>").Take(2).Select(match => match.Groups[1].Value).ToArray();
 }

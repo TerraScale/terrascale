@@ -21,9 +21,9 @@ public sealed class AuditAnalyticsProducer
         object Sample(DateTimeOffset start, bool missingLatency = false, bool idle = false) => new
         {
             start = start.ToOffset(TimeSpan.FromHours(-3)),
-            requests = new Dictionary<string, long> { ["GET"] = idle ? 0 : Mode == "missing" ? 9_007_199_254_740_993L : 10 },
-            operations = new Dictionary<string, long> { ["document_read"] = 4 },
-            errors = 1,
+            requests = new Dictionary<string, long> { ["GET"] = idle ? 0 : Mode == "missing" ? 9_007_199_254_740_993L : Mode == "large" ? 5_612_334_001L : 10 },
+            operations = new Dictionary<string, long> { ["document_read"] = Mode == "large" ? 7_800_000_000_000L : 4 },
+            errors = Mode == "large" ? 3_400_000L : 1,
             latency = new { p50Ms = missingLatency || idle || Mode == "missing" ? (double?)null : 0.5, p95Ms = missingLatency || idle || Mode == "missing" ? (double?)null : 1.75, p99Ms = missingLatency || idle || Mode == "missing" ? (double?)null : 9 },
             storageBytes = Mode == "missing" || idle ? (long?)null : 4096,
             clientBandwidth = new { bytesSent = 6, bytesReceived = 7 },

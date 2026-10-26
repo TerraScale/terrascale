@@ -1,3 +1,4 @@
+@using TerraScale.Dashboard.Shared.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Logs.DatabaseLogPage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @using System.Globalization
@@ -26,7 +27,7 @@
                 <div class="ts-table-wrap"><table class="ts-table" aria-describedby="request-operations"><caption class="ts-sr-only">Recent requests for @Model.Database.Name</caption><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Route</th><th scope="col">Request ID</th><th scope="col">Status</th><th scope="col">Latency</th><th scope="col">Operations</th></tr></thead><tbody>
                 @foreach (var log in Model.Logs.Items)
                 {
-                    <tr><td><time datetime="@log.Time.ToString("O", CultureInfo.InvariantCulture)">@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time><div class="ts-meta">@log.Region</div></td><td><code>@log.Method @log.Route</code></td><td>@if(log.RequestId is { } requestId){<code>@requestId</code><div><a href="@("/support?relatedRequestId=" + requestId)">Contact support</a></div>}else{<span class="ts-meta">Unavailable</span>}</td><td><span class="ts-badge ts-badge-tone" data-tone="@(log.Status >= 400 ? "danger" : "success")">@log.Status</span></td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td><td>@log.Operations.ToString("N0", CultureInfo.InvariantCulture)</td></tr>
+                    <tr><td><time datetime="@log.Time.ToString("O", CultureInfo.InvariantCulture)">@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time><div class="ts-meta">@log.Region</div></td><td><code>@log.Method @log.Route</code></td><td>@if(log.RequestId is { } requestId){<code>@requestId</code><div><a href="@("/support?relatedRequestId=" + requestId)">Contact support</a></div>}else{<span class="ts-meta">Unavailable</span>}</td><td><span class="ts-badge ts-badge-tone" data-tone="@(log.Status >= 400 ? "danger" : "success")">@log.Status</span></td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td><td title="@log.Operations.ToString("N0", CultureInfo.InvariantCulture)">@ChartGeometry.Compact(log.Operations)</td></tr>
                 }
                 </tbody></table></div>
                 }
@@ -40,7 +41,7 @@
         else { <div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">Slow query shapes for @Model.Database.Name</caption><thead><tr><th scope="col">Collection</th><th scope="col">Shape</th><th scope="col">Queries</th><th scope="col">p95 ms</th><th scope="col">Avg ms</th><th scope="col">Rows scanned per query</th><th scope="col">Last seen (UTC)</th></tr></thead><tbody>
             @foreach (var shape in Model.QueryShapes)
             {
-                <tr><td>@shape.Collection</td><td><code title="@shape.Shape">@(shape.Shape.Length > 100 ? shape.Shape[..100] + "…" : shape.Shape)</code></td><td>@shape.Queries.ToString("N0", CultureInfo.InvariantCulture)</td><td>@(shape.P95LatencyMs?.ToString("0.##", CultureInfo.InvariantCulture) ?? "—")</td><td>@(shape.Queries > 0 ? (shape.TotalLatencyMs / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td>@(shape.Queries > 0 ? ((double)shape.RowsScanned / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td><time datetime="@shape.LastSeenAt.ToString("O", CultureInfo.InvariantCulture)">@shape.LastSeenAt.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time></td></tr>
+                <tr><td>@shape.Collection</td><td><code title="@shape.Shape">@(shape.Shape.Length > 100 ? shape.Shape[..100] + "…" : shape.Shape)</code></td><td title="@shape.Queries.ToString("N0", CultureInfo.InvariantCulture)">@ChartGeometry.Compact(shape.Queries)</td><td>@(shape.P95LatencyMs?.ToString("0.##", CultureInfo.InvariantCulture) ?? "—")</td><td>@(shape.Queries > 0 ? (shape.TotalLatencyMs / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td>@(shape.Queries > 0 ? ((double)shape.RowsScanned / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td><time datetime="@shape.LastSeenAt.ToString("O", CultureInfo.InvariantCulture)">@shape.LastSeenAt.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time></td></tr>
             }
         </tbody></table></div> }
     </div></section>

@@ -9,6 +9,21 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13;
 public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
+    [Arguments("/analytics?range=1h")]
+    [Arguments("/?range=1h")]
+    public async Task LargeCountsRenderCompactValuesWithExactTitles(string route)
+    {
+        var producer = new AuditAnalyticsProducer { Mode = "large" };
+        await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, producer.RespondAsync);
+        using var client = scenario.CreateClient();
+        producer.DatabaseId = await CreateDatabaseAsync(client);
+        var html = await GetPageAsync(client, route);
+        foreach (var (label, compact, exact) in new[] { ("Requests", "5.6B", "5,612,334,001"), ("Errors", "3.4M", "3,400,000"), ("Operations", "7.8T", "7,800,000,000,000") })
+            await Assert.That(html).Contains($"<dt class=\"ts-stat-label\">{label}</dt><dd class=\"ts-stat-value\" title=\"{exact}\">{compact}</dd>");
+        await Assert.That(html).Contains("5,612,334,001").Because("request chart tooltips keep the exact grouped count");
+    }
+
+    [Test]
     [Arguments("duplicate", "/analytics?range=1h", "Could not load analytics measurements.")]
     [Arguments("duplicate", "/?range=1h", "Analytics measurements could not be loaded.")]
     public async Task DuplicateRowsAreRejected(string mode, string route, string expectedError)
@@ -19,7 +34,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         producer.DatabaseId = await CreateDatabaseAsync(client);
         var baseline = await GetPageAsync(client, route);
         await SaveEvidenceAsync("single" + (route.StartsWith("/analytics", StringComparison.Ordinal) ? "-analytics" : "-home"), route, producer, baseline);
-        await Assert.That(baseline).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\">10</dd>");
+        await Assert.That(baseline).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\" title=\"10\">10</dd>");
         await Assert.That(baseline).Contains("<dt class=\"ts-stat-label\">Storage</dt><dd class=\"ts-stat-value\">4.0 KiB</dd>");
         producer.Mode = mode;
         var html = await GetPageAsync(client, route);
@@ -37,7 +52,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         using var client = scenario.CreateClient();
         producer.DatabaseId = await CreateDatabaseAsync(client);
         var history = await GetPageAsync(client, "/analytics?range=1h");
-        await Assert.That(history).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\">10</dd>")
+        await Assert.That(history).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\" title=\"10\">10</dd>")
             .Because("TerraBase keeps observations for a region the database has left.");
         await Assert.That(history).Contains("text-anchor=\"end\">15</text>").Because("10 requests get round grid steps 0, 5, 10, 15, 20.");
         producer.Mode = "latest-partial";
@@ -111,10 +126,10 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         producer.Mode = "missing";
         var html = await GetPageAsync(client, route);
         await SaveEvidenceAsync("null-offset-large-counter", route, producer, html);
-        await Assert.That(html).Contains("9007199254740993");
+        await Assert.That(html).Contains("title=\"9,007,199,254,740,993\"");
         await Assert.That(html).Contains("Not measured");
         await Assert.That(html).Contains("Not reported");
-        await Assert.That(html).Contains("<span class=\"ts-mono\">gru</span></a></th><td class=\"ts-num\">9007199254740993</td><td class=\"ts-num\">Not reported</td>")
+        await Assert.That(html).Contains("<span class=\"ts-mono\">gru</span></a></th><td class=\"ts-num\" title=\"9,007,199,254,740,993\">9007.2T</td><td class=\"ts-num\">Not reported</td>")
             .Because("One gru bucket sums its request counter exactly and has no latest p95 to report.");
         await Assert.That(html).Contains(producer.From.UtcDateTime.ToString("MMM d HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture));
         await Assert.That(html.Contains("Could not load analytics measurements.", StringComparison.Ordinal)).IsFalse();
@@ -159,7 +174,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
     {
         var directory = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence", producer.DatabaseId);
         Directory.CreateDirectory(directory);
-        var stats = Regex.Matches(html, "<dt class=\"ts-stat-label\">([^<]+)</dt><dd class=\"ts-stat-value\">([^<]*)</dd>")
+        var stats = Regex.Matches(html, "<dt class=\"ts-stat-label\">([^<]+)</dt><dd class=\"ts-stat-value\"[^>]*>([^<]*)</dd>")
             .Select(match => new { label = match.Groups[1].Value, value = match.Groups[2].Value }).ToArray();
         var charts = Regex.Matches(html, "<svg class=\"ts-chart ts-analytics-plot\"[^>]+aria-label=\"([^\"]+)\"[^>]*>(.*?)</svg>\\s*</div>", RegexOptions.Singleline)
             .Select(match => new

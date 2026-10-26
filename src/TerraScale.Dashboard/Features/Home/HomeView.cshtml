@@ -1,3 +1,5 @@
+@using System.Globalization
+@using TerraScale.Dashboard.Shared.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Home
@@ -32,7 +34,7 @@
         @if (Model.Measurement.Activity.Count > 0)
         {
             var chart = TerraScale.Dashboard.Features.Home.OperationChart.For(Model);
-            <p class="ts-home-activity-total"><span class="ts-chart-swatch" aria-hidden="true"></span>@Model.Measurement.ActivityLabel<strong>@(Model.Measurement.Reads + Model.Measurement.Writes)</strong></p><div class="ts-chart-shell" role="region" aria-label="@chart.Label" tabindex="0">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Home.ActivityChart, TerraScale.Dashboard.Features.Home.OperationChart>(chart))</div>
+            <p class="ts-home-activity-total"><span class="ts-chart-swatch" aria-hidden="true"></span>@Model.Measurement.ActivityLabel<strong title="@((Model.Measurement.Reads + Model.Measurement.Writes).ToString("N0", CultureInfo.InvariantCulture))">@ChartGeometry.Compact(Model.Measurement.Reads + Model.Measurement.Writes)</strong></p><div class="ts-chart-shell" role="region" aria-label="@chart.Label" tabindex="0">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Home.ActivityChart, TerraScale.Dashboard.Features.Home.OperationChart>(chart))</div>
         }
         else { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Activity", 16)</span><p class="ts-empty-title">No measured reads or writes to plot.</p></div> }
         <a class="ts-link ts-meta" href="/organization?tab=audit">View persisted audit events →</a></div></section>
