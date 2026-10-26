@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Cronos;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
@@ -30,7 +31,7 @@ namespace TerraBase.Features.Management.Backups;
 /// </remarks>
 internal sealed class EngineManagedBackupService(
     IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, TimeProvider time,
-    ILogger<EngineManagedBackupService> logger)
+    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options)
     : IManagedBackupService
 {
     /// <summary>Catalog collection: database id → <see cref="DatabaseOwner"/>, deleted with the database.</summary>
@@ -166,11 +167,14 @@ internal sealed class EngineManagedBackupService(
                 && record.DatabaseId == owner.DatabaseId
                 && await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
                     .ConfigureAwait(false) is { } source
-                    ? new RestoreSource(source.Name, record.Id)
+                    ? new RestoreSource(source, record.Id, record.Region)
                     : new NotFound(),
                 static error => error, cancellationToken).ConfigureAwait(false) switch
         {
-            RestoreSource source => await CopyRestoredAsync(userId, organizationId, owner, source.Name, source.StorageId, name, cancellationToken).ConfigureAwait(false),
+            RestoreSource { Region: null } => new Unavailable("the snapshot's region is unknown; take a new snapshot", "backup_region_unknown"),
+            RestoreSource source when source.Region != options.Region => new BackupElsewhere(source.Region!),
+            RestoreSource source when !source.Database.PlacedIn(options.Region) => new Conflict("the snapshot's region is outside the database's current placement", "backup_region_not_placed"),
+            RestoreSource source => await CopyRestoredAsync(userId, organizationId, owner, source.Database.Name, source.StorageId, name, cancellationToken).ConfigureAwait(false),
             NotFound error => error,
             Unavailable error => error,
         };
@@ -201,6 +205,11 @@ internal sealed class EngineManagedBackupService(
                 Unavailable error => error,
                 ManagedDatabase => throw new UnreachableException(),
             };
+        }
+
+        if (source.Home(options.Region) != options.Region)
+        {
+            return new BackupElsewhere(source.Home(options.Region));
         }
 
         var staging = database with { DatabaseId = EntityIds.New().ToString() };
@@ -331,7 +340,7 @@ internal sealed class EngineManagedBackupService(
                         var policy = await GetPolicyAsync(transaction, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
                         var schedule = await GetAsync(transaction, BackupCatalog.Schedule(owner.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken)
                             .ConfigureAwait(false);
-                        if (DueSince(policy, schedule, database.CreatedAt, time.GetUtcNow()) is null)
+                        if (database.Home(options.Region) != options.Region || DueSince(policy, schedule, database.CreatedAt, time.GetUtcNow()) is null)
                         {
                             continue;
                         }
@@ -596,7 +605,7 @@ internal sealed class EngineManagedBackupService(
             }
         }
 
-        return database is null || DueSince(policy, schedule, database.CreatedAt, now) is not { } since ? new NotFound()
+        return database is null || database.Home(options.Region) != options.Region || DueSince(policy, schedule, database.CreatedAt, now) is not { } since ? new NotFound()
             : schedule?.LastFailedAt is { } failedAt && failedAt >= since ? new BackupTurn(failedAt, true)
             : new BackupTurn(since, false);
     }
@@ -705,6 +714,12 @@ internal sealed class EngineManagedBackupService(
         {
             var plan = await EngineManagementService.PlanUncheckedAsync(transaction, organizationId, CancellationToken.None).ConfigureAwait(false);
             var record = await GetRecordAsync(transaction, organizationId, backupId, CancellationToken.None).ConfigureAwait(false);
+            // Another region's process owns its in-flight copy and its files. Its sweep must finish them.
+            if (record?.Region is { } region && region != options.Region)
+            {
+                return new SweepBackupState(null, plan);
+            }
+
             switch (record?.State)
             {
                 case null or BackupState.Registered:
@@ -790,7 +805,7 @@ internal sealed class EngineManagedBackupService(
     {
         var now = time.GetUtcNow();
         return new BackupRecord(
-            EntityIds.New(time).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, BackupState.Pending, trigger, now, null, 0, null);
+            EntityIds.New(time).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, BackupState.Pending, trigger, now, null, 0, null, options.Region);
     }
 
     private static async ValueTask<BackupRecord?> OldestRegisteredAsync(IStorageTransaction transaction, DatabaseOwner owner, CancellationToken cancellationToken)
@@ -856,7 +871,7 @@ internal sealed class EngineManagedBackupService(
     private sealed record SweepBackupState(BackupRecord? Record, PlanTier Plan);
 
     // The name of the database a backup restores and the engine database holding the backup.
-    private sealed record RestoreSource(string Name, string StorageId);
+    private sealed record RestoreSource(ManagedDatabase Database, string StorageId, string? Region);
 
     // What a restore copies, or why there is nothing to restore.
     private readonly union RestoreSourceResult(RestoreSource, NotFound, Unavailable);

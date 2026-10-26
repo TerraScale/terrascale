@@ -26,8 +26,9 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     /// <inheritdoc />
@@ -89,6 +90,7 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         var organization = ManagementRoute.OrganizationId(HttpContext);
         return await backups.RestorePointInTimeAsync(ManagementRoute.UserId(HttpContext), organization, database, at, name, cancellationToken, destination) switch
         {
+            BackupElsewhere elsewhere => DatabaseRegions.HomeRegion(elsewhere.Region, [elsewhere.Region]),
             ManagedDatabase restored => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, restored), restored),
             NotFound error => ErrorResponse.From(error),
             Conflict error => ErrorResponse.From(error),

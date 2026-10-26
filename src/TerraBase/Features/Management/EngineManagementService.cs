@@ -715,14 +715,15 @@ internal sealed partial class EngineManagementService(
             };
         }
 
-        // A branch copies the home region's file and lives there only (docs/cross-region.md).
+        // Copy at home, preserving the customer's placement for the new database.
         if (source.Home(options.Region) != options.Region)
         {
             return ManagementErrors.WrongRegion;
         }
 
         return await AddDatabaseAsync(
-            transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source.Id, source.Id, cancellationToken)
+            transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source.Id, source.Id, cancellationToken,
+            placement: source.Placement(options.Region) with { Version = 1 })
             .ConfigureAwait(false) switch
         {
             AddedDatabase added => added.Database,
@@ -735,9 +736,27 @@ internal sealed partial class EngineManagementService(
     }
 
     public async ValueTask<CopyDatabaseResult> CopyDatabaseAsync(
-        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken) =>
-        await AddDatabaseAsync(
-            transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId, branchedFrom, cancellationToken)
+        string userId, string organizationId, string projectId, string sourceId, string name, string? branchedFrom, CancellationToken cancellationToken)
+    {
+        DatabasePlacement? placement = null;
+        if (branchedFrom is not null)
+        {
+            var found = await GetDatabaseAsync(userId, organizationId, projectId, branchedFrom, cancellationToken).ConfigureAwait(false);
+            if (found is not ManagedDatabase source)
+            {
+                return found switch
+                {
+                    NotFound error => error,
+                    Unavailable error => error,
+                    ManagedDatabase => throw new UnreachableException(),
+                };
+            }
+
+            placement = source.Placement(options.Region) with { Version = 1 };
+        }
+
+        return await AddDatabaseAsync(
+            transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId, branchedFrom, cancellationToken, placement: placement)
             .ConfigureAwait(false) switch
         {
             AddedDatabase added => added.Database,
@@ -747,6 +766,7 @@ internal sealed partial class EngineManagementService(
             QuotaExceeded error => error,
             Unavailable error => error,
         };
+    }
 
     // Records cleanup ownership before creating (or copying) storage, then registers the database and
     // clears the intent in one transaction. project resolves the tenant of the project to add to (or why there is
@@ -756,8 +776,9 @@ internal sealed partial class EngineManagementService(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
     {
-        // A database homed in another region is a replica of a database counted where it was created.
-        var allowance = (placement?.Home ?? options.Region) == options.Region
+        // Copies are new databases even when their preserved home differs from the snapshot's region.
+        // Replica materialization has no sourceId and spends no additional unit.
+        var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
             ? new AllowanceCheck(databaseAllowance.Limit, options.Region, await ServingAsync(cancellationToken).ConfigureAwait(false))
             : null;
 

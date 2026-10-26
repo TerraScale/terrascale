@@ -24,8 +24,9 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     /// <inheritdoc />
@@ -55,6 +56,7 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
                 ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken) switch
             {
                 ManagedDatabase restored => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, restored), restored),
+                BackupElsewhere elsewhere => DatabaseRegions.HomeRegion(elsewhere.Region, [elsewhere.Region]),
                 NotFound error => ErrorResponse.From(error),
                 Conflict error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),

@@ -34,6 +34,7 @@ internal static class BackupState
 /// <param name="CompletedAt">When it was registered; retention counts from here.</param>
 /// <param name="SizeBytes">Bytes the snapshot occupies, once registered.</param>
 /// <param name="Order">Its key in the database's backup list, once registered.</param>
+/// <param name="Region">The region holding the snapshot file; absent records cannot be routed for restore.</param>
 internal sealed record BackupRecord(
     string Id,
     string OrganizationId,
@@ -44,7 +45,8 @@ internal sealed record BackupRecord(
     DateTimeOffset StartedAt,
     DateTimeOffset? CompletedAt,
     long SizeBytes,
-    string? Order)
+    string? Order,
+    string? Region)
 {
     /// <summary>
     /// The engine database that holds the snapshot: in the organization's directory, next to the backed-up database in its
