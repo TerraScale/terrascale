@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Hosting;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.Import;
 
@@ -20,6 +22,7 @@ internal sealed class NdjsonFile : IImportSource
     private readonly string _path;
     private readonly string? _collection;
     private readonly Dictionary<string, SourceTable> _tables = [];
+    private readonly HashSet<string> _auditRecords = [];
 
     private NdjsonFile(string path, string? collection)
     {
@@ -47,8 +50,66 @@ internal sealed class NdjsonFile : IImportSource
         while (Next(lines) is var (collection, id, body))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (collection == ImportNames.Collection && IsAuditRecord(id, body))
+            {
+                if (_auditRecords.Add(id!))
+                {
+                    Schema.Skip("import_audit_record", collection + "/" + id);
+                }
+
+                continue;
+            }
+
             yield return new SourceRow(Table(collection), [new(SourceKind.Blob, Blob: body), id is null ? SourceValue.Null : new(SourceKind.Text, Text: id)],
                 Columns, null, new ImportPosition(lines.Position, null, null, 0, 0));
+        }
+    }
+
+    // Imported databases export these two records too. They describe the old job, not the new destination.
+    // Recognize both the fixed id and versioned record shape; other rows in this collection still block.
+    private static bool IsAuditRecord(string? id, byte[] body)
+    {
+        if (id is not (ImportNames.JobId or ImportNames.StateId))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body, Options);
+            var root = document.RootElement;
+            if (root.GetPropertyCount() != 3 || !root.TryGetProperty("v", out var version) || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != 1
+                || !root.TryGetProperty("rev", out var revision) || !root.TryGetProperty("record", out var text) || text.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            using var record = JsonDocument.Parse(text.GetString()!, Options);
+            var value = record.RootElement;
+            if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("v", out version) || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out number) || number != 1)
+            {
+                return false;
+            }
+
+            var fields = id == ImportNames.JobId ? TerraBaseJsonContext.Default.ImportJobRecord.Properties : TerraBaseJsonContext.Default.ImportStateRecord.Properties;
+            if (value.GetPropertyCount() != fields.Count || fields.Any(field => !value.TryGetProperty(field.Name, out _)))
+            {
+                return false;
+            }
+
+            return id == ImportNames.JobId
+                ? revision.ValueKind == JsonValueKind.Null && value.TryGetProperty("id", out var job) && job.ValueKind == JsonValueKind.String && EntityIds.IsValid(job.GetString())
+                    && value.TryGetProperty("databaseId", out var database) && database.ValueKind == JsonValueKind.String && EntityIds.IsValid(database.GetString())
+                    && value.TryGetProperty("sourceSha256", out var sha) && sha.ValueKind == JsonValueKind.String && sha.GetString() is { Length: 64 } hash && hash.All(char.IsAsciiHexDigitLower)
+                : revision.ValueKind == JsonValueKind.String && EntityIds.IsValid(revision.GetString())
+                    && value.TryGetProperty("rev", out var rev) && rev.ValueKind == JsonValueKind.String && rev.GetString() == revision.GetString()
+                    && value.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String && state.GetString() is
+                        ImportStates.AwaitingSource or ImportStates.Analyzing or ImportStates.Ready or ImportStates.Rejected or ImportStates.Queued
+                        or ImportStates.Running or ImportStates.Validating or ImportStates.Completed or ImportStates.Failed or ImportStates.Cancelled;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
