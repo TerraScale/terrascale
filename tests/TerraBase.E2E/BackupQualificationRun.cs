@@ -18,7 +18,7 @@ internal static class BackupQualificationRun
     internal sealed record Document(string Body, string Version, long Stamp);
     internal sealed record Run(IReadOnlyList<Cut> Plan, IReadOnlyList<Outcome> Outcomes, IReadOnlyList<string> Nodes, IReadOnlyDictionary<string, DateTimeOffset> PointInTimes);
 
-    public static async Task<Run> ExecuteAsync(Func<Cluster, string, Task>? inspectRestored = null)
+    public static async Task<Run> ExecuteAsync(Func<Cluster, HttpClient, string, Task>? inspectRestored = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(3));
@@ -38,8 +38,7 @@ internal static class BackupQualificationRun
             var source = await GetAsync(client, cluster.DatabasePath, token);
             var organization = cluster.OrganizationId ?? throw new InvalidOperationException("backup qualification needs the source organization id");
             var sourceId = source.GetProperty("id").GetString()!;
-            // Placement is frozen from the source record before any restore: a restore is placed as a new database, at the
-            // serving region (gru) with every other serving region as a replica, which is where the source was created.
+            // Placement is frozen from the source record before any restore: a restore keeps the source's primary and replicas.
             string[] placement = [source.GetProperty("homeRegion").GetString()!,
                 .. source.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)];
             var projectId = cluster.ProjectPath.Split('/')[^1];
@@ -114,7 +113,12 @@ internal static class BackupQualificationRun
                     points.Add(cut.Name, at);
                 }
 
+                var replays = cluster.Replays.Count;
                 using var restored = await client.PostAsJsonAsync(Uri(route), new { name, pointInTime = at }, token);
+                // The copy is made where the edge replayed the restore (the snapshot's region, or the primary for PITR);
+                // its other regions fill asynchronously, so it is read there.
+                var holder = cluster[cluster.Replays.Skip(replays).LastOrDefault(replay => !replay.FellBack && replay.PathAndQuery == route)?.Target
+                    ?? Cluster.Gru];
                 if (restored.StatusCode != HttpStatusCode.Created)
                 {
                     var refusal = await restored.Content.ReadFromJsonAsync<JsonElement>(token);
@@ -130,25 +134,25 @@ internal static class BackupQualificationRun
                 {
                     if (inspectRestored is not null)
                     {
-                        await inspectRestored(cluster, path);
+                        await inspectRestored(cluster, holder, path);
                     }
 
                     var publication = await restored.Content.ReadFromJsonAsync<JsonElement>(token);
-                    var record = await GetAsync(client, path, token);
+                    var record = await GetAsync(holder, path, token);
                     if (record.GetProperty("id").GetString() == sourceId
                         || publication.GetProperty("id").GetString() != record.GetProperty("id").GetString()
                         || record.GetProperty("name").GetString() != name || record.GetProperty("projectId").GetString() != projectId)
                     {
                         throw new InvalidOperationException("restore did not publish the named new database in the source project");
                     }
-                    var collections = await GetAsync(client, path + "/collections", token);
+                    var collections = await GetAsync(holder, path + "/collections", token);
                     if (!collections.GetProperty("items").EnumerateArray().Select(collection => collection.GetProperty("name").GetString())
                         .SequenceEqual([cluster.Collection]))
                     {
                         throw new InvalidOperationException("restored database has missing or unexpected collections");
                     }
 
-                    var documents = await ListAsync(client, path, cluster.Collection, token);
+                    var documents = await ListAsync(holder, path, cluster.Collection, token);
                     var original = cut.Name == cuts[2] ? latestDocuments : initial;
                     var scope = new TenantContext(organization, PlanTier.Enterprise, projectId, record.GetProperty("id").GetString()).VersionScope();
                     var versions = documents.ToDictionary(pair => pair.Key, pair => original.TryGetValue(pair.Key, out var expected)

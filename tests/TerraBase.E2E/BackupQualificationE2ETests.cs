@@ -36,11 +36,11 @@ public sealed class BackupQualificationE2ETests
     [Scenario(Nodes.InProcess)]
     public async Task Rewriting_the_same_restored_body_fails_version_qualification()
     {
-        var run = await BackupQualificationRun.ExecuteAsync(async (cluster, path) =>
+        var run = await BackupQualificationRun.ExecuteAsync(async (cluster, holder, path) =>
         {
-            var documents = await BackupQualificationRun.ListAsync(cluster[Cluster.Gru], path, cluster.Collection, TestContext.Current!.Execution.CancellationToken);
+            var documents = await BackupQualificationRun.ListAsync(holder, path, cluster.Collection, TestContext.Current!.Execution.CancellationToken);
             var first = documents.First();
-            await Docs.PutAsync(cluster[Cluster.Gru], new Uri($"{path}/collections/{cluster.Collection}/documents/by-key?id={first.Key}", UriKind.Relative), JsonNode.Parse(first.Value.Body)!);
+            await Docs.PutAsync(holder, new Uri($"{path}/collections/{cluster.Collection}/documents/by-key?id={first.Key}", UriKind.Relative), JsonNode.Parse(first.Value.Body)!);
         });
         var failures = BackupQualification.Failures(run.Plan, run.Outcomes);
         Outcomes.Mark("harness", JsonSerializer.Serialize(new
