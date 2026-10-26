@@ -201,7 +201,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await page.Locator("#change-billing-plan input[name=plan][value=starter]").PressAsync("Space");
         await page.GetByRole(AriaRole.Button, new() { Name = "Review change", Exact = true }).PressAsync("Enter");
         await page.Locator("#review-billing-plan[open]").WaitForAsync();
-        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("US$ 30.00 / year");
+        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("$30.00 / year");
         await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("After Stripe confirms checkout");
         await BrowserAudit.AssertAccessibleAsync(page, "The annual review must remain keyboard accessible.");
         await Assert.That(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= innerWidth")).IsTrue();

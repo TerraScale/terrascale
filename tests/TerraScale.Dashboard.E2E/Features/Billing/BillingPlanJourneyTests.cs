@@ -42,7 +42,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard");
 
             await ChooseAsync("pro");
-            await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("US$ 6.66 estimated by Stripe (including US$ 1.66 in prorations)");
+            await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("$6.66 estimated by Stripe (including $1.66 in prorations)");
             await ScreenshotAsync("upgrade-review-desktop");
             await ScenarioAsync("pending");
             await ConfirmAsync();
@@ -423,7 +423,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(republished.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             using var preview = await first.GetAsync("/organization?tab=billing&review=1&plan=pro&interval=monthly");
             await Assert.That(preview.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await preview.Content.ReadAsStringAsync()).Contains("US$ 6.66 estimated by Stripe");
+            await Assert.That(await preview.Content.ReadAsStringAsync()).Contains("$6.66 estimated by Stripe");
             using var beforeRetry = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/plans/probe"));
             await Assert.That(beforeRetry.RootElement.GetProperty("publishedReplacementObserved").GetBoolean()).IsTrue();
             using var retried = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "pro", ["interval"] = "monthly" });

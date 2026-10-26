@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Billing.Invoices;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
@@ -107,8 +107,8 @@ public sealed class InvoiceSummaryContractTests
     [Test]
     public async Task CountsArePluralizedCorrectly()
     {
-        await Assert.That(InvoiceHistory.Plural(1, "recorded invoice")).IsEqualTo("1 recorded invoice");
-        await Assert.That(InvoiceHistory.Plural(0, "open invoice")).IsEqualTo("0 open invoices");
+        await Assert.That(TerraScale.Dashboard.Shared.Formatting.ValueFormat.Plural(1, "recorded invoice")).IsEqualTo("1 recorded invoice");
+        await Assert.That(TerraScale.Dashboard.Shared.Formatting.ValueFormat.Plural(0, "open invoice")).IsEqualTo("0 open invoices");
     }
 
     [Test]

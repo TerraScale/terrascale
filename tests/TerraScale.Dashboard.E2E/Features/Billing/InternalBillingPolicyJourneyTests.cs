@@ -1,5 +1,5 @@
-using System.Net;
 using System.Net.Http.Json;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TUnit.Core;
@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing;
 [Category("Slow")]
 public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixture)
 {
-    private const string CapAlert = "Internal spending cap reached: estimated bill US$ 124.40, cap US$ 120.00. Report only; services remain active.";
+    private const string CapAlert = "Internal spending cap reached: estimated bill $124.40, cap $120.00. Report only; services remain active.";
     private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";
     private const string InvalidAmount = "The internal bill exceeds the supported amount or has invalid reporting rates.";
 
@@ -111,9 +111,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The report-only cap alert is visible through the native owner inbox");
         using var card = await browser.GetAsync("/organization?tab=billing");
         var html = await card.Content.ReadAsStringAsync();
-        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 20.00", "US$ 104.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GB-month", "$120.00", CapAlert }
+        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "$20.00", "$104.00", "$0.40", "$124.40", "$1.00 per million", "$0.20 per GB-month", "$120.00", CapAlert }
             .All(value => html.Contains(value, StringComparison.Ordinal)),
-            "The native card retains original US$ prices, overage rates and alert text while the organization cap label keeps its source dollar format");
+            "The native card uses consistent dollar prices, overage rates, cap labels and alert text");
         await scenario.RestartAsync();
         using var restarted = CookieClient(scenario, setup.Cookie);
         await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);

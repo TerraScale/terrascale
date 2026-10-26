@@ -13,7 +13,7 @@
         <td>@if (project.BackupRegion.Length > 0) { var backup = project.BackupRegion.ToLowerInvariant(); var country = Regions.Country(backup); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@backup</span></span> } else { <span class="ts-meta">None</span> }</td>
         <td class="ts-table-num">@project.Databases.Count</td>
         <td><span class="ts-badge @(current ? "ts-badge-info" : "ts-badge-neutral")">@(current ? "Current" : "Available")</span></td>
-        <td class="ts-muted">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : project.CreatedAt.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture))</td>
+        <td class="ts-muted">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : ValueFormat.UtcDate(project.CreatedAt))</td>
         <td class="ts-table-actions"><div class="ts-row ts-row-end">
             @if (!current)
             {

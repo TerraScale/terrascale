@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Analytics;
+using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Databases;
@@ -21,7 +22,7 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public bool AllRegions { get; init; }
     public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? Choices.FirstOrDefault()?.Code ?? "";
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
-    public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
+    public string Description => Search.Length == 0 ? $"{ValueFormat.Plural(Databases.Count, "database")} in this project" : $"{ValueFormat.Plural(Databases.Count, "database")} matching \"{Search}\"";
     public static string Tone(string status) => status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
     public const string CreatePlacementHint = "All currently serving regions are selected by default. Keep at least two regions, including the chosen home. Selecting every current region does not include future regions. Select All regions to follow future regions automatically.";
     public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.Shared.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
@@ -36,11 +37,10 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
     {
         var metric = Metrics?.Databases.GetValueOrDefault(databaseId);
-        string N(long value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
-        yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(reads) : null, metric?.Reads is { } r ? N(r) + " reads in " + Range : "", metric?.ReadTrend, "ts-cat-1");
-        yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(writes) : null, metric?.Writes is { } w ? N(w) + " puts, patches and deletes in " + Range : "", metric?.WriteTrend, "ts-cat-2");
-        yield return ("Storage", metric?.StorageBytes is { } bytes ? TerraScale.Dashboard.Shared.Formatting.MetricFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? N(b) + " bytes in the latest bucket, summed across every reporting region" : "", null, "");
-        yield return ("p95 latency", metric?.P95Ms is { } ms ? ms.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " ms" : null, "Highest region p95 in the latest bucket", null, "");
+        yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(reads) : null, metric?.Reads is { } r ? ValueFormat.Plural(r, "read") + " in " + Range : "", metric?.ReadTrend, "ts-cat-1");
+        yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(writes) : null, metric?.Writes is { } w ? ValueFormat.Plural(w, "write") + " (puts, patches and deletes) in " + Range : "", metric?.WriteTrend, "ts-cat-2");
+        yield return ("Storage", metric?.StorageBytes is { } bytes ? MetricFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? ValueFormat.Plural(b, "byte") + " in the latest bucket, summed across every reporting region" : "", null, "");
+        yield return ("p95 latency", metric?.P95Ms is { } ms ? MetricFormat.Latency(ms) : null, "Highest region p95 in the latest bucket", null, "");
     }
 }
 

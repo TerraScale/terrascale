@@ -210,7 +210,7 @@ public sealed class PaymentWebhookAuditJourneyTests
     [Category("PaymentAuditDefect")]
     [Arguments("jpy", 1500L, "JPY 1500")]
     [Arguments("clp", 1234L, "CLP 1234")]
-    [Arguments("usd", 501L, "USD 5.01")]
+    [Arguments("usd", 501L, "$5.01")]
     public async Task InvoiceHistoryUsesTheCurrencyMinorUnit(string currency, long amount, string expected)
     {
         await using var scenario = await PaymentWebhookAuditScenario.StartAsync();

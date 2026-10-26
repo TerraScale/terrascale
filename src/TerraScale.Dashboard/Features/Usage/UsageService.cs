@@ -8,19 +8,19 @@ using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Usage;
 
-public sealed record UsageDatabaseRow(SpendingDatabase Spending, string Status, UsageReading? Reading, int? SharePercent, UsageStorageFact? Storage = null)
+public sealed record UsageDatabaseRow(SpendingDatabase Spending, string Status, UsageReading? Reading, double? SharePercent, UsageStorageFact? Storage = null)
 {
     public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
     public long? Documents => Reading?.Documents ?? Storage?.Documents;
 }
-public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Reading, bool Selected, int? SharePercent, UsageStorageFact? Storage = null)
+public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Reading, bool Selected, double? SharePercent, UsageStorageFact? Storage = null)
 {
     public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
 }
-public sealed record UsageAllowance(string Name, string Allowance, string Used, int? Percent, string PlanName, string? ExactUsed = null, string? ExactAllowance = null)
+public sealed record UsageAllowance(string Name, string Allowance, string Used, double? Percent, string PlanName, string? ExactUsed = null, string? ExactAllowance = null)
 {
     public string Tone => Percent >= 100 ? "danger" : Percent >= 80 ? "warning" : "success";
-    public string Label => $"{Name}: {Percent}% of the {PlanName} plan's allowance";
+    public string Label => $"{Name}: {ValueFormat.PercentLabel(Percent ?? 0)} of the {PlanName} plan's allowance";
 }
 public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, string Tab, string Saved, SpendingSnapshot Spending,
     IReadOnlyList<UsageProjectRow> Projects, IReadOnlyList<UsageDatabaseRow> Databases, IReadOnlyList<UsageAllowance> Allowances,
@@ -101,7 +101,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             var reading = result.Monthly.GetValueOrDefault(project.Id) is { State: UsageSourceState.Measured } observation ? observation.Reading : null;
             var bytes = reading?.LogicalBytes;
             return new UsageProjectRow(project, reading, project.Id == selection.Context.Project?.Id,
-                bytes is not null && organizationStorage is not null ? Share(bytes.Value, organizationStorage.Value) : null);
+                bytes is not null && organizationStorage is not null ? ValueFormat.Percent(bytes, organizationStorage) : null);
         }).ToArray();
         var scopedDatabases = scope?.Items ?? [];
         var selectedProject = controls.Projects.FirstOrDefault(project => project.Id == selection.Context.Project?.Id);
@@ -110,7 +110,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             selection.DatabaseId.Length > 0 ? scope : scopedDatabases.FirstOrDefault(reading => reading.DatabaseId == database.Id), 0,
             stored?.Projects.GetValueOrDefault(selection.Context.Project!.Id)?.Databases.GetValueOrDefault(database.Id))).ToArray();
         var knownDatabaseTotal = UsageStorageSnapshot.SumCounters(databaseRows.Select(database => database.LogicalBytes));
-        databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? Share(bytes, total) : null }).ToArray();
+        databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? ValueFormat.Percent(bytes, total) : null }).ToArray();
         var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, scope.Series.Select(point => point.Start).ToArray(),
             [new("Reads", scope.Series.Select(point => point.Reads).ToArray()), new("Writes", scope.Series.Select(point => point.Writes).ToArray())]) : null;
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
@@ -124,8 +124,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
 
         UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured) => new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " operation units/month" : allowance,
             measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
-            measured && limit > 0 ? (int)Math.Min(int.MaxValue, Math.Round(used / (double)limit * 100, MidpointRounding.AwayFromZero)) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " operation units/month" : null);
+            measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " operation units/month" : null);
         async Task<UsageStorageSnapshot?> StoredAsync() => tab == "overview" ? await storage.ReadAsync(selection, cancellationToken) : null;
     }
-    private static int Share(long part, long total) => part <= 0 || total <= 0 ? 0 : Math.Max(1, (int)Math.Round(part / (double)total * 100, MidpointRounding.AwayFromZero));
 }

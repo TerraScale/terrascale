@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraScale.Dashboard.Shared.Formatting;
 using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Shared.Accounts;
@@ -11,15 +12,15 @@ public sealed record BillingPlan(string Id, string Key, string Name, long PriceC
     public bool SupportsInterval(string interval) => PriceCents > 0 && (BillingInterval is "month" or "year") && interval == CheckoutInterval;
     // Yearly plans are sold only by the year; their monthly figure is an equivalent, never an offer.
     public string BillingDescription => BillingInterval == "year" ? "Billed yearly · " + MonthlyPrice + "/month equivalent" : "Billed monthly";
-    public string MonthlyPrice => "$" + (PriceCents / 100m).ToString("F2", CultureInfo.InvariantCulture);
-    public string AnnualPrice => "$" + (AnnualPriceCents / 100m).ToString("F2", CultureInfo.InvariantCulture);
+    public string MonthlyPrice => MoneyFormat.Money(PriceCents);
+    public string AnnualPrice => MoneyFormat.Money(AnnualPriceCents);
     public long IntervalPriceCents => BillingInterval == "year" ? AnnualPriceCents : PriceCents;
     public string Price => BillingInterval == "year" ? AnnualPrice : MonthlyPrice;
     public string PriceUnit => BillingInterval == "year" ? "/ year" : "/ month";
-    public string DatabaseAllowance => Resources.Databases.ToString(CultureInfo.InvariantCulture) + (Resources.Databases == 1 ? " database" : " databases");
+    public string DatabaseAllowance => ValueFormat.Plural(Resources.Databases, "database");
     public string StorageAllowance => (Allowances.StorageBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage";
     public string EgressAllowance => (Allowances.MonthlyEgressBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month";
-    public string MemberAllowance => Resources.Members.ToString(CultureInfo.InvariantCulture) + (Resources.Members == 1 ? " team member" : " team members");
+    public string MemberAllowance => ValueFormat.Plural(Resources.Members, "team member");
     public string OperationsAllowance => Allowances.MonthlyOperations.ToString("N0", CultureInfo.InvariantCulture) + " " + PlanCatalog.OperationUnitName.ToLowerInvariant() + "s/month (" + (PlanCatalog.OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)";
 }
 
@@ -76,10 +77,10 @@ public static class PlanCatalog
         var limits = plan.GetProperty("limits");
         var selectable = Plans.FirstOrDefault(candidate => candidate.Key == key);
         string Resource(string property, string singular, string plural) => limits.GetProperty(property).ValueKind == JsonValueKind.Null
-            ? plural + ": contact sales" : limits.GetProperty(property).GetInt32().ToString(CultureInfo.InvariantCulture) + " " + (limits.GetProperty(property).GetInt32() == 1 ? singular : plural);
+            ? plural + ": contact sales" : ValueFormat.Plural(limits.GetProperty(property).GetInt32(), singular, plural);
         var cents = checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100));
         return new PlanComparison(key, plan.GetProperty("name").GetString()!, cents,
-            selectable?.Price ?? "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture), selectable?.PriceUnit ?? "/ month",
+            selectable?.Price ?? MoneyFormat.Money(cents), selectable?.PriceUnit ?? "/ month",
             key == "free" ? "No card required" : selectable?.BillingDescription ?? plan.GetProperty("billing").GetString()!,
             Array.AsReadOnly(new[] {
                 limits.GetProperty("storageGb").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage",
