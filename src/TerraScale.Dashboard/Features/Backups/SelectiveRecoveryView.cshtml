@@ -3,19 +3,17 @@
 @using System.Globalization
 @using System.Text.Json
 @using TerraScale.Dashboard.Features.Databases
+@using TerraScale.Dashboard.Features.Backups
 <main class="ts-page ts-db-detail">
 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
 <section class="ts-card" aria-labelledby="recovery-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recovery-title">Recover selected records</h2><p class="ts-card-description">Compare retained records with current data, then approve the records to restore into @Model.Database.Name.</p></div></header><div class="ts-card-body ts-stack-lg">
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
 @if(Model.Applied is { } count){<div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Restored @count approved record(s) into @Model.Database.Name.</p></div>}
-@if(Model.Listing is null){<p role="status">Retained points are unavailable. Try again shortly.</p>}
-else if(Model.Listing.Backups.Count == 0){<p role="status">No retained points are available for this database.</p>}
+@if(Model.Window is not { } window){<p role="status">@(Model.Error.Length == 0 ? "No retained PITR history is available for this database yet." : "The PITR window is unavailable. Try again shortly.")</p>}
 else{
 <form method="post" action="@("/databases/" + Model.Database.Id + "/recovery")" class="ts-form" aria-label="Preview selective recovery">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-<div class="ts-field"><label class="ts-label" for="recovery-point">Retained point (UTC)</label><select class="ts-select" id="recovery-point" name="point" required>
-@foreach(var backup in Model.Listing.Backups){var instant = backup.CreatedAt.ToString("O", CultureInfo.InvariantCulture);<option value="@instant" selected="@(Model.Point == instant ? "selected" : null)">@backup.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture)</option>}
-</select></div>
+<div class="ts-field"><label class="ts-label" for="recovery-point">Retained UTC timestamp</label><input class="ts-input" id="recovery-point" name="point" type="datetime-local" step="0.001" value="@Model.Point" min="@RecoveryWindow.Input(window.Earliest)" max="@RecoveryWindow.Input(window.Latest)" aria-describedby="recovery-window" required /><p class="ts-hint" id="recovery-window">PITR window: @RecoveryWindow.Input(window.Earliest) UTC to @RecoveryWindow.Input(window.Latest) UTC. Defaults to the latest retained point. Enter UTC; your browser's local time zone is not applied. History inside the window is verified during preview.</p></div>
 <div class="ts-field"><label class="ts-label" for="recovery-collection">Collection</label><input class="ts-input ts-mono" id="recovery-collection" name="collection" value="@Model.Collection" maxlength="128" required /><p class="ts-hint">The collection must currently exist. Recreate a dropped collection explicitly before previewing; historical access rules and schemas are not restored.</p></div>
 <div class="ts-field"><label class="ts-label" for="recovery-ids">Record IDs (optional)</label><textarea class="ts-input ts-mono" id="recovery-ids" name="ids" rows="4" maxlength="2800" aria-describedby="recovery-ids-hint">@Model.Ids</textarea><p class="ts-hint" id="recovery-ids-hint">One ULID per line. Leave empty to preview all historical live records in this collection. Limit: 100 records and 1 MiB of combined current and historical data. Use explicit ID batches for larger selections.</p></div>
 <div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit" name="operation" value="preview">Preview differences</button></div>

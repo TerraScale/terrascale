@@ -9,7 +9,7 @@ public sealed class BrowserSecurityJourneyTests(DashboardE2EFixture fixture)
     public async Task PagesAssetsErrorsAndApisHaveTheSameBrowserProtections()
     {
         using var client = fixture.CreateClient();
-        foreach (var path in new[] { "/login", "/css/terrascale.css", "/api/v1/auth/me", "/.env", "/.git/HEAD", "/debug", "/metrics", "/__test/unexpected-error" })
+        foreach (var path in new[] { "/login", "/css/terrascale.css", "/api/v1/auth/me", "/.env", "/.git/HEAD", "/debug", "/metrics", "/__test/unexpected-error", "/__test/initializer-error" })
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, path);
             request.Headers.Add("X-Forwarded-Proto", "https");
@@ -25,7 +25,7 @@ public sealed class BrowserSecurityJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(response.Headers.Contains("Access-Control-Allow-Credentials")).IsFalse();
             if (path.StartsWith("/.", StringComparison.Ordinal) || path is "/debug" or "/metrics")
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            if (path == "/__test/unexpected-error")
+            if (path is "/__test/unexpected-error" or "/__test/initializer-error")
             {
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
                 await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();

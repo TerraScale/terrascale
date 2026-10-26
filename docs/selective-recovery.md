@@ -1,7 +1,10 @@
 # Selective record recovery
 
 Open a database's **Backups → Recover selected records**. Choose a retained
-point and a current collection. Optionally enter explicit ULIDs, one per line;
+UTC timestamp inside the continuous PITR window and a current collection. The
+window comes from `GET …/point-in-time` with `databases:read`, independently of
+manual/scheduled whole-database backups. The input defaults to the latest point;
+browser min/max and server validation use the current window. Optionally enter explicit ULIDs, one per line;
 empty IDs select historical live records in that collection. Preview is bounded
 to 100 records and 1 MiB of combined historical/current values. Larger selections
 need explicit ID batches.

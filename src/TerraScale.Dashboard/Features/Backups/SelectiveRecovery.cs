@@ -21,17 +21,36 @@ public sealed record RecoveryIdentity(string Collection, string Id);
 public sealed record RecoveryApplyRequest(string Approval, RecoveryIdentity[] Records);
 public sealed record RecoveryWritten(string Id, string Version);
 public sealed record RecoveryApplied(string Offset, string Durability, IReadOnlyList<RecoveryWritten> Results);
-public sealed record SelectiveRecoveryPage(ShellModel Shell, DatabaseRecord Database, BackupListing? Listing = null,
+public sealed record RecoveryWindow(DateTimeOffset Earliest, DateTimeOffset Latest)
+{
+    public static string Input(DateTimeOffset point) => point.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff", CultureInfo.InvariantCulture);
+}
+public sealed record SelectiveRecoveryPage(ShellModel Shell, DatabaseRecord Database, RecoveryWindow? Window = null,
     string Point = "", string Collection = "", string Ids = "", RecoveryPreview? Preview = null, string Error = "", int? Applied = null);
 
 // Backup APIs absent from the packaged SDK use the existing project-token/home-region HTTP boundary.
 public sealed class SelectiveRecovery(IHttpClientFactory factory, IProjectAccessTokens tokens, DatabaseService databases)
 {
-    public async Task<RecoveryPreview> PreviewAsync(AccountContext context, DatabaseRecord database, string point, string collection, string ids, CancellationToken ct)
+    public async Task<RecoveryWindow?> WindowAsync(AccountContext context, DatabaseRecord database, CancellationToken ct)
+    {
+        RecoveryWindow window;
+        try
+        {
+            window = await SendAsync<RecoveryPreviewRequest, RecoveryWindow>(context, database, "", null,
+            RecoveryJson.Default.RecoveryPreviewRequest, RecoveryJson.Default.RecoveryWindow, ct);
+        }
+        catch (DatabaseProviderException error) when (error.StatusCode == HttpStatusCode.NotFound) { return null; }
+        if (window.Earliest == default || window.Latest < window.Earliest) throw new JsonException("Invalid PITR window.");
+        return window;
+    }
+
+    public async Task<RecoveryPreview> PreviewAsync(AccountContext context, DatabaseRecord database, RecoveryWindow? window, string point, string collection, string ids, CancellationToken ct)
     {
         DataService.ValidCollection(collection);
-        if (!DateTimeOffset.TryParseExact(point, "O", CultureInfo.InvariantCulture, DateTimeStyles.None, out var instant) || ids.Length > 2800)
-            throw new AccountAccessException("Choose a retained point and up to 100 record IDs.", 422);
+        if (window is null || !DateTimeOffset.TryParseExact(point, ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF"],
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var instant) || instant < window.Earliest || instant > window.Latest)
+            throw new AccountAccessException("Choose a UTC timestamp inside the current PITR window.", 422);
+        if (ids.Length > 2800) throw new AccountAccessException("Enter up to 100 record IDs.", 422);
         var selected = ids.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (selected.Length > 100 || selected.Distinct(StringComparer.Ordinal).Count() != selected.Length)
             throw new AccountAccessException("Enter up to 100 distinct record IDs, separated by whitespace.", 422);
@@ -65,17 +84,19 @@ public sealed class SelectiveRecovery(IHttpClientFactory factory, IProjectAccess
         return result.Results.Count;
     }
 
-    private async Task<TResponse> SendAsync<TRequest, TResponse>(AccountContext context, DatabaseRecord database, string operation, TRequest body,
+    private async Task<TResponse> SendAsync<TRequest, TResponse>(AccountContext context, DatabaseRecord database, string operation, TRequest? body,
         JsonTypeInfo<TRequest> requestType, JsonTypeInfo<TResponse> responseType, CancellationToken ct)
     {
         var scope = DatabaseService.Scope(context);
         var home = await databases.HomeAsync(context, database, ct);
-        var access = await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId,
+        var access = await tokens.GetAsync(scope.Session!, scope.OrganizationId, scope.ProjectId, operation.Length == 0 ? ["databases:read"] :
             ["databases:write", operation == "recovery-preview" ? "documents:read" : "documents:write"], ct);
-        var path = $"/v1/projects/{Uri.EscapeDataString(scope.ProjectId)}/databases/{Uri.EscapeDataString(database.Name)}/point-in-time/{operation}";
+        var path = $"/v1/projects/{Uri.EscapeDataString(scope.ProjectId)}/databases/{Uri.EscapeDataString(database.Name)}/point-in-time" +
+            (operation.Length == 0 ? "" : "/" + operation);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, path)) { Content = JsonContent.Create(body, requestType) };
+        using var request = new HttpRequestMessage(operation.Length == 0 ? HttpMethod.Get : HttpMethod.Post, new Uri(home.Api, path))
+        { Content = body is null ? null : JsonContent.Create(body, requestType) };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
         request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
         using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
@@ -100,7 +121,7 @@ public static class SelectiveRecoveryEndpoints
     public static IEndpointRouteBuilder MapSelectiveRecovery(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapMethods("/databases/{databaseId}/recovery", ["GET", "POST"], async Task<IResult> (HttpContext http, string databaseId,
-            DashboardSessions sessions, AccountService accounts, DatabaseService databases, BackupService backups, SelectiveRecovery recovery) =>
+            DashboardSessions sessions, AccountService accounts, DatabaseService databases, SelectiveRecovery recovery) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);
@@ -116,7 +137,8 @@ public static class SelectiveRecoveryEndpoints
                 var status = 200;
                 try
                 {
-                    page = page with { Listing = await backups.ListAsync(context, databaseId, http.RequestAborted) };
+                    var window = await recovery.WindowAsync(context, database, http.RequestAborted);
+                    page = page with { Window = window, Point = window is null ? "" : RecoveryWindow.Input(window.Latest) };
                     if (HttpMethods.IsPost(http.Request.Method))
                     {
                         var form = await http.Request.ReadFormAsync(http.RequestAborted);
@@ -128,7 +150,7 @@ public static class SelectiveRecoveryEndpoints
                                 Applied = await recovery.ApplyAsync(context, database, form["approval"].ToString(), page.Collection,
                                 form["approved"].Select(value => value ?? "").ToArray(), http.RequestAborted)
                             }
-                            : page with { Preview = await recovery.PreviewAsync(context, database, page.Point, page.Collection, page.Ids, http.RequestAborted) };
+                            : page with { Preview = await recovery.PreviewAsync(context, database, page.Window, page.Point, page.Collection, page.Ids, http.RequestAborted) };
                     }
                 }
                 catch (Exception error) when (BackupEndpoints.KnownFailure(error) && (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
@@ -151,4 +173,5 @@ public static class SelectiveRecoveryEndpoints
 [JsonSerializable(typeof(RecoveryPreview))]
 [JsonSerializable(typeof(RecoveryApplyRequest))]
 [JsonSerializable(typeof(RecoveryApplied))]
+[JsonSerializable(typeof(RecoveryWindow))]
 internal sealed partial class RecoveryJson : JsonSerializerContext;

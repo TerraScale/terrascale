@@ -1,9 +1,11 @@
 using System.Net;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.E2E.Features.Databases;
+using TerraScale.Dashboard.Features.Backups;
 
 namespace TerraScale.Dashboard.E2E.Features.Backups;
 
@@ -17,12 +19,16 @@ public sealed class SelectiveRecoveryJourneyTests(DashboardRootFixture fixture)
         var calls = new List<(string Path, JsonElement Body)>();
         var stale = true;
         var unavailable = false;
+        var noHistory = true;
+        var earliest = DateTimeOffset.Parse("2026-10-25T12:00:00.000Z", CultureInfo.InvariantCulture);
+        var latest = earliest.AddMinutes(10);
         await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
-            if (!http.Request.Path.Value!.Contains("/point-in-time/", StringComparison.Ordinal)) return null;
+            if (!http.Request.Path.Value!.Contains("/point-in-time", StringComparison.Ordinal)) return null;
             await Assert.That(http.Request.Host.Host).IsEqualTo("gru.api.terrascale.tech");
             await Assert.That(http.Request.Headers["X-TerraScale-Region-Pin"].ToString()).IsEqualTo("gru");
             await Assert.That(http.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.Ordinal)).IsTrue();
+            if (http.Request.Method == "GET") return noHistory ? Results.NotFound() : Results.Json(new { earliest, latest });
             using var body = await JsonDocument.ParseAsync(http.Request.Body);
             calls.Add((http.Request.Path.Value, body.RootElement.Clone()));
             if (unavailable) { http.Response.Headers.RetryAfter = "7"; return Results.StatusCode(503); }
@@ -49,18 +55,30 @@ public sealed class SelectiveRecoveryJourneyTests(DashboardRootFixture fixture)
         var id = database.RootElement.GetProperty("id").GetString()!;
         var path = "/databases/" + id + "/recovery";
         using (var empty = await client.GetAsync(path))
-            await Assert.That(await empty.Content.ReadAsStringAsync()).Contains("No retained points");
-        using (var backup = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups", new() { ["_csrf"] = csrf, ["databaseId"] = id }))
-            await Assert.That(backup.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(await empty.Content.ReadAsStringAsync()).Contains("No retained PITR history");
         using var listing = await client.GetFromJsonAsync<JsonDocument>("/api/v1/dashboard/backups?databaseId=" + id);
-        var point = listing!.RootElement.GetProperty("backups")[0].GetProperty("createdAt").GetDateTimeOffset().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        await Assert.That(listing!.RootElement.GetProperty("backups").GetArrayLength()).IsEqualTo(0);
+        noHistory = false;
+        using (var available = await client.GetAsync(path))
+            await Assert.That(await available.Content.ReadAsStringAsync()).Contains("value=\"" + RecoveryWindow.Input(latest) + "\"")
+                .And.Contains("min=\"" + RecoveryWindow.Input(earliest) + "\"").And.Contains("max=\"" + RecoveryWindow.Input(latest) + "\"");
+        var selectedPoint = earliest.AddMinutes(5);
+        var point = RecoveryWindow.Input(selectedPoint);
         var preview = new Dictionary<string, string> { ["_csrf"] = csrf, ["operation"] = "preview", ["point"] = point, ["collection"] = "users", ["ids"] = "" };
+        foreach (var outside in new[] { earliest.AddMilliseconds(-1), latest.AddMilliseconds(1) })
+        {
+            preview["point"] = RecoveryWindow.Input(outside);
+            using var refused = await HttpJourney.PostFormAsync(client, path, preview);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        }
+        await Assert.That(calls.Count).IsEqualTo(0);
+        preview["point"] = point;
         await PreviewAsync();
         await Assert.That(calls[0].Path).EndsWith("/databases/recovery-source/point-in-time/recovery-preview");
         var selection = calls[0].Body.GetProperty("selections")[0];
         await Assert.That(selection.GetProperty("collection").GetString()).IsEqualTo("users");
         await Assert.That(selection.TryGetProperty("ids", out _)).IsFalse();
-        await Assert.That(calls[0].Body.GetProperty("pointInTime").GetDateTimeOffset()).IsEqualTo(DateTimeOffset.Parse(point, System.Globalization.CultureInfo.InvariantCulture));
+        await Assert.That(calls[0].Body.GetProperty("pointInTime").GetDateTimeOffset()).IsEqualTo(selectedPoint);
         var apply = new Dictionary<string, string> { ["_csrf"] = csrf, ["operation"] = "apply", ["collection"] = "users", ["approval"] = "test-only-approval" };
         using (var none = await HttpJourney.PostFormAsync(client, path, apply))
             await Assert.That(none.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
