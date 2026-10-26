@@ -59,7 +59,8 @@ func (t Timestamp) MarshalJSON() ([]byte, error) { return Uint64(t).MarshalJSON(
 // UnmarshalJSON decodes a canonical decimal string.
 func (t *Timestamp) UnmarshalJSON(data []byte) error { return (*Uint64)(t).UnmarshalJSON(data) }
 
-// Durability is the acknowledgment level of a committed write.
+// Durability is a committed write acknowledgment. LocalDurable and RemoteDurable
+// also select a single-document write guarantee when passed as WriteOption.
 type Durability string
 
 // Durability levels.

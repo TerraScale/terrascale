@@ -319,10 +319,11 @@ func (col *Collection) List(ctx context.Context, opts ListOptions) (*QueryResult
 	return col.db.c.page(ctx, request{method: http.MethodGet, path: p, query: opts.query(), replaySafe: true}, nil)
 }
 
-// WriteOption configures a document write: a Precondition.
+// WriteOption selects a document precondition or durability guarantee.
 type WriteOption interface{ applyWrite(*writeConfig) }
 
 type writeConfig struct {
+	durability     Durability
 	ifMatch        string
 	ifNoneMatchAny bool
 }
@@ -360,11 +361,17 @@ func resolveWrite(opts []WriteOption) (writeConfig, error) {
 			return w, err
 		}
 	}
+	if err := checkWriteDurability(w.durability); err != nil {
+		return w, err
+	}
 	return w, nil
 }
 
 func (w writeConfig) header() http.Header {
 	h := http.Header{}
+	if w.durability != "" {
+		h.Set("TB-Durability", string(w.durability))
+	}
 	if w.ifMatch != "" {
 		h.Set("If-Match", `"`+w.ifMatch+`"`)
 	}
@@ -452,7 +459,7 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 	if err != nil {
 		return nil, err
 	}
-	res, err := col.write(ctx, request{method: http.MethodPost, path: p, body: body})
+	res, err := col.write(ctx, request{method: http.MethodPost, path: p, body: body, header: w.header()})
 	if err == nil {
 		err = ValidateID(res.ID)
 	}

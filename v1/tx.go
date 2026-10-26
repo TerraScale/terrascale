@@ -14,9 +14,10 @@ import (
 // collections of one database. Ops never target the same document twice.
 // A Tx is not safe for concurrent use.
 type Tx struct {
-	db  *Database
-	ops []txOp
-	err error
+	db         *Database
+	ops        []txOp
+	err        error
+	durability Durability
 }
 
 type txOp struct {
@@ -194,7 +195,7 @@ func (t *Tx) Commit(ctx context.Context) (*TxResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	req := request{method: http.MethodPost, path: p, replaySafe: t.conditional()}
+	req := request{method: http.MethodPost, path: p, replaySafe: t.conditional(), header: writeConfig{durability: t.durability}.header()}
 	var res TxResult
 	if _, err := t.db.c.call(ctx, req, struct {
 		Ops []txOp `json:"ops"`
