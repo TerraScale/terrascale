@@ -107,6 +107,55 @@ public sealed class RestoreWindowLatestTests
         await Assert.That(latest).IsEqualTo(start.AddSeconds(2));
     }
 
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(9)]
+    public async Task A_latest_cut_with_submillisecond_precision_restores_without_the_shippers_local_progress(int segments, CancellationToken cancellationToken)
+    {
+        RemoteProgress? progress = null;
+        await using var host = await BackupShippingHost.StartAsync(services => services.AddSingleton<IPointInTimeRestore>(provider =>
+        {
+            progress = new RemoteProgress(provider.GetRequiredService<IContinuousBackup>());
+            return ActivatorUtilities.CreateInstance<PointInTimeRestore>(provider, progress);
+        }));
+        host.Time.Advance(TimeSpan.FromTicks(979627));
+        var texts = new Dictionary<string, string>(StringComparer.Ordinal) { ["seed"] = Faker.Lorem.Sentence(8) };
+        await host.PutAsync("people", "seed", texts["seed"], cancellationToken);
+        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        for (var index = 0; index < segments; index++)
+        {
+            var id = "document-" + index;
+            texts.Add(id, Faker.Lorem.Sentence(8));
+            await host.PutAsync("people", id, texts[id], cancellationToken);
+            host.Time.Advance(TimeSpan.FromSeconds(1) + TimeSpan.FromTicks(979627));
+            host.Time.AutoAdvanceAmount = TimeSpan.FromTicks(1);
+            try
+            {
+                await host.StartPassAsync(cancellationToken);
+            }
+            finally
+            {
+                host.Time.AutoAdvanceAmount = TimeSpan.Zero;
+            }
+        }
+
+        await Assert.That(host.Segments(host.Status().Generation!).Count).IsEqualTo(segments);
+        var latest = await LatestAsync(host, cancellationToken);
+        // A restore routed to another region has only the bucket's millisecond timestamps, not this member's progress.
+        progress!.Away = true;
+        await RestoresAsync(host, latest, "fractional-latest", texts, [], cancellationToken);
+        await Assert.That(latest).IsEqualTo(DateTimeOffset.FromUnixTimeMilliseconds(latest.ToUnixTimeMilliseconds()));
+    }
+
+    private sealed class RemoteProgress(IContinuousBackup backup) : IContinuousBackup
+    {
+        public bool Away { get; set; }
+        public BackupStatus Status => backup.Status;
+        public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) => Away ? null : backup.LastShipped(database, generation);
+        public Task RunOnceAsync(CancellationToken cancellationToken) => backup.RunOnceAsync(cancellationToken);
+    }
+
     private static async Task<DateTimeOffset> LatestAsync(BackupShippingHost host, CancellationToken cancellationToken)
     {
         using var response = await host.Api.Client.GetAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time"), cancellationToken);
