@@ -24,7 +24,8 @@ var commandSyntax = map[string]string{
 	"backup restore-at": "backup restore-at <database> <RFC3339-time> <new-database> [platform|customer]",
 	"backup policy":     "backup policy <database>", "backup policy-set": "backup policy-set <database> <five-field-UTC-cron|none> <days:1..35>",
 	"backup window": "backup window <database> [platform|customer]", "backup plan": "backup plan <database> <RFC3339-time> [platform|customer]",
-	"collection list": "collection list <database>", "collection create": "collection create <database> <name>",
+	"backup destination": "backup destination get|set|delete",
+	"collection list":    "collection list <database>", "collection create": "collection create <database> <name>",
 	"collection drop": "collection drop <database> <name>",
 	"doc list":        "doc list <database> <collection>", "doc get": "doc get <database> <collection> <id>",
 	"doc put": "doc put <database> <collection> [<id>] <json|->", "doc delete": "doc delete <database> <collection> <id>",
@@ -161,6 +162,8 @@ func helpOptions(name string) map[string]string {
 		options[flag] = text
 	}
 	switch {
+	case name == "backup destination":
+		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db changes":
 		options["-cursor <cursor|now|empty>"] = "resume the same database/filter set; default now; accepts at most64 collection filters"
 	case name == "db create":

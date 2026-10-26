@@ -186,6 +186,7 @@ func completion(shell string, out io.Writer) error {
 		words[k] = slices.Compact(v)
 	}
 	words["completion"] = []string{"bash", "fish", "zsh"}
+	words["backup destination"] = []string{"get", "set", "delete"}
 	valueFlags := []string{"project", "org", "scope", "expires", "allow-cidr", "collection", "home-region", "replica-regions", "placement", "cursor"}
 	var valuePatterns []string
 	flags := "-h -help --help -yes --yes"
@@ -222,7 +223,7 @@ fi
 `)
 		fmt.Fprintf(b, "      %s) pending=1 ;;\n", strings.Join(valuePatterns, "|"))
 		b.WriteString(`      -*) ;;
-      *) [[ $depth == 0 ]] && cmd=$token; ((depth+=1)) ;;
+      *) if (( depth == 0 )); then cmd=$token; elif (( depth == 1 )); then cmd="$cmd $token"; fi; ((depth+=1)) ;;
     esac
   done
   (( pending )) && return 0
@@ -233,7 +234,7 @@ fi
 		fmt.Fprintf(b, "      0:*) words=%q ;;\n", strings.Join(words[""], " "))
 		for _, k := range slices.Sorted(maps.Keys(words)) {
 			if k != "" {
-				fmt.Fprintf(b, "      1:%s) words=%q ;;\n", k, strings.Join(words[k], " "))
+				fmt.Fprintf(b, "      %q) words=%q ;;\n", fmt.Sprintf("%d:%s", len(strings.Fields(k)), k), strings.Join(words[k], " "))
 			}
 		}
 		b.WriteString("    esac ;;\n  esac\n  for token in $words; do\n    [[ $token == \"${COMP_WORDS[COMP_CWORD]}\"* ]] && COMPREPLY+=(\"$token\")\n  done\n  return 0\n}\ncomplete -F _ts ts\n")
@@ -257,6 +258,8 @@ fi
       case '*'
         if test $depth -eq 0
           set cmd $token
+        else if test $depth -eq 1
+          set cmd "$cmd $token"
         end
         set depth (math $depth + 1)
     end
@@ -267,7 +270,7 @@ fi
 		fmt.Fprintf(b, "    case '0:*'\n      printf '%%s\\n' %s\n", strings.Join(words[""], " "))
 		for _, k := range slices.Sorted(maps.Keys(words)) {
 			if k != "" {
-				fmt.Fprintf(b, "    case '1:%s'\n      printf '%%s\\n' %s\n", k, strings.Join(words[k], " "))
+				fmt.Fprintf(b, "    case '%d:%s'\n      printf '%%s\\n' %s\n", len(strings.Fields(k)), k, strings.Join(words[k], " "))
 			}
 		}
 		b.WriteString("  end\nend\ncomplete -c ts -f -a '(__ts_words)'\n")

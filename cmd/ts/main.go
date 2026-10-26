@@ -70,6 +70,8 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
+  backup destination get|set|delete      project backup bucket; set reads credential
+                                          JSON from stdin and requires -yes
   backup window <db> [platform|customer]  inspect the proven restore interval
   backup plan <db> <time> [platform|customer] preview restore metadata
   backup restore <db> <backup id> <new db> restore a backup into a new database
@@ -156,75 +158,76 @@ var errUsage = errors.New("invalid arguments: run ts help")
 
 // commands maps each command to its accepted operand counts.
 var commands = map[string][]int{
-	"auth login":        {0},
-	"auth logout":       {0},
-	"whoami":            {0},
-	"billing":           {0},
-	"projects":          {0},
-	"orgs":              {0},
-	"orgs create":       {1},
-	"orgs info":         {1},
-	"orgs rename":       {2},
-	"orgs delete":       {1},
-	"projects info":     {1},
-	"projects rename":   {2},
-	"projects delete":   {1},
-	"context show":      {0},
-	"context clear":     {0},
-	"context set":       {2, 3},
-	"projects create":   {1},
-	"usage":             {0, 1},
-	"completion":        {1},
-	"db changes":        changesOperandCounts(),
-	"export":            {1},
-	"backup restore-at": {3, 4},
-	"backup policy":     {1},
-	"backup policy-set": {3},
-	"backup window":     {1, 2},
-	"backup plan":       {2, 3},
-	"schema get":        {2},
-	"schema set":        {3},
-	"schema delete":     {2},
-	"ttl get":           {2},
-	"ttl set":           {3},
-	"ttl delete":        {2},
-	"index list":        {1, 2},
-	"index create":      {3, 4, 5, 6},
-	"index drop":        {2},
-	"import":            {3},
-	"import status":     {1},
-	"import cancel":     {1},
-	"db list":           {0},
-	"db create":         {1},
-	"db delete":         {1},
-	"db branch":         {2},
-	"db info":           {1},
-	"db regions":        {2, 3, 4},
-	"backup list":       {1},
-	"backup create":     {1},
-	"backup restore":    {3},
-	"collection list":   {1},
-	"collection create": {2},
-	"collection drop":   {2},
-	"doc list":          {2},
-	"doc get":           {3},
-	"doc put":           {3, 4},
-	"doc delete":        {3},
-	"doc import":        {2},
-	"sql":               {2},
-	"functions deploy":  {2},
-	"functions list":    {1},
-	"functions invoke":  {2},
-	"functions logs":    {2},
-	"functions delete":  {2},
-	"exec":              {2},
-	"migrate new":       {1},
-	"migrate up":        {1},
-	"migrate status":    {1},
-	"migrate diff":      {1, 2},
-	"keys list":         {0},
-	"keys create":       {1, 2},
-	"keys revoke":       {1},
+	"auth login":         {0},
+	"auth logout":        {0},
+	"whoami":             {0},
+	"billing":            {0},
+	"projects":           {0},
+	"orgs":               {0},
+	"orgs create":        {1},
+	"orgs info":          {1},
+	"orgs rename":        {2},
+	"orgs delete":        {1},
+	"projects info":      {1},
+	"projects rename":    {2},
+	"projects delete":    {1},
+	"context show":       {0},
+	"context clear":      {0},
+	"context set":        {2, 3},
+	"projects create":    {1},
+	"usage":              {0, 1},
+	"completion":         {1},
+	"db changes":         changesOperandCounts(),
+	"export":             {1},
+	"backup restore-at":  {3, 4},
+	"backup policy":      {1},
+	"backup policy-set":  {3},
+	"backup window":      {1, 2},
+	"backup plan":        {2, 3},
+	"backup destination": {1},
+	"schema get":         {2},
+	"schema set":         {3},
+	"schema delete":      {2},
+	"ttl get":            {2},
+	"ttl set":            {3},
+	"ttl delete":         {2},
+	"index list":         {1, 2},
+	"index create":       {3, 4, 5, 6},
+	"index drop":         {2},
+	"import":             {3},
+	"import status":      {1},
+	"import cancel":      {1},
+	"db list":            {0},
+	"db create":          {1},
+	"db delete":          {1},
+	"db branch":          {2},
+	"db info":            {1},
+	"db regions":         {2, 3, 4},
+	"backup list":        {1},
+	"backup create":      {1},
+	"backup restore":     {3},
+	"collection list":    {1},
+	"collection create":  {2},
+	"collection drop":    {2},
+	"doc list":           {2},
+	"doc get":            {3},
+	"doc put":            {3, 4},
+	"doc delete":         {3},
+	"doc import":         {2},
+	"sql":                {2},
+	"functions deploy":   {2},
+	"functions list":     {1},
+	"functions invoke":   {2},
+	"functions logs":     {2},
+	"functions delete":   {2},
+	"exec":               {2},
+	"migrate new":        {1},
+	"migrate up":         {1},
+	"migrate status":     {1},
+	"migrate diff":       {1, 2},
+	"keys list":          {0},
+	"keys create":        {1, 2},
+	"keys revoke":        {1},
 }
 
 func run(ctx context.Context, args []string, out io.Writer) error {
@@ -351,7 +354,18 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if collectionSet && (name != "import" || operands[1] != "ndjson" || strings.TrimSpace(*collection) == "") {
 		return fmt.Errorf("-collection needs a nonempty name and an ndjson import: %w", errUsage)
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete"}, name) {
+	if name == "backup destination" {
+		if !slices.Contains([]string{"get", "set", "delete"}, operands[0]) {
+			return fmt.Errorf("backup destination operation must be get, set or delete: %w", errUsage)
+		}
+		if operands[0] == "get" && yesSet {
+			return fmt.Errorf("backup destination get does not accept -yes: %w", errUsage)
+		}
+		if operands[0] == "set" && !*yes || operands[0] == "delete" && !*yes && !tty {
+			return errors.New("backup destination changes require explicit consent: pass -yes before the command; set reads its JSON only from stdin")
+		}
+	}
+	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
@@ -380,6 +394,15 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	dispatch := func(s *session) error {
+		if name == "backup destination" {
+			action := "Replace backup destination; start a new generation"
+			if operands[0] == "delete" {
+				action = "Remove backup destination; keep customer objects and resume platform shipping"
+			}
+			return backupDestination(ctx, s.tb, s.project, operands[0], in, func(_, label, id string) error {
+				return confirmManagementTarget(action, label, id, *yes, in, prompt, tty)
+			}, out)
+		}
 		if name == "db changes" {
 			return tailChangesFrom(ctx, s.tb.Database(s.project, operands[0]), *cursor, operands[1:], out)
 		}

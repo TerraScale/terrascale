@@ -59,6 +59,8 @@ func TestCompletionRealShells(t *testing.T) {
 				{[]string{"completion", "z"}, "zsh"},
 				{[]string{"-p"}, "-placement -project"},
 				{[]string{"--p"}, "--placement --project"},
+				{[]string{"backup", "destination", ""}, "delete get set"},
+				{[]string{"-project", "demo", "backup", "destination", "s"}, "set"},
 				{[]string{"-yes", "db", ""}, db},
 				{[]string{"--yes=false", "db", ""}, db},
 				{[]string{"-yes=true", "db", ""}, db},
@@ -67,7 +69,7 @@ func TestCompletionRealShells(t *testing.T) {
 				{[]string{"-org", "db", "-project", "my project", "db", "c"}, "changes create"},
 				{[]string{"-project", "db", "db", "list", ""}, ""},
 			}
-			for _, flag := range []string{"project", "org", "expires", "allow-cidr", "collection"} {
+			for _, flag := range []string{"project", "org", "expires", "allow-cidr", "collection", "placement", "home-region", "replica-regions", "cursor"} {
 				for _, prefix := range []string{"-", "--"} {
 					probes = append(probes,
 						probe{[]string{prefix + flag, "db", "db", ""}, db},
