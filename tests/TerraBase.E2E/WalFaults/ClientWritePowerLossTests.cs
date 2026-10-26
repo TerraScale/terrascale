@@ -15,7 +15,8 @@ public sealed class ClientWritePowerLossTests
     public async Task A_power_loss_keeps_every_client_write_the_node_answered()
     {
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
-        await using var node = await PowerLossNode.StartAsync();
+        // Standalone WAL host: recovery must prove the local disk, without a cluster catalog waiting for a peer.
+        await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await node.CommitAsync(EntityIds.New().ToString(), new JsonObject
         {

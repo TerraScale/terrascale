@@ -16,7 +16,7 @@ public sealed class SystemDatabasePowerLossTests
     public async Task A_power_loss_keeps_the_catalog_and_the_api_keys_the_system_database_acknowledged()
     {
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
-        await using var node = await PowerLossNode.StartAsync();
+        await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         var owner = EntityIds.New().ToString();
         await node.CommitAsync(owner, new JsonObject
