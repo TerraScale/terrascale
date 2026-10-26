@@ -305,6 +305,59 @@ public sealed class PostgresWireTests
         }
     }
 
+    [Test]
+    public async Task Driver_startup_settings_and_returning_work_without_client_overrides()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+
+        // SQLAlchemy's default dialect initialization and pgcli's timezone startup query.
+        var isolation = await ReadAsync(connection, "show transaction isolation level");
+        var spaced = await ReadAsync(connection, "SHOW TRANSACTION\tISOLATION  LEVEL");
+        var zone = await ReadAsync(connection, "show time zone");
+        var conforming = await ReadAsync(connection, "show standard_conforming_strings");
+        await Assert.That(isolation[0][0]).IsEqualTo("serializable");
+        await Assert.That(spaced[0][0]).IsEqualTo("serializable");
+        await Assert.That(zone[0][0]).IsEqualTo("UTC");
+        await Assert.That(conforming[0][0]).IsEqualTo("on");
+
+        await ExecuteAsync(connection, "CREATE TABLE driver_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
+        await using var existence = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM driver_rows) AS found", connection);
+        await existence.PrepareAsync();
+        await Assert.That((bool)(await existence.ExecuteScalarAsync())!).IsFalse();
+        await using var insert = new NpgsqlCommand("INSERT INTO driver_rows (id, value) VALUES ($1, $2) RETURNING id, value", connection);
+        insert.Parameters.AddWithValue("a");
+        insert.Parameters.AddWithValue("before");
+        await insert.PrepareAsync();
+        await using (var reader = await insert.ExecuteReaderAsync())
+        {
+            await Assert.That(await reader.ReadAsync()).IsTrue();
+            await Assert.That(reader.GetString(0)).IsEqualTo("a");
+            await Assert.That(reader.GetString(1)).IsEqualTo("before");
+            await Assert.That(await reader.ReadAsync()).IsFalse();
+        }
+
+        await ExecuteAsync(connection, "BEGIN");
+        await Assert.That((bool)(await existence.ExecuteScalarAsync())!).IsTrue();
+        var updated = await ReadAsync(connection, "UPDATE driver_rows SET value = 'after' WHERE id = 'a' RETURNING value");
+        await Assert.That(updated[0][0]).IsEqualTo("after");
+        await ExecuteAsync(connection, "ROLLBACK");
+        var persisted = await ReadAsync(connection, "SELECT value FROM driver_rows WHERE id = 'a'");
+        await Assert.That(persisted[0][0]).IsEqualTo("before");
+        var deleted = await ReadAsync(connection, "DELETE FROM driver_rows WHERE id = 'a' RETURNING id");
+        await Assert.That(deleted[0][0]).IsEqualTo("a");
+
+        await ExecuteAsync(connection, "CREATE TABLE bad_dates (v DATE)");
+        await ExecuteAsync(connection, "INSERT INTO bad_dates VALUES ('2023-02-29')");
+        await using var simple = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        var invalid = await simple.QueryAsync("SELECT v FROM bad_dates");
+        await Assert.That(invalid.Single(message => message.Type == 'E').Fields[0]).IsEqualTo("22P02");
+        var recovery = await simple.QueryAsync("SELECT 1");
+        await Assert.That(recovery.Single(message => message.Type == 'D').Fields[0]).IsEqualTo("1");
+    }
+
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
         await using var source = Source(api, key, database);
