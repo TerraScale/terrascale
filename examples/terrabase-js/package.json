@@ -4,5 +4,5 @@
   "type": "module",
   "scripts": { "start": "node quickstart.mjs" },
   "engines": { "node": "22.x || 24.x", "npm": ">=11" },
-  "dependencies": { "@terrascale/sdk": "0.0.9" }
+  "dependencies": { "@terrascale/sdk": "0.0.13" }
 }

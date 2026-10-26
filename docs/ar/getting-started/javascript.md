@@ -10,7 +10,7 @@ description: Install the published TerraScale SDK and create, read, update, quer
 
 # JavaScript quickstart
 
-Install `@terrascale/sdk@0.0.9` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ar/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
+Install `@terrascale/sdk@0.0.13` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ar/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
 
 ## 1. Install the SDK
 
@@ -20,10 +20,10 @@ Use Node.js **22 or 24** and npm **11 or newer**, matching the published package
 mkdir terrabase-quickstart
 cd terrabase-quickstart
 npm init -y
-npm install --save-exact @terrascale/sdk@0.0.9
+npm install --save-exact @terrascale/sdk@0.0.13
 ```
 
-The package is available on [public npm registry](https://registry.npmjs.org/@terrascale/sdk/0.0.9). Do not substitute the old unpublished `0.3.0` starter pin.
+The package is available on [public npm registry](https://registry.npmjs.org/@terrascale/sdk/0.0.13). Do not substitute the old unpublished `0.3.0` starter pin.
 
 ## 2. Supply connection details
 
