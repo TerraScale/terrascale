@@ -99,7 +99,7 @@ public static class Listeners
 
     // Whether host is <label>.api.terrascale.tech, and the region the label names (null when it names none).
     // Case-insensitive; Kestrel's Host.Host has no port.
-    private static bool IsRegionalHost(string host, out string? region)
+    internal static bool IsRegionalHost(string host, out string? region)
     {
         region = null;
         if (!host.EndsWith(RegionalHostSuffix, StringComparison.OrdinalIgnoreCase))
@@ -113,6 +113,18 @@ public static class Listeners
     }
 
     private static string RegionalHosts(IEnumerable<string> regions) => string.Join(", ", regions.Select(name => name + RegionalHostSuffix));
+
+    private static bool DeferPin(HttpContext context, string region)
+    {
+        if (!context.Request.Headers.ContainsKey("Authorization") || !context.Request.RouteValues.ContainsKey("project")
+            || !context.Request.RouteValues.ContainsKey("database"))
+        {
+            return false;
+        }
+
+        context.Features.Set(new RequestedRegion(region));
+        return true;
+    }
 
     // The regions with a started machine of this app, this one's included, in order.
     private static async Task<SortedSet<string>> ServedRegionsAsync(HttpContext context)
@@ -313,7 +325,7 @@ public static class Listeners
                     // A header naming another region contradicts the host.
                     if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], host, StringComparison.Ordinal)))
                     {
-                        context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+                        await RegionGuidance.RefuseAsync(context, host, code: "misdirected_request").ConfigureAwait(false);
                         return;
                     }
 
@@ -330,20 +342,31 @@ public static class Listeners
                         }
 
                         // Without a machine there, the edge sends the request back here with ts-replay-failed instead of an error.
-                        ReplayIn(context, host, fallbackSelf: true);
-                        context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
-                        return;
+                        if (!DeferPin(context, host))
+                        {
+                            ReplayIn(context, host, fallbackSelf: true);
+                            await RegionGuidance.RefuseAsync(context, host).ConfigureAwait(false);
+                            return;
+                        }
                     }
                 }
                 else if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], region, StringComparison.Ordinal)))
                 {
                     if (pin.Count == 1 && TerraBaseOptions.IsRegion(pin[0]))
                     {
-                        ReplayIn(context, pin[0]!);
+                        if (!DeferPin(context, pin[0]!))
+                        {
+                            ReplayIn(context, pin[0]!);
+                            await RegionGuidance.RefuseAsync(context, pin[0]!).ConfigureAwait(false);
+                            return;
+                        }
                     }
-
-                    context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
-                    return;
+                    else
+                    {
+                        await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "misdirected_request",
+                            $"use one valid region pin; see {RegionGuidance.Docs}", op: null).ConfigureAwait(false);
+                        return;
+                    }
                 }
             }
 

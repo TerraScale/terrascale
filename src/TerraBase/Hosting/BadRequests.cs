@@ -17,13 +17,19 @@ public sealed record ErrorBody(ErrorDetail Error);
 /// <param name="Details">Bounded schema validation errors, without document values.</param>
 /// <param name="Region">For <c>write_outcome_unknown</c>: the region of the machine that accepted the write.</param>
 /// <param name="Machine">For <c>write_outcome_unknown</c>: the machine that accepted the write.</param>
+/// <param name="Regions">Authorized database placement for a wrong-region refusal.</param>
+/// <param name="Host">The regional HTTP host to use.</param>
+/// <param name="Docs">Public recovery documentation.</param>
 public sealed record ErrorDetail(
     string Code,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Op = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ValidationDetail>? Details = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Region = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Regions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Host = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Docs = null);
 
 /// <summary>
 /// Answers framework <see cref="BadHttpRequestException"/> with an
