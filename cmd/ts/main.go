@@ -272,7 +272,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke", "db changes", "export", "usage", "backup list", "backup create", "backup restore", "backup restore-at", "schema get", "schema set", "schema delete", "ttl get", "ttl set", "ttl delete", "index list", "index create", "index drop", "import status", "import cancel"}, name) {
+	if jsonMode(out) && !slices.Contains([]string{"db list", "db create", "db delete", "db branch", "db info", "db regions", "orgs", "auth login", "auth logout", "whoami", "projects", "projects create", "keys list", "keys create", "keys revoke", "db changes", "export", "usage", "backup list", "backup create", "backup restore", "backup restore-at", "schema get", "schema set", "schema delete", "ttl get", "ttl set", "ttl delete", "index list", "index create", "index drop", "import status", "import cancel", "collection list", "collection create", "collection drop", "doc list", "doc get", "doc put", "doc delete", "doc import", "sql", "exec"}, name) {
 		return errors.New("structured output is not implemented for this command yet")
 	}
 	var collectionSet, yesSet, scopeSet bool
@@ -678,6 +678,9 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, res)
+		}
 		for _, row := range res.Rows {
 			fmt.Fprintf(out, "%s\n", row.Value)
 		}
@@ -840,6 +843,9 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, res)
+		}
 		if len(res.Columns) == 0 {
 			fmt.Fprintf(out, "%d rows affected\n", res.RowsAffected)
 			return nil
@@ -978,44 +984,63 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		return emitJSON(out, job)
 	case "collection list":
+		items := []v1.CollectionInfo{}
 		for cursor := ""; ; {
 			page, err := db.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
 			if err != nil {
 				return err
 			}
 			for _, c := range page.Items {
+				if jsonMode(out) {
+					items = append(items, c)
+					continue
+				}
 				fmt.Fprintln(out, c.Name)
 			}
 			if cursor = page.NextCursor; cursor == "" {
+				if jsonMode(out) {
+					return emitJSON(out, items)
+				}
 				return nil
 			}
 		}
 	case "collection create":
-		if _, err := db.CreateCollection(ctx, args[1]); err != nil {
+		c, err := db.CreateCollection(ctx, args[1])
+		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, c)
 		}
 		fmt.Fprintf(out, "Created collection %s\n", args[1])
 		return nil
 	case "collection drop":
-		if _, err := db.Collection(args[1]).Drop(ctx); err != nil {
+		c, err := db.Collection(args[1]).Drop(ctx)
+		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, c)
 		}
 		fmt.Fprintf(out, "Dropped collection %s\n", args[1])
 		return nil
 	case "doc list":
-		enc := json.NewEncoder(out)
+		beginJSONStream(out)
 		for cursor := ""; ; {
 			page, err := db.Collection(args[1]).List(ctx, v1.ListOptions{Limit: 1000, Cursor: cursor})
 			if err != nil {
 				return err
 			}
 			for _, d := range page.Items {
-				if err := enc.Encode(d); err != nil {
+				if err := emitJSONRecord(out, d); err != nil {
 					return err
 				}
 			}
 			if cursor = page.NextCursor; cursor == "" {
-				return nil
+				if jsonMode(out) && ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return finishJSONStream(out)
 			}
 		}
 	case "doc get":
@@ -1023,7 +1048,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(out).Encode(d)
+		return emitJSON(out, d)
 	case "doc put":
 		body, err := jsonOperand(args[len(args)-1])
 		if err != nil {
@@ -1039,11 +1064,18 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		if err != nil {
 			return err
 		}
+		if jsonMode(out) {
+			return emitJSON(out, res)
+		}
 		fmt.Fprintf(out, "Wrote %s (version %s)\n", res.ID, res.Version)
 		return nil
 	case "doc delete":
-		if _, err := db.Collection(args[1]).Delete(ctx, args[2]); err != nil {
+		res, err := db.Collection(args[1]).Delete(ctx, args[2])
+		if err != nil {
 			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, res)
 		}
 		fmt.Fprintf(out, "Deleted %s\n", args[2])
 		return nil
@@ -1134,6 +1166,11 @@ func importDocuments(ctx context.Context, col *v1.Collection, in io.Reader, out 
 	}
 	if err := lines.Err(); err != nil {
 		return err
+	}
+	if jsonMode(out) {
+		return emitJSON(out, struct {
+			Imported int `json:"imported"`
+		}{n})
 	}
 	fmt.Fprintf(out, "Imported %d documents\n", n)
 	return nil
