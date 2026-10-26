@@ -133,6 +133,7 @@ public sealed class TerraBaseContractTests
         yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
         yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
         yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
+        yield return ("project", "getProjectMetrics", client => ProjectClient(client).GetPrometheusMetricsAsync());
         yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
         yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
         yield return ("documents", "exportDatabase", client => ReadFirstAsync(Db(client).ExportAsync()));
@@ -155,6 +156,7 @@ public sealed class TerraBaseContractTests
         yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
         yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
         yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
+        yield return ("project", "getProjectMetrics", client => ProjectClient(client).GetPrometheusMetricsAsync());
         yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
         yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
         yield return ("documents", "getDeclaredCollectionSchema", client => Db(client).GetDeclaredSchemaAsync("users"));
