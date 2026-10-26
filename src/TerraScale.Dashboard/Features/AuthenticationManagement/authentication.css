@@ -232,6 +232,7 @@ button.ts-idp-provider:focus-visible {
   gap: 2px;
   min-width: 0;
   max-width: 68ch;
+  overflow-wrap: anywhere;
 }
 
 .ts-idp-switch-form {
@@ -829,8 +830,21 @@ button.ts-idp-provider:focus-visible {
 }
 
 .ts-idp-content {
+  container: authentication / inline-size;
   min-width: 0;
   padding: var(--ts-s6);
+}
+
+@container authentication (width < 640px) {
+  .ts-idp-setting {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--ts-s3);
+  }
+
+  .ts-idp-setting > .ts-switch {
+    align-self: flex-start;
+  }
 }
 
 .ts-idp-layout > nav .ts-nav-link {
