@@ -23,6 +23,12 @@ public static class HomeConnectSnippets
         psql "postgresql://app@pg.terrascale.tech:5432/{database}?sslmode=require"
         """;
 
+    public static string CreateCollection(string projectId, string database) => $$"""
+        curl -sS --fail-with-body -H "Authorization: Bearer $TERRASCALE_ACCESS_TOKEN" \
+          -H 'Content-Type: application/json' -d '{"name":"{{Collection}}"}' \
+          "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/collections"
+        """;
+
     public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database) =>
     [
         ("curl", "curl", "", $"""
@@ -40,7 +46,7 @@ public static class HomeConnectSnippets
             const page = await client.database("{{database}}").collection("{{Collection}}").list({ limit: 10 });
             console.log(page.items);
             """),
-        ("csharp", "C#", "dotnet add package TerraScale.DotNet", $$"""
+        ("csharp", "C#", "", $$"""
             using TerraScale.DotNet.TerraBase;
 
             using var http = new HttpClient(TerraBaseHttp.CreateHandler());
@@ -52,7 +58,7 @@ public static class HomeConnectSnippets
             var page = await client.Database("{{projectId}}", "{{database}}").ListDocumentsAsync("{{Collection}}", limit: 10);
             Console.WriteLine(page.Items.Count);
             """),
-        ("go", "Go", "go get terrascale.tech/sdk/v1", $$"""
+        ("go", "Go", "go get terrascale.tech/sdk@v0.0.3", $$"""
             package main
 
             import (
@@ -84,7 +90,7 @@ public static class HomeConnectSnippets
                 page = ts.database("{{database}}").collection("{{Collection}}").list(limit=10)
                 print(len(page.items))
             """),
-        ("rust", "Rust", "cargo add terrascale serde_json tokio --features tokio/full", $$"""
+        ("rust", "Rust", "cargo add terrascale --git https://github.com/TerraScale/ts-rust --tag v0.0.2\ncargo add serde_json\ncargo add tokio --features full", $$"""
             use terrascale::v1::Client;
 
             #[tokio::main]
