@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Shared.UI;
 
@@ -35,6 +37,55 @@ public sealed class InvoiceSummaryContractTests
         await Assert.That(recorded.Outstanding).IsEqualTo("$12.50");
         await Assert.That(recorded.OutstandingDetail).IsEqualTo("2 open invoices in recorded history");
         await Assert.That(recorded.Period).IsEqualTo(estimate.Period);
+    }
+
+    [Test]
+    [Arguments(0, 0)]
+    [Arguments(5, 16)]
+    public async Task CurrentMonthlySubscriptionOverridesTheAnnualCreditAndMonthlyDebitInvoiceUnion(int elapsedDays, int progress)
+    {
+        var start = new DateTimeOffset(2026, 10, 26, 3, 16, 0, TimeSpan.Zero);
+        // The invoice table retains the union of its annual credit and monthly debit line periods.
+        var proration = new BillingInvoice("in_proration", "PRORATION-1", "paid", 0, "usd", start, start.AddDays(-1), start.AddYears(1));
+        var summary = InvoiceHistory.Summarize([proration], start.AddDays(elapsedDays), new(start.AddMonths(1), 2000, "usd", "monthly", PeriodStart: start));
+        await Assert.That(summary.Period).IsEqualTo("Oct 26 – Nov 26, 2026");
+        await Assert.That(summary.PeriodDetail).IsEqualTo($"Day {elapsedDays} of 31 · based on the current subscription period");
+        await Assert.That(summary.PeriodPercent).IsEqualTo(progress);
+        await Assert.That(summary.NextInvoice).IsEqualTo("$20.00 base fee");
+        await Assert.That(InvoiceHistory.Page([proration], "", "", 1, start.AddDays(5)).Invoices.Single().PeriodEnd).IsEqualTo(start.AddYears(1));
+    }
+
+    [Test]
+    public async Task MonthEndSubscriptionRetainsJanuary31RatherThanApproximatingJanuary28()
+    {
+        var start = new DateTimeOffset(2026, 1, 31, 3, 16, 0, TimeSpan.Zero);
+        var summary = InvoiceHistory.Summarize([], start.AddDays(10), new(start.AddMonths(1), 2000, "usd", "monthly", PeriodStart: start));
+        await Assert.That(summary.Period).IsEqualTo("Jan 31 – Feb 28, 2026");
+        await Assert.That(summary.PeriodDetail).IsEqualTo("Day 10 of 28 · based on the current subscription period");
+        await Assert.That(summary.PeriodPercent).IsEqualTo(36);
+    }
+
+    [Test]
+    [Arguments(null, 20)]
+    [Arguments(1, 20)]
+    [Arguments(21, 20)]
+    [Arguments(-5, 0)]
+    [Arguments(-5, -1)]
+    public async Task MissingOrInvalidSubscriptionPeriodKeepsTheRecordedInvoiceFallback(int? startDays, int endDays)
+    {
+        var paid = new BillingInvoice("in_existing", "EXISTING-1", "paid", 3000, "usd", Now.AddDays(-1), Now.AddDays(-1), Now.AddYears(1));
+        var summary = InvoiceHistory.Summarize([paid], Now, new(Now.AddDays(endDays), 2000, "usd", "monthly", PeriodStart: startDays is { } days ? Now.AddDays(days) : null));
+        var recorded = InvoiceHistory.Summarize([paid], Now);
+        await Assert.That(summary.Period).IsEqualTo(recorded.Period);
+        await Assert.That(summary.PeriodDetail).IsEqualTo(recorded.PeriodDetail);
+        await Assert.That(summary.PeriodPercent).IsEqualTo(recorded.PeriodPercent);
+    }
+
+    [Test]
+    public async Task ExactPeriodStartDoesNotChangeSerializedPlanState()
+    {
+        var state = new BillingPlanState("pro", "monthly", Now.AddMonths(1), "", "", null, "", "", false, true);
+        await Assert.That(JsonSerializer.Serialize(state with { PeriodStart = Now })).IsEqualTo(JsonSerializer.Serialize(state));
     }
 
     [Test]

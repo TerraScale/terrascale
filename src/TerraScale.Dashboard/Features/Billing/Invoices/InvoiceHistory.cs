@@ -23,7 +23,7 @@ public sealed record InvoiceHistoryPage(BillingInvoiceList Listing, string Statu
     }
 }
 // Catalog base subscription fee at renewal; usage and invoice adjustments are not included.
-public sealed record InvoiceRenewal(DateTimeOffset At, long AmountCents, string Currency, string Interval, bool Ends = false);
+public sealed record InvoiceRenewal(DateTimeOffset At, long AmountCents, string Currency, string Interval, bool Ends = false, DateTimeOffset? PeriodStart = null);
 public sealed record InvoiceSummary(string NextInvoice, string NextDetail, string Period, string PeriodDetail,
     string Outstanding, string OutstandingDetail, bool HasPeriod = false, int PeriodPercent = 0);
 
@@ -99,6 +99,12 @@ public static class InvoiceHistory
         var current = invoices.Where(invoice => invoice.PeriodStart is { } start && invoice.PeriodEnd is { } end &&
             start <= now && now < end).OrderByDescending(invoice => invoice.PeriodStart).FirstOrDefault();
         (DateTimeOffset Start, DateTimeOffset End)? period = current is null ? null : (current.PeriodStart!.Value, current.PeriodEnd!.Value);
+        var periodSource = current is null ? "the subscription renewal date" : "a recorded invoice period";
+        if (renewal is { PeriodStart: { } starts, At: var ends } && starts > DateTimeOffset.UnixEpoch && starts <= now && now < ends)
+        {
+            period = (starts, ends);
+            periodSource = "the current subscription period";
+        }
         if (period is null && renewal is { At: var renews } && renews > now && renewal.Interval is "annual" or "monthly")
         {
             var started = renewal.Interval == "annual" ? renews.AddYears(-1) : renews.AddMonths(-1);
@@ -112,7 +118,7 @@ public static class InvoiceHistory
             summary = summary with
             {
                 Period = start.UtcDateTime.ToString(start.UtcDateTime.Year == end.UtcDateTime.Year ? "MMM d" : "MMM d, yyyy", CultureInfo.InvariantCulture) + " – " + end.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture),
-                PeriodDetail = $"Day {elapsed} of {days}" + (current is null ? " · based on the subscription renewal date" : " · based on a recorded invoice period"),
+                PeriodDetail = $"Day {elapsed} of {days} · based on " + periodSource,
                 HasPeriod = true,
                 PeriodPercent = Math.Clamp(Math.Max(elapsed > 0 ? 1 : 0, (int)Math.Round(elapsed * 100d / days, MidpointRounding.AwayFromZero)), 0, 100)
             };

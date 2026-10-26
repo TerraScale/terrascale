@@ -90,7 +90,7 @@ public static class BillingEndpoints
         {
             var scheduled = state.ScheduledPlanKey.Length > 0 && (state.ScheduledAt is null || state.ScheduledAt <= state.RenewalAt);
             var interval = scheduled && state.ScheduledInterval.Length > 0 ? state.ScheduledInterval : state.Interval;
-            return new(state.RenewalAt, Price(scheduled ? state.ScheduledPlanKey : state.PlanKey, interval), "usd", state.Interval, state.CancelAtPeriodEnd);
+            return new(state.RenewalAt, Price(scheduled ? state.ScheduledPlanKey : state.PlanKey, interval), "usd", state.Interval, state.CancelAtPeriodEnd, state.PeriodStart);
         }
         if (binding is not { SubscriptionId.Length: > 0, RenewalAt: { } renews } || binding.Status is "canceled" or "incomplete_expired") return null;
         var current = binding.EffectiveInterval.Length > 0 ? binding.EffectiveInterval : binding.Interval;

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -51,12 +52,14 @@ public sealed class InvoiceFactsJourneyTests
         var html = await response.Content.ReadAsStringAsync();
         await Assert.That(html).Contains(totalLabel);
         await Assert.That(html).Contains(balanceLabel);
+        await Assert.That(WebUtility.HtmlDecode(html)).Contains("Day 3 of 27 · based on the current subscription period");
         await Assert.That(wire.Calls).IsGreaterThan(0);
         await app.StopAsync();
     }
 
     private sealed class InvoiceWire(IHttpClientFactory original, string currency, long amount, long remaining) : HttpMessageHandler, IHttpClientFactory
     {
+        private readonly DateTimeOffset periodStart = DateTimeOffset.UtcNow.AddDays(-3);
         private int calls;
         private int stripeCalls;
         public int Calls => Volatile.Read(ref calls);
@@ -103,6 +106,15 @@ public sealed class InvoiceFactsJourneyTests
                 using var client = original.CreateClient("platform");
                 var response = await client.SendAsync(forwarded, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 response.RequestMessage = request;
+                if (response.IsSuccessStatusCode && request.Method == HttpMethod.Get && request.RequestUri is { Host: "api.stripe.com" } subscriptionUri &&
+                    subscriptionUri.AbsolutePath.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))
+                {
+                    var subscription = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!;
+                    subscription["items"]!["data"]![0]!["current_period_start"] = periodStart.ToUnixTimeSeconds();
+                    subscription["items"]!["data"]![0]!["current_period_end"] = periodStart.AddDays(27).ToUnixTimeSeconds();
+                    response.Content.Dispose();
+                    response.Content = new StringContent(subscription.ToJsonString(), Encoding.UTF8, "application/json");
+                }
                 return response;
             }
             var customer = QueryHelpers.ParseQuery(uri.Query)["customer"].ToString();
