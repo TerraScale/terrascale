@@ -14,6 +14,7 @@ const routes = [
   ['/getting-started/python', 'Python SDK installation and sync/async document, query, SQL and vector quickstart'],
   ['/getting-started/browser-todos', 'Browser todos with an existing end-user session and collection owner rules'],
   ['/getting-started/browser-backend-tokens', 'Connect an existing app backend session to project-scoped end-user tokens'],
+  ['/cli/sql-and-export', 'CLI multiline SQL submission, session-only history and document-only export limits'],
   ['/cli/access', 'CLI sign-in, least-privilege keys, saved context, consent and dashboard billing'],
   ['/cli/automation', 'Go CLI typed JSON, safe errors, exit codes and NDJSON terminal records'],
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],

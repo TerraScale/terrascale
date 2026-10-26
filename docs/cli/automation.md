@@ -28,3 +28,5 @@ The [JSON Schema](https://docs.terrascale.tech/cli-output.schema.json) maps indi
 | `migrate`, `context`, backup settings | Path/run/status/diff objects or arrays; saved selectors/clear receipt; policy/window/plan/destination metadata |
 
 See [access and execution context](./access) for scopes, consent and dashboard billing.
+
+See [SQL shell and document exports](./sql-and-export) for interactive and streaming workflows.
