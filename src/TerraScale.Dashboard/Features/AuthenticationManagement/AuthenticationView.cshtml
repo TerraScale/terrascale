@@ -7,6 +7,13 @@
     void Card(string title, string description) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@("auth-" + current.Key + "-title")">@title</h2><p class="ts-card-description">@description</p></div></header> }
     void Action(string path, string label, string confirm = "") { <form method="post" action="@("/api/v1/auth-management/" + path)" data-on:submit="@(confirm.Length == 0 ? null : "confirm('" + confirm + "') || evt.preventDefault()")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn @(confirm.Length == 0 ? "ts-btn-secondary" : "ts-btn-danger") ts-btn-sm" type="submit">@label</button></form> }
     void Empty(string title) { <div class="ts-empty" role="status"><p class="ts-empty-title">@title</p></div> }
+    void CopyValue(string id, string value, string label, bool link = false, bool secret = false) {
+        <div class="ts-stack-sm" data-auth-copy><div class="ts-idp-copy">
+        @if (link) { <a class="ts-break" href="@value" rel="noopener" target="_blank" id="@id">@value</a> }
+        else { <code class="@(secret ? "ts-apikeys-secret-value" : "ts-break")" tabindex="0" id="@id">@value</code> }
+        <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" aria-label="@("Copy " + label)" aria-describedby="@(id + "-copy-status")" data-on:click="@CopyExpression">@Icons.Render("Copy", 14)<span>Copy</span></button>
+        </div><p class="ts-hint" id="@(id + "-copy-status")" role="status" aria-live="polite" aria-atomic="true"></p></div>
+    }
     void Pager(string path) { if (Model.Next is null && Model.After.Length == 0) { return; } <nav class="ts-pager" aria-label="@(current.Title + " pages")"><div class="ts-row">@if (Model.After.Length > 0) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@path">First page</a> }@if (Model.Next is not null) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(path + (path.Contains('?') ? "&" : "?") + "after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }</div></nav> }
 }
 <main class="ts-page ts-idp" data-auth-section="@current.Key">
@@ -17,14 +24,14 @@
 @if (Model.Saved) { <div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Changes saved.</p></div> }
 @if (!manage && current.Key != "overview") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
 @if (Model.Created is { } created) {
-<section class="ts-alert ts-alert-success" role="status" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID <code>@created.ClientId</code>.@if (created.ClientSecret is not null) { <text> Copy the client secret now: it is shown only once.</text> }</p>@if (created.ClientSecret is { } secret) { <div class="ts-row"><code class="ts-apikeys-secret-value" id="auth-client-secret">@secret</code><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">@Icons.Render("Copy", 14)<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span></button></div> }</section>
+<section class="ts-alert ts-alert-success" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID</p>@{ CopyValue("auth-created-client-id", created.ClientId, "new client ID"); }@if (created.ClientSecret is { } secret) { <p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>CopyValue("auth-client-secret", secret, "client secret", secret: true); }</section>
 }
 <section class="@(current.Key == "branding" ? "ts-idp-brand-section" : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
 Card("Project authentication", "Point your OpenID Connect library at this issuer; users sign in on the hosted pages.");
 <div class="ts-card-body">@if (settings is null) { Empty("Authentication details unavailable"); } else {
 <dl class="ts-stats ts-idp-stats" aria-label="Identity totals"><div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div><div class="ts-stat"><dt class="ts-stat-label">OAuth applications</dt><dd class="ts-stat-value" id="auth-count-clients">@settings.Counts.Clients</dd></div></dl>
-<dl class="ts-kv ts-idp-endpoints"><dt>Project</dt><dd class="ts-strong">@Model.Context.Project?.Name</dd><dt>Issuer</dt><dd><code id="auth-issuer">@settings.Issuer</code></dd><dt>Discovery</dt><dd><code>@settings.DiscoveryUrl</code></dd><dt>Hosted sign-in</dt><dd><a id="auth-sign-in-url" href="@settings.SignInUrl" rel="noopener" target="_blank">@settings.SignInUrl</a></dd></dl> }</div>
+<dl class="ts-kv ts-idp-endpoints"><dt>Project</dt><dd class="ts-strong">@Model.Context.Project?.Name</dd><dt>Issuer</dt><dd>@{ CopyValue("auth-issuer", settings.Issuer, "issuer"); }</dd><dt>Discovery</dt><dd>@{ CopyValue("auth-discovery", settings.DiscoveryUrl, "discovery URL"); }</dd><dt>Hosted sign-in</dt><dd>@{ CopyValue("auth-sign-in-url", settings.SignInUrl, "hosted sign-in URL", link: true); }</dd></dl> }</div>
 }
 else if (current.Key == "users") {
 Card("Users", current.Description);
@@ -44,7 +51,7 @@ Card(Model.User.Length > 0 ? "Sessions of one user" : "Live sessions", current.D
 else if (current.Key == "clients") {
 Card("OAuth applications", current.Description);
 <div class="ts-card-body">@if (Model.Clients is not { Count: > 0 } clients) { Empty("No OAuth applications yet"); } else {
-<div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table"><thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong">@client.Name</td><td class="ts-mono">@client.ClientId</td><td><span class="ts-badge">@client.Type</span></td><td class="ts-mono">@string.Join(", ", client.RedirectUris)</td><td>@if (manage) { Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</td></tr> }</tbody></table></div> }
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table"><thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong">@client.Name</td><td>@{ CopyValue("auth-client-" + client.ClientId, client.ClientId, "client ID for " + client.Name); }</td><td><span class="ts-badge">@client.Type</span></td><td class="ts-mono">@string.Join(", ", client.RedirectUris)</td><td>@if (manage) { Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</td></tr> }</tbody></table></div> }
 @if (manage) {
 <form class="ts-form" method="post" action="/api/v1/auth-management/clients" id="auth-create-client"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><h3 class="ts-strong">Add an application</h3>
 <div class="ts-field"><label class="ts-label" for="auth-client-name">Application name</label><input class="ts-input" id="auth-client-name" name="name" required maxlength="64" placeholder="Web app" autocomplete="off" /></div>
@@ -65,7 +72,7 @@ Card("Social sign-in", current.Description);
 <li class="ts-idp-setting" id="@id"><div class="ts-idp-setting-text ts-stack-sm"><div class="ts-row"><span class="ts-strong">@info.Name</span><span class="@(provider.Configured ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@(provider.Configured ? "Configured" : "Not configured")</span></div>
 @if (provider.Configured) { <p class="ts-meta">@info.ClientIdLabel <code>@provider.ClientId</code>@if (provider.Issuer is not null) { <text> · Issuer <code>@provider.Issuer</code></text> }@if (provider.TeamId is not null) { <text> · Team ID <code>@provider.TeamId</code> · Key ID <code>@provider.KeyId</code></text> }</p> }
 <p class="ts-meta">@info.Help@if (info.ConsoleUrl.Length > 0) { <text> </text><a class="ts-link" href="@info.ConsoleUrl" rel="noopener" target="_blank">@info.ConsoleName</a> }</p>
-<div class="ts-idp-copy"><code class="ts-idp-copy-value" id="@(id + "-callback")">@provider.CallbackUrl</code><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" aria-label="@("Copy the " + info.Name + " callback URL")" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">@Icons.Render("Copy", 14)<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span></button></div></div>
+@{ CopyValue(id + "-callback", provider.CallbackUrl, info.Name + " callback URL"); }</div>
 @if (manage) { <div class="ts-row"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="@(id + "-dialog")">@(provider.Configured ? "Update" : "Configure")</button>@if (provider.Configured) { Action("providers/" + info.Key + "/delete", "Remove", "Remove " + info.Name + " sign-in? Its users can no longer continue with it."); }</div>
 <dialog id="@(id + "-dialog")" class="ts-dialog" closedby="any" aria-labelledby="@(id + "-dialog-title")"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-dialog-title")">@(provider.Configured ? "Update" : "Configure") @info.Name sign-in</h2><p class="ts-dialog-description ts-break">Callback URL <code>@provider.CallbackUrl</code></p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@(id + "-dialog")">@Icons.Render("X", 18)</button></header>
 <form class="ts-form" method="post" action="@("/api/v1/auth-management/providers/" + info.Key)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
@@ -110,4 +117,31 @@ else {
 </div></div></main>
 @functions {
 public ShellModel LayoutModel => Model.Shell;
+// Values stay in the rendered DOM, never in Datastar signals or browser storage.
+private const string CopyExpression = """
+    (async () => {
+        if (el.getAttribute('aria-disabled') === 'true') return;
+        const value = el.previousElementSibling;
+        const status = el.parentElement.nextElementSibling;
+        const label = el.getAttribute('aria-label').slice(5);
+        el.setAttribute('aria-disabled', 'true');
+        el.setAttribute('aria-busy', 'true');
+        status.textContent = 'Copying ' + label + '…';
+        try {
+            await navigator.clipboard.writeText(value.textContent);
+            status.textContent = label + ' copied.';
+        } catch {
+            status.textContent = 'Copy failed. Select the value above, then press Ctrl+C or Command+C to copy manually.';
+            value.focus();
+            const range = document.createRange();
+            range.selectNodeContents(value);
+            const selection = window.getSelection();
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+        } finally {
+            el.removeAttribute('aria-disabled');
+            el.removeAttribute('aria-busy');
+        }
+    })()
+    """;
 }
