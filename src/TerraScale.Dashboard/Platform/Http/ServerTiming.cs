@@ -24,8 +24,9 @@ public sealed class ServerTiming
         public bool Current => ServerTiming.Current.Value == Request && Volatile.Read(ref Request.writes) == Writes;
     }
 
-    // Only page loads (GET and HEAD) reuse reads; a form post always re-reads what it changes.
-    public static Mark? Now() => Current.Value is { reads: true } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
+    // A freshly authorized context also serves a form action until that action sends a write.
+    // Individual read memoization below remains limited to GET/HEAD.
+    public static Mark? Now() => Current.Value is { } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
 
     // Coalesce identical reads only within this GET/HEAD. A mutation invalidates earlier reads;
     // failed reads can be retried and no task or authority survives into another request.

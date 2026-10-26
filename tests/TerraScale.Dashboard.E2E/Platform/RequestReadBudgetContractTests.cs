@@ -10,6 +10,21 @@ namespace TerraScale.Dashboard.E2E.Platform;
 public sealed class RequestReadBudgetContractTests
 {
     [Test]
+    public async Task FormActionContextRemainsCurrentOnlyUntilItSendsAWrite()
+    {
+        using var wire = new Wire();
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "POST" } }, async () =>
+        {
+            var loaded = ServerTiming.Now();
+            await Assert.That(loaded?.Current).IsTrue();
+            using var client = wire.CreateClient("mutation");
+            using var response = await client.PostAsync("https://auth.terrascale.tech/v1/membership", null);
+            await Assert.That(loaded?.Current).IsFalse();
+            await Assert.That(ServerTiming.Now()?.Current).IsTrue();
+        }, NullLogger.Instance);
+    }
+
+    [Test]
     public async Task AuthDirectoryReadsCoalesceWithinOneGetAndRefreshAfterWritesOrAnotherPage()
     {
         using var wire = new Wire();
