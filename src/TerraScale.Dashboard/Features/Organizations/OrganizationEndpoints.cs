@@ -132,6 +132,7 @@ public static class OrganizationEndpoints
         endpoints.MapInvitations();
         endpoints.MapOrganizationAudit();
         endpoints.MapOrganizationSso();
+        endpoints.MapProjectSettings();
         return endpoints;
     }
 

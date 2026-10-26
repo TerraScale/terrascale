@@ -61,9 +61,20 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
     public async Task UpdateProjectAsync(AccountContext context, string name, string region, string backupRegion,
         IReadOnlyList<string>? regions, CancellationToken cancellationToken)
     {
-        context = await FreshManagerAsync(context, cancellationToken, requireProject: true);
+        context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
+        if (context.Project!.Role != "admin" || !context.CanWriteProjectData)
+            throw new AccountAccessException("Project admin access is required to rename this project.");
+        var placementRequested = region.Length > 0 || backupRegion.Length > 0 || regions is { Count: > 0 };
+        if (!context.CanManage && placementRequested)
+            throw new AccountAccessException("Organization management is required to change project placement. Submit only a project name.");
         name = AccountService.ValidName(name);
         var project = context.Project!;
+        // Names belong to ts-auth. A project grant never authorizes an organization aggregate write.
+        if (!placementRequested)
+        {
+            if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
+            return;
+        }
         Duplicate(context.Organization!, name, project.Id);
         var locations = regions is { Count: > 0 }
             ? await LocationsAsync(region, backupRegion, regions, cancellationToken)
