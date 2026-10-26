@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.E2E;
 // Owns the isolated HTTP host and synthetic state controls; journeys invoke cleanup through HTTP.
 internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
 {
-    public static readonly string[] Records = ["dashboard_saved_queries", AlertRules.Collection, LogDrains.Collection];
+    public static readonly string[] Records = ["dashboard_saved_queries", SqlWorkspace.Collection, AlertRules.Collection, LogDrains.Collection];
     public static readonly string[] Indexes = [AlertRules.IndexCollection, LogDrains.IndexCollection];
     private readonly DemoEnvironment environment = new();
     public string Organization { get; } = AccountService.NewId();
@@ -24,6 +24,8 @@ internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
     public string Retained { get; } = AccountService.NewId();
     public string ForeignOrganization { get; } = AccountService.NewId();
     public string ForeignProject { get; } = AccountService.NewId();
+    private readonly string database = AccountService.NewId();
+    public string User { get; } = AccountService.NewId();
     private WebApplication app = null!;
     public HttpClient Client { get; private set; } = null!;
     private IDashboardState State => app.Services.GetRequiredService<IDashboardState>();
@@ -41,6 +43,11 @@ internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
                 return Results.NoContent();
             }
             catch (IOException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+        });
+        scenario.app.MapPost("/__test/sql-user/{subject}", async (string subject, HttpContext http) =>
+        {
+            await new DeletionRelatedRecords(scenario.State, scenario.app.Services.GetRequiredService<DashboardSessions>()).CleanAccountAsync(subject, http.RequestAborted);
+            return Results.NoContent();
         });
         try
         {
@@ -72,7 +79,10 @@ internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
         {
             object body = Indexes.Contains(collection)
                 ? new AlertProjectIndex(new() { [Project] = ForeignOrganization, [Retained] = Organization })
-                : Record(collection, ForeignOrganization, Project);
+                : collection == SqlWorkspace.Collection
+                    // Keep the queried organization/project but corrupt the remaining key identity.
+                    ? new SqlWorkspaceRecord(Organization, Project, ForeignProject, User, "private draft", ["SELECT 1"])
+                    : Record(collection, ForeignOrganization, Project);
             await State.PutAsync(collection, key, JsonSerializer.SerializeToElement(body), TerraBasePrecondition.Matches(document.Version), default);
         }
     }
@@ -95,17 +105,18 @@ internal sealed class DeletionProjectRecordsScenario : IAsyncDisposable
     public async Task<IReadOnlyDictionary<string, string>> IndexAsync(string collection) =>
         AccountService.Read<AlertProjectIndex>((await GetAsync(collection, "all"))!).Projects;
 
-    private static object Record(string collection, string organization, string project) => collection switch
+    private object Record(string collection, string organization, string project) => collection switch
     {
         "dashboard_saved_queries" => new SavedQueryRecord(organization, project,
             [new(Guid.CreateVersion7().ToString(), new Bogus.Faker().Lorem.Word(), "SELECT * FROM orders", "", DateTimeOffset.UtcNow)]),
+        SqlWorkspace.Collection => new SqlWorkspaceRecord(organization, project, database, User, "private draft", ["SELECT 1"]),
         AlertRules.Collection => new AlertRuleSet(project, organization,
             [new(AccountService.NewId(), new Bogus.Faker().Lorem.Word(), "p95_latency_ms", 10, null, false, null, null, DateTimeOffset.UtcNow)]),
         LogDrains.Collection => new LogDrain(project, organization, AccountService.NewId(), "https://logs.example.test/v1/logs", null, null, DateTimeOffset.UtcNow),
         _ => throw new InvalidOperationException("Unknown project record collection.")
     };
 
-    private string Key(string collection, string project) => collection == "dashboard_saved_queries"
+    private string Key(string collection, string project) => collection == SqlWorkspace.Collection ? Organization + "/" + project + "/" + database + "/" + User : collection == "dashboard_saved_queries"
         ? Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Organization + "/" + project))) : project;
     public Task<TerraBaseDocument?> GetAsync(string collection, string project) => State.GetAsync(collection, Key(collection, project), default);
     public async ValueTask DisposeAsync()

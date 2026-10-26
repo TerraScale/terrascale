@@ -40,6 +40,14 @@ public sealed partial class StateSdkScenario
             try { await DatabaseWorkspaceCleanup.ReplayAsync(state, default); return Results.NoContent(); }
             catch (HttpRequestException) { return Results.StatusCode(503); }
         });
+        // Simulates an already admitted write reaching persistence after erasure's scan.
+        app.MapPost("/__test/sql-cleanup/late/{org}/{project}/{database}", async (string org, string project, string database, IDashboardState state) =>
+        {
+            var user = AccountService.NewId();
+            await state.PutAsync(SqlWorkspace.Collection, org + "/" + project + "/" + database + "/" + user,
+                JsonSerializer.SerializeToElement(new SqlWorkspaceRecord(org, project, database, user, "late", [])), TerraBasePrecondition.Absent, default);
+            return Results.NoContent();
+        });
         app.MapPost("/__test/sql-cleanup/project/{org}/{project}", async (string org, string project, IDashboardState state) =>
         {
             await new DeletionProjectRecords(state).CleanAsync(org, project, default);

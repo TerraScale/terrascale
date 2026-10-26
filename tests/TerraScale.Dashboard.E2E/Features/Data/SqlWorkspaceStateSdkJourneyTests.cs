@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 
@@ -54,6 +55,15 @@ public sealed class SqlWorkspaceStateSdkJourneyTests(DashboardRootFixture fixtur
             }
         }
         await Assert.That(after.GetProperty("sqlWorkspaceLists").GetInt32()).IsEqualTo(0);
+        using (var late = await client.PostAsync($"/__test/sql-cleanup/late/{org}/{project}/{database}", null)) late.EnsureSuccessStatusCode();
+        using (var fault = await producer.PostAsJsonAsync("/__test/control", new { command = "mode", value = "sql-delete-unavailable" })) fault.EnsureSuccessStatusCode();
+        using (var failed = await client.PostAsync("/__test/sql-cleanup/replay", null)) await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var interrupted = await SnapshotAsync();
+        await Assert.That(Count(interrupted, "dashboard_sql_workspaces")).IsEqualTo(4);
+        await Assert.That(Count(interrupted, "dashboard_sql_database_deletions")).IsEqualTo(37);
+        using (var recovered = await producer.PostAsJsonAsync("/__test/control", new { command = "mode", value = "" })) recovered.EnsureSuccessStatusCode();
+        using (var replay = await client.PostAsync("/__test/sql-cleanup/replay", null)) replay.EnsureSuccessStatusCode();
+        await Assert.That(Count(await SnapshotAsync(), "dashboard_sql_workspaces")).IsEqualTo(3);
         using (var erased = await client.PostAsync($"/__test/sql-cleanup/project/{org}/{project}", null)) erased.EnsureSuccessStatusCode();
         await Assert.That(Count(await SnapshotAsync(), "dashboard_sql_database_deletions")).IsEqualTo(2);
         using (var erased = await client.PostAsync("/__test/sql-cleanup/organization/" + org, null)) erased.EnsureSuccessStatusCode();

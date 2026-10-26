@@ -44,11 +44,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
     public Uri ProviderOrigin { get; private set; } = null!;
 
     public static async Task<DatabaseSdkScenario> StartAsync(string root, Action<WebApplicationBuilder>? configureScenario = null,
-        Func<HttpContext, Task<IResult?>>? producerExtension = null)
+        Func<HttpContext, Task<IResult?>>? producerExtension = null, Action<WebApplication>? configureApp = null)
     {
         var scenario = new DatabaseSdkScenario();
         scenario.protocol.Extension = producerExtension;
-        try { await scenario.InitializeAsync(root, configureScenario); return scenario; }
+        try { await scenario.InitializeAsync(root, configureScenario, configureApp); return scenario; }
         catch { await scenario.DisposeAsync(); throw; }
     }
 
@@ -67,10 +67,17 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
 
     public HttpClient CreateClient(bool replica = false) => Client(replica ? ReplicaOrigin : Origin);
     public HttpClient CreateProviderClient() => Client(ProviderOrigin);
+    public void AddSqlViewer(string organizationId, string userId, string email)
+    {
+        lock (protocol.Workspace.Gate)
+            protocol.Workspace.Organizations[organizationId].Members[userId] = new()
+            { UserId = userId, Email = email, Name = "SQL viewer", Role = "viewer", Status = "active" };
+    }
+
     private static HttpClient Client(Uri origin) => new(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
     { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
 
-    private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configureScenario)
+    private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configureScenario, Action<WebApplication>? configureApp)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -103,6 +110,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         }
         first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
         second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+        configureApp?.Invoke(first);
+        configureApp?.Invoke(second);
         await first.StartAsync();
         await second.StartAsync();
         Origin = Address(first);
