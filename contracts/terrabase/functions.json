@@ -26,8 +26,8 @@
     {"operation":"deployFunction","method":"PUT","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
     {"operation":"getFunction","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
     {"operation":"deleteFunction","method":"DELETE","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["documents:read","documents:write"],"success":204,"implemented":true},
-    {"operation":"invokeFunction","method":"POST","path":"/v1/projects/{project}/databases/{database}/functions/{function}/invoke","scopes":["documents:read"],"success":200,"implemented":false},
-    {"operation":"listFunctionLogs","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","scopes":["documents:read","documents:write"],"success":200,"implemented":false},
-    {"operation":"listFunctionDeliveries","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/deliveries","scopes":["documents:read","documents:write"],"success":200,"implemented":false}
+    {"operation":"invokeFunction","method":"POST","path":"/v1/projects/{project}/databases/{database}/functions/{function}/invoke","scopes":["documents:read"],"success":200,"implemented":true},
+    {"operation":"listFunctionLogs","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
+    {"operation":"listFunctionDeliveries","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/deliveries","scopes":["documents:read","documents:write"],"success":200,"implemented":true}
   ]
 }

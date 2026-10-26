@@ -67,9 +67,12 @@ public sealed partial class TerraBaseDatabase
         CancellationToken cancellationToken = default)
     {
         if (limit is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(limit), "Log limit must be 1–100.");
-        return (await connection.SendAsync(HttpMethod.Get, FunctionPath(functionName) + "/logs" +
+        var response = await connection.SendAsync(HttpMethod.Get, FunctionPath(functionName) + "/logs" +
             TerraBaseConnection.Query(("limit", TerraBaseConnection.Number(limit))), null,
-            Json.IReadOnlyListTerraBaseFunctionLog, null, cancellationToken).ConfigureAwait(false)).Value;
+            Json.IReadOnlyListTerraBaseFunctionLog, null, cancellationToken).ConfigureAwait(false);
+        if (response.Value.Any(log => log is null || log.Lines.Any(line => line is null)))
+            throw new TerraBaseException(response.Status, "Function logs contain invalid items.", "invalid_response", null);
+        return response.Value;
     }
 
     /// <summary>
@@ -77,7 +80,12 @@ public sealed partial class TerraBaseDatabase
     /// documents:read and documents:write. Pending attempts/errorCode form the dead-letter view; no cursor.
     /// </summary>
     public async Task<IReadOnlyList<TerraBaseChangeWebhookDelivery>> ListFunctionDeliveriesAsync(string functionName,
-        CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Get, FunctionPath(functionName) + "/deliveries", null,
-            Json.IReadOnlyListTerraBaseChangeWebhookDelivery, null, cancellationToken).ConfigureAwait(false)).Value;
+        CancellationToken cancellationToken = default)
+    {
+        var response = await connection.SendAsync(HttpMethod.Get, FunctionPath(functionName) + "/deliveries", null,
+            Json.IReadOnlyListTerraBaseChangeWebhookDelivery, null, cancellationToken).ConfigureAwait(false);
+        if (response.Value.Any(delivery => delivery is null))
+            throw new TerraBaseException(response.Status, "Function deliveries contain invalid items.", "invalid_response", null);
+        return response.Value;
+    }
 }

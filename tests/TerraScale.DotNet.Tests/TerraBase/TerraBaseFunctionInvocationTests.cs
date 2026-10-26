@@ -160,6 +160,30 @@ public sealed class TerraBaseFunctionInvocationTests
         await Assert.That(stillUsable.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
 
+    [Test]
+    [Arguments("null", false)]
+    [Arguments("[null]", false)]
+    [Arguments("[{}]", false)]
+    [Arguments("null", true)]
+    [Arguments("[null]", true)]
+    [Arguments("[{}]", true)]
+    [Arguments("[{\"id\":\"01JA0000000000000000000001\",\"at\":\"2026-10-26T00:00:00Z\",\"trigger\":\"http\",\"status\":\"ok\",\"durationMs\":1,\"lines\":[null]}]", false)]
+    public async Task Malformed_observation_items_fail_without_replay(string body, bool delivery)
+    {
+        var calls = 0;
+        using var handler = new TerraBaseTestHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(TerraBaseIntegrationFixture.Json(body));
+        });
+        using var http = new HttpClient(handler);
+        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        Func<Task> call = delivery ? () => db.ListFunctionDeliveriesAsync("hello") : () => db.ListFunctionLogsAsync("hello");
+        var error = await Assert.ThrowsAsync<TerraBaseException>(call);
+        await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
     private sealed class WaitingBody(TaskCompletionSource started) : MemoryStream
     {
         public override async Task CopyToAsync(Stream destination, int bufferSize, CancellationToken token)

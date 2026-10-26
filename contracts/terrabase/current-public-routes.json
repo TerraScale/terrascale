@@ -89,6 +89,9 @@
     {"operation": "listFunctions", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions", "contract": "functions.json"},
     {"operation": "deployFunction", "method": "PUT", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
     {"operation": "getFunction", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
-    {"operation": "deleteFunction", "method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"}
+    {"operation": "deleteFunction", "method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
+    {"operation": "invokeFunction", "method": "POST", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/invoke", "contract": "function-invocations.json"},
+    {"operation": "listFunctionLogs", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/logs", "contract": "function-invocations.json"},
+    {"operation": "listFunctionDeliveries", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/deliveries", "contract": "function-invocations.json"}
   ]
 }
