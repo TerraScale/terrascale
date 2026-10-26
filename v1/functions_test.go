@@ -53,11 +53,11 @@ func TestFunctionContracts(t *testing.T) {
 				err = d.DeleteFunction(t.Context(), "hello")
 				ok = err == nil
 			case "invoke":
-				var out []byte
-				out, err = d.InvokeFunction(t.Context(), "hello", []byte(`{"n":1}`))
-				ok = err == nil && string(out) == `{"ok":true}`
+				var out *tb.FunctionResponse
+				out, err = d.InvokeFunction(t.Context(), "hello", []byte(`{"n":1}`), nil)
+				ok = err == nil && out.StatusCode == http.StatusOK && string(out.Body) == `{"ok":true}`
 			case "invoke error":
-				_, err = d.InvokeFunction(t.Context(), "hello", nil)
+				_, err = d.InvokeFunction(t.Context(), "hello", nil, nil)
 				var api *tb.APIError
 				ok = errors.As(err, &api) && api.Status == http.StatusTeapot && string(api.Body) == c.reply
 			case "logs":
@@ -85,7 +85,7 @@ func TestFunctionValidationBeforeHTTP(t *testing.T) {
 	}
 	d := c.Database(parityProject, "main")
 	for _, name := range []string{"", "Hello", "../x", "a/b"} {
-		if _, err := d.InvokeFunction(t.Context(), name, nil); err == nil || d.DeleteFunction(t.Context(), name) == nil {
+		if _, err := d.InvokeFunction(t.Context(), name, nil, nil); err == nil || d.DeleteFunction(t.Context(), name) == nil {
 			t.Errorf("accepted function name %q", name)
 		}
 	}
