@@ -6,7 +6,6 @@ using Npgsql;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Hrana;
 using TerraBase.Fast.Management;
-using TerraBase.Fast.Postgres;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Testing;
 
@@ -188,7 +187,7 @@ public sealed class SqlMeteringTests
         await SqlApi.OkAsync(api, Notes);
         await SendOkAsync(api, new { sql = "INSERT INTO notes VALUES (1, ?)", args = new object[] { Large() } });
         var key = await api.Server.IssueNarrowedAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, null, "documents:read");
-        await using var wire = await PostgresWireTests.RawClient.ConnectAsync(api.Server.PostgresPort, key, DocumentApi.Database);
+        await using var wire = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, DocumentApi.Database);
         await Assert.That(string.Concat(await wire.PortalAsync("SELECT body FROM notes", null))).IsEqualTo("12T3Z");
         await Assert.That(await UnitsAsync(api)).IsEqualTo((0L, 3L));
         await Assert.That(string.Concat(await wire.PortalAsync("SELECT body FROM notes", 1))).IsEqualTo("12TEZ");
