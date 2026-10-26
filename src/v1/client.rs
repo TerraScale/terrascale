@@ -980,6 +980,10 @@ fn backoff_with(policy: &RetryPolicy, attempt: u32, random: u128) -> Duration {
 mod auth_smoke;
 
 #[cfg(test)]
+#[path = "token_tests.rs"]
+mod token_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
