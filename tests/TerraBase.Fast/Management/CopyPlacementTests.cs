@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -11,6 +12,65 @@ namespace TerraBase.Fast.Management;
 public sealed class CopyPlacementTests
 {
     private static readonly string[] Replicas = ["fra"];
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_snapshot_in_a_replica_region_keeps_the_primary_and_enforces_the_database_allowance(bool atCapacity)
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-replica-restore-").FullName;
+        try
+        {
+            string user, organization, project, route;
+            await using (var gru = await ManagementApi.StartAsync(settings =>
+            {
+                settings["region"] = "gru";
+                settings["data-directory"] = directory;
+            }, new OtherRegions("fra", "sjc").Register))
+            {
+                user = gru.User;
+                organization = await gru.CreateOrganizationAsync("Replica restore");
+                project = await gru.CreateProjectAsync(organization, "Copies");
+                var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+                using var created = await gru.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = "source", replicaRegions = Replicas });
+                created.EnsureSuccessStatusCode();
+                route = $"{databases}/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
+            }
+
+            await using var fra = await ManagementApi.StartAsync(settings =>
+            {
+                settings["region"] = "fra";
+                settings["data-directory"] = directory;
+            }, services =>
+            {
+                new OtherRegions("gru", "sjc").Register(services);
+                if (atCapacity)
+                {
+                    services.AddSingleton(new DatabaseAllowance(_ => 1));
+                }
+            });
+            using var owner = fra.As(user);
+            using var backup = await owner.PostAsync(ManagementApi.Uri(route + "/backups"), null);
+            backup.EnsureSuccessStatusCode();
+            var id = (await backup.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+            using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri($"{route}/backups/{id}/restore"), new { name = "copy" });
+            await Assert.That(restored.StatusCode).IsEqualTo(atCapacity ? HttpStatusCode.Conflict : HttpStatusCode.Created).Because(await restored.Content.ReadAsStringAsync());
+            var body = await restored.Content.ReadFromJsonAsync<JsonElement>();
+            if (atCapacity)
+            {
+                await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("database_limit");
+            }
+            else
+            {
+                await Assert.That(body.GetProperty("homeRegion").GetString()).IsEqualTo("gru");
+                await Assert.That(body.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString())).IsEquivalentTo(Replicas);
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 
     [Test]
     [Arguments(false, false)]
