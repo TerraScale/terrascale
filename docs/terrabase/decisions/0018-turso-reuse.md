@@ -46,6 +46,7 @@ not measured speedups. S = one small PR; M = several focused PRs; L = protocol/n
 The first change affects only scratch-copy execution. No stored schema, digest, CDC record, wire frame, public API,
 LWW rule, commit sync or ack changes. Old and new nodes can serve together. The source remains a `TursoConnection`
 inside the same read transaction; only the private target uses the facade already used by production writers.
+The target explicitly creates its scratch file and disables provider pooling so its handle closes before publication.
 Bindings must be replaced on every row, including NULL, Unicode and BLOB values, across chunk boundaries.
 The target command dies before any later schema changes. Backup, copy, rewrite and restore share this path.
 
