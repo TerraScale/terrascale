@@ -68,7 +68,7 @@ for (const [folder, files] of [
   ['terrabase-js', ['quickstart.mjs', 'package.json', 'follow-changes.mjs']],
   ['terrabase-dotnet', ['Program.cs', 'TerraBaseStarter.csproj']],
   ['server-token-provider', ['server-client.mjs', 'package.json']],
-  ['typed-models', ['package.json', 'schema.json', 'verify-models.mjs', 'model-types.ts', 'tsconfig.json']],
+  ['typed-models', ['package.json', 'schema.json', 'verify-models.mjs', 'model-types.ts', 'tsconfig.json', 'live.ts']],
 ]) {
   for (const file of files) outputs.push([
     `docs/public/examples/${folder}/${file}`,

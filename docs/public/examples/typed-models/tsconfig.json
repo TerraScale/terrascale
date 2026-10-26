@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
     "strict": true, "exactOptionalPropertyTypes": true, "skipLibCheck": false,
-    "outDir": "dist", "rootDir": "."
+    "outDir": "dist", "rootDir": "..", "allowJs": true, "resolveJsonModule": true
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "../server-token-provider/server-client.mjs"]
 }
