@@ -17,6 +17,7 @@ public sealed class DatabaseBackendContractTests
     [Arguments("set-regions", "databases:write", true)]
     [Arguments("set-all-regions", "databases:write", true)]
     [Arguments("collections", "databases:read", true)]
+    [Arguments("sql-catalog", "documents:read", true)]
     [Arguments("sql", "documents:read", true)]
     [Arguments("sql-write", "documents:write", true)]
     [Arguments("indexes", "databases:read", true)]
@@ -44,6 +45,7 @@ public sealed class DatabaseBackendContractTests
                         "set-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], false, CancellationToken.None),
                         "set-all-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], true, CancellationToken.None),
                         "collections" => backend.CollectionsAsync(scope, home, DatabaseId, CancellationToken.None),
+                        "sql-catalog" => backend.SqlTablesAsync(scope, home, DatabaseId, CancellationToken.None),
                         "sql" => backend.SqlAsync(scope, home, DatabaseId, "SELECT * FROM items", false, CancellationToken.None),
                         "sql-write" => backend.SqlAsync(scope, home, DatabaseId, "DELETE FROM items", true, CancellationToken.None),
                         "indexes" => backend.IndexesAsync(scope, home, DatabaseId, CancellationToken.None),

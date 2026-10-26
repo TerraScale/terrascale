@@ -716,6 +716,8 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     }
     public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken) { var changed = databases[databaseId] with { ReplicaRegions = allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions = allRegions }; databases[databaseId] = changed; return Task.FromResult(changed); }
     public Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken) => Task.FromResult(documents.Statistics(scope, Database(scope, databaseId).Name));
+    public Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+    { Database(scope, databaseId); return Task.FromResult(new DatabaseSqlCatalog([], false)); }
     public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken) => Task.FromResult(documents.Query(scope, databases[databaseId].Name, statement));
     public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
     { Database(scope, databaseId); return Task.FromResult<IReadOnlyList<DatabaseIndex>>(indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray()); }

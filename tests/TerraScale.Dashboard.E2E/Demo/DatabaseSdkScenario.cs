@@ -859,6 +859,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var statements = (await JsonAsync(http)).GetProperty("statements");
                     Require(statements.GetArrayLength() == 1, "The dashboard runs one statement per request");
                     var sql = statements[0].GetProperty("sql").GetString()!;
+                    if (sql == "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 101")
+                        return Results.Json(new { results = new[] { new { columns = new[] { new { name = "name", decltype = (string?)null } }, rows = Array.Empty<object>(), rows_affected = 0 } } });
                     var match = System.Text.RegularExpressions.Regex.Match(sql, @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                     if (!match.Success)
                     {

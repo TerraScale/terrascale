@@ -35,6 +35,8 @@ public sealed record DatabaseRegion(string Code, string Id, string Name, string 
 public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false);
 public sealed record CollectionStats(string Name, long Documents, long Bytes);
 public sealed record DatabaseSqlRow(string Id, JsonElement Value);
+public sealed record DatabaseSqlCatalog(IReadOnlyList<DatabaseSqlTable> Tables, bool Truncated);
+public sealed record DatabaseSqlTable(string Name, IReadOnlyList<DatabaseSqlColumn> Columns);
 public sealed record DatabaseSqlColumn(string Name, string? Decltype);
 // One relational statement's result from TerraBase POST .../sql/execute: columns, rows (one value per column), and write counts.
 public sealed record DatabaseSqlResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows, long RowsAffected, long? LastInsertRowId);
@@ -63,6 +65,7 @@ public interface IDatabaseBackend
     Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
+    Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken);
     Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken);
@@ -199,10 +202,15 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             .Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes)).ToArray();
     }
 
-    // ts-dotnet 0.0.4 has no wrapper for TerraBase's relational SQL route yet (Ku TS-907), so this posts one statement to
-    // POST /v1/projects/{project}/databases/{name}/sql/execute with the same current-user, action-scoped token as the SDK calls.
-    // Reads ask for documents:read only; writes and DDL also ask for documents:write. TerraBase's own error message is kept.
+    // SQL HTTP bridge (TS-907): execution and catalog batches share current-user authority, region pin and JSON bounds.
     public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
+    {
+        var result = (await SqlBatchAsync(scope, home, databaseId, [new(statement)], write, cancellationToken))[0];
+        return new(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid);
+    }
+
+    private async Task<IReadOnlyList<SqlExecuteResult>> SqlBatchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId,
+        IReadOnlyList<SqlExecuteStatement> statements, bool write, CancellationToken cancellationToken)
     {
         if (PlatformDatabases.IsPlatform(scope.OrganizationId)) throw PlatformDatabases.ReadOnly();
         var name = await NameAsync(scope, home, databaseId, cancellationToken);
@@ -211,7 +219,7 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(60));
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, "/v1/projects/" + Uri.EscapeDataString(scope.ProjectId) + "/databases/" + Uri.EscapeDataString(name) + "/sql/execute"))
-        { Content = JsonContent.Create(new SqlExecuteRequest([new(statement)]), DatabaseSqlJson.Default.SqlExecuteRequest) };
+        { Content = JsonContent.Create(new SqlExecuteRequest(statements), DatabaseSqlJson.Default.SqlExecuteRequest) };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
@@ -229,9 +237,39 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             throw (int)response.StatusCode is 400 or 403 or 409 or 413 && body?.Error is { Message.Length: > 0 } refused
                 ? new DatabaseSqlException(response.StatusCode, refused.Code == "forbidden_scope" ? "Write access is required to change data or schema." : refused.Message)
                 : new DatabaseProviderException(response.StatusCode);
-        if (body?.Results is not [{ } result] || result.Rows.Any(row => row.Count != result.Columns.Count))
+        if (body?.Results is not { } results || results.Count != statements.Count || results.Any(result => result is null || result.Columns is null || result.Rows is null ||
+            result.Columns.Any(column => column is null) || result.Rows.Any(row => row is null || row.Count != result.Columns.Count)))
             throw new HttpRequestException("TerraBase returned an invalid SQL result.");
-        return new(result.Columns.Select(column => new DatabaseSqlColumn(column.Name, column.Decltype)).ToArray(), result.Rows, result.RowsAffected, result.LastInsertRowid);
+        return results;
+    }
+
+    public async Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        var listed = (await SqlBatchAsync(scope, home, databaseId,
+            [new("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 101")], false, timeout.Token))[0];
+        if (listed.Rows.Count > 101) throw new HttpRequestException("TerraBase returned an invalid SQL catalog.");
+        var names = listed.Rows.Select(row => CatalogText(listed, row, "name")).ToArray();
+        if (names.Any(string.IsNullOrWhiteSpace) || names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Length)
+            throw new HttpRequestException("TerraBase returned an invalid SQL catalog.");
+        if (names.Length == 0) return new([], false);
+        var columns = await SqlBatchAsync(scope, home, databaseId,
+            names.Take(100).Select(name => new SqlExecuteStatement("PRAGMA table_info('" + name.Replace("'", "''", StringComparison.Ordinal) + "')")).ToArray(), false, timeout.Token);
+        var tables = columns.Select((result, index) => new DatabaseSqlTable(names[index], result.Rows.Select(row =>
+            new DatabaseSqlColumn(CatalogText(result, row, "name"), CatalogText(result, row, "type"))).ToArray())).ToArray();
+        // A dropped table answers no metadata; fail this snapshot instead of presenting stale tables as complete.
+        if (tables.Any(table => table.Columns.Count == 0 || table.Columns.Any(column => string.IsNullOrWhiteSpace(column.Name)) ||
+            table.Columns.Select(column => column.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != table.Columns.Count))
+            throw new HttpRequestException("TerraBase returned incomplete SQL metadata. Refresh the catalog.");
+        return new(tables, names.Length > 100);
+    }
+
+    private static string CatalogText(SqlExecuteResult result, IReadOnlyList<JsonElement> row, string field)
+    {
+        var index = result.Columns.ToList().FindIndex(column => column.Name == field);
+        return index >= 0 && row[index].ValueKind == JsonValueKind.String ? row[index].GetString()!
+            : throw new HttpRequestException("TerraBase returned invalid SQL metadata.");
     }
 
     public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
