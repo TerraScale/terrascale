@@ -14,6 +14,8 @@ namespace TerraBase.Fast.Platform;
 /// </summary>
 public sealed class PlatformPlacementLockTests
 {
+    private const string LockedMessage = "platform databases are placed in every region and their placement cannot change";
+
     [Test]
     [Arguments(PlatformDatabases.AuthProjectId, PlatformDatabases.Auth)]
     [Arguments(PlatformDatabases.DashboardProjectId, PlatformDatabases.Dashboard)]
@@ -48,7 +50,7 @@ public sealed class PlatformPlacementLockTests
         ];
         foreach (var body in refused)
         {
-            await ErrorAssert.ErrorAsync(projectClient.PatchAsJsonAsync(route, body, cancellationToken), HttpStatusCode.Conflict, "platform_placement_locked");
+            await ErrorAssert.ErrorAsync(projectClient.PatchAsJsonAsync(route, body, cancellationToken), HttpStatusCode.Conflict, "platform_placement_locked", LockedMessage);
         }
 
         // The unchanged placement is accepted and writes nothing.
@@ -67,7 +69,7 @@ public sealed class PlatformPlacementLockTests
         await Assert.That(branchRecord.ReplicaCount).IsEqualTo(0);
         await ErrorAssert.ErrorAsync(
             projectClient.PatchAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{name}-branch"), new { replicaRegions = Array.Empty<string>() }, cancellationToken),
-            HttpStatusCode.Conflict, "platform_placement_locked");
+            HttpStatusCode.Conflict, "platform_placement_locked", LockedMessage);
     }
 
     private sealed record Placement(string? HomeRegion, bool AllRegions, long Version, int ReplicaCount);
