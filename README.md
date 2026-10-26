@@ -161,3 +161,12 @@ server. Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
 GitHub release for it; the publish workflow uploads to PyPI with trusted publishing.
 
 License: Apache-2.0.
+
+`401 key_revoked` and `401 key_expired` raise `KeyRevokedError` and
+`KeyExpiredError`, subclasses of `AuthenticationError` retaining `code` and
+`message`. They never retry or refresh. Built-in sync and async token sources
+drop cached tokens and remain refused, including during in-flight exchanges;
+create a new source/client with a replacement key. Token endpoint
+`invalid_client` is a terminal `TokenError`. Caller-owned providers must discard
+refused tokens themselves. `503 auth_unavailable` follows the existing safe-read
+backoff and `Retry-After` policy without discarding the cached token.

@@ -14,6 +14,8 @@ __all__ = [
     "InvalidRequestError",
     "InvalidResponseError",
     "AuthenticationError",
+    "KeyRevokedError",
+    "KeyExpiredError",
     "PermissionDeniedError",
     "NotFoundError",
     "ConflictError",
@@ -98,6 +100,14 @@ class AuthenticationError(APIError):
     """401: the access token is missing, expired or invalid."""
 
 
+class KeyRevokedError(AuthenticationError):
+    """401 key_revoked: permanent; replace the key without retry or exchange."""
+
+
+class KeyExpiredError(AuthenticationError):
+    """401 key_expired: permanent; replace the key without retry or exchange."""
+
+
 class PermissionDeniedError(APIError):
     """403: the token lacks a scope, e.g. ``forbidden_scope``."""
 
@@ -134,6 +144,8 @@ class CommitUncertainError(APIError):
 
 
 _BY_CODE: dict[str, type[APIError]] = {
+    "key_revoked": KeyRevokedError,
+    "key_expired": KeyExpiredError,
     "unique_violation": UniqueViolationError,
     "commit_uncertain": CommitUncertainError,
     "write_outcome_unknown": CommitUncertainError,
