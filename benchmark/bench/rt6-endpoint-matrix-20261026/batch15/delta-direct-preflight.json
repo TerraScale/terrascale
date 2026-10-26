@@ -1,0 +1,62 @@
+[
+  {
+    "target_sha": "f8b0c3270",
+    "sha_source": "COS batch15 rollout notice",
+    "region": "gru",
+    "ip": "163.176.124.12",
+    "at": "2026-10-26T14:40:20Z",
+    "ready_status": 200,
+    "ready_region": "gru",
+    "ready_machine": "ts-gru-2",
+    "ready": {
+      "status": "ready",
+      "version": "0.1.0",
+      "region": "gru"
+    },
+    "postgres_tls": "TLSv1.3",
+    "postgres_cert_verified": true,
+    "wire_tls": "TLSv1.3",
+    "wire_cert_verified": true,
+    "wire_matrix": "blocked_no_authenticated_key"
+  },
+  {
+    "target_sha": "f8b0c3270",
+    "sha_source": "COS batch15 rollout notice",
+    "region": "sjc",
+    "ip": "163.192.54.17",
+    "at": "2026-10-26T14:40:20Z",
+    "ready_status": 200,
+    "ready_region": "sjc",
+    "ready_machine": "ts-sjc-1",
+    "ready": {
+      "status": "ready",
+      "version": "0.1.0",
+      "region": "sjc"
+    },
+    "postgres_tls": "TLSv1.3",
+    "postgres_cert_verified": true,
+    "wire_tls": "TLSv1.3",
+    "wire_cert_verified": true,
+    "wire_matrix": "blocked_no_authenticated_key"
+  },
+  {
+    "target_sha": "f8b0c3270",
+    "sha_source": "COS batch15 rollout notice",
+    "region": "fra",
+    "ip": "130.162.238.198",
+    "at": "2026-10-26T14:40:22Z",
+    "ready_status": 200,
+    "ready_region": "fra",
+    "ready_machine": "ts-fra-1",
+    "ready": {
+      "status": "ready",
+      "version": "0.1.0",
+      "region": "fra"
+    },
+    "postgres_tls": "TLSv1.3",
+    "postgres_cert_verified": true,
+    "wire_tls": "TLSv1.3",
+    "wire_cert_verified": true,
+    "wire_matrix": "blocked_no_authenticated_key"
+  }
+]
