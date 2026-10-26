@@ -84,6 +84,8 @@ Point load balancers and reverse proxies (Caddy) at the client listener's `/read
 Target replication design (Turso + CDC + lattices across gru and sjc, with its slice plan):
 [`multi-region-replication.md`](multi-region-replication.md). It replaces the replication described below.
 
+Two regions accepting one database name keep both databases: [database name conflicts](database-name-conflicts.md).
+
 Replication setup, certificates, limits and metrics: [`docs/terrabase/replication.md`](replication.md).
 `GET /replication` on the internal listener reports outbound per-peer
 and per-database durable lag, detected journal conflicts and catch-up times; see

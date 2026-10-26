@@ -1,6 +1,8 @@
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -8,6 +10,9 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
+    private const int MaxDatabaseName = 63;
+    private const string ConflictActor = "system";
+
     internal async ValueTask ConvergeAsync(CancellationToken cancellationToken)
     {
         if (!catalogGate.Value.IsOpen)
@@ -85,43 +90,159 @@ internal sealed partial class EngineManagementService
     private async ValueTask ConvergeDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var (projectId, databaseId) = (database.ProjectId!, database.DatabaseId!);
-        var (deleted, found, named, rivalWins) = await ReadAsync<(bool Deleted, ManagedDatabase? Record, string? Named, bool RivalWins)>(async transaction =>
+        var (deleted, found, named, winner, stale) = await ReadAsync<(bool Deleted, ManagedDatabase? Record, string? Named, string? Winner, bool Stale)>(async transaction =>
         {
             if (await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false))
             {
-                return (true, null, null, false);
+                return (true, null, null, null, false);
             }
 
             var version = await transaction.GetVersionAsync(Databases(projectId), databaseId, cancellationToken).ConfigureAwait(false);
             if (version is not { Deleted: false })
             {
-                return (version is { Deleted: true }, null, null, false);
+                return (version is { Deleted: true }, null, null, null, false);
             }
 
             var record = await GetAsync(transaction, Databases(projectId), databaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
-            var name = record is null ? null : await GetAsync(transaction, DatabaseNames(projectId), record.Name, Id, cancellationToken).ConfigureAwait(false);
-            var wins = name is not null && name != databaseId && string.CompareOrdinal(name, databaseId) < 0
-                && await GetAsync(transaction, Databases(projectId), name, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } rival
-                && rival.Name == record!.Name;
-            return (false, record, name, wins);
-        }, static _ => (false, null, null, false), cancellationToken).ConfigureAwait(false);
+            if (record is null)
+            {
+                return (false, null, null, null, false);
+            }
+
+            var name = await GetAsync(transaction, DatabaseNames(projectId), record.Name, Id, cancellationToken).ConfigureAwait(false);
+            var winner = await NameWinnerAsync(transaction, record, name, cancellationToken).ConfigureAwait(false);
+            return (false, record, name, winner, await StaleNamesAsync(transaction, record, cancellationToken).ConfigureAwait(false) is not []);
+        }, static _ => (false, null, null, null, false), cancellationToken).ConfigureAwait(false);
 
         if (deleted)
         {
             await DropLocalAsync(database, cancellationToken).ConfigureAwait(false);
         }
-        else if (found is { } record && named != databaseId)
+        else if (found is not { } record)
         {
-            if (rivalWins)
+            return;
+        }
+        else if (winner is not null)
+        {
+            // One writer per loser, its home region, so the move and its audit event are recorded once.
+            if (record.Home(options.Region) == options.Region)
             {
-                await LoseNameAsync(database, record, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                await ClaimNameAsync(record, cancellationToken).ConfigureAwait(false);
+                await KeepLoserAsync(record, database.OrganizationId, cancellationToken).ConfigureAwait(false);
             }
         }
+        else if (named != databaseId)
+        {
+            await ClaimNameAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+        else if (stale)
+        {
+            await DropStaleNamesAsync(record, cancellationToken).ConfigureAwait(false);
+        }
     }
+
+    // The smaller id holding the database's name in the index (`named`) under the same name: that database keeps the name.
+    private static async ValueTask<string?> NameWinnerAsync(IStorageTransaction transaction, ManagedDatabase record, string? named, CancellationToken cancellationToken) =>
+        named is not null
+        && string.CompareOrdinal(named, record.Id) < 0
+        && await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } rival
+        && rival.Name == record.Name
+            ? named
+            : null;
+
+    // The database that lost its name keeps its id, data, backups, keys and file under the first free name every region
+    // derives alike (docs/terrabase/database-name-conflicts.md). A name conflict never deletes a database.
+    private async ValueTask KeepLoserAsync(ManagedDatabase record, string organizationId, CancellationToken cancellationToken) =>
+        _ = await WriteAsync<bool>(async transaction =>
+        {
+            if (await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } current
+                || await NameWinnerAsync(transaction, current, await GetAsync(transaction, DatabaseNames(current.ProjectId), current.Name, Id, cancellationToken).ConfigureAwait(false),
+                    cancellationToken).ConfigureAwait(false) is not { } winner)
+            {
+                return false;
+            }
+
+            // A database that loses a conflict name again keeps the name its customer chose, and the database that holds it.
+            var kept = current.ConflictOf is null ? current with { PreviousName = current.Name, ConflictOf = winner } : current;
+            return await MoveToFreeNameAsync(transaction, organizationId, kept, ConflictNames(kept.PreviousName ?? current.Name, current.Id), cancellationToken)
+                .ConfigureAwait(false)
+                ? true
+                : throw new InvalidOperationException("every conflict name of a database that lost its name is held");
+        }, static _ => false, cancellationToken).ConfigureAwait(false);
+
+    // The names a database that lost `name` tries, in order: the name, cut to fit the database name rules, then
+    // "-conflict-" and a longer tail of the database's own lowercase id each time. Every region derives the same list.
+    private static IEnumerable<string> ConflictNames(string name, string id)
+    {
+        foreach (var length in (int[])[6, 8, 10, 13, 16, 20, 26])
+        {
+            var suffix = $"-conflict-{id[^Math.Min(length, id.Length)..].ToLowerInvariant()}";
+            yield return name[..Math.Min(name.Length, MaxDatabaseName - suffix.Length)] + suffix;
+        }
+    }
+
+    // Moves a database that lost a name race to the first of `candidates` no other database holds, in the caller's
+    // transaction, and records the move in the organization's audit log. Its id, data, backups and file stay, and requests
+    // by id keep working; the lost name serves its holder only. False when every candidate is held.
+    private async ValueTask<bool> MoveToFreeNameAsync(
+        IStorageTransaction transaction, string organizationId, ManagedDatabase database, IEnumerable<string> candidates, CancellationToken cancellationToken)
+    {
+        foreach (var name in candidates)
+        {
+            if (await NameHolderAsync(transaction, database.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } holder && holder != database.Id)
+            {
+                continue;
+            }
+
+            var json = EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(database with { Name = name }, TerraBaseJsonContext.Default.ManagedDatabase), database.Id, nested: true);
+            FieldOperation[] fields =
+            [
+                new(FieldOperationKind.Set, "name", JsonSerializer.SerializeToElement(name, Id)),
+                new(FieldOperationKind.Set, "previousName", JsonSerializer.SerializeToElement(database.PreviousName!, Id)),
+                new(FieldOperationKind.Set, "conflictOf", JsonSerializer.SerializeToElement(database.ConflictOf!, Id)),
+            ];
+            _ = await transaction.PatchAsync(Databases(database.ProjectId), database.Id, json, fields, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.Id, Id, cancellationToken).ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, ConflictActor, "database.name_conflict", database.Id,
+                $"{database.PreviousName} is held by {database.ConflictOf}; this database is kept as {name}", cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        return false;
+    }
+
+    // Index entries that still point at the database under a name it no longer carries: its previous name and its conflict names.
+    private static async ValueTask<List<string>> StaleNamesAsync(IStorageTransaction transaction, ManagedDatabase record, CancellationToken cancellationToken)
+    {
+        List<string> stale = [];
+        if (record.PreviousName is { } previous)
+        {
+            foreach (var name in ConflictNames(previous, record.Id).Prepend(previous))
+            {
+                if (name != record.Name && await GetAsync(transaction, DatabaseNames(record.ProjectId), name, Id, cancellationToken).ConfigureAwait(false) == record.Id)
+                {
+                    stale.Add(name);
+                }
+            }
+        }
+
+        return stale;
+    }
+
+    private async ValueTask DropStaleNamesAsync(ManagedDatabase record, CancellationToken cancellationToken) =>
+        _ = await WriteAsync<bool>(async transaction =>
+        {
+            if (await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } current)
+            {
+                return false;
+            }
+
+            foreach (var name in await StaleNamesAsync(transaction, current, cancellationToken).ConfigureAwait(false))
+            {
+                _ = await transaction.DeleteAsync(DatabaseNames(current.ProjectId), name, cancellationToken).ConfigureAwait(false);
+            }
+
+            return true;
+        }, static _ => false, cancellationToken).ConfigureAwait(false);
 
     private async ValueTask DropLocalAsync(TenantContext database, CancellationToken cancellationToken)
     {
@@ -173,21 +294,23 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    private async ValueTask LoseNameAsync(TenantContext database, ManagedDatabase record, CancellationToken cancellationToken) =>
-        _ = await DeleteRecordedAsync(database, async (transaction, token) =>
+    // The database that holds a name in the project: its index entry's, unless that database is deleted or now carries
+    // another name. A database whose record has not replicated here yet still holds its name.
+    private static async ValueTask<string?> NameHolderAsync(IStorageTransaction transaction, string projectId, string name, CancellationToken cancellationToken)
+    {
+        if (await GetAsync(transaction, DatabaseNames(projectId), name, Id, cancellationToken).ConfigureAwait(false) is not { } named)
         {
-            var current = await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, token).ConfigureAwait(false);
-            var named = current is null ? null : await GetAsync(transaction, DatabaseNames(record.ProjectId), current.Name, Id, token).ConfigureAwait(false);
-            if (current is null || named is null || string.CompareOrdinal(named, record.Id) >= 0
-                || await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, token).ConfigureAwait(false) is not { } winner
-                || winner.Name != current.Name)
-            {
-                return false;
-            }
+            return null;
+        }
 
-            _ = await UnregisterRecordAsync(transaction, database, current, token, releaseName: false).ConfigureAwait(false);
-            return true;
-        }, cancellationToken).ConfigureAwait(false);
+        // Every name lookup pays this read, so the record is read raw and the version only when there is no record.
+        if (await transaction.GetAsync(Databases(projectId), named, cancellationToken).ConfigureAwait(false) is { } holder)
+        {
+            return EntityPayload.Read(holder, TerraBaseJsonContext.Default.ManagedDatabase)?.Name == name ? named : null;
+        }
+
+        return await transaction.GetVersionAsync(Databases(projectId), named, cancellationToken).ConfigureAwait(false) is { Deleted: true } ? null : named;
+    }
 
     private async ValueTask ClaimNameAsync(ManagedDatabase record, CancellationToken cancellationToken) =>
         _ = await WriteAsync<bool>(async transaction =>
@@ -197,11 +320,10 @@ internal sealed partial class EngineManagementService
                 return false;
             }
 
-            var named = await GetAsync(transaction, DatabaseNames(record.ProjectId), current.Name, Id, cancellationToken).ConfigureAwait(false);
+            var named = await NameHolderAsync(transaction, record.ProjectId, current.Name, cancellationToken).ConfigureAwait(false);
             if (named == current.Id
-                || (named is not null && string.CompareOrdinal(named, current.Id) < 0
-                    && await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } rival
-                    && rival.Name == current.Name))
+                || (named is not null && (string.CompareOrdinal(named, current.Id) < 0
+                    || await GetAsync(transaction, Databases(record.ProjectId), named, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)))
             {
                 return false;
             }
