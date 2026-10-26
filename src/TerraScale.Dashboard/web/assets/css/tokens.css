@@ -27,6 +27,15 @@
   --ts-ink-2: #a8a8a8;
   --ts-ink-3: #9a9a9a;
 
+  /* Monaco/Shiki syntax and widget depth, consumed by code-editor/theme.js. */
+  --ts-syn-keyword: #7ea6ff;
+  --ts-syn-string: #86efac;
+  --ts-syn-number: #fdba74;
+  --ts-syn-comment: #8f8f8f;
+  --ts-syn-fn: #fafafa;
+  --ts-syn-punct: #a3a3a3;
+  --ts-shadow: rgb(0 0 0 / 0.60);
+
   /* Logo blue fills; text and focus use --ts-link and --ts-focus instead. */
   --ts-accent: #2158e8;
   --ts-accent-soft: rgb(33 88 232 / 0.18);
