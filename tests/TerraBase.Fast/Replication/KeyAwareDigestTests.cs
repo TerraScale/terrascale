@@ -109,7 +109,9 @@ public sealed class KeyAwareDigestTests
         await gru.SeedAsync(states);
         await sjc.SeedAsync(states);
         // Digests compared and rounds run before the loss: nothing may depend on a check made only once per copy.
-        await Assert.That((await sjc.DigestsAsync()).SequenceEqual(await gru.DigestsAsync())).IsTrue();
+        var before = await sjc.DigestsAsync();
+        var beforePeer = await gru.DigestsAsync();
+        await Assert.That(before.SequenceEqual(beforePeer)).IsTrue();
         await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
         await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
 
@@ -135,7 +137,8 @@ public sealed class KeyAwareDigestTests
             await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
             await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
             var matched = await sjc.DigestsAsync();
-            await Assert.That(matched.SequenceEqual(await gru.DigestsAsync())).IsTrue().Because($"round {round}");
+            var matchedPeer = await gru.DigestsAsync();
+            await Assert.That(matched.SequenceEqual(matchedPeer)).IsTrue().Because($"round {round}");
             await Assert.That((await sjc.MerkleAsync()).SequenceEqual(matched)).IsTrue().Because($"round {round}");
         }
 
