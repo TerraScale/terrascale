@@ -286,7 +286,7 @@ public sealed class OidcRetentionTests(TerraBaseFixture fixture)
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var now = DateTimeOffset.UtcNow;
         var issuedRecords = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 100)).Items;
-        await Assert.That(issuedRecords.Select(record => record.Document.GetProperty("type").GetString())).IsEquivalentTo(
+        await Assert.That(issuedRecords.Select(record => record.Document.GetProperty("type").GetString() ?? string.Empty)).IsEquivalentTo(
             [TokenTypeIdentifiers.Private.AuthorizationCode, TokenTypeIdentifiers.RefreshToken, TokenTypeIdentifiers.AccessToken, TokenTypeIdentifiers.IdentityToken]);
         var eligibleIds = issuedRecords.Where(record => record.Document.GetProperty("type").GetString()
             is TokenTypeIdentifiers.Private.AuthorizationCode or TokenTypeIdentifiers.RefreshToken).Select(record => record.Id).ToArray();

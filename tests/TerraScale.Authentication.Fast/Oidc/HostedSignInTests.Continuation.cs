@@ -178,8 +178,12 @@ public sealed partial class HostedSignInTests
         var responseHeaders = response.Headers.Concat(response.Content.Headers)
             .Where(header => header.Key is not ("Content-Length" or "Transfer-Encoding"))
             .ToDictionary(header => header.Key, header => string.Join(", ", header.Value));
-        await route.FulfillAsync(new() { Status = (int)response.StatusCode, Headers = responseHeaders,
-            BodyBytes = await response.Content.ReadAsByteArrayAsync(deadline.Token) });
+        await route.FulfillAsync(new()
+        {
+            Status = (int)response.StatusCode,
+            Headers = responseHeaders,
+            BodyBytes = await response.Content.ReadAsByteArrayAsync(deadline.Token),
+        });
     }
 
     [Test]
