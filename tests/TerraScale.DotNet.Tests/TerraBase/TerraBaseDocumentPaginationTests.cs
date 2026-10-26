@@ -36,7 +36,7 @@ public sealed class TerraBaseDocumentPaginationTests
         await Assert.That(await pages.MoveNextAsync()).IsFalse();
         await Assert.That(bodies.Count).IsEqualTo(2);
         await Assert.That(query.Cursor).IsEqualTo("opaque/+initial=");
-        await Assert.That(query.Count).IsEqualTo(true);
+        await Assert.That(query.Count).IsTrue();
         await Assert.That(bodies[0].GetProperty("count").GetBoolean()).IsTrue();
         await Assert.That(bodies[1].GetProperty("count").GetBoolean()).IsFalse();
         await Assert.That(bodies[0].GetProperty("cursor").GetString()).IsEqualTo(query.Cursor);
