@@ -385,8 +385,11 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
     private static async Task Denied(HttpClient client, HttpMethod method, string path, string cookie)
     {
         using var response = await Request(client, method, path, cookie);
-        Check(response.StatusCode == HttpStatusCode.Forbidden && await response.Content.ReadAsStringAsync() == "forbidden\n" &&
-            response.Content.Headers.ContentType?.MediaType == "text/plain", "Ordinary owner cannot access administration: " + path);
+        var body = await response.Content.ReadAsStringAsync();
+        var mediaType = path.StartsWith("/api/", StringComparison.Ordinal) ? "application/problem+json" : "text/html";
+        Check(response.StatusCode == HttpStatusCode.Forbidden && body.Contains("Your account does not have platform admin access.", StringComparison.Ordinal) &&
+            body.Contains(response.Headers.GetValues("X-Request-ID").Single(), StringComparison.Ordinal) &&
+            response.Content.Headers.ContentType?.MediaType == mediaType, "Ordinary owner cannot access administration: " + path);
     }
 
     private static Task<HttpResponseMessage> Request(HttpClient client, HttpMethod method, string path, string cookie)

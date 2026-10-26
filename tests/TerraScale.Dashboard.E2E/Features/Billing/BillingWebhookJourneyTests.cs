@@ -177,6 +177,22 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
         }
         var contentLength = Regex.Match(head.ToString(), "Content-Length: (\\d+)", RegexOptions.IgnoreCase);
         if (contentLength.Success) await stream.ReadExactlyAsync(new byte[int.Parse(contentLength.Groups[1].Value)]);
+        else if (head.ToString().Contains("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase))
+        {
+            // Error responses now carry problem JSON; consume its framing before the next response.
+            while (true)
+            {
+                var line = new StringBuilder();
+                while (!line.ToString().EndsWith("\r\n", StringComparison.Ordinal))
+                {
+                    await stream.ReadExactlyAsync(one);
+                    line.Append((char)one[0]);
+                }
+                var size = int.Parse(line.ToString().Trim().Split(';')[0], System.Globalization.NumberStyles.HexNumber);
+                await stream.ReadExactlyAsync(new byte[size + 2]);
+                if (size == 0) break;
+            }
+        }
         return head.ToString();
     }
 

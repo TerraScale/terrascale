@@ -284,7 +284,9 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
 
     private static async Task<JsonElement> AdmissionAsync(HttpClient client, object command, HttpStatusCode expected = HttpStatusCode.OK)
     {
-        using var response = await client.PostAsJsonAsync("/__test/state-admission", command);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/__test/state-admission") { Content = JsonContent.Create(command) };
+        request.Headers.Accept.ParseAdd("application/json");
+        using var response = await client.SendAsync(request);
         var text = await response.Content.ReadAsStringAsync();
         Check(response.StatusCode == expected, "Admission harness status: " + response.StatusCode + " expected " + expected + ": " + text);
         if (string.IsNullOrEmpty(text)) return default;

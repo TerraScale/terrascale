@@ -39,6 +39,7 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardRootFixture fixture)
                 };
             });
         using var owner = scenario.CreateClient();
+        owner.DefaultRequestHeaders.Accept.ParseAdd("text/html"); // Native browser form navigation.
         using var replica = scenario.CreateClient(replica: true);
         using var producer = scenario.CreateProviderClient();
         var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(owner);

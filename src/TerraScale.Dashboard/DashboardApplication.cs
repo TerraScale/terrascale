@@ -2,7 +2,6 @@ using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
@@ -170,14 +169,7 @@ public static class DashboardApplication
             catch (AccountAccessException error)
             {
                 if (context.Response.HasStarted) throw;
-                if (AcceptsJson(context))
-                {
-                    await Results.Problem(error.Message, statusCode: error.StatusCode).ExecuteAsync(context);
-                    return;
-                }
-                context.Response.StatusCode = error.StatusCode;
-                context.Response.ContentType = "text/plain; charset=utf-8";
-                await context.Response.WriteAsync(error.Message + "\n", context.RequestAborted);
+                await RequestError.Response(context, error.StatusCode, error.Message).ExecuteAsync(context);
             }
             catch (Exception error) when (error is HttpRequestException or IOException or JsonException or TimeoutException or Stripe.StripeException ||
                                           error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
@@ -198,24 +190,15 @@ public static class DashboardApplication
             {
                 app.Logger.LogError("Dashboard request failed ({ErrorType})", error.GetType().Name);
                 context.Response.Clear();
-                if (AcceptsJson(context))
-                {
-                    await Results.Problem("The dashboard could not complete the request. Try again shortly.", statusCode: StatusCodes.Status500InternalServerError).ExecuteAsync(context);
-                    return;
-                }
-                var view = Shared.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
-                view.StatusCode = StatusCodes.Status500InternalServerError;
-                await ((IResult)view).ExecuteAsync(context);
+                await RequestError.Response(context, StatusCodes.Status500InternalServerError).ExecuteAsync(context);
             }
         });
         app.Use((context, next) => context.Request.Path.StartsWithSegments("/metrics")
             ? slo.ScrapeAsync(context, context.Request.Path == "/metrics" && HttpMethods.IsGet(context.Request.Method) && context.Items[privateScrapeKey] is true)
             : next(context));
-        // Bodiless failures (401 from an expired session, unknown API routes) still tell JSON clients the status and cause.
-        app.UseStatusCodePages(status => AcceptsJson(status.HttpContext)
-            ? Results.Problem(status.HttpContext.Response.StatusCode == StatusCodes.Status401Unauthorized ? "Sign in to TerraScale to use this API." : ReasonPhrases.GetReasonPhrase(status.HttpContext.Response.StatusCode) + ".",
-                statusCode: status.HttpContext.Response.StatusCode).ExecuteAsync(status.HttpContext)
-            : Task.CompletedTask);
+        // Browser forms and API clients both get an actionable body for otherwise empty failures.
+        app.UseStatusCodePages(status => RequestError.Response(status.HttpContext,
+            status.HttpContext.Response.StatusCode).ExecuteAsync(status.HttpContext));
         app.UseStaticFiles(new StaticFileOptions
         {
             OnPrepareResponse = response =>
@@ -271,6 +254,5 @@ public static class DashboardApplication
         return app;
     }
 
-    private static bool AcceptsJson(HttpContext context) =>
-        context.Request.Headers.Accept.Any(value => value is not null && value.Contains("json", StringComparison.OrdinalIgnoreCase));
+    private static bool AcceptsJson(HttpContext context) => RequestError.WantsJson(context);
 }

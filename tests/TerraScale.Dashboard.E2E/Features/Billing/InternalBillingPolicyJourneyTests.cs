@@ -856,7 +856,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await CheckAsync(identity.GetProperty("email").GetString() == email && identity.GetProperty("onboardingCompleted").GetBoolean(),
             "Native identity exposes the genuinely verified second account and persisted completed onboarding");
         using var denied = await browser.GetAsync("/admin/users");
-        await CheckAsync(denied.StatusCode == HttpStatusCode.Forbidden && await denied.Content.ReadAsStringAsync() == "forbidden\n",
+        await CheckAsync(denied.StatusCode == HttpStatusCode.Forbidden && (await denied.Content.ReadAsStringAsync()).Contains("Your account does not have platform admin access.", StringComparison.Ordinal),
             "The nominee's own forced signed refresh carries no platform role and cannot turn organization ownership into operator authority");
         var observed = await ObserveAsync(producer);
         var principal = observed.GetProperty("registeredPrincipals").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == subject);

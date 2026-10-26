@@ -268,8 +268,20 @@ public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)
 
     private static async Task DeniedIdentity(HttpResponseMessage response, string action)
     {
-        Check(response.StatusCode == HttpStatusCode.Unauthorized && await response.Content.ReadAsStringAsync() == "Account identity does not match.\n",
-            action + " must fail closed with the exact safe identity error");
+        Check(response.StatusCode == HttpStatusCode.Unauthorized, action + " must fail closed");
+        var body = await response.Content.ReadAsStringAsync();
+        if (response.Content.Headers.ContentType?.MediaType == "application/problem+json")
+        {
+            using var problem = JsonDocument.Parse(body);
+            Check(problem.RootElement.GetProperty("detail").GetString() == "Account identity does not match.",
+                action + " must retain the exact safe identity error in problem JSON");
+        }
+        else
+            Check(response.Content.Headers.ContentType?.MediaType == "text/html" &&
+                body.Contains("Account identity does not match.", StringComparison.Ordinal) && body.Contains("Sign in again", StringComparison.Ordinal),
+                action + " must render the safe identity error and recovery in HTML");
+        Check(body.Contains(response.Headers.GetValues("X-Request-ID").Single(), StringComparison.Ordinal),
+            action + " must include the request ID");
     }
 
     private static async Task<JsonElement> User(HttpClient client)
