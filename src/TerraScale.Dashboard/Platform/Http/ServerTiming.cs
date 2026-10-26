@@ -119,8 +119,12 @@ public sealed class ServerTiming
 
     public static async Task MiddlewareAsync(HttpContext context, Func<Task> next, ILogger logger)
     {
-        var timing = new ServerTiming { reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method), logger = logger,
-            probe = context.Request.Path == "/readyz" || context.Request.Path == "/health/ready" };
+        var timing = new ServerTiming
+        {
+            reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method),
+            logger = logger,
+            probe = context.Request.Path == "/readyz" || context.Request.Path == "/health/ready"
+        };
         Current.Value = timing;
         context.Response.OnStarting(() =>
         {

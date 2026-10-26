@@ -75,12 +75,8 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
     }
 
     public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
-        // Only account-context snapshots coalesce. Session leases and credentials must observe rotations,
-        // revocation and CAS updates from another request even while this request has sent no write.
-        => collection is "dashboard_accounts" or "dashboard_account_identities" or "dashboard_organizations"
-            ? await TerraScale.Dashboard.Platform.Http.ServerTiming.ReadAsync((this, collection, id),
-                () => GetDocumentAsync(collection, id, cancellationToken))
-            : await GetDocumentAsync(collection, id, cancellationToken);
+        // Coordination, account and billing rereads must observe other requests' writes too.
+        => await GetDocumentAsync(collection, id, cancellationToken);
 
     private async Task<TerraBaseDocument?> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken)
     {

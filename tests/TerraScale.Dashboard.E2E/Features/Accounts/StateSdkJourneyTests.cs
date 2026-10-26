@@ -15,7 +15,10 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     [Test]
     [Arguments("sessions")]
     [Arguments("auth_credentials")]
-    public async Task AnExternalRotationIsVisibleInsideTheWaitingReadRequest(string collection)
+    [Arguments("dashboard_accounts")]
+    [Arguments("dashboard_account_identities")]
+    [Arguments("dashboard_organizations")]
+    public async Task AnExternalUpdateIsVisibleInsideTheWaitingReadRequest(string collection)
     {
         await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
         Check(await scenario.StartHostsAsync(), "The fixed state schema initializes.");

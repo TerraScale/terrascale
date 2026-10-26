@@ -399,8 +399,11 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                     lock (gate)
                     {
                         var items = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Skip(offset).Take(size).ToArray();
-                        return Results.Json(new { items = items.Select(item => CollectionBody(item.Key, item.Value)),
-                            next_cursor = offset + items.Length < collections.Count ? (offset + items.Length).ToString(CultureInfo.InvariantCulture) : null });
+                        return Results.Json(new
+                        {
+                            items = items.Select(item => CollectionBody(item.Key, item.Value)),
+                            next_cursor = offset + items.Length < collections.Count ? (offset + items.Length).ToString(CultureInfo.InvariantCulture) : null
+                        });
                     }
                 }
                 Require(parts.Length >= 7, "A collection name is required.");
