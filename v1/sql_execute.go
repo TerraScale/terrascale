@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 )
@@ -54,6 +55,66 @@ type SQLExecResult struct {
 	Rows            [][]any     `json:"rows"`
 	RowsAffected    int64       `json:"rows_affected"`
 	LastInsertRowID *int64      `json:"last_insert_rowid"`
+}
+
+// SQLProtocolError reports an invalid successful SQL response. The transaction
+// may have committed; callers must reconcile its outcome before repeating it.
+type SQLProtocolError struct{}
+
+func (*SQLProtocolError) Error() string {
+	return "terrabase: invalid SQL success response; transaction outcome unknown"
+}
+
+// Is preserves the uncertain mutation outcome classification.
+func (*SQLProtocolError) Is(target error) bool { return target == ErrCommitUncertain }
+
+// UnmarshalJSON validates the public statement envelope and exact scalar cells.
+func (r *SQLExecResult) UnmarshalJSON(data []byte) error {
+	invalid := &SQLProtocolError{}
+	if requiredResponseMembers(data, "columns", "rows", "rows_affected") != nil {
+		return invalid
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal(data, &members) != nil || members["last_insert_rowid"] == nil {
+		return invalid
+	}
+	type wire SQLExecResult
+	var decoded wire
+	if decodeExact(data, &decoded) != nil || decoded.RowsAffected < 0 {
+		return invalid
+	}
+	var columns []json.RawMessage
+	if json.Unmarshal(members["columns"], &columns) != nil {
+		return invalid
+	}
+	for _, column := range columns {
+		var fields map[string]json.RawMessage
+		if requiredResponseMembers(column, "name") != nil || json.Unmarshal(column, &fields) != nil || fields["decltype"] == nil {
+			return invalid
+		}
+	}
+	for _, row := range decoded.Rows {
+		if row == nil || len(row) != len(decoded.Columns) {
+			return invalid
+		}
+		for j, cell := range row {
+			switch v := cell.(type) {
+			case nil, string:
+			case json.Number:
+				if integer, err := v.Int64(); err == nil {
+					row[j] = integer
+				} else if real, err := v.Float64(); err == nil && !math.IsInf(real, 0) && !math.IsNaN(real) {
+					row[j] = real
+				} else {
+					return invalid
+				}
+			default:
+				return invalid
+			}
+		}
+	}
+	*r = SQLExecResult(decoded)
+	return nil
 }
 
 // Maps returns each row keyed by column name. A later duplicate column name
@@ -168,24 +229,20 @@ func (d *Database) BatchSQL(ctx context.Context, statements []SQLStatement) ([]S
 	var out struct {
 		Results []SQLExecResult `json:"results"`
 	}
-	_, err = d.c.call(ctx, request{method: http.MethodPost, path: p}, struct {
+	resp, err := d.c.call(ctx, request{method: http.MethodPost, path: p}, struct {
 		Statements []SQLStatement `json:"statements"`
 	}{wire}, &out)
 	if apiErr := (*APIError)(nil); errors.As(err, &apiErr) {
 		return nil, sqlErrorFrom(apiErr)
 	}
 	if err != nil {
+		if resp != nil && resp.status >= 200 && resp.status < 300 {
+			return nil, &SQLProtocolError{}
+		}
 		return nil, err
 	}
 	if len(out.Results) != len(statements) {
-		return nil, fmt.Errorf("terrabase: SQL response has %d results for %d statements", len(out.Results), len(statements))
-	}
-	for i := range out.Results {
-		for _, row := range out.Results[i].Rows {
-			for j, v := range row {
-				row[j] = sqlValue(v)
-			}
-		}
+		return nil, &SQLProtocolError{}
 	}
 	return out.Results, nil
 }
@@ -201,20 +258,6 @@ func sqlArg(v any) (any, bool) {
 		return 0, true
 	}
 	return nil, false
-}
-
-func sqlValue(v any) any {
-	n, isNum := v.(json.Number)
-	if !isNum {
-		return v
-	}
-	if i, err := n.Int64(); err == nil {
-		return i
-	}
-	if f, err := n.Float64(); err == nil {
-		return f
-	}
-	return n
 }
 
 func sqlErrorFrom(apiErr *APIError) error {

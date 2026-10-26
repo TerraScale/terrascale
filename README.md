@@ -10,7 +10,7 @@ The root package holds hosted TSAuth clients and pure schema and SQL builders.
 The [compatibility matrix](contracts/terrabase-compatibility.md) records the
 exact server revision, local test evidence and remaining qualification gaps.
 
-All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
+Document and platform entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
 `sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
 Generation is concurrency-safe and monotonic within a millisecond. Entity
 IDs reject UUIDs, prefixes and lowercase forms. Document keys use the same
@@ -19,6 +19,14 @@ parameter and rejected otherwise. An application payload may contain its own `id
 OAuth client names, database and
 collection names, region/service catalog names, versions and credentials
 remain protocol names or opaque tokens, not entity IDs.
+
+SQL and PostgreSQL primary keys are user-chosen values, including integer, text
+and composite keys; they do not need to be ULIDs. Relational `QuerySQL` and
+`BatchSQL` preserve these values. Document point operations still require ULIDs.
+Shared list/query/change/shape/export results legitimately carry either document
+ULIDs or SQL primary keys. Stored keys follow the producer's 1–256 UTF-16 code
+unit, non-control-character contract; export resume keys use that same contract.
+Document point inputs and API entity references continue to require ULIDs.
 
 The SDK owns no persistent collections, databases or KV records. This contract
 alignment requires no stored-data deletion or migration.
