@@ -44,7 +44,7 @@ public sealed class TsAuthPlatformJourneyTests
         using (var preview = await client.GetAsync("/invitations/" + token))
         {
             await Assert.That(preview.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(preview.Headers.CacheControl?.NoStore).IsEqualTo(true);
+            await Assert.That(preview.Headers.CacheControl?.NoStore).IsTrue();
             await Assert.That(preview.Headers.GetValues("Referrer-Policy").Single()).IsEqualTo("strict-origin");
             var html = await preview.Content.ReadAsStringAsync();
             foreach (var copy in new[] { "Project invitation", "Join Granted", "This invitation grants " + role + " access to Granted in Shared projects.", "Your organization role is unchanged." })
@@ -57,7 +57,7 @@ public sealed class TsAuthPlatformJourneyTests
             new() { ["_csrf"] = csrf, ["action"] = "accept" }))
         {
             await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(accepted.Headers.CacheControl?.NoStore).IsEqualTo(true);
+            await Assert.That(accepted.Headers.CacheControl?.NoStore).IsTrue();
             await Assert.That(accepted.Headers.Location!.OriginalString).IsEqualTo("/databases?organizationId=" + org + "&projectId=" + project);
             using var landing = await client.GetAsync(accepted.Headers.Location);
             await Assert.That(landing.StatusCode).IsEqualTo(HttpStatusCode.OK);
