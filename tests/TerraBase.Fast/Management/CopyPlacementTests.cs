@@ -98,7 +98,7 @@ public sealed class CopyPlacementTests
             else
             {
                 await Assert.That(body.GetProperty("homeRegion").GetString()).IsEqualTo("gru");
-                await Assert.That(body.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString())).IsEquivalentTo(Replicas);
+                await Assert.That(body.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)).IsEquivalentTo(Replicas);
             }
         }
         finally

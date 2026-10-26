@@ -13,6 +13,8 @@ namespace TerraBase.Fast.Backup;
 
 public sealed class PointInTimeEntitlementTests
 {
+    private static readonly string[] Fra = ["fra"];
+
     [Test]
     public async Task Point_in_time_recovery_preserves_explicit_placement(CancellationToken cancellationToken)
     {
@@ -32,14 +34,14 @@ public sealed class PointInTimeEntitlementTests
         var project = await api.CreateProjectAsync(organization, "Copies");
         using var client = ProjectClient(api, organization, project);
         var created = await JsonAsync(client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"),
-            new { name = "main", replicaRegions = new[] { "fra" } }, cancellationToken), HttpStatusCode.Created);
+            new { name = "main", replicaRegions = Fra }, cancellationToken), HttpStatusCode.Created);
         await ShipAsync(api, time, TimeSpan.FromSeconds(10), cancellationToken);
         var route = $"/v1/projects/{project}/databases/main/point-in-time";
         var window = await JsonAsync(client.GetAsync(Uri(route), cancellationToken));
         var restored = await JsonAsync(client.PostAsJsonAsync(Uri(route + "/restore"),
             new { pointInTime = window.GetProperty("latest").GetDateTimeOffset(), name = "copy" }, cancellationToken), HttpStatusCode.Created);
         await Assert.That(restored.GetProperty("homeRegion").GetString()).IsEqualTo(created.GetProperty("homeRegion").GetString());
-        await Assert.That(restored.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString())).IsEquivalentTo(["fra"]);
+        await Assert.That(restored.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)).IsEquivalentTo(["fra"]);
         await Assert.That(restored.GetProperty("allRegions").GetBoolean()).IsFalse();
     }
 
