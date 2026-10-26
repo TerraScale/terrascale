@@ -243,7 +243,7 @@ public sealed class PostgresWireTests
         await using var select = new NpgsqlCommand("SELECT * FROM t", connection);
         await select.PrepareAsync();
         await ExecuteAsync(connection, "ALTER TABLE t ADD extra TEXT");
-        var changed = await Assert.ThrowsAsync<PostgresException>(async () => await select.ExecuteScalarAsync());
+        var changed = await Assert.ThrowsAsync<PostgresException>(select.ExecuteScalarAsync);
         await Assert.That(changed!.SqlState).IsEqualTo("0A000");
         await using var current = new NpgsqlCommand("SELECT id, extra FROM t", connection);
         await using var row = await current.ExecuteReaderAsync();
