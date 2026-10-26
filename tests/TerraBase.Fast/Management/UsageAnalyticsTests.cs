@@ -715,10 +715,15 @@ public sealed class UsageAnalyticsTests
         Requests(now - 20, (0, 50), (UsageReading.LatencyBounds.Count - 1, 50));
         var series = (await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1")))
             .GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
-        JsonElement Latency(long minute) =>
-            series.Single(point => point.GetProperty("start").GetDateTimeOffset() == DateTimeOffset.FromUnixTimeSeconds(minute * 60)).GetProperty("latency");
-        async Task Near(JsonElement latency, string percentile, double expected) =>
+        JsonElement Latency(long minute)
+        {
+            return series.Single(point => point.GetProperty("start").GetDateTimeOffset() == DateTimeOffset.FromUnixTimeSeconds(minute * 60)).GetProperty("latency");
+        }
+
+        async Task Near(JsonElement latency, string percentile, double expected)
+        {
             await Assert.That(Math.Abs(latency.GetProperty(percentile).GetDouble() - expected)).IsLessThan(1e-9).Because($"{percentile} should be {expected}");
+        }
 
         var middle = Latency(now - 30);
         await Near(middle, "p50Ms", 24);
