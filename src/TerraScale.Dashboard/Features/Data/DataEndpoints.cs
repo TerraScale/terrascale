@@ -29,7 +29,7 @@ public static class DataEndpoints
         }
         endpoints.MapMethods("/databases/{databaseId}/documents/{collection}", ["GET", "POST"], async (HttpContext http, string databaseId, string collection, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
         {
-            if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = BrowseFormBytes;
+            if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = DocumentFormBytes;
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is not null && HttpMethods.IsPost(http.Request.Method) && (!http.Request.HasFormContentType || !Csrf.Validate(http, await http.Request.ReadFormAsync(http.RequestAborted)))) return Results.BadRequest("Invalid form token.");
             return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
