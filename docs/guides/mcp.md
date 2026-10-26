@@ -119,6 +119,16 @@ Owners and admins can use `set_collection_schema` with `databaseId`, `collection
 
 Read `get_collection_validation` after a successful apply to confirm the declared schema. See [collection validation](/guides/schema-validation) for supported keywords and enforcement limits.
 
+## Reading usage results
+
+`get_usage` reports the selected organization, project, database and period. Raw read/write counts describe operations; billing uses separate 4 KiB operation units, so one operation can consume multiple units. The monthly operation allowance uses the organization ledger, including usage from deleted projects.
+
+Document queries that return data consume read units even when requesting an explanation. A conditional GET returning `304 Not Modified` returns no logical object and consumes no read units; failed or invalid reads are also unbilled.
+
+Treat unavailable measurements as unknown, rather than zero. Project storage includes files; database document storage can remain available when the complete project total cannot be measured. A project share is unknown when the organization total is incomplete.
+
+`regionCount` is a number for known explicit placement, or `null` when effective all-regions placement is unknown. Read `regionCountDescription` for the explanation. Do not infer one region from an all-regions database's home region, or multiply billable operations by its region count: replication is not billed.
+
 ## Connection and call failures
 
 An HTTP `401` means the access token is missing, invalid, expired or revoked. A client with MCP sign-in starts the sign-in again; with a personal access token, create a replacement in **Profile → Access tokens** and update your client's credential. An HTTP `403` can indicate a rejected cross-origin browser request; use the MCP client's HTTP connection. Permission failures, rejected input and data-plane refusals (a missing collection, an existing document ID, a changed `version`) arrive as an MCP tool result with `isError: true` and a message naming the cause.
