@@ -47,6 +47,7 @@ type DeviceAuthorization struct {
 	VerificationURIComplete string `json:"verification_uri_complete"`
 	ExpiresIn               int    `json:"expires_in"`
 	Interval                int    `json:"interval"`
+	expiresAt               time.Time
 }
 
 // NewDevice returns a device sign-in client.
@@ -61,6 +62,7 @@ func NewDevice(cfg DeviceConfig) (*Device, error) {
 // Start requests a device authorization for openid, email and
 // offline_access, so Wait's tokens carry a refresh token.
 func (d *Device) Start(ctx context.Context) (*DeviceAuthorization, error) {
+	started := time.Now()
 	body, err := oauthPost(ctx, d.hc, d.issuer+"/oauth/device", url.Values{"client_id": {CLIClientID}, "scope": {"openid email offline_access"}}, CLIClientID, "")
 	if err != nil {
 		return nil, err
@@ -74,6 +76,7 @@ func (d *Device) Start(ctx context.Context) (*DeviceAuthorization, error) {
 		a.VerificationURIComplete = a.VerificationURI
 	}
 	a.Interval = min(max(cmp.Or(a.Interval, 5), 1), 600) // RFC 8628 section 3.2: 5 s when absent
+	a.expiresAt = started.Add(time.Duration(a.ExpiresIn) * time.Second)
 	return &a, nil
 }
 
@@ -88,20 +91,35 @@ func (d *Device) onIssuer(raw string) bool {
 // Wait polls until the user approves a, then returns the tokens. A denial
 // or an expired authorization is *Error access_denied or expired_token.
 func (d *Device) Wait(ctx context.Context, a *DeviceAuthorization) (*Tokens, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(a.ExpiresIn)*time.Second)
+	if a == nil || a.DeviceCode == "" || a.expiresAt.IsZero() || a.Interval < 1 || a.Interval > 600 {
+		return nil, errors.New("tsauth: Wait needs a valid authorization returned by Start")
+	}
+	caller := ctx
+	ctx, cancel := context.WithDeadline(ctx, a.expiresAt)
 	defer cancel()
+	failure := func(err error) error {
+		if caller.Err() != nil {
+			return caller.Err()
+		}
+		if !time.Now().Before(a.expiresAt) {
+			return &Error{Status: 400, Code: "expired_token"}
+		}
+		return err
+	}
 	interval := time.Duration(a.Interval) * time.Second
 	form := url.Values{"grant_type": {deviceGrant}, "device_code": {a.DeviceCode}}
 	for {
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return nil, &Error{Status: 400, Code: "expired_token"}
-			}
-			return nil, ctx.Err()
-		case <-time.After(interval):
+			timer.Stop()
+			return nil, failure(ctx.Err())
+		case <-timer.C:
 		}
 		t, err := d.tokens(ctx, form)
+		if ctx.Err() != nil {
+			return nil, failure(ctx.Err())
+		}
 		var e *Error
 		switch {
 		case errors.As(err, &e) && e.Code == "authorization_pending":
