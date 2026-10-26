@@ -49,8 +49,8 @@ const (
 	DefaultMaxResponseBytes int64 = 64 << 20
 	// DefaultMaxRetries is the retry budget for 429 and retryable 503s.
 	DefaultMaxRetries = 3
-	// MaxRetryWait caps a server-provided Retry-After.
-	MaxRetryWait = 30 * time.Second
+	// OperationTimeout bounds ordinary requests, including auth, resolution and retries.
+	OperationTimeout = 30 * time.Second
 )
 
 // Config configures a Client or a Management client.
@@ -75,21 +75,6 @@ type Config struct {
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
 	// bearer token is never forwarded to a redirect target.
 	HTTPClient *http.Client
-	// MaxRetries bounds retries. TerraBase does not deduplicate retries, so
-	// only requests that are safe to replay are resent: reads, queries and
-	// writes with an If-Match version, which a replay cannot apply twice
-	// (If-None-Match: * is not enough, a tombstone satisfies it). For those,
-	// 429 rate_limited is retried after Retry-After, and the transient 503s
-	// (capacity, storage_unavailable, dependencies_unavailable) with backoff.
-	// Transport errors and commit_uncertain are retried only for reads and
-	// queries. A mutation's uncertain outcome is returned without a replay;
-	// transport failures also match ErrCommitUncertain through errors.Is.
-	// stored_corruption and 500 internal_error are never retried.
-	// Zero means DefaultMaxRetries; negative disables retries.
-	MaxRetries int
-	// MaxResponseBytes bounds one response body. Zero means
-	// DefaultMaxResponseBytes.
-	MaxResponseBytes int64
 }
 
 // Client is a data-plane client for one API key. It is safe for concurrent use.
@@ -154,26 +139,20 @@ func newClient(cfg Config) (*Client, error) {
 		cfg.Resolver = StaticResolver(cfg.BaseURL)
 	}
 	hc := &http.Client{Transport: &http.Transport{
-		Proxy:             http.ProxyFromEnvironment,
-		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS13},
-		ForceAttemptHTTP2: true,
-		IdleConnTimeout:   90 * time.Second,
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13},
+		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       90 * time.Second,
 	}}
 	if cfg.HTTPClient != nil {
 		copied := *cfg.HTTPClient
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes}
-	switch {
-	case c.maxRetries == 0:
-		c.maxRetries = DefaultMaxRetries
-	case c.maxRetries < 0:
-		c.maxRetries = 0
-	}
-	if c.maxResponse <= 0 {
-		c.maxResponse = DefaultMaxResponseBytes
-	}
+	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes}
 	return c, nil
 }
 
@@ -279,6 +258,8 @@ func (c *Client) url(ctx context.Context, segments []string, query url.Values) (
 // do sends req with the client's retry policy and returns a 2xx response or
 // an error. Non-2xx statuses become *APIError.
 func (c *Client) do(ctx context.Context, req request) (*response, error) {
+	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
+	defer cancel()
 	if len(req.body) > MaxRequestBytes {
 		return nil, fmt.Errorf("terrabase: request body is %d bytes, over the %d byte limit", len(req.body), MaxRequestBytes)
 	}
@@ -325,7 +306,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			return resp, apiErr
 		}
 		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe); ok && attempt < c.maxRetries {
-			if err := sleep(ctx, delay); err != nil {
+			if err := waitRetry(ctx, delay, apiErr); err != nil {
 				return nil, err
 			}
 			continue
@@ -340,11 +321,11 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 // remote_region_unavailable, confirmation_busy and catalog_stale are retried. do excludes uncertain mutation outcomes.
 // stored_corruption and 500 internal_error are never retried.
 func retryDelay(e *APIError, attempt int, replaySafe bool) (time.Duration, bool) {
-	if !replaySafe || (e.Status != http.StatusTooManyRequests && !isTransient503(e)) {
+	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && e.Code == ErrRateLimited) && !isTransient503(e)) {
 		return 0, false
 	}
 	if e.retryAfterSet {
-		return min(e.RetryAfter, MaxRetryWait), true
+		return e.RetryAfter, true
 	}
 	return backoff(attempt), true
 }
@@ -466,8 +447,14 @@ func parseRetryAfter(h http.Header) (time.Duration, bool) {
 	if v == "" {
 		return 0, false
 	}
-	if s, err := strconv.ParseUint(v, 10, 32); err == nil {
+	if s, err := strconv.ParseUint(v, 10, 64); err == nil {
+		if s > uint64((1<<63-1)/int64(time.Second)) {
+			return time.Duration(1<<63 - 1), true
+		}
 		return time.Duration(s) * time.Second, true
+	}
+	if strings.Trim(v, "0123456789") == "" {
+		return time.Duration(1<<63 - 1), true
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		return max(time.Until(t), 0), true

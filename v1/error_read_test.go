@@ -48,10 +48,11 @@ func TestErrorReadFailurePreservesPartialBody(t *testing.T) {
 }
 
 func TestErrorReadLimitPreservesBoundedBody(t *testing.T) {
-	c, err := New(Config{Token: "fixture.jwt.sig", MaxResponseBytes: 4, HTTPClient: &http.Client{Transport: errorReaderTransport{io.NopCloser(strings.NewReader("too long"))}}})
+	c, err := New(Config{Token: "fixture.jwt.sig", HTTPClient: &http.Client{Transport: errorReaderTransport{io.NopCloser(strings.NewReader("too long"))}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.maxResponse = 4
 	_, err = c.Database("01ARZ3NDEKTSV4RRFFQ69G5FA8", "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.RequestID != "fixture-read" || string(apiErr.Body) != "too " || apiErr.Unwrap() == nil {

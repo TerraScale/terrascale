@@ -32,7 +32,7 @@ func TestTransactionQuotesOpaqueVersionsAndOmitsZeroFilter(t *testing.T) {
 		w.Write([]byte(`{"offset":"1","durability":"local_durable","results":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD3","version":"opaque","document":{"id":"application"}},{"asserted":true,"count":"0"}]}`))
 	}))
 	t.Cleanup(peer.Close)
-	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
+	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
 	if err != nil {
 		t.Fatal(err)
 	}

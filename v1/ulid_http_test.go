@@ -35,7 +35,7 @@ func TestULIDHTTPBoundary(t *testing.T) {
 		fmt.Fprintf(w, `{"id":%q,"version":"opaque","state":"value","document":{"natural_key":"user@example.com"}}`, id)
 	}))
 	t.Cleanup(peer.Close)
-	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
+	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 		fmt.Fprint(w, body.Load())
 	}))
 	t.Cleanup(peer.Close)
-	m, err := v1.NewManagement(v1.Config{BaseURL: peer.URL, MaxRetries: -1})
+	m, err := v1.NewManagement(v1.Config{BaseURL: peer.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 	if _, err := u.Projects(t.Context(), testOrg, v1.PageOptions{}); err == nil {
 		t.Fatal("accepted an invalid nested reference")
 	}
-	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
+	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
 	if err != nil {
 		t.Fatal(err)
 	}

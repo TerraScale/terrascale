@@ -166,7 +166,7 @@ func TestNearQuery(t *testing.T) {
 }
 
 func TestNearRejects(t *testing.T) {
-	c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature", MaxRetries: -1})
+	c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestAggregateQuery(t *testing.T) {
 }
 
 func TestGeoAndAggregateRejects(t *testing.T) {
-	c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature", MaxRetries: -1})
+	c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature"})
 	if err != nil {
 		t.Fatal(err)
 	}

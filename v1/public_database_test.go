@@ -60,7 +60,7 @@ func TestPublicDatabaseContracts(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			c, err := tb.New(tb.Config{BaseURL: server.URL + "/proxy", Token: token, HTTPClient: server.Client(), MaxRetries: -1})
+			c, err := tb.New(tb.Config{BaseURL: server.URL + "/proxy", Token: token, HTTPClient: server.Client()})
 			if err != nil {
 				t.Fatal(err)
 			}
