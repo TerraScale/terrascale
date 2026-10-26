@@ -177,8 +177,7 @@ internal static class SqlGuard
     // A guaranteed runtime storage class is separate from declared affinity: n+0 still has no affinity.
     public static SqlAffinity? Storage(Expression expression) => Unwrap(expression) switch
     {
-        Expression.BinaryOp { Op: BinaryOperator.Plus or BinaryOperator.Minus or BinaryOperator.Multiply
-            or BinaryOperator.Divide or BinaryOperator.Modulo } => SqlAffinity.Numeric,
+        Expression.BinaryOp binary when binary.Op is BinaryOperator.Plus or BinaryOperator.Minus or BinaryOperator.Multiply or BinaryOperator.Divide or BinaryOperator.Modulo => SqlAffinity.Numeric,
         Expression.UnaryOp { Op: UnaryOperator.Minus } => SqlAffinity.Numeric,
         Expression.Function { Name.Values: [{ Value: SqlProgram.Concat }] } => SqlAffinity.Text,
         Expression.LiteralValue { Value: Value.SingleQuotedString } => SqlAffinity.Text,

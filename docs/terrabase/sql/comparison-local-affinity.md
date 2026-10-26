@@ -21,7 +21,7 @@ Projection aliases are resolved in the clauses where SQLite permits them, with r
 `WHERE` and other expressions. A bare `ORDER BY` alias refers to the projection; inside an `ORDER BY`
 expression real columns take precedence. Correlated direct projections retain outer-column affinity, and a local
 qualifier without a matching column does not hide a matching outer column. Duplicate CTE column names are disambiguated after
-applying the CTE's explicit column aliases (`v`, `v:1`, …).
+applying the CTE's explicit column aliases (`v`, `v:1`, …). The execution copy explicitly names these outputs and parenthesized direct projections to match the inferred names. Real-column references are qualified; shadowed inner aliases are renamed to avoid native-engine alias-resolution differences while preserving correlated references. Merged outer-join columns use the preserved side.
 `USING` and `NATURAL` joins expose merged unqualified columns and omit their right-hand duplicates in `SELECT *`;
 qualified wildcards retain every column of the named source. Compound SELECT outputs retain an affinity only when
 all branches agree, including no affinity for computed expressions. A comparison against a compound output with
@@ -39,7 +39,7 @@ When SQLite needs conversion of a row-dependent operand, preparation explicitly 
 `comparison requires unsupported row-dependent affinity conversion`. This includes column-to-column comparisons
 with incompatible affinities, dynamic `IN` entries, incompatible `USING`/`NATURAL` join keys, and BETWEEN/simple CASE
 forms that need different conversions of a shared operand. Comparisons between columns with the same affinity or
-numeric affinities remain available. Correlated CTE outputs without a self-contained column shape are refused with
+numeric affinities remain available. A conversion that is provably a no-op from a computed output's runtime storage class also remains available: numeric arithmetic outputs compared with numeric-affinity columns, and bounded concatenation outputs compared with text-affinity columns. This storage-class evidence does not grant computed expressions declared affinity. Correlated CTE outputs without a self-contained column shape are refused with
 `SQL source column affinity cannot be inferred`; their inferred shape is never reused across differing outer scopes. Row-value comparisons fail with `row-value comparison affinity is not supported`.
 Short `IS :parameter` and `IS NOT :parameter` syntax uses the same affinity rules as
 `IS NOT DISTINCT FROM` and `IS DISTINCT FROM`; NULL/boolean RHS predicates retain SQLite truth-test semantics.

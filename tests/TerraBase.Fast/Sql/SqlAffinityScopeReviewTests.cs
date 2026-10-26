@@ -26,6 +26,19 @@ public sealed class SqlAffinityScopeReviewTests
     }
 
     [Test]
+    [Arguments("LEFT", "[[1],[2]]")]
+    [Arguments("RIGHT", "[[2],[3]]")]
+    public async Task Merged_outer_join_columns_use_the_preserved_side(string side, string rows)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE a(n INTEGER)", "INSERT INTO a VALUES(1),(2)",
+            "CREATE TABLE b(n INTEGER)", "INSERT INTO b VALUES(2),(3)");
+        var response = await SqlApi.ExecuteAsync(api, "SELECT n FROM a " + side + " JOIN b USING(n) ORDER BY n");
+        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK).Because(response.Message ?? side);
+        await Assert.That(response.Json.GetProperty("results")[0].GetProperty("rows").GetRawText()).IsEqualTo(rows);
+    }
+
+    [Test]
     public async Task Aliased_parenthesized_joins_are_refused_instead_of_losing_affinity()
     {
         await using var api = await DocumentApi.StartAsync();

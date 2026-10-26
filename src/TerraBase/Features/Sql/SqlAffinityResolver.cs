@@ -160,8 +160,8 @@ internal sealed class SqlAffinityResolver
 
         if (node is SelectItem.QualifiedWildcard { Name.Values: [var name] } wildcard)
         {
-            var source = scopes.SelectMany(scope => scope.Sources).FirstOrDefault(source => Same(source.Name, name.Value));
-            if (source.Columns is [var first, ..] && first.Qualifier is { } qualifier)
+            var (_, columns) = scopes.SelectMany(scope => scope.Sources).FirstOrDefault(source => Same(source.Name, name.Value));
+            if (columns is [var first, ..] && first.Qualifier is { } qualifier)
             {
                 wildcard.GetType().GetProperty(nameof(wildcard.Name))!.SetValue(wildcard, new ObjectName([new Ident(qualifier, '"')]));
             }
@@ -301,6 +301,8 @@ internal sealed class SqlAffinityResolver
         var visible = new List<Column>();
         _budget.Add(visible, left.Visible.Select(column => merged.Contains(column.Name) ? column with
         {
+            Qualifier = operation is JoinOperator.FullOuter ? null : operation is JoinOperator.RightOuter
+                ? right.Visible.FirstOrDefault(other => Same(other.Name, column.Name)).Qualifier : column.Qualifier,
             Affinity = operation is JoinOperator.FullOuter ? null : operation is JoinOperator.RightOuter
                 ? right.Visible.FirstOrDefault(other => Same(other.Name, column.Name)).Affinity : column.Affinity,
             Ambiguous = operation is not JoinOperator.FullOuter && (operation is JoinOperator.RightOuter
