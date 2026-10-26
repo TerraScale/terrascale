@@ -43,6 +43,8 @@ public sealed record DatabaseSqlResult(IReadOnlyList<DatabaseSqlColumn> Columns,
 public sealed record DatabaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State);
 public sealed record ProjectCredential(string Id, string ProjectId, string Name, IReadOnlyList<string> Scopes, string? DatabaseId, string LastFour, DateTimeOffset CreatedAt)
 {
+    public string CreatedByUserId { get; init; } = "";
+    public string CreatedByEmail { get; init; } = "";
     public string? DatabaseName { get; init; }
     public DateTimeOffset? ExpiresAt { get; init; }
     // Last successful token exchange as ts-auth reports it (at most five minutes stale); null when never used.

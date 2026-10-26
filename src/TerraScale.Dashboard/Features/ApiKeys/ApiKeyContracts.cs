@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys;
 public record ProjectApiKeyMetadata(string KeyId, string ProjectId, string Name, string Prefix, string LastFour, IReadOnlyList<string> Scopes,
     string DatabaseId, string CreatedByEmail, string CreatedAt, string ExpiresAt, string LastUsedAt, string RevokedAt, bool IsActive)
 {
+    public string CreatedByUserId { get; init; } = "";
     public string? DatabaseName { get; init; }
     public IReadOnlyList<string>? AllowedCidrs { get; init; }
 }

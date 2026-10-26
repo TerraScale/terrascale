@@ -146,14 +146,14 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     public static string MintedScope(string scope) => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope };
 
     public static ProjectApiKeyMetadata Metadata(ProjectCredential key) => new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
-        key.DatabaseId ?? "", "", Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
-    { DatabaseName = key.DatabaseName, AllowedCidrs = key.AllowedCidrs };
+        key.DatabaseId ?? "", key.CreatedByEmail, Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
+    { CreatedByUserId = key.CreatedByUserId, DatabaseName = key.DatabaseName, AllowedCidrs = key.AllowedCidrs };
     public static ProjectCredentialMetadata CredentialMetadata(ProjectCredential key)
     {
         var value = Metadata(key);
         return new(value.KeyId, value.ProjectId, value.Name, value.Prefix, value.LastFour, value.Scopes, value.DatabaseId,
             value.CreatedByEmail, value.CreatedAt, value.ExpiresAt, value.LastUsedAt, value.RevokedAt, value.IsActive, "api-key")
-        { DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs };
+        { CreatedByUserId = value.CreatedByUserId, DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs };
     }
 
     private TerraScaleAuthPlatformClient Client() => new TerraScaleAuthClient(http.CreateClient("platform"),
@@ -209,7 +209,11 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
         var database = context.Project!.Databases.Values.SingleOrDefault(item => item.Name == key.Database);
         return new(key.Id, scope.ProjectId, key.Name, key.Scopes, database?.Id, "", key.CreatedAt)
-        { DatabaseName = key.Database, ExpiresAt = key.ExpiresAt, LastUsedAt = key.LastUsedAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow() };
+        {
+            CreatedByUserId = key.CreatedBy ?? "",
+            CreatedByEmail = context.Organization?.Members.GetValueOrDefault(key.CreatedBy ?? "")?.Email ?? "",
+            DatabaseName = key.Database, ExpiresAt = key.ExpiresAt, LastUsedAt = key.LastUsedAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
+        };
     }
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 }
