@@ -482,9 +482,12 @@ public sealed class RebuildLedgerRecoveryTests
             offset = (page - 1) * pageSize;
         }
 
-        using var file = File.OpenWrite(path);
+        // Complement the page's first byte: a fixed 0xFF left an encrypted page unchanged whenever its ciphertext held 0xFF.
+        using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
         file.Position = offset;
-        file.WriteByte(0xFF);
+        var original = file.ReadByte();
+        file.Position = offset;
+        file.WriteByte((byte)~original);
     }
 
     private static SqliteConnection Connection(string path) => new(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
