@@ -200,7 +200,7 @@ public sealed class EmailAdmissionTests(TerraBaseFixture fixture)
             var recipient = sent.RootElement.GetProperty("to").GetRawText();
             var response = new HttpResponseMessage(this.Status)
             {
-                Content = new StringContent($$"""{"success":true,"result":{"queued":[{{recipient}}],"delivered":[],"permanent_bounces":[],"suppressed_recipients":[]}}"""),
+                Content = new StringContent($$$"""{"success":true,"result":{"queued":[{{{recipient}}}],"delivered":[],"permanent_bounces":[],"suppressed_recipients":[]}}"""),
             };
             if (this.Reset is { } reset)
             {

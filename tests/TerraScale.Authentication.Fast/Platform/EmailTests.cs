@@ -232,7 +232,7 @@ public sealed class EmailTests
     {
         var logs = new EmailLogs();
         await using var cloudflare = await FakeCloudflare.StartAsync(body:
-            $$"""{"success":true,"result":{"delivered":["{{Recipient}}"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}""");
+            $$$"""{"success":true,"result":{"delivered":["{{{Recipient}}}"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}""");
         await using var server = await StartAsync(logs, cloudflare);
         using var response = await server.Client.PostAsync("/__test/email", null);
         await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(nameof(EmailDeliveryOutcome.Accepted));
