@@ -6,7 +6,7 @@ cd "$root"
 if [[ ${1:-} == report ]]; then
   evidence=${2:?evidence directory}
   status=0
-  python3 benchmark/scripts/perf-report.py "$evidence/local" || status=1
+  python3 benchmark/scripts/perf-report.py "$evidence/local" "${@:3}" || status=1
   python3 benchmark/scripts/perf-live-report.py "$evidence" || status=1
   cat "$evidence/local/summary.md" "$evidence/live-summary.md"
   exit "$status"

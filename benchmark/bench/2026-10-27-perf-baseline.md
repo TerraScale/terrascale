@@ -72,5 +72,17 @@ direction/repeat in all six directions, with the existing RTT/2 correction and 2
 
 Three SJC read repeats completed, followed by successful tenant cleanup. That attempt's
 replication binary was x86_64 on ARM64 and did not start; it is excluded from qualification.
-The static ARM64 probe is now checked before tenant creation. The full regional run is pending.
+The static ARM64 probe is now checked before tenant creation. SJC and FRA have since
+completed all three repeats, including both inbound replication directions on each host,
+with zero missing probes and successful project deletion in all regions.
+
+| Direction | Probes | p50 ms | Pooled p99 ms | Target p99 <200 ms |
+| --- | ---: | ---: | ---: | --- |
+| fra → sjc | 180 | 127.515 | 345.612 | not met |
+| gru → sjc | 180 | 240.135 | 2,431.839 | not met |
+| gru → fra | 180 | 202.543 | 1,107.936 | not met |
+| sjc → fra | 180 | 131.725 | 1,443.139 | not met |
+
+The two inbound GRU directions and GRU endpoint latency await trusted NetBird SSH access;
+two host-key verification failures were escalated rather than disabling verification.
 No repeat/stress runs or workflow changes were added to GitHub CI.
