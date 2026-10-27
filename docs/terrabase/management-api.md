@@ -148,7 +148,7 @@ apply, and each use is logged without the credential.
 - Project access is decided at the organization level for now: every member with the `member` role or
   higher can manage every project and database in the organization; a `viewer` reads them and gets `403` on
   every change, including the database tooling (indexes, recommendations applied, backups, backup policies,
-  restores, saved queries and project API keys); it still reads them and runs SQL, which is read-only. Renaming the
+  restores and saved queries); it still reads them and runs SQL, which is read-only. Renaming the
   organization needs `admin` and deleting it needs `owner` (`403` otherwise).
   Per-project roles are a follow-up.
 - `GET /organizations` lists only the acting user's organizations. The current organization can
@@ -226,7 +226,7 @@ logged and counted as unknown while management requests keep returning `503`.
   `_` or `-`, at most 63 characters. They are unique per project.
 - **Lists** take `?after=<cursor>&limit=1..100` (default 20) and return `{"items":[…],"next":null|"<cursor>"}`.
   This matches the document list endpoint. On lists in id order the cursor is the last item's id; lists kept in a
-  per-organization sequence (invitations, audit events, backups, API keys, saved queries) return an opaque cursor.
+  per-organization sequence (invitations, audit events, backups, saved queries) return an opaque cursor.
   Either way, pass `next` back as `after`.
 - **Errors:** `400` for invalid input, `403` when the acting member's role does not allow the request,
   `404` for an unknown resource or parent (or an organization the user is not a member of), `409` for a
@@ -464,12 +464,9 @@ A = `/v1/projects/{project}/databases/{database}` is the prefix for automatic-in
 | `GET` | `P/saved-queries/{query}` | saved query |
 | `PUT` | `P/saved-queries/{query}` | `{name, sql}` → saved query |
 | `DELETE` | `P/saved-queries/{query}` | `204` |
-| `POST` | `P/api-keys` | `{name, scopes, databaseId?}` → `201 {key, secret}`; the secret is shown once |
-| `GET` | `P/api-keys` | page of keys, never secrets |
-| `DELETE` | `P/api-keys/{key}` | `204`; the key stops working at once |
 
 Membership is checked in the same catalog transaction as every write to the catalog that creates access or
-data: API keys, backups, backup policies and restores. The other routes (SQL, indexes, schema, usage, saved queries)
+data: backups, backup policies and restores. The other routes (SQL, indexes, schema, usage, saved queries)
 check it when the request starts. Background work (scheduled backups, usage flushes) acts for no user.
 
 Per-database state (backups, policy, usage, query counts) lives in the catalog under the database and is
@@ -768,43 +765,6 @@ index provenance remain subsequent TS-685 slices.
   When another index already has the default name, it returns `409` `name_taken`.
 - This is a deterministic workload rule, not the terrabase-rust auto-index decider (sampled statistics, scoring, 100-observation threshold).
 
-### Project API keys
-
-A project key is an API key of the project's organization narrowed to the project (decision 0005): it reaches the data API
-(`/v1/projects/{project}/databases/{name}/…`) only for the databases of its project.
-
-| Field | Meaning |
-| --- | --- |
-| `id` | ULID. Lists are in creation order. |
-| `projectId` | The owning project. |
-| `name` | Label of 1 to 128 characters. Same rules as project names. |
-| `scopes` | A non-empty subset of `documents:read` and `documents:write`. |
-| `databaseId` | Optional. Restricts the key to one database of the project. `null` means every database of the project. |
-| `lastFour` | The last 4 characters of the secret. |
-| `createdAt` | Creation time. |
-
-- `POST …/api-keys` returns `201 {key, secret}`. The secret (`tb_…`) is shown only once. Only its SHA-256 is stored.
-- Any other scope gives 400. A `databaseId` that is not a database of this project gives 404.
-- `GET …/api-keys` never returns secrets or hashes.
-- Key lists use the same persisted per-organization sequence pattern as invitations, allocated in the key's write
-  transaction. Pagination uses the opaque `next` sequence as `after`, not the key ULID. Keys created at one timestamp,
-  after a clock change or after a restart keep committed creation order.
-- `DELETE …/api-keys/{key}` returns 204. The key stops working at once: its next request gets 401.
-- A viewer lists keys but cannot issue or revoke them: `403` `forbidden_role`. Errors use the `{"error":{"code","message"}}`
-  envelope: `400 invalid_request`, `403 forbidden_role`, `404 not_found`.
-- A key belongs to its organization (the tenant) and project. The data API resolves a database only inside the key's
-  organization (`ApiKey.Reaches`): TerraBase never looks a database up by name across organizations.
-- A database outside the key's project, or outside its `databaseId`, answers `404` like a database that does not exist,
-  so a key cannot learn which databases exist. A project key creates databases (`PUT /v1/projects/{project}/databases/{name}`)
-  only in its own project; a key restricted to one database creates none. Project keys never reach `/v1/management`.
-- Deleting a project returns 409 while it has API keys. Revoke them first.
-- Deleting a database leaves keys restricted to it in place. They then reach no database (404). Revoke them.
-- A key that the administrative listener (`POST /admin/api-keys`) narrows to a project is stored and listed the same
-  way: it appears here, can be revoked here, and blocks deleting its project. The scope it names is checked in the
-  issuing write; a missing one answers 400. Its `name` and `scopes` follow the administrative endpoint's rules (up to
-  100 characters; any client scope, such as `documents:read`). Organization-wide keys are not listed here. Every key authentication record is keyed by its canonical ULID; a separate SHA-256 secret lookup points to that id.
-  The closed-beta cutover deletes old credentials and recreates service keys.
-
 ## Dashboard feature map
 
 ### Backed by this API
@@ -836,7 +796,6 @@ A project key is an API key of the project's organization narrowed to the projec
 | SQL console | `POST /api/v1/dashboard/data/sql[/check]` | `POST D/sql`, `POST D/sql/check` |
 | Saved queries | `/api/v1/dashboard/data/saved-queries[/delete]` | `P/saved-queries…` |
 | Usage | `GET /usage` | `GET D/usage`, `GET P/usage` |
-| API keys | `/api/v1/dashboard/credentials/key\|revoke`, `/api/v1/projects/{projectID}/auth/api-keys[…]` | `P/api-keys…` |
 | Members list | `GET /access`, organization page | `GET …/members` |
 | Change member role | `/api/v1/access/members/{userID}/role`, `/api/v1/dashboard/organization/members/{userID}/role` | `PUT …/members/{user}/role` |
 | Remove member | `/api/v1/access/members/{userID}/revoke`, `/api/v1/dashboard/organization/members/{userID}/remove` | `DELETE …/members/{user}` |
@@ -911,7 +870,6 @@ not cover branches.
 | Indexes | named, 1–4 fields, built synchronously, always `active` | dashboard creates one `field` per call; control-plane-v1 indexes use JSON Pointer keys, `backfilling` states and `Idempotency-Key` |
 | Schema | inferred from sampled documents, read-only | dashboard and SDK read and write declared schemas with generations |
 | SQL result | `{matched, truncated, rows:[{id, value}]}` | SDK `SQLResult{matched, rows[{id, value}]}`; no explain variant |
-| API keys | `tb_` secret, SHA-256 stored, scopes `documents:read\|write`, optional `databaseId` | control-plane-v1 `tbk1.<id>.<secret>` tokens with grants, row filters, rate limits, expiry and rotation |
 | Usage | best-effort reads and writes, lifetime and per UTC hour or day; documents, file and logical bytes | control-plane-v1 reports the current calendar month as decimal strings |
 | Roles | `owner`, `admin`, `member`, `viewer`; several owners; admins manage members and invitations | dashboard: exactly one owner, who alone manages members (it keeps one by granting `owner` only through a transfer) |
 | Members | user id, role and join time | dashboard members also carry email and name; ts-auth owns profiles |
