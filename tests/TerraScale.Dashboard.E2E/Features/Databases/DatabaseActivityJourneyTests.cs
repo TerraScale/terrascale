@@ -63,7 +63,7 @@ public sealed class DatabaseActivityJourneyTests(DashboardRootFixture fixture)
 
         var empty = await PageAsync("?range=1h");
         await Assert.That(Card(empty, "Reads")).Contains("No activity measurements for this database in the last 1h.");
-        await Assert.That(Card(empty, "p95 latency (µs)")).Contains("No activity measurements for this database in the last 1h.");
+        await Assert.That(Card(empty, "p95 latency (ms)")).Contains("No activity measurements for this database in the last 1h.");
         await Assert.That(Card(empty, "Reads")).Contains("href=\"" + path + "?reads=7d&writes=1h&storage=1h&latency=1h#activity\"");
         await Assert.That(queries.Single()).IsEqualTo("?range=1h&database=" + databaseId);
 
@@ -74,7 +74,7 @@ public sealed class DatabaseActivityJourneyTests(DashboardRootFixture fixture)
         var reads = Card(overview, "Reads");
         await Assert.That(reads).Contains("href=\"" + path + "?reads=1h&writes=7d&storage=1h&latency=1h#activity\" aria-current=\"page\">1h</a>");
         await Assert.That(reads).Contains(" UTC: gru 6\"");
-        await Assert.That(reads).Contains(" UTC: gru Not reported\"").Because("a bucket without a read count stays missing instead of zero");
+        await Assert.That(reads).Contains(" UTC: gru 0\"").Because("a reported bucket without the read key has zero reads");
         var writes = Card(overview, "Writes (put, patch, delete)");
         await Assert.That(writes).Contains("aria-current=\"page\">7d</a>");
         await Assert.That(writes).Contains(" UTC: gru 40\"");
@@ -82,7 +82,7 @@ public sealed class DatabaseActivityJourneyTests(DashboardRootFixture fixture)
         var storage = Card(overview, "Storage (bytes)");
         await Assert.That(storage).Contains(" UTC: gru 4,096\"");
         await Assert.That(storage).Contains(" UTC: gru Not reported\"");
-        await Assert.That(Card(overview, "p95 latency (µs)")).Contains(" UTC: gru 2,000\"");
+        await Assert.That(Card(overview, "p95 latency (ms)")).Contains(" UTC: gru 2.00 ms\"");
         await Assert.That(overview.Contains("Activity unavailable", StringComparison.Ordinal)).IsFalse();
 
         var replication = await PageAsync("/replication?range=1h");

@@ -71,7 +71,7 @@ public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseLis
                 var name = selection.Context.Project!.Databases[group.Key].Name;
                 AnalyticsLinePlot? Trend(string label, Func<AnalyticsPoint, long?> measure, out long? total)
                 {
-                    var values = new long[starts.Length]; var missing = Enumerable.Repeat(true, starts.Length).ToArray();
+                    var values = new decimal[starts.Length]; var missing = Enumerable.Repeat(true, starts.Length).ToArray();
                     total = null;
                     foreach (var point in group)
                     {
@@ -82,8 +82,8 @@ public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseLis
                     }
                     return total is null ? null : AnalyticsLinePlot.For(name + " " + label + ", " + range, range, starts, [new AnalyticsSeries(label, values, missing)]);
                 }
-                var readTrend = Trend("reads", point => point.Operations.TryGetValue("read", out var count) ? count : null, out var reads);
-                var writeTrend = Trend("writes", point => Writes.Any(point.Operations.ContainsKey) ? Writes.Sum(op => point.Operations.GetValueOrDefault(op)) : null, out var writes);
+                var readTrend = Trend("reads", point => point.Operations.GetValueOrDefault("read"), out var reads);
+                var writeTrend = Trend("writes", point => Writes.Sum(op => point.Operations.GetValueOrDefault(op)), out var writes);
                 // Gauges read only the latest project bucket, like the analytics page: an explicit null there stays missing and never falls back
                 // to an older reading, and storage is a total only when every region this database reported from has a value in that bucket.
                 var current = group.Where(point => point.Start.ToUniversalTime() == starts[^1]).ToArray();
@@ -138,7 +138,7 @@ public sealed record DatabaseActivityCard(string Key, string Title, string Range
 // Per-region activity for one database, read from the same TerraBase analytics route as /analytics, once per distinct card range.
 public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards, IReadOnlyList<AnalyticsRegionRow> Regions)
 {
-    public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (µs)")];
+    public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (ms)")];
     // TerraBase meters committed document operations as read, put, patch and delete.
     private static readonly string[] WriteOperations = ["put", "patch", "delete"];
 
@@ -164,9 +164,9 @@ public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards,
                 var first = batch.Points.Min(point => point.Start.ToUniversalTime());
                 var last = batch.Points.Max(point => point.Start.ToUniversalTime());
                 var starts = Enumerable.Range(0, checked((int)((last - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
-                var plots = cards.Where(card => card.Range == range).ToDictionary(card => card.Key, card => AnalyticsLinePlot.For(card.Title + ", " + range, range, starts, regions.Select(region =>
+                var plots = cards.Where(card => card.Range == range).ToDictionary(card => card.Key, card => Plot(card, starts, regions.Select(region =>
                 {
-                    var values = new long[starts.Length];
+                    var values = new decimal[starts.Length];
                     var missing = Enumerable.Repeat(true, starts.Length).ToArray();
                     foreach (var point in batch.Points.Where(sample => sample.Region.Equals(region.Code, StringComparison.OrdinalIgnoreCase)))
                     {
@@ -187,13 +187,17 @@ public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards,
         return new(cards, latencyRegions);
     }
 
-    // Missing operation names stay missing; they are never reported as zero.
-    private static long? Measure(string key, AnalyticsPoint point) => key switch
+    private static AnalyticsLinePlot Plot(DatabaseActivityCard card, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series) => card.Key == "latency"
+        ? AnalyticsLinePlot.ForLatency(card.Title + ", " + card.Range, card.Range, starts, series)
+        : AnalyticsLinePlot.For(card.Title + ", " + card.Range, card.Range, starts, series);
+
+    // A returned counter bucket omits zero-valued operation keys; only nullable gauges represent missing observations.
+    private static decimal? Measure(string key, AnalyticsPoint point) => key switch
     {
-        "reads" => point.Operations.TryGetValue("read", out var reads) ? (long?)reads : null,
-        "writes" => WriteOperations.Any(point.Operations.ContainsKey) ? (long?)WriteOperations.Sum(name => point.Operations.GetValueOrDefault(name)) : null,
+        "reads" => point.Operations.GetValueOrDefault("read"),
+        "writes" => WriteOperations.Sum(name => point.Operations.GetValueOrDefault(name)),
         "storage" => point.StorageBytes,
-        _ => point.P95Ms is { } ms ? checked((long)Math.Round(ms * 1000, MidpointRounding.AwayFromZero)) : null,
+        _ => point.P95Ms is { } ms ? (decimal)ms : null,
     };
 }
 
@@ -208,6 +212,6 @@ public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usag
         var (x1, y1) = Hubs[Database!.Region]; var (x2, y2) = Hubs[to];
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"M {x1:0.00} {y1:0.00} Q {(x1 + x2) / 2:0.00} {Math.Min(y1, y2) - 12:0.00} {x2:0.00} {y2:0.00}");
     }
-    public double? P95(string region) => Activity?.Regions.FirstOrDefault(row => row.Code.Equals(region, StringComparison.OrdinalIgnoreCase))?.LatestP95Ms;
+    public double? P95(string region) => Activity?.Regions.FirstOrDefault(row => row.Code.Equals(region, StringComparison.OrdinalIgnoreCase))?.WorstP95Ms;
     public string AnalyticsPath => "/analytics?database=" + Uri.EscapeDataString(DatabaseId) + "&project=" + Uri.EscapeDataString(ProjectId) + "&range=" + Range;
 }

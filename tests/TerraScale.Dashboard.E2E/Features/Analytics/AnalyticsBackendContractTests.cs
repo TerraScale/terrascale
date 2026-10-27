@@ -20,7 +20,7 @@ public sealed class AnalyticsBackendContractTests
         var project = selection.Context.Project!;
         foreach (var id in new[] { "01JA0000000000000000000005", "01JA0000000000000000000006" })
             project.Databases.Add(id, new() { Id = id, ProjectId = project.Id, Name = "app-" + id, Region = "GRU" });
-        foreach (var database in project.Databases.Values) database.Regions = ["GRU", "SJC"];
+        foreach (var database in project.Databases.Values) { database.Regions = ["GRU", "SJC"]; database.Name = "app"; }
         var to = new DateTimeOffset(2026, 10, 13, 0, 0, 0, TimeSpan.Zero);
         var from = to.AddHours(-1);
         var items = project.Databases.Keys.SelectMany(id => new[] { "gru", "sjc" }.Select(region => new
@@ -33,7 +33,7 @@ public sealed class AnalyticsBackendContractTests
                 requests = new { GET = 10L },
                 operations = new { read = 4L },
                 errors = 1L,
-                latency = new { p50Ms = 1d, p95Ms = 2d, p99Ms = 3d },
+                latency = new { p50Ms = .125d, p95Ms = 256d, p99Ms = 300d },
                 storageBytes = 4096L,
                 clientBandwidth = new { bytesSent = 13L, bytesReceived = 17L },
                 replicationBandwidth = new { bytesSent = 8L, bytesReceived = 9L }
@@ -50,6 +50,11 @@ public sealed class AnalyticsBackendContractTests
         await Assert.That(result.Points.Count).IsEqualTo(360);
         await Assert.That(result.Points.Sum(point => point.Requests["GET"])).IsEqualTo(3600);
         await Assert.That(result.Points.Select(point => (point.DatabaseId, point.Region)).Distinct().Count()).IsEqualTo(6);
+        var latency = AnalyticsService.Build(selection, result.Points).Charts.Single(chart => chart.Title.Contains("latency", StringComparison.Ordinal));
+        await Assert.That(latency.Plot.Paths.Count).IsEqualTo(18).Because("equal database names cannot overwrite each other's percentiles");
+        await Assert.That(latency.Plot.Paths.Select(path => path.Name).Distinct().Count()).IsEqualTo(18);
+        await Assert.That(latency.Title).Contains("(ms)");
+        await Assert.That(latency.Plot.Columns.SelectMany(column => column.Rows).Any(row => row.Name.StartsWith("p95", StringComparison.Ordinal) && row.Value == "256 ms")).IsTrue();
     }
 
     [Test]
@@ -119,9 +124,8 @@ public sealed class AnalyticsBackendContractTests
         await Assert.That(wire.Reads).IsEqualTo(0);
     }
 
-    // Databases need two regions (#224) and the browser host serves only GRU and SFO, so the journey cannot reach this branch.
     [Test]
-    public async Task ChangingToADatabaseWithoutTheSelectedRegionClearsOnlyThatRegion()
+    public async Task HistoricalRegionsRemainSelectedAcrossDatabaseChanges()
     {
         var context = Selection("24h").Context;
         var organization = context.Organization!;
@@ -131,10 +135,10 @@ public sealed class AnalyticsBackendContractTests
         orders.Regions = ["GRU", "SFO"];
         const string archive = "01JA0000000000000000000007";
         project.Databases.Add(archive, new() { Id = archive, ProjectId = project.Id, Name = "archive", Region = "SFO", Regions = ["SFO", "SJC"] });
-        await Assert.That(AnalyticsSelection.For(context, project.Id, archive, "GRU", "24h").Region).IsEqualTo("");
+        await Assert.That(AnalyticsSelection.For(context, project.Id, archive, "GRU", "24h").Region).IsEqualTo("GRU");
         await Assert.That(AnalyticsSelection.For(context, project.Id, archive, "sjc", "24h").Region).IsEqualTo("SJC");
         await Assert.That(AnalyticsSelection.For(context, project.Id, orders.Id, "gru", "24h").Region).IsEqualTo("GRU");
-        var unknown = Assert.Throws<AccountAccessException>(() => AnalyticsSelection.For(context, project.Id, archive, "IAD", "24h"));
+        var unknown = Assert.Throws<AccountAccessException>(() => AnalyticsSelection.For(context, project.Id, archive, "bad/region", "24h"));
         await Assert.That(unknown.StatusCode).IsEqualTo(400);
     }
 
