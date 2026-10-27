@@ -2,7 +2,7 @@
 
 Auth `9682f0ec3ffb934945dde49c277ccaef6ba08d0a`; dashboard `d5b0e7b87ebd13d6753c9109a578bc80a750bcc7`. GRU node `ts-gru-2`, reached through SSH alias `ts-gru-1`. Image digests and request/trace IDs are in [the sanitized records](2026-10-27-auth-read-before.jsonl).
 
-Three sequential signed-in full-body `GET /support` requests from delta; redirects refused, no-cache request, existing shared session read without modification. No sign-in, credential export or forced token refresh. The parent’s initial three samples at 22:24:51–53Z are preserved separately; the correlated samples below ended at 22:28:47Z. Each correlated sample captured all eight auth spans immediately after its response because the runtime stdout file rotates.
+Three sequential signed-in full-body `GET /support` requests from delta; redirects refused, no-cache request, existing shared session read without modification. No sign-in, credential export or forced token refresh. The [parent’s initial three samples and observed serving metadata](2026-10-27-auth-parent-before.json) at 22:24:51–53Z are preserved separately; the correlated samples below ended at 22:28:47Z. Each correlated sample captured all eight auth spans immediately after its response because the runtime stdout file rotates.
 
 All durations are milliseconds. Independent calls overlap; summed auth time exceeds elapsed auth wait. Three samples describe these requests and do not establish a production p95.
 
@@ -29,4 +29,4 @@ The measured long calls are fresh identity/management reads, while discovery res
 
 Reproduce the page samples with `nice -n19 python3 benchmark/scripts/auth-dashboard-probe.py`; keep the shared session file mode 0600 and read-only to this probe. Correlate its request IDs or client trace IDs with the serving dashboard’s `ServerTiming` records immediately after each response. Preserve only fixed operation names, statuses, timing fields and correlation IDs, never headers, bodies, resource names or credentials.
 
-After measurements: pending deployment of #758. No improvement or sub-200 ms claim is made.
+After measurements: wait for the release owner’s `DEPLOYED <sha>` confirmation for #758 before the full after run. No improvement or sub-200 ms claim is made.
