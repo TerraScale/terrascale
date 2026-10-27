@@ -7,7 +7,7 @@ asyncio, built on [httpx](https://www.python-httpx.org/). Python 3.10+.
 ```sh
 pip install terrascale
 # until the first PyPI release:
-pip install "git+https://github.com/TerraScale/ts-python@v0.0.2"
+pip install "git+https://github.com/TerraScale/ts-python@v0.0.3"
 ```
 
 ## Quickstart
@@ -137,10 +137,16 @@ exception. Its fixed message omits response contents; the SDK does not retry it.
 Malformed token success responses retain `TokenError` / `invalid_token_response`
 and now carry the request ID too. Transport failures with no response have no ID.
 
-Reads and read-only queries retry transport failures, 429 and transient 503s,
-honouring `Retry-After`. Writes, including `if_match` writes, are never replayed
-after an ambiguous failure. A transport failure, 5xx or malformed acknowledgement
-raises `CommitUncertainError`; reconcile state before retrying. Transactions
+Reads and read-only queries retry transport failures, 429, 502, 504 and
+transient 503s (`storage_busy`, `unavailable`, `capacity`, ...) with jittered
+exponential backoff, honouring `Retry-After`, up to `max_attempts` (default 4).
+The token exchange retries transport failures, 429 and 5xx the same way; one
+exchange runs at a time and concurrent callers share its result. A connect or
+connection-pool failure never reached the server, so writes retry it too; when
+attempts run out the `TerraScaleError` names the cause and says the request was
+not sent. Writes, including `if_match` writes, are never replayed after an
+ambiguous failure: a transport failure after sending, 5xx or malformed
+acknowledgement raises `CommitUncertainError`; reconcile state before retrying. Transactions
 cannot be changed or committed again after submission; context exit sends once.
 Malformed read responses raise `InvalidResponseError`.
 

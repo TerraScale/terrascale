@@ -14,7 +14,7 @@ from . import _spec, models
 from ._spec import Call, TransactionBuilder
 from ._version import __version__
 from .auth import APIKeyTokenSource
-from .errors import APIError, CommitUncertainError, InvalidResponseError, TerraScaleError, error_for
+from .errors import APIError, CommitUncertainError, InvalidResponseError, error_for
 from .ids import validate_id
 
 __all__ = ["TerraScale", "Database", "Collection", "Transaction"]
@@ -66,7 +66,7 @@ class TerraScale:
         if token is None:
             assert api_key is not None
             self._source = APIKeyTokenSource(api_key, project=self.project, scopes=scopes, issuer=issuer,
-                                             http_client=self._http)
+                                             max_attempts=self._max_attempts, http_client=self._http)
         self._headers = {"User-Agent": _spec.USER_AGENT_PREFIX + __version__, "Accept": "application/json"}
 
     # Lifecycle -----------------------------------------------------------
@@ -103,12 +103,13 @@ class TerraScale:
                                               content=content)
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
-                if not call.replay_safe:
+                # A connect or pool failure never reached the server, so even a write can be repeated.
+                if not call.replay_safe and not isinstance(exc, _spec.NOT_SENT):
                     raise CommitUncertainError(0, "commit_uncertain", "transport failure; the write may have committed") from exc
                 if isinstance(exc, httpx.DecodingError):
                     raise InvalidResponseError(0, "invalid_response", "invalid response encoding") from exc
                 if attempt >= self._max_attempts:
-                    raise TerraScaleError(f"{call.method} failed: {type(exc).__name__}") from exc
+                    raise _spec.transport_failure(call.method, attempt, exc) from exc
                 time.sleep(_spec.backoff(attempt, None))
                 continue
             if 200 <= response.status_code < 300:

@@ -136,19 +136,21 @@ async def test_repeated_cursor_fails_without_looping(sdk: Any) -> None:
 
 
 @pytest.mark.parametrize("failure", ["transport", "Infinity", "NaN", "0", "-1", "bad-token", "gzip"])
-async def test_token_failures_stay_typed(sdk: Any, failure: str) -> None:
+async def test_token_failures_stay_typed(sdk: Any, failure: str, monkeypatch: pytest.MonkeyPatch) -> None:
     ts, calls, responses = sdk
     cls = type(ts)
-    ts = cls(API_KEY, project=PROJECT, http_client=ts._http)
-    responses.append((lambda _: httpx.Response(201, headers={"content-encoding": "gzip"}, content=b"not-a-gzip-stream"))
+    ts = cls(API_KEY, project=PROJECT, http_client=ts._http, max_attempts=2)
+    monkeypatch.setattr("terrascale._spec.backoff", lambda *_: 0)
+    responses.extend([(lambda _: httpx.Response(201, headers={"content-encoding": "gzip"}, content=b"not-a-gzip-stream"))
                      if failure == "gzip" else httpx.ConnectError("auth failed") if failure == "transport" else
                      httpx.Response(200, json={
         "access_token": "bad\nvalue" if failure == "bad-token" else "fixture-token", "token_type": "Bearer",
-        "expires_in": 3600 if failure == "bad-token" else failure}))
+        "expires_in": 3600 if failure == "bad-token" else failure})] * (2 if failure == "transport" else 1))
     with pytest.raises(TokenError) as err:
         await resolve(ts.database("main").collection("c").create({}))
     assert err.value.code == ("token_transport_error" if failure in ("transport", "gzip") else "invalid_token_response")
-    assert len(calls) == 1 and calls[0].url.path.endswith("/oauth/token")
+    # Transport failures are exchanged again (no token was issued); decoding failures are not.
+    assert len(calls) == (2 if failure == "transport" else 1) and all(c.url.path.endswith("/oauth/token") for c in calls)
 
 
 @pytest.mark.parametrize("change", [{"id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"}, {"version": None},

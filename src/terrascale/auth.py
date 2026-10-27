@@ -20,6 +20,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
+from . import _spec
 from .errors import TerraScaleError, TokenError, parse_retry_after, response_request_id
 from .ids import validate_id
 
@@ -29,6 +30,15 @@ DEFAULT_ISSUER = "https://auth.terrascale.tech/terrascale"
 SCOPES = ("databases:read", "databases:write", "documents:read", "documents:write")
 
 _KEY = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")
+# Token endpoint answers worth another exchange: issuing a token changes no
+# state, so overload and gateway failures are retried with backoff.
+_RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _transport_error(attempts: int, exc: Exception) -> TokenError:
+    detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
+    return TokenError(0, "token_transport_error", f"token exchange failed after {attempts} attempt{'s' if attempts != 1 else ''}"
+                      f" ({detail})")
 
 
 class _Exchange:
@@ -60,6 +70,17 @@ class _Exchange:
         self.token: str | None = None
         self.refresh_at = 0.0
         self.refusal: TerraScaleError | None = None
+
+    def retry_delay(self, response: httpx.Response | None, attempt: int, max_attempts: int) -> float | None:
+        """Seconds to wait before another exchange, or None to stop.
+        ``response`` is None after a transport failure."""
+        if attempt >= max_attempts or self.refusal is not None:
+            return None
+        if response is None:
+            return _spec.backoff(attempt, None)
+        if response.status_code in _RETRY_STATUS:
+            return _spec.backoff(attempt, parse_retry_after(response.headers.get("retry-after")))
+        return None
 
     def headers(self) -> dict[str, str]:
         return {"Authorization": self._auth, "Accept": "application/json"}
@@ -130,22 +151,37 @@ class APIKeyTokenSource:
         scopes: Sequence[str] | None = None,
         issuer: str | None = None,
         http_client: httpx.Client | None = None,
+        max_attempts: int = _spec.MAX_ATTEMPTS,
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
         self._http = http_client or httpx.Client(timeout=30.0, follow_redirects=False)
         self._lock = threading.Lock()
+        self._max_attempts = max(1, max_attempts)
 
     def token(self) -> str:
+        # One exchange at a time: concurrent callers wait for it instead of stampeding ts-auth.
         with self._lock:
             cached = self._x.cached()
             if cached:
                 return cached
-            started = time.monotonic()
-            try:
-                response = self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
-            except (httpx.TransportError, httpx.DecodingError) as exc:
-                raise TokenError(0, "token_transport_error", "token exchange failed") from exc
-            return self._x.accept(response, started)
+            attempt = 0
+            while True:
+                attempt += 1
+                started = time.monotonic()
+                try:
+                    response = self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+                except httpx.TransportError as exc:
+                    delay = self._x.retry_delay(None, attempt, self._max_attempts)
+                    if delay is None:
+                        raise _transport_error(attempt, exc) from exc
+                    time.sleep(delay)
+                    continue
+                except httpx.DecodingError as exc:
+                    raise _transport_error(attempt, exc) from exc
+                delay = self._x.retry_delay(response, attempt, self._max_attempts)
+                if delay is None:
+                    return self._x.accept(response, started)
+                time.sleep(delay)
 
     def reject(self, error: TerraScaleError) -> None:
         """Drop a permanently refused token and stop exchanging this key."""
@@ -168,24 +204,39 @@ class AsyncAPIKeyTokenSource:
         scopes: Sequence[str] | None = None,
         issuer: str | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_attempts: int = _spec.MAX_ATTEMPTS,
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
         self._http = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=False)
         self._lock: asyncio.Lock | None = None
+        self._max_attempts = max(1, max_attempts)
 
     async def token(self) -> str:
         if self._lock is None:
             self._lock = asyncio.Lock()
+        # One exchange at a time: concurrent callers wait for it instead of stampeding ts-auth.
         async with self._lock:
             cached = self._x.cached()
             if cached:
                 return cached
-            started = time.monotonic()
-            try:
-                response = await self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
-            except (httpx.TransportError, httpx.DecodingError) as exc:
-                raise TokenError(0, "token_transport_error", "token exchange failed") from exc
-            return self._x.accept(response, started)
+            attempt = 0
+            while True:
+                attempt += 1
+                started = time.monotonic()
+                try:
+                    response = await self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+                except httpx.TransportError as exc:
+                    delay = self._x.retry_delay(None, attempt, self._max_attempts)
+                    if delay is None:
+                        raise _transport_error(attempt, exc) from exc
+                    await asyncio.sleep(delay)
+                    continue
+                except httpx.DecodingError as exc:
+                    raise _transport_error(attempt, exc) from exc
+                delay = self._x.retry_delay(response, attempt, self._max_attempts)
+                if delay is None:
+                    return self._x.accept(response, started)
+                await asyncio.sleep(delay)
 
     def reject(self, error: TerraScaleError) -> None:
         """Drop a permanently refused token and stop exchanging this key."""
