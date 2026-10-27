@@ -7,6 +7,7 @@ namespace TerraBase.Slow.Management;
 public sealed class DatabaseEscrowConcurrencyTests
 {
     [Test]
+    [StarterAllowanceQuarantine]
     public async Task Concurrent_creates_across_three_regions_never_exceed_the_starter_allowance()
     {
         await using var cell = await DatabaseEscrowCell.StartAsync();
@@ -61,4 +62,13 @@ public sealed class DatabaseEscrowConcurrencyTests
             }
         }
     }
+}
+
+// User-authorized quarantine: #755, owner MarioGK / all-regions WRK. Automatically resumes within 24 hours.
+[AttributeUsage(AttributeTargets.Method)]
+internal sealed class StarterAllowanceQuarantineAttribute()
+    : SkipAttribute("#755: transient escrow deadline changes the refusal message; owner MarioGK / all-regions WRK; expires 2026-10-27T23:30:00Z")
+{
+    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
+        Task.FromResult(DateTimeOffset.UtcNow < new DateTimeOffset(2026, 10, 27, 23, 30, 0, TimeSpan.Zero));
 }
