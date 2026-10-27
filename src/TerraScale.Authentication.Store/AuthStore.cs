@@ -173,7 +173,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
 
     /// <summary>Reads a document and its opaque ETag version. Missing parents and outages propagate.</summary>
     public Task<TerraBaseDocument?> GetAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
-        local.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
+        AuthStorageTelemetry.ReadAsync(collection, "get", () => local.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken));
 
     /// <summary>Reads this region's replicated copy, without a remote fallback.</summary>
     public Task<TerraBaseDocument?> GetLocalAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
@@ -228,7 +228,8 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in <paramref name="sort"/> order, then id order.</summary>
     public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<TerraBaseSort>? sort, CancellationToken cancellationToken = default) =>
-        (await local.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
+        (await AuthStorageTelemetry.ReadAsync(collection, "query", () => local.QueryAsync(collection,
+            new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken)).ConfigureAwait(false)).Items;
 
     /// <summary>How many of the instance's documents <paramref name="collection"/> holds; a lower bound beyond 100000.</summary>
     public async Task<long> CountAsync(string collection, string instanceId, CancellationToken cancellationToken = default)
@@ -468,7 +469,8 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>The owner of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<string?> FindUniqueOwnerAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await local.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await AuthStorageTelemetry.ReadAsync(UniqueCollection, "get", () => local.GetDocumentAsync(UniqueCollection,
+            NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken)).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? claim.OwnerId : null;
     }
@@ -656,7 +658,8 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>The owner and version of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<(string OwnerId, string Version)?> FindUniqueAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await local.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await AuthStorageTelemetry.ReadAsync(UniqueCollection, "get", () => local.GetDocumentAsync(UniqueCollection,
+            NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken)).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, document!.Version) : null;
     }
@@ -691,47 +694,62 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
             return false;
         }
 
-        foreach (var binding in bindings)
+        // Reject malformed lineage before issuing reads. Independent ancestors have no ordering dependency;
+        // bound the fan-out and retain every check, including user-state/email and device authorization checks.
+        if (bindings.Any(binding => binding is null || string.IsNullOrEmpty(binding.Kind)
+            || string.IsNullOrEmpty(binding.Key) || string.IsNullOrEmpty(binding.OwnerId)))
         {
-            if (binding is null || string.IsNullOrEmpty(binding.Kind) || string.IsNullOrEmpty(binding.Key) || string.IsNullOrEmpty(binding.OwnerId))
+            return false;
+        }
+
+        var distinct = bindings.Distinct().ToArray();
+        for (var offset = 0; offset < distinct.Length; offset += 8)
+        {
+            var checks = distinct.Skip(offset).Take(8).Select(binding => this.IsCredentialCurrentAsync(instanceId, binding, cancellationToken));
+            if ((await Task.WhenAll(checks).ConfigureAwait(false)).Any(current => !current))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private async Task<bool> IsCredentialCurrentAsync(string instanceId, CredentialBinding binding, CancellationToken cancellationToken)
+    {
+        if (binding.Kind == "credential:user-state")
+        {
+            var user = await this.GetAsync(UserCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+            if (user is null || !user.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
+                || !user.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
+                || !user.Document.TryGetProperty("authStamp", out var stamp) || stamp.GetString() != binding.OwnerId
+                || !user.Document.TryGetProperty("email", out var email) || email.GetString() is not { } address
+                || await this.FindUniqueOwnerAsync(instanceId, "email", address, cancellationToken).ConfigureAwait(false) != binding.Key)
             {
                 return false;
             }
 
-            if (binding.Kind == "credential:user-state")
-            {
-                var user = await this.GetAsync(UserCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
-                if (user is null || !user.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
-                    || !user.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
-                    || !user.Document.TryGetProperty("authStamp", out var stamp) || stamp.GetString() != binding.OwnerId
-                    || !user.Document.TryGetProperty("email", out var email) || email.GetString() is not { } address
-                    || await this.FindUniqueOwnerAsync(instanceId, "email", address, cancellationToken).ConfigureAwait(false) != binding.Key)
-                {
-                    return false;
-                }
+            return true;
+        }
 
-                continue;
-            }
-
-            if (binding.Kind == "credential:authorization")
-            {
-                var authorization = await this.GetAsync(OidcAuthorizationCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
-                if (binding.OwnerId != binding.Key || authorization is null
-                    || !authorization.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
-                    || !authorization.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
-                    || !authorization.Document.TryGetProperty("status", out var status) || status.GetString() != "valid")
-                {
-                    return false;
-                }
-
-                continue;
-            }
-
-            if (!binding.Kind.StartsWith("credential:", StringComparison.Ordinal)
-                || await this.FindUniqueOwnerAsync(instanceId, binding.Kind, binding.Key, cancellationToken).ConfigureAwait(false) != binding.OwnerId)
+        if (binding.Kind == "credential:authorization")
+        {
+            var authorization = await this.GetAsync(OidcAuthorizationCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+            if (binding.OwnerId != binding.Key || authorization is null
+                || !authorization.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
+                || !authorization.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
+                || !authorization.Document.TryGetProperty("status", out var status) || status.GetString() != "valid")
             {
                 return false;
             }
+
+            return true;
+        }
+
+        if (!binding.Kind.StartsWith("credential:", StringComparison.Ordinal)
+            || await this.FindUniqueOwnerAsync(instanceId, binding.Kind, binding.Key, cancellationToken).ConfigureAwait(false) != binding.OwnerId)
+        {
+            return false;
         }
 
         return true;

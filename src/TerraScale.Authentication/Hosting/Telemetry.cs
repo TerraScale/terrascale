@@ -8,6 +8,7 @@ using Sentry.Extensibility;
 using Sentry.Protocol;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Logging;
+using TerraScale.Authentication.Store;
 
 namespace TerraScale.Authentication.Hosting;
 
@@ -72,11 +73,12 @@ public static partial class Telemetry
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
-                .AddMeter(AuthMetrics.MeterName)
+                .AddMeter(AuthMetrics.MeterName, AuthStorageTelemetry.SourceName)
                 .AddPrometheusExporter());
         if (traces)
         {
             telemetry.WithTracing(tracing => tracing
+                .AddSource(AuthStorageTelemetry.SourceName)
                 .AddAspNetCoreInstrumentation(aspnet =>
                     aspnet.Filter = context => !context.Request.Path.StartsWithSegments("/healthz", StringComparison.Ordinal))
                 .AddHttpClientInstrumentation()
