@@ -227,7 +227,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return new NotFound();
         }
         var database = jwt.TryGetPayloadValue<string>("database", out var name) ? name : null;
-        if (database is not null && !EntityIds.IsValid(database) && !Engine.DatabaseName.TryParse(database, out _))
+        if (database is not null && !EntityIds.IsValid(database))
         {
             return new NotFound();
         }

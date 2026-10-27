@@ -58,7 +58,7 @@ public static class GitHubActionsGrant
     /// <summary>The required GitHub environment.</summary>
     public const string Environment = "production";
 
-    /// <summary>The database name restriction understood by TerraBase's verifier.</summary>
+    /// <summary>The database ULID restriction understood by TerraBase's verifier.</summary>
     public const string DatabaseProperty = "ts_database";
 
     /// <summary>The binding's activation time.</summary>
@@ -83,7 +83,7 @@ public static class GitHubActionsGrant
         database = Text(DatabaseProperty);
         return DateTimeOffset.TryParseExact(Text(ExpiresProperty), TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out expires)
             && DateTimeOffset.TryParseExact(Text(ActivatedProperty), TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var activated)
-            && PlatformDirectory.IsId(organization) && PlatformDirectory.IsId(project) && ApiKeys.IsDatabaseName(database)
+            && PlatformDirectory.IsId(organization) && PlatformDirectory.IsId(project) && ApiKeys.IsDatabaseId(database)
             && activated <= now && expires > now && expires > activated && expires - activated <= TimeSpan.FromHours(24);
     }
 
@@ -116,17 +116,17 @@ public static class GitHubActionsBinding
     /// <summary>The verb that unbinds.</summary>
     public const string UnbindCommand = "unbind-github-actions-e2e";
 
-    /// <summary>Binds an existing organization/project and an explicitly approved database name until a UTC deadline.</summary>
+    /// <summary>Binds an existing organization/project and an explicitly approved database ULID until a UTC deadline.</summary>
     public static async Task<(string Organization, string Project, bool Created)> BindAsync(IServiceProvider services,
         string organization, string project, string database, DateTimeOffset deadline, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(services);
         var now = services.GetRequiredService<TimeProvider>().GetUtcNow();
-        if (!PlatformDirectory.IsId(organization) || !PlatformDirectory.IsId(project) || !ApiKeys.IsDatabaseName(database)
+        if (!PlatformDirectory.IsId(organization) || !PlatformDirectory.IsId(project) || !ApiKeys.IsDatabaseId(database)
             || deadline.Offset != TimeSpan.Zero || deadline.Ticks % TimeSpan.TicksPerSecond != 0
             || deadline <= now || deadline - now > TimeSpan.FromHours(24))
         {
-            throw new ArgumentException("Explicit canonical organization/project ULIDs, database name and a UTC deadline within 24 hours are required.");
+            throw new ArgumentException("Explicit canonical organization/project ULIDs, database ULID and a UTC deadline within 24 hours are required.");
         }
 
         var directory = services.GetRequiredService<PlatformDirectory>();
@@ -210,7 +210,7 @@ public static class GitHubActionsBinding
             {
                 outcome = arguments is [UnbindCommand]
                     ? await UnbindAsync(services, cancellationToken).ConfigureAwait(false) ? "unbound: client deleted" : "not bound; nothing changed"
-                    : throw new ArgumentException("Usage: bind-github-actions-e2e <organization ULID> <project ULID> <database name> <yyyy-MM-ddTHH:mm:ssZ> | unbind-github-actions-e2e");
+                    : throw new ArgumentException("Usage: bind-github-actions-e2e <organization ULID> <project ULID> <database ULID> <yyyy-MM-ddTHH:mm:ssZ> | unbind-github-actions-e2e");
             }
 
             logger.ZLogWarning($"Audit: operator command {command}: {outcome}");

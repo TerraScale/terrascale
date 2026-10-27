@@ -50,15 +50,18 @@ Convergence drops index entries whose database now carries another name (from th
 deleted, one bounded page of one project per pass, rotating across the projects a region holds. An entry whose
 database has not replicated to the region yet is kept, so lookups fail closed.
 
+## Credentials
+
+A key or token narrowed to one database carries its ULID (`database` claim); TerraBase refuses a token whose
+`database` claim is a name, and ts-auth only creates keys narrowed by ULID. A rename therefore never moves a
+credential to another database that later takes the old name.
+
 ## Known limits
 
 - **Late release over a new claim.** Index releases are last-writer-wins tombstones, not conditional on the claim they
   read. A release committed after, but before receiving, another region's newer claim of the same name can hide that
   claim. The claiming database's holders re-add its entry on their next convergence pass, so the name resolves again
   after one pass and replication; until then it answers `404` by name (never another database).
-- **Name-restricted credentials.** A key or token restricted by database *name* follows the name, not the database.
-  Rename must not reach production until every stored restriction is an immutable ULID; that conversion is a separate,
-  unfinished auth change.
 - **Placement full-row writes.** `ITenantDirectory.UpdatePlacementAsync`, which has no production caller today, rewrites
   the whole record from a non-home region and could restore a stale name. It must become a placement-only patch
   before anything calls it.
