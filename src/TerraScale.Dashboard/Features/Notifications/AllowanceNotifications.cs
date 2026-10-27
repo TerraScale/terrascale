@@ -51,7 +51,9 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
                 try { await ObserveAsync(item, month, cancellationToken); }
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
-                    logger.LogWarning("An allowance notification could not be processed ({ErrorType}); other organizations continue.", error.GetType().Name);
+                    // Messages here are the dashboard's own or status lines; no response body or recipient is logged.
+                    logger.LogWarning("An allowance notification for organization {OrganizationId} could not be processed ({ErrorType}: {Error}); other organizations continue.",
+                        item.OrganizationId, error.GetType().Name, error.Message);
                 }
             }
             after = page.Next;

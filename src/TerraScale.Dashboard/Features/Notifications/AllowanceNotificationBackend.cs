@@ -32,7 +32,7 @@ public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashb
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(
             Uri.EscapeDataString(credentials.AuthClientId) + ":" + Uri.EscapeDataString(credentials.AuthClientSecret))));
         using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode) throw new IOException("Allowance email service is unavailable.");
+        if (!response.IsSuccessStatusCode) throw new IOException($"Allowance email service answered {(int)response.StatusCode}.");
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         return body.TryGetProperty("status", out var value) && value.GetString() is "accepted" or "retryable" or "unknown" or "rejected" or "no_recipients"
             ? value.GetString()! : throw new IOException("Allowance email response is invalid.");

@@ -41,7 +41,13 @@ public static class DashboardApplication
             WebRootPath = "web/static"
         });
         // The console formatter's fixed setting retains sanitized request/trace scopes in structured timings.
-        builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
+        // UTC timestamps place each line against ts-auth and TerraBase logs and ts-orch rollouts.
+        builder.Logging.AddJsonConsole(options =>
+        {
+            options.IncludeScopes = true;
+            options.UseUtcTimestamp = true;
+            options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+        });
         builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
         builder.Services.AddSafeHttpLogging();
@@ -184,7 +190,9 @@ public static class DashboardApplication
                                           error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
             {
                 // Platform failures never select a demo store or leak response bodies/secrets.
-                app.Logger.LogWarning("Dashboard dependency failed ({ErrorType})", error.GetType().Name);
+                app.Logger.LogWarning("Dashboard dependency failed on {Route} ({ErrorType} {Status})",
+                    (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]",
+                    error.GetType().Name, (int?)(error as HttpRequestException)?.StatusCode);
                 if (context.Response.HasStarted) throw;
                 if (AcceptsJson(context))
                 {
