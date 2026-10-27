@@ -102,7 +102,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
 
         // No second submit: the same durable driver resumes against the upgraded real engine.
         legacy.Upgraded = true;
-        clock.UtcNow += TimeSpan.FromSeconds(3);
+        clock.UtcNow = clock.UtcNow.AddMinutes(2);
         await worker.RunOnceAsync();
         await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNull();
         await Assert.That(await directory.ProjectAsync(project, CancellationToken.None)).IsNull();
@@ -138,7 +138,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
             JsonSerializer.SerializeToElement(account.Value with { NextAttemptAt = clock.UtcNow.AddSeconds(1) }, ClosureJson.Default.ClosureJob), account.Version)).IsNotNull();
 
         // The old engine's fallback now meets the real v2 fence, with no recorded fence evidence in auth.
-        clock.UtcNow += TimeSpan.FromSeconds(3);
+        clock.UtcNow = clock.UtcNow.AddMinutes(2);
         await worker.RunOnceAsync();
         await Assert.That(legacy.Versions is [2, 2, 1]).IsTrue();
         var pending = (await JobAsync(oidc, "project", project))!;
@@ -149,7 +149,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNotNull();
 
         legacy.Upgraded = true;
-        clock.UtcNow += TimeSpan.FromSeconds(3);
+        clock.UtcNow = clock.UtcNow.AddMinutes(2);
         await worker.RunOnceAsync();
         await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNull();
         await Assert.That(await services.GetRequiredService<PlatformDirectory>().ProjectAsync(project, CancellationToken.None)).IsNull();
@@ -456,6 +456,39 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         }
 
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{solo}", token);
+    }
+
+    // Every deferral is a remote-durable write: a pending intent backs off (2 s doubling, at most a minute) instead of being
+    // rewritten on every two-second pass while its account intent drives it.
+    [Test]
+    public async Task An_account_driven_intent_backs_off_to_a_minute_between_deferrals()
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
+        var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token, "Solo");
+        var project = await oidc.CreateProjectAsync(token, organization, "Pending");
+        var services = oidc.Server.App.Services;
+        var (store, worker) = (services.GetRequiredService<AuthStore>(), services.GetRequiredService<ClosureWorker>());
+
+        // The account intent is never due, so only its project intent is visited, and deferred each time it is.
+        var (accountJob, _) = ClosureJob.New("terrascale", "account", alice.Id, null, alice.Id, clock);
+        var (_, child) = ClosureJob.New("terrascale", "project", project, organization, alice.Id, clock, alice.Id);
+        var account = AuthStore.Create(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("account", alice.Id),
+            JsonSerializer.SerializeToElement(accountJob with { NextAttemptAt = clock.UtcNow.AddDays(1) }, ClosureJson.Default.ClosureJob));
+        await Assert.That(await store.TransactAsync([account, child])).IsNull();
+
+        List<double> delays = [];
+        for (var pass = 0; pass < 7; pass++)
+        {
+            await worker.RunOnceAsync();
+            var pending = (await JobAsync(oidc, "project", project))!;
+            await Assert.That(pending.FailureCode).IsEqualTo("account_driven");
+            delays.Add((pending.NextAttemptAt - clock.UtcNow).TotalSeconds);
+            clock.UtcNow = pending.NextAttemptAt;
+        }
+
+        await Assert.That(string.Join(",", delays)).IsEqualTo("2,4,8,16,32,60,60");
     }
 
     // Review R2 P2-2: a step that read the organizations before a concurrent cancellation can no longer create an
