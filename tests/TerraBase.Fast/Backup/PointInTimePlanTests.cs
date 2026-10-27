@@ -44,7 +44,7 @@ public sealed class PointInTimePlanTests
             using var otherProject = ProjectClient(EntityIds.New().ToString(), "databases:read");
             using var hiddenProject = await otherProject.PostAsJsonAsync(route, new { });
             await Assert.That(hiddenProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            using var restricted = ProjectClient(database.Project, "databases:read", "another");
+            using var restricted = ProjectClient(database.Project, "databases:read", EntityIds.New().ToString());
             using var hiddenDatabase = await restricted.PostAsJsonAsync(route, new { });
             await Assert.That(hiddenDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             using var anonymous = api.WithToken(null);

@@ -195,7 +195,7 @@ public sealed class PlatformDatabasesTests
                 token.Issuer = TerraBaseOptions.PlatformAuthIssuer;
                 token.Audience = TerraBaseOptions.PlatformAuthAudience;
                 token.Claims["project_id"] = database.ProjectId;
-                token.Claims["database"] = name;
+                token.Claims["database"] = database.Id;
                 token.Claims["scope"] = "databases:read documents:read";
             }));
             using var read = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.ProjectId}/databases/{name}/collections"));

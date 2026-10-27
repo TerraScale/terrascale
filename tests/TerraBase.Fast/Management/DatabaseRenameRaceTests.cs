@@ -20,7 +20,7 @@ public sealed partial class DatabaseRenameRaceTests
         var (regions, renamed) = await StartAsync("left");
         await using var cleanup = regions;
         var (gru, sjc) = (regions.Gru, regions.Sjc);
-        var backups = await PrepareAsync(gru, renamed);
+        var (backups, policy) = await PrepareAsync(gru, renamed);
         await AssertConvergedAsync(regions, renamed.Project, [renamed]);
 
         regions.Delivery.Arm(renamed.Project);
@@ -52,8 +52,8 @@ public sealed partial class DatabaseRenameRaceTests
         var (winner, loser) = string.CompareOrdinal(renamed.Id, created.Id) < 0 ? (renamed, created) : (created, renamed);
         await AssertConflictResolvedAsync(regions, winner, loser, "shared");
         await AssertMissingAsync(regions.All, renamed.Project, "left");
-        await Assert.That(await gru.Client.GetStringAsync(Uri(renamed.Path + "/backups"))).IsEqualTo(backups.Backups);
-        await Assert.That(await gru.Client.GetStringAsync(Uri(renamed.Path + "/backup-policy"))).IsEqualTo(backups.Policy);
+        await Assert.That(await gru.Client.GetStringAsync(Uri(renamed.Path + "/backups"))).IsEqualTo(backups);
+        await Assert.That(await gru.Client.GetStringAsync(Uri(renamed.Path + "/backup-policy"))).IsEqualTo(policy);
         foreach (var region in regions.All)
         {
             await Assert.That(await EventsAsync(region, renamed.Organization, "database.renamed", renamed.Id)).IsEqualTo(1);
@@ -177,7 +177,7 @@ public sealed partial class DatabaseRenameRaceTests
         var (gru, sjc) = (regions.Gru, regions.Sjc);
         var unrelated = await gru.CreateManagedDatabaseAsync(target.Organization, target.Project, "unrelated");
         await PrepareAsync(gru, target);
-        var backups = await PrepareAsync(gru, unrelated);
+        var (backups, _) = await PrepareAsync(gru, unrelated);
         await AssertConvergedAsync(regions, target.Project, [target, unrelated]);
 
         // At its home, gru renames the target and then deletes it; meanwhile sjc, which sees neither, creates a database
@@ -247,7 +247,7 @@ public sealed partial class DatabaseRenameRaceTests
             await Assert.That(await EventsAsync(region, target.Organization, "database.name_conflict", claimant.Id)).IsEqualTo(lost ? 1 : 0);
         }
 
-        await Assert.That(await gru.Client.GetStringAsync(Uri(unrelated.Path + "/backups"))).IsEqualTo(backups.Backups);
+        await Assert.That(await gru.Client.GetStringAsync(Uri(unrelated.Path + "/backups"))).IsEqualTo(backups);
     }
 
     // After convergence: exactly one database holds `name`, the smallest ULID, in every region; the other keeps its ULID, data,

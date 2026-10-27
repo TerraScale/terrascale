@@ -39,8 +39,8 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         var deadline = Deadline(oidc);
-        var (organization, project, created) = await BindAsync(oidc, deadline);
-        var again = await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, organization, project, "ci-e2e", deadline, CancellationToken.None);
+        var (organization, project, database, created) = await BindAsync(oidc, deadline);
+        var again = await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, organization, project, database, deadline, CancellationToken.None);
 
         using var response = await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience));
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -51,7 +51,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(GitHubActionsGrant.Scopes);
-        await Assert.That(access.GetClaim("database").Value).IsEqualTo("ci-e2e");
+        await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
         await Assert.That(access.Audiences).IsEquivalentTo([GitHubActionsGrant.ApiAudience]);
         await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
         await Assert.That(access.Subject).IsEqualTo(GitHubActionsGrant.ClientId);
@@ -185,7 +185,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         // GitHub documents job_workflow_ref only for jobs of a reusable workflow; a job of e2e.yml itself may carry none.
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
-        var (organization, project, _) = await BindAsync(oidc);
+        var (organization, project, _, _) = await BindAsync(oidc);
 
         using var response = await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience, new Dictionary<string, string?> { ["job_workflow_ref"] = null }));
         var access = new JsonWebToken((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString());
@@ -290,7 +290,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
-        var (organization, project, _) = await BindAsync(oidc);
+        var (organization, project, database, _) = await BindAsync(oidc);
         var otherOrganization = AuthStore.NewId();
         var otherProject = AuthStore.NewId();
 
@@ -300,7 +300,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
             ["project_id"] = otherProject,
             ["role"] = "admin",
             ["scope"] = "api-keys:write",
-            ["database"] = "other",
+            ["database"] = AuthStore.NewId(),
         }));
         var access = new JsonWebToken((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString());
 
@@ -309,7 +309,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(GitHubActionsGrant.Scopes);
         await Assert.That(access.TryGetClaim("role", out _)).IsFalse();
-        await Assert.That(access.GetClaim("database").Value).IsEqualTo("ci-e2e");
+        await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
     }
 
     [Test]
@@ -320,15 +320,15 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
-        var (organization, project, _) = await BindAsync(oidc);
+        var (organization, project, database, _) = await BindAsync(oidc);
         var assertion = github.Mint(GitHubActionsGrant.Audience);
-        var bad = await ErrorAsync(await RequestAsync(oidc, assertion, extra: new Dictionary<string, string> { [parameter] = parameter == "database" ? "other" : AuthStore.NewId() }));
+        var bad = await ErrorAsync(await RequestAsync(oidc, assertion, extra: new Dictionary<string, string> { [parameter] = AuthStore.NewId() }));
         await Assert.That(bad.Error).IsEqualTo("invalid_target");
         using var good = await RequestAsync(oidc, assertion, "documents:read", new Dictionary<string, string>
         {
             ["organization"] = organization,
             ["project"] = project,
-            ["database"] = "ci-e2e",
+            ["database"] = database,
         });
         await Assert.That((int)good.StatusCode).IsEqualTo(200);
     }
@@ -405,18 +405,19 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: github.Route);
         var services = oidc.Server.App.Services;
         var deadline = now.AddHours(24);
-        var (organization, project, _) = await BindAsync(oidc, deadline);
+        var (organization, project, database, _) = await BindAsync(oidc, deadline);
         foreach (var invalid in new[] { now, now.AddSeconds(-1), deadline.AddSeconds(1), deadline.ToOffset(TimeSpan.FromHours(1)), deadline.AddTicks(1) })
         {
-            await Assert.ThrowsAsync<ArgumentException>(() => GitHubActionsBinding.BindAsync(services, organization, project, "ci-e2e", invalid, CancellationToken.None));
+            await Assert.ThrowsAsync<ArgumentException>(() => GitHubActionsBinding.BindAsync(services, organization, project, database, invalid, CancellationToken.None));
         }
 
-        await Assert.ThrowsAsync<ArgumentException>(() => GitHubActionsBinding.BindAsync(services, "bad", project, "ci-e2e", deadline, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => GitHubActionsBinding.BindAsync(services, "bad", project, database, deadline, CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentException>(() => GitHubActionsBinding.BindAsync(services, organization, project, "bad/name", deadline, CancellationToken.None));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, AuthStore.NewId(), project, "ci-e2e", deadline, CancellationToken.None));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, organization, AuthStore.NewId(), "ci-e2e", deadline, CancellationToken.None));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, organization, project, "other", deadline, CancellationToken.None));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, organization, project, "ci-e2e", deadline.AddSeconds(-1), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => GitHubActionsBinding.BindAsync(services, organization, project, "ci-e2e", deadline, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, AuthStore.NewId(), project, database, deadline, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, organization, AuthStore.NewId(), database, deadline, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, organization, project, AuthStore.NewId(), deadline, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(services, organization, project, database, deadline.AddSeconds(-1), CancellationToken.None));
         using var accepted = await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience));
         await Assert.That((int)accepted.StatusCode).IsEqualTo(200);
     }
@@ -452,7 +453,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         var deadline = Deadline(oidc);
-        var (organization, project, _) = await BindAsync(oidc, deadline);
+        var (organization, project, database, _) = await BindAsync(oidc, deadline);
         await using var scope = oidc.Server.App.Services.CreateAsyncScope();
         var manager = scope.ServiceProvider.GetRequiredService<IOpenIddictApplicationManager>();
         var application = (await manager.FindByClientIdAsync(GitHubActionsGrant.ClientId))!;
@@ -475,7 +476,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         {
             await UpdateBindingAsync(manager, application, original.SetItem(property, JsonSerializer.SerializeToElement(value)));
             await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience)))).Error).IsEqualTo("invalid_client");
-            await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(oidc.Server.App.Services, organization, project, "ci-e2e", deadline, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => GitHubActionsBinding.BindAsync(oidc.Server.App.Services, organization, project, database, deadline, CancellationToken.None));
         }
 
         await UpdateBindingAsync(manager, application, original);
@@ -501,8 +502,8 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, services: github.Route);
         var services = oidc.Server.App.Services;
         var deadline = Deadline(oidc);
-        var (organization, project, _) = await BindAsync(oidc, deadline);
-        var args = new[] { GitHubActionsBinding.BindCommand, organization, project, "ci-e2e", deadline.ToString(GitHubActionsGrant.TimestampFormat, CultureInfo.InvariantCulture) };
+        var (organization, project, database, _) = await BindAsync(oidc, deadline);
+        var args = new[] { GitHubActionsBinding.BindCommand, organization, project, database, deadline.ToString(GitHubActionsGrant.TimestampFormat, CultureInfo.InvariantCulture) };
         await Assert.That(await GitHubActionsBinding.RunAsync(args, services, CancellationToken.None)).IsEqualTo(0);
         await Assert.That(await GitHubActionsBinding.RunAsync([GitHubActionsBinding.BindCommand], services, CancellationToken.None)).IsEqualTo(1);
         args[4] = deadline.ToString("O", CultureInfo.InvariantCulture);
@@ -530,13 +531,15 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     private static DateTimeOffset Deadline(OidcHarness oidc) =>
         DateTimeOffset.FromUnixTimeSeconds(oidc.Server.App.Services.GetRequiredService<TimeProvider>().GetUtcNow().AddHours(1).ToUnixTimeSeconds());
 
-    private static async Task<(string Organization, string Project, bool Created)> BindAsync(OidcHarness oidc, DateTimeOffset? deadline = null)
+    private static async Task<(string Organization, string Project, string Database, bool Created)> BindAsync(OidcHarness oidc, DateTimeOffset? deadline = null)
     {
         var user = await oidc.CreateUserAsync();
         var directory = oidc.Server.App.Services.GetRequiredService<PlatformDirectory>();
         var organization = await directory.CreateOrganizationAsync(user, "Isolated E2E", CancellationToken.None);
         var project = await directory.CreateProjectAsync(user.Id, organization.Id, "E2E", CancellationToken.None);
-        return await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, organization.Id, project.Id, "ci-e2e", deadline ?? Deadline(oidc), CancellationToken.None);
+        var database = await oidc.CreateDatabaseIdAsync("ci-e2e");
+        var binding = await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, organization.Id, project.Id, database, deadline ?? Deadline(oidc), CancellationToken.None);
+        return (binding.Organization, binding.Project, database, binding.Created);
     }
 
     private static Task<HttpResponseMessage> RequestAsync(OidcHarness oidc, string subjectToken, string? scope = null, IReadOnlyDictionary<string, string>? extra = null)

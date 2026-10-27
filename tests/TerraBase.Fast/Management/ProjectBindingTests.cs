@@ -256,7 +256,7 @@ public sealed class ProjectBindingTests
                 case "signature": descriptor.SigningCredentials = unpublished; break;
                 case "project":
                     descriptor.Claims["project_id"] = database.Project;
-                    descriptor.Claims["database"] = "main";
+                    descriptor.Claims["database"] = database.Id;
                     descriptor.Claims["scope"] = Scopes;
                     break;
                 default: throw new ArgumentOutOfRangeException(nameof(failure));

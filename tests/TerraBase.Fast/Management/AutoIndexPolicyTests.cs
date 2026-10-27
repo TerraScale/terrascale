@@ -161,7 +161,7 @@ public sealed class AutoIndexPolicyTests
         await SetPolicyAsync(api, database, "people", false);
         var otherProject = await api.CreateManagedDatabaseAsync();
         using var readOnly = PolicyClient(api, database, scope: "databases:read");
-        using var restricted = PolicyClient(api, database, restrictedDatabase: database.Name);
+        using var restricted = PolicyClient(api, database, restrictedDatabase: database.Id);
         using var mismatched = PolicyClient(api, otherProject);
         using var anonymous = api.WithToken(null);
         var neighbor = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "neighbor");

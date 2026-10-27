@@ -91,7 +91,7 @@ public sealed class ExplainSqlApiTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SeedPeopleAsync(api, database);
-        using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Name, subject: EntityIds.New().ToString());
+        using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Id, subject: EntityIds.New().ToString());
         using var anonymous = api.WithToken(null);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read");
         const string Sql = "SELECT name FROM people LIMIT 1";
@@ -126,7 +126,7 @@ public sealed class ExplainSqlApiTests
             (EntityIds.New().ToString(), "databases:read", null, database.Project, HttpStatusCode.NotFound),
             ("not-a-project", "databases:read", null, "not-a-project", HttpStatusCode.Unauthorized),
             ("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "databases:read", null, "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", HttpStatusCode.Unauthorized),
-            (database.Project, "databases:read", "other", database.Project, HttpStatusCode.NotFound),
+            (database.Project, "databases:read", EntityIds.New().ToString(), database.Project, HttpStatusCode.NotFound),
             (database.Project, null, null, database.Project, HttpStatusCode.Forbidden),
             (database.Project, "documents:read", null, database.Project, HttpStatusCode.Forbidden),
             (database.Project, "databases:reader", null, database.Project, HttpStatusCode.Forbidden),

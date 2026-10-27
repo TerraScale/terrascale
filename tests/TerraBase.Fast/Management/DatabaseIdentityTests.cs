@@ -9,18 +9,16 @@ namespace TerraBase.Fast.Management;
 public sealed class DatabaseIdentityTests
 {
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task Database_ids_and_names_reach_the_same_data_and_preserve_database_restrictions(bool idRoute, bool idRestriction)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Database_ids_and_names_reach_the_same_data_and_preserve_database_restrictions(bool idRoute)
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("original");
         var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = Client(api, database.Project);
-        using var restricted = Client(api, database.Project, idRestriction ? database.Id : database.Name);
+        using var restricted = Client(api, database.Project, database.Id);
         var root = $"/v1/projects/{database.Project}/databases/";
         var target = root + (idRoute ? database.Id : database.Name);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
@@ -60,11 +58,14 @@ public sealed class DatabaseIdentityTests
         }));
         using var noScope = await readOnly.GetAsync(Uri($"{target}/collections/people/documents/by-key?id={id}"));
         await Assert.That(noScope.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        // This deployable prerequisite adds identity addressing; mutable naming stays unavailable.
+        // Renaming keeps the immutable restriction and releases the former name.
         using var rename = await restricted.PatchAsJsonAsync(Uri(target), new { name = "renamed" });
-        await Assert.That(rename.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        using var unchanged = await restricted.GetAsync(Uri(root + database.Name));
-        await Assert.That(unchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(rename.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var renamed = await restricted.GetAsync(Uri(root + "renamed"));
+        await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await renamed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(database.Id);
+        using var released = await restricted.GetAsync(Uri(root + database.Name));
+        await Assert.That(released.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     private static HttpClient Client(ManagementApi api, string project, string? restriction = null) => api.WithToken(api.Issuer.Mint(api.User, token =>

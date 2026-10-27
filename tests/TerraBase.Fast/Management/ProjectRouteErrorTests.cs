@@ -18,7 +18,7 @@ public sealed class ProjectRouteErrorTests
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        using var client = ProjectClient(api, database.Project, narrowed ? database.Name : null);
+        using var client = ProjectClient(api, database.Project, narrowed ? database.Id : null);
 
         using var before = await client.GetAsync(Uri(database.Data));
         before.EnsureSuccessStatusCode();

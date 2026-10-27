@@ -157,7 +157,7 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
         var organizationKey = await KeyAsync(oidc, owner, organization, null);
         var read = await KeyAsync(oidc, owner, organization, project, scopes: ReadOnly);
         var write = await KeyAsync(oidc, owner, organization, project, scopes: WriteOnly);
-        var narrowed = await KeyAsync(oidc, owner, organization, project, database: "app");
+        var narrowed = await KeyAsync(oidc, owner, organization, project, database: await oidc.CreateDatabaseIdAsync("app"));
         foreach (var credential in new[] { tampered, organizationKey, read, write, narrowed, owner, null })
         {
             await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), credential, new { user_id = AuthStore.NewId() }))
