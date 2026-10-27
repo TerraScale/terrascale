@@ -21,7 +21,29 @@ pub struct RestoredDatabase {
     pub created_at: String,
     pub home_region: Option<String>,
     pub replica_regions: Option<Vec<String>>,
+    #[serde(deserialize_with = "restore_placement_version")]
     pub placement_version: i64,
+}
+fn restore_placement_version<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<i64, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let parsed = match value {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => {
+            let digits = s.strip_prefix('-').unwrap_or(&s);
+            if !digits.is_empty()
+                && (digits.len() == 1 || !digits.starts_with('0'))
+                && digits.bytes().all(|b| b.is_ascii_digit())
+            {
+                s.parse::<i64>().ok()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    parsed.ok_or_else(|| serde::de::Error::custom("expected exact signed placement version"))
 }
 impl RestoredDatabase {
     /// Assigned replicas, empty until placement is assigned.
