@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Restore/audit once before the no-restore build. Vulnerability data is fresh on every run.
 make security
+make lint
 dotnet build TerraScale.Dashboard.slnx --configuration Release --no-restore \
   -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$GITHUB_SHA"
-make lint
 python3 scripts/ci/tree-proof.py --self-check
 # Keep CI's package identical to the standalone Dockerfile's runtime contract.
 test "$(grep '^FROM mcr.microsoft.com/dotnet/aspnet:' Dockerfile)" = \

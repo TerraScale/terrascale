@@ -47,7 +47,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await ScenarioAsync("pending");
             await ConfirmAsync();
             await page.GetByText("Awaiting payment", new() { Exact = true }).WaitForAsync();
-            await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Complete payment", Exact = true }).GetAttributeAsync("href"))
+            await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Complete payment (opens in a new tab)", Exact = true }).GetAttributeAsync("href"))
                 .StartsWith("https://invoice.stripe.com/i/pending_").Because("a payment that needs 3D Secure links to Stripe's hosted invoice page");
             await Assert.That(await PlanAsync()).IsEqualTo(Starter).Because("Pending payment keeps the existing allowance.");
             await ScenarioAsync("confirm-payment");

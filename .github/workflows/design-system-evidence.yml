@@ -2,10 +2,18 @@ name: Design system evidence
 
 on:
   pull_request:
-    paths: ['tests/TerraScale.Dashboard.E2E/Platform/DesignSystemBrowserJourneyTests.cs']
+    paths:
+      - 'tests/TerraScale.Dashboard.E2E/Platform/DesignSystemBrowserJourneyTests.cs'
+      - '.github/workflows/design-system-evidence.yml'
+      - '.github/actions/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   evidence:
@@ -14,24 +22,22 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/dashboard-setup
       - run: make build
-      - name: Install pinned Chromium
-        run: |
-          driver=tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/.playwright
-          "$driver/node/linux-x64/node" "$driver/package/cli.js" install --with-deps chromium
+      - uses: ./.github/actions/dashboard-browser
       - name: Verify and capture the PR head
         run: |
           dotnet run --configuration Release --no-build --no-restore \
             --project tests/TerraScale.Dashboard.E2E -- \
             --treenode-filter '/*/*/DesignSystemBrowserJourneyTests/*'
       - name: Capture the actual base application for comparison
+        if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
           # Keep the capture harness; restore only application source to the real base commit.
           git restore --source="$BASE_SHA" --worktree -- src
           python3 - <<'PY'
@@ -42,7 +48,8 @@ jobs:
           # Baseline is a capture, not a claim that old markup passes the new assertions.
           s = re.sub(r'await Assert\.That\(await point\.EvaluateAsync<bool>\(""".*?"""\)\).*?;', '', s, flags=re.S)
           s = re.sub(r'^\s*await Assert\..*?;\n', '\n', s, flags=re.M)
-          s = s.replace('details.ts-menu', 'details').replace('.ts-menu-panel', '.ts-dropdown-panel')
+          # The base may already contain the shared menu introduced by the original design PR.
+          s = s.replace('details.ts-menu', 'details').replace('.ts-menu-panel', ':is(.ts-menu-panel, .ts-dropdown-panel)')
           s = s.replace('summary.ts-card-head', 'summary').replace('design-system"', 'design-system-before"')
           p.write_text(s)
           PY
@@ -52,7 +59,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: design-system-${{ github.event.pull_request.head.sha }}-base-${{ github.event.pull_request.base.sha }}
+          name: design-system-${{ github.event.pull_request.head.sha || github.sha }}-base-${{ github.event.pull_request.base.sha || github.sha }}
           path: |
             test-results/dotnet/design-system/
             test-results/dotnet/design-system-before/

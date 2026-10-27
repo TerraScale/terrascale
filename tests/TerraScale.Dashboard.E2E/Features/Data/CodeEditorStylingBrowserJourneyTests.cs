@@ -140,10 +140,15 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
                     return surface.width > 0 && surface.height > 0 && Math.abs(editor.width - surface.width) < 2 && Math.abs(editor.height - surface.height) < 2;
                 }
                 """, host);
-            var surface = await page.Locator(host + " .ts-code-editor-surface").BoundingBoxAsync();
-            await Assert.That(surface is { Width: > 0, Height: > 0 }).IsTrue().Because(name + ": the editor must have a size once its dialog is shown.");
-            var editor = await page.Locator(host + " .monaco-editor").BoundingBoxAsync();
-            await Assert.That(editor is not null && Math.Abs(editor.Width - surface!.Width) < 2 && Math.Abs(editor.Height - surface.Height) < 2)
+            // Read both rectangles in one browser frame: dialog animations can change their
+            // scale between separate protocol round trips even when their layout agrees.
+            await Assert.That(await page.Locator(host).EvaluateAsync<bool>("""
+                host => {
+                    const surface = host.querySelector('.ts-code-editor-surface').getBoundingClientRect();
+                    const editor = host.querySelector('.monaco-editor').getBoundingClientRect();
+                    return surface.width > 0 && surface.height > 0 && Math.abs(editor.width - surface.width) < 2 && Math.abs(editor.height - surface.height) < 2;
+                }
+                """))
                 .IsTrue().Because(name + ": Monaco must fill its surface after a hidden dialog opens.");
             await Assert.That(await page.Locator(host).EvaluateAsync<string>("el => getComputedStyle(el).backgroundColor")).IsEqualTo(surfaceToken)
                 .Because(name + ": the host surface must use --ts-surface.");
