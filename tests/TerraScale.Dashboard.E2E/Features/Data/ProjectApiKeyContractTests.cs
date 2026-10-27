@@ -39,8 +39,8 @@ public sealed class ProjectApiKeyContractTests
             context.Organization!.Members.Add(CreatorId, new() { UserId = CreatorId, Email = "creator@example.test" });
         var service = new ApiKeyService(wire, TimeProvider.System);
         var listed = (await service.ListAsync(context, CancellationToken.None)).Single();
-        var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 0, [], CancellationToken.None);
-        var rotated = await service.RotateAsync(context, KeyId, 0, CancellationToken.None);
+        var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 0, [], CancellationToken.None, "synthetic-proof");
+        var rotated = await service.RotateAsync(context, KeyId, 0, CancellationToken.None, "synthetic-proof");
         foreach (var key in new[] { listed, created.Key, rotated.Key })
         {
             await Assert.That(key.CreatedByUserId).IsEqualTo(createdBy);
@@ -60,10 +60,10 @@ public sealed class ProjectApiKeyContractTests
         var context = Context();
         var service = new ApiKeyService(wire, TimeProvider.System);
         var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId,
-            ["documents:read", "documents:write"], 0, [], CancellationToken.None);
+            ["documents:read", "documents:write"], 0, [], CancellationToken.None, "synthetic-proof");
         using var request = JsonDocument.Parse(wire.Body!);
         await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
-        await Assert.That(request.RootElement.TryGetProperty("allowed_cidrs", out _)).IsFalse();
+        await Assert.That(request.RootElement.GetProperty("allowed_cidrs").GetArrayLength()).IsEqualTo(0);
         await Assert.That(created.Key.AllowedCidrs).IsEquivalentTo(Array.Empty<string>());
         await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo("app");
         await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
@@ -87,7 +87,7 @@ public sealed class ProjectApiKeyContractTests
         var now = new DateTimeOffset(2026, 10, 23, 12, 0, 0, 750, TimeSpan.Zero);
         using var wire = new Wire();
         var created = await new ApiKeyService(wire, new FixedTime(now)).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
-            ["documents:read", "documents:write"], days, [], CancellationToken.None);
+            ["documents:read", "documents:write"], days, [], CancellationToken.None, "synthetic-proof");
         using var request = JsonDocument.Parse(wire.Body!);
         var expected = new DateTimeOffset(2026, 10, 23, 12, 0, 0, TimeSpan.Zero).AddDays(days);
         await Assert.That(request.RootElement.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(expected);
@@ -103,7 +103,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire();
         AccountAccessException? rejected = null;
-        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", "", ["documents:read"], days, [], CancellationToken.None); }
+        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", "", ["documents:read"], days, [], CancellationToken.None, "synthetic-proof"); }
         catch (AccountAccessException error) { rejected = error; }
         await Assert.That(rejected?.StatusCode).IsEqualTo(422);
         await Assert.That(wire.Requests).IsEqualTo(0);
@@ -114,7 +114,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire { Failure = "expiry" };
         HttpRequestException? rejected = null;
-        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 30, [], CancellationToken.None); }
+        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 30, [], CancellationToken.None, "synthetic-proof"); }
         catch (HttpRequestException error) { rejected = error; }
         await Assert.That(rejected?.Message).IsEqualTo("Credential issuance returned different restrictions.");
     }
@@ -163,7 +163,7 @@ public sealed class ProjectApiKeyContractTests
     public async Task RotateVerifiesTheKeyAndSendsTheGracePeriodForTheOldSecret()
     {
         using var wire = new Wire();
-        var rotated = await new ApiKeyService(wire, TimeProvider.System).RotateAsync(Context(), KeyId, 3600, CancellationToken.None);
+        var rotated = await new ApiKeyService(wire, TimeProvider.System).RotateAsync(Context(), KeyId, 3600, CancellationToken.None, "synthetic-proof");
         await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Post }, CollectionOrdering.Matching);
         await Assert.That(wire.Path).IsEqualTo($"/v1/terrascale/organizations/{OrganizationId}/projects/{ProjectId}/api-keys/{KeyId}/rotate");
         using var request = JsonDocument.Parse(wire.Body!);
@@ -180,7 +180,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire { Failure = failure };
         AccountAccessException? rejected = null;
-        try { await new ApiKeyService(wire, TimeProvider.System).RotateAsync(Context(), KeyId, ttl, CancellationToken.None); }
+        try { await new ApiKeyService(wire, TimeProvider.System).RotateAsync(Context(), KeyId, ttl, CancellationToken.None, "synthetic-proof"); }
         catch (AccountAccessException error) { rejected = error; }
         await Assert.That(rejected?.StatusCode).IsEqualTo(status);
         await Assert.That(wire.Requests).IsEqualTo(requests);
@@ -205,7 +205,7 @@ public sealed class ProjectApiKeyContractTests
     {
         using var wire = new Wire();
         var created = await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
-            ["documents:read", "documents:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None);
+            ["documents:read", "documents:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None, "synthetic-proof");
         using var request = JsonDocument.Parse(wire.Body!);
         await Assert.That(request.RootElement.GetProperty("allowed_cidrs").EnumerateArray().Select(item => item.GetString()!))
             .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, CollectionOrdering.Matching);
@@ -293,6 +293,8 @@ public sealed class ProjectApiKeyContractTests
                 request.RequestUri.AbsolutePath is not { } path || path != root && path != root + "/" + KeyId && path != root + "/" + KeyId + "/rotate" &&
                 path != root + "/" + KeyId + "/allowed-cidrs" && path != root[..^"/api-keys".Length] && path != root[..^"/api-keys".Length] + "/allowed-cidrs")
                 throw new InvalidOperationException("Keys must use the original user authority at ts-auth's project boundary.");
+            if (request.Method == HttpMethod.Post && request.Headers.GetValues("X-TerraScale-Step-Up-Proof").Single() != "synthetic-proof")
+                throw new InvalidOperationException("Protected key mutations must carry their backend step-up proof.");
             Requests++;
             Methods.Add(request.Method);
             Query = request.RequestUri.Query;

@@ -9,6 +9,9 @@ namespace TerraScale.Dashboard.Demo;
 // Each project starts with the same synthetic tenant. Pages hold three records so journeys exercise paging.
 sealed class TestAuthentication : ITsAuthProjects
 {
+    public IAuthStepUpGateway? StepUp { get; set; }
+    private int createdClients;
+    public int CreatedClients => Volatile.Read(ref createdClients);
     public const int PageSize = 3;
     private readonly ConcurrentDictionary<string, Tenant> tenants = new(StringComparer.Ordinal);
     private readonly TerraScaleIdGenerator ids = new();
@@ -138,12 +141,14 @@ sealed class TestAuthentication : ITsAuthProjects
         return Task.FromResult(Locked(tenant, () => (IReadOnlyList<TerraScaleAuthProjectOAuthClient>)tenant.Clients.ToArray()));
     }
 
-    public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, CancellationToken cancellationToken)
+    public async Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken)
     {
+        await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_oauth_client", "ts-auth", null, cancellationToken);
+        Interlocked.Increment(ref createdClients);
         var tenant = For(projectId);
         var client = new TerraScaleAuthProjectOAuthClient(ids.NewId(), request.Name!, request.Type!, request.RedirectUris!.ToArray(), DateTimeOffset.UtcNow);
         Locked(tenant, () => { tenant.Clients.Add(client); return true; });
-        return Task.FromResult(request.Type == "confidential" ? client with { ClientSecret = "tsas_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)) } : client);
+        return request.Type == "confidential" ? client with { ClientSecret = "tsas_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)) } : client;
     }
 
     public Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken)

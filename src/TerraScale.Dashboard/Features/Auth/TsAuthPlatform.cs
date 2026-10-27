@@ -41,7 +41,7 @@ public partial interface ITsAuthPlatform
     Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     // Deletes the caller's user, sessions, tokens, memberships and the organizations only they belong to.
     // ts-auth refuses with last_owner while the caller is the last owner of an organization with other members.
-    Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken);
+    Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, string authorization, CancellationToken cancellationToken);
     Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken);
     Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken);
 }
@@ -160,8 +160,8 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PagesAsync(after => Client().Platform.ListAuditEventsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));
 
-    public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken) =>
-        PlatformAsync(() => Client().Platform.DeleteAccountAsync(Bearer(session), receipt, cancellationToken));
+    public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, string authorization, CancellationToken cancellationToken) =>
+        PlatformAsync(() => Client().Platform.DeleteAccountAsync(Bearer(session), receipt, authorization, cancellationToken));
 
     public Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.AccountDeletionCompletedAsync(receipt, cancellationToken));
@@ -207,6 +207,7 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
 
     private static string Message(string? code, HttpStatusCode status) => code switch
     {
+        "step_up_required" => StepUpFlow.Required().Message,
         "name_taken" => "That name is already used in this organization.",
         "last_owner" => "The organization needs another owner first.",
         "closure_conflict" => "Deletion is paused because a project closure could not be confirmed. Resolve the project conflict and try again.",

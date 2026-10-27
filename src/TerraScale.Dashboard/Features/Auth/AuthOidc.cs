@@ -19,5 +19,6 @@ public interface IAuthLogoutGateway
 public sealed record OidcFlow(string State, string Nonce, string Verifier, string ReturnTo, string RedirectUri, DateTimeOffset ExpiresAt,
     string TokenName = "", int TokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? Mcp = null)
 {
+    public StepUpIntent? StepUp { get; init; }
     public override string ToString() => "Dashboard OIDC flow [REDACTED]";
 }

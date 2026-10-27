@@ -61,6 +61,7 @@ public sealed class DemoEnvironment
     internal TestWorkspace Workspace => workspace;
     internal TestBillingPlanTransport BillingPlans => billingPlans;
     internal TestAuthApiKeys ApiKeys => apiKeys;
+    internal TestAuthentication Authentication => authentication;
     // The E2E suite seeds its reference fixtures through these.
     internal TestState State => state;
     internal TestAuth Auth => auth;
@@ -201,6 +202,7 @@ sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthG
     public Exception? ExchangeError { get; set; }
     private readonly ConcurrentDictionary<string, SessionRecord> codes = new();
     public int SignIns { get; private set; }
+    public int ActiveGrants => tokenOwners.Keys.Where(token => ResolveAccessToken(token) is not null).Select(token => tokenFamilies[token]).Distinct().Count();
     public void RegisterFixturePrincipal(ReferencePrincipal principal)
     {
         if (string.IsNullOrEmpty(principal.Subject) || string.IsNullOrEmpty(principal.Email) ||
@@ -361,6 +363,12 @@ sealed class TestState : IDashboardState
 // One provider registry per DemoEnvironment: its host pair shares it, other scenarios never do.
 sealed class TestWorkspace : ITsAuthPlatform
 {
+    public Func<Task>? BeforeListMembers { get; set; }
+    public Func<SessionRecord, string, string, bool>? AuthorizeDeletion { get; set; }
+    private int deletionCalls;
+    public int DeletionCalls => Volatile.Read(ref deletionCalls);
+    private readonly ConcurrentDictionary<string, bool> deletionReceipts = new();
+    public void SetDeletionStatus(string receipt, bool completed) => deletionReceipts[receipt] = completed;
     public readonly object Gate = new();
     public readonly Dictionary<string, OrganizationRecord> Organizations = [];
     private readonly Dictionary<string, (string OrganizationId, InvitationRecord Invitation)> invitations = [];
@@ -490,8 +498,11 @@ sealed class TestWorkspace : ITsAuthPlatform
             return Task.CompletedTask;
         }
     }
-    public Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
-    { lock (Gate) return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformMember>>(Member(session.UserId, organizationId).Members.Values.Where(member => member.Status == "active").Select(member => new TerraScaleAuthPlatformMember(member.UserId, member.Email, ScopedRole(member.UserId, organizationId), member.CreatedAt)).ToArray()); }
+    public async Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    {
+        if (BeforeListMembers is not null) await BeforeListMembers();
+        lock (Gate) return Member(session.UserId, organizationId).Members.Values.Where(member => member.Status == "active").Select(member => new TerraScaleAuthPlatformMember(member.UserId, member.Email, ScopedRole(member.UserId, organizationId), member.CreatedAt)).ToArray();
+    }
     public Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken)
     {
         lock (Gate)
@@ -669,9 +680,13 @@ sealed class TestWorkspace : ITsAuthPlatform
     }
     // ts-auth DELETE /v1/terrascale/account: refuses last_owner of a shared organization, deletes sole-member organizations, leaves the rest.
     public Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken) => Task.FromResult(!Organizations.ContainsKey(organizationId));
-    public Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken) => throw new AccountAccessException("Receipt is unavailable.", 404);
-    public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken)
+    public Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken) =>
+        deletionReceipts.TryGetValue(receipt, out var completed) ? Task.FromResult(completed) : throw new AccountAccessException("Receipt is unavailable.", 404);
+    public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, string authorization, CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref deletionCalls);
+        if (AuthorizeDeletion?.Invoke(session, receipt, authorization) != true) throw StepUpFlow.Required();
+        deletionReceipts[receipt] = true;
         lock (Gate)
         {
             var mine = Organizations.Values.Where(org => ScopedRole(session.UserId, org.Id).Length > 0).ToArray();

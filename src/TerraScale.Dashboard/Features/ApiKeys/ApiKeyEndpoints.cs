@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Shared.UI;
 
@@ -28,27 +29,7 @@ public static class ApiKeyEndpoints
             .WithSummary("List ts-auth project keys without secrets")
             .WithDescription(CursorPaging.Description + " Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseName is the canonical restriction; missing local DatabaseId does not mean unrestricted access. LastUsedAt is the last token exchange (up to five minutes stale).")
             .WithCursorContract().Produces<CursorPage<ProjectCredentialMetadata>>().Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
-        endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", async (HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
-        {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null) return Results.Unauthorized();
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
-            if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            try
-            {
-                var expires = form["expiresInDays"].ToString();
-                var expiresInDays = 0;
-                if (expires.Length > 0 && !int.TryParse(expires, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out expiresInDays))
-                    throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
-                var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted);
-                await keys.RecordAsync(accounts, context, credential.Key.Id, true, http.RequestAborted);
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
-            }
-            catch (Exception error) when (DatabaseResults.KnownFailure(error) || error is HttpRequestException)
-            {
-                return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), kind, form["name"].ToString(), status: DatabaseResults.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseResults.Failure(error);
-            }
-        }).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
+        endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", CreateAsync).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
             .WithSummary("Create a project key and reveal its secret once")
             .WithDescription("Uses the original user session at ts-auth. " + ApiKeyService.ScopeDescription + " expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
             .Accepts<CreateProjectCredentialRequest>("application/x-www-form-urlencoded")
@@ -80,23 +61,7 @@ public static class ApiKeyEndpoints
             .WithSummary("Revoke a key selected by its form ID")
             .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces(204).Produces(303).Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
-        endpoints.MapPost("/api/v1/dashboard/credentials/rotate", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
-        {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null) return Results.Unauthorized();
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
-            if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            try
-            {
-                var ttl = form["previousSecretTtl"].ToString();
-                var previousSecretTtl = 0;
-                if (ttl.Length > 0 && !int.TryParse(ttl, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out previousSecretTtl))
-                    throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
-                var credential = await keys.RotateAsync(context, form["keyId"].ToString(), previousSecretTtl, http.RequestAborted);
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
-            }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
-        }).WithGroupName("integration").WithName("rotateDashboardCredential").WithTags("Credentials")
+        endpoints.MapPost("/api/v1/dashboard/credentials/rotate", RotateAsync).WithGroupName("integration").WithName("rotateDashboardCredential").WithTags("Credentials")
             .WithSummary("Rotate a project key and reveal its new secret once")
             .WithDescription("Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period. With 0, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With grace, these bounds apply from its end. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.")
             .Accepts<RotateProjectCredentialRequest>("application/x-www-form-urlencoded")
@@ -127,6 +92,56 @@ public static class ApiKeyEndpoints
             });
         }
         return endpoints;
+    }
+
+    public static async Task<IResult> CreateAsync(HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return Results.Unauthorized();
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+        try
+        {
+            if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
+            if (kind is not ("key" or "api-key")) throw new AccountAccessException("Machine clients are not issued by this view.", 503);
+            var expires = form["expiresInDays"].ToString();
+            var expiresInDays = 0;
+            if (expires.Length > 0 && !int.TryParse(expires, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out expiresInDays))
+                throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
+            _ = keys.PrepareCreate(context, kind, form["name"].ToString(), form["databaseId"].ToString(),
+                form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
+                expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()));
+            var intent = StepUpFlow.Intent(http, context, "create_api_key");
+            if (intent is null) return await StepUpFlow.StartAsync(http, context, "create_api_key", "ts-auth");
+            var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted, intent.Challenge.Proof);
+            await keys.RecordAsync(accounts, context, credential.Key.Id, true, http.RequestAborted);
+            return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
+        }
+        catch (Exception error) when (DatabaseResults.KnownFailure(error) || error is HttpRequestException)
+        {
+            return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), kind, form["name"].ToString(), status: DatabaseResults.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseResults.Failure(error);
+        }
+    }
+
+    public static async Task<IResult> RotateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return Results.Unauthorized();
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+        try
+        {
+            if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
+            var ttl = form["previousSecretTtl"].ToString();
+            var previousSecretTtl = 0;
+            if (ttl.Length > 0 && !int.TryParse(ttl, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out previousSecretTtl))
+                throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
+            var intent = StepUpFlow.Intent(http, context, "rotate_api_key");
+            if (intent is null) return await StepUpFlow.StartAsync(http, context, "rotate_api_key", "ts-auth");
+            var credential = await keys.RotateAsync(context, form["keyId"].ToString(), previousSecretTtl, http.RequestAborted, intent.Challenge.Proof);
+            return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
+        }
+        catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
     }
 
     private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "")

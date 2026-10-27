@@ -41,6 +41,14 @@ public static class HttpJourney
     {
         Uri location;
         using (authorize) location = authorize.Headers.Location ?? throw new InvalidOperationException("Expected a redirect to ts-auth.");
+        if ((location.IsAbsoluteUri ? location.AbsolutePath : location.OriginalString).StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal))
+        {
+            using var approved = await client.GetAsync("/__test/step-up/" + location.Segments.Last() + "?approve=yes");
+            if (approved.StatusCode != HttpStatusCode.Redirect) return new HttpResponseMessage(approved.StatusCode);
+            var continued = await client.GetAsync(approved.Headers.Location!.PathAndQuery);
+            if (continued.StatusCode == HttpStatusCode.Redirect) return await HostedSignInAsync(client, continued, email, password, signUp);
+            return continued;
+        }
         var account = "email=" + Uri.EscapeDataString(email) + "&password=" + Uri.EscapeDataString(password) + (signUp ? "&signup=1" : "");
         HttpResponseMessage answered;
         if (!location.IsAbsoluteUri) answered = await client.GetAsync(location.OriginalString + "&" + account);
@@ -63,6 +71,20 @@ public static class HttpJourney
         var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
         request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
         return client.SendAsync(request);
+    }
+
+    // Explicitly follows fresh hosted confirmation before the protected action.
+    public static async Task<HttpResponseMessage> PostConfirmedFormAsync(HttpClient client, string path, Dictionary<string, string> body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
+        request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+        request.Headers.Add("Sec-Fetch-Mode", "navigate");
+        var response = await client.SendAsync(request);
+        if (response.StatusCode != HttpStatusCode.Redirect || response.Headers.Location is not { IsAbsoluteUri: true } location || !location.AbsolutePath.StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal)) return response;
+        using var approved = await client.GetAsync("/__test/step-up/" + location.Segments.Last() + "?approve=yes");
+        response.Dispose();
+        if (approved.StatusCode != HttpStatusCode.Redirect) return new HttpResponseMessage(approved.StatusCode);
+        return await client.GetAsync(approved.Headers.Location!.PathAndQuery);
     }
 
     public static async Task<JsonElement> McpAsync(HttpClient client, string secret, string method, object arguments, string path = "/mcp", string? host = null)
@@ -102,7 +124,7 @@ public static class HttpJourney
     public static async Task<string> CreatePatAsync(HttpClient client, string name = "TUnit E2E", string password = "test-password")
     {
         var token = await CsrfAsync(client, "/profile?tab=access-tokens");
-        var authorize = await PostFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new()
+        var authorize = await PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new()
         { ["_csrf"] = token, ["name"] = name, ["expiresInDays"] = "7" });
         await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         using var response = await HostedSignInAsync(client, authorize, HostedAccounts.TryGetValue(client, out var email) ? email : "user@example.com", password);

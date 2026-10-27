@@ -124,6 +124,10 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(provider.Billing));
         application.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
         application.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
+        application.Services.AddSingleton(provider.StepUp);
+        environment.Authentication.StepUp = provider.StepUp;
+        provider.ApiKeys.StepUp = provider.StepUp;
+        environment.Workspace.AuthorizeDeletion = provider.StepUp.AuthorizeDeletion;
         application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport)));
         application.Services.AddSingleton<TsAuthGateway>();
         application.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(services => services.GetRequiredService<TsAuthGateway>()));
@@ -248,6 +252,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private long authEpoch;
         private InternalBillingProducer? billing;
         private TestAuthApiKeys? apiKeys;
+        private TestStepUpGateway? stepUp;
+        public TestStepUpGateway StepUp => stepUp ??= new(clock, ResolveActiveBearer);
         public TestAuthApiKeys ApiKeys => apiKeys ??= new(ResolveActiveBearer, workspace.ProjectRole);
         public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
         public OwnershipSdkProtocol? Ownership { get; private set; }

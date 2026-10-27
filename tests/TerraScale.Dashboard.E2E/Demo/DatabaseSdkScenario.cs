@@ -112,6 +112,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
         configureApp?.Invoke(first);
         configureApp?.Invoke(second);
+        protocol.ApiKeys!.StepUp = first.Services.GetRequiredService<TestStepUpGateway>();
         await first.StartAsync();
         await second.StartAsync();
         Origin = Address(first);

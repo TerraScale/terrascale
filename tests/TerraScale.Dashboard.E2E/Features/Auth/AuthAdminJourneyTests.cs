@@ -302,7 +302,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         Check(tokenPage.StatusCode == HttpStatusCode.OK, "Native personal access token form is available");
         var tokenCsrf = Hidden(await tokenPage.Content.ReadAsStringAsync(), "_csrf");
         var tokenName = "TUnit ordinary-owner " + Guid.NewGuid().ToString("N");
-        using var authorize = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new Dictionary<string, string>
+        using var authorize = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new Dictionary<string, string>
         {
             ["_csrf"] = tokenCsrf,
             ["name"] = tokenName,

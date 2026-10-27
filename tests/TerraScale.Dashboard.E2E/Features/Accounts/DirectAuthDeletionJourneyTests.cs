@@ -279,7 +279,7 @@ public sealed class DirectAuthDeletionJourneyTests
     [Arguments(true, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
-    public async Task DashboardDeletionRecoversInterruptedCheckoutBeforeCreatingAuthIntent(bool completedCheckout, bool organizationDeletion)
+    public async Task DashboardDeletionRecoversInterruptedCheckoutBeforeRequestingErasure(bool completedCheckout, bool organizationDeletion)
     {
         await using var scenario = await Scenario.StartAsync(productionState: true);
         using var owner = scenario.Client();
@@ -328,7 +328,7 @@ public sealed class DirectAuthDeletionJourneyTests
         if (!organizationDeletion)
         {
             // Billing waits for ts-auth's organization proof, so the outage neither blocks the account nor loses the hidden Checkout.
-            using (var deleted = await HttpJourney.PostFormAsync(owner, deletionPath, deletionForm))
+            using (var deleted = await HttpJourney.PostConfirmedFormAsync(owner, deletionPath, deletionForm))
                 await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
             var held = StripeBilling.ReadBinding((await scenario.GetAsync(StripeBilling.Collection, organizationId))!, organizationId);
             await Assert.That(held.State).IsEqualTo("deleting");
@@ -351,7 +351,7 @@ public sealed class DirectAuthDeletionJourneyTests
             await Assert.That(unaffected.StatusCode).IsEqualTo(HttpStatusCode.OK);
             return;
         }
-        using (var pending = await HttpJourney.PostFormAsync(owner, deletionPath, deletionForm))
+        using (var pending = await HttpJourney.PostConfirmedFormAsync(owner, deletionPath, deletionForm))
             await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
         await Assert.That(AccountService.Read<OrganizationRecord>((await scenario.GetAsync(AccountService.OrganizationsCollection, organizationId))!).DeletionRequested).IsTrue();
         var retained = StripeBilling.ReadBinding((await scenario.GetAsync(StripeBilling.Collection, organizationId))!, organizationId);
@@ -360,7 +360,7 @@ public sealed class DirectAuthDeletionJourneyTests
         await Assert.That(retained.CustomerId).IsEqualTo(original.CustomerId);
         await Assert.That(retained.CheckoutId).IsEqualTo("");
         await Assert.That(await scenario.GetAsync(StripeBilling.CustomersCollection, original.CustomerId)).IsNotNull();
-        await Assert.That((await scenario.State.ListAsync("account_deletions", default)).Count).IsEqualTo(0);
+        await Assert.That((await scenario.State.ListAsync("account_deletions", default)).Count).IsEqualTo(organizationDeletion ? 0 : 1);
         await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(organizationId)).IsTrue();
         using (var stalePublication = await HttpJourney.PostFormAsync(owner, "/billing/checkout", new()
         { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" }))
@@ -371,7 +371,7 @@ public sealed class DirectAuthDeletionJourneyTests
             if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/v1/checkout/sessions/" + hiddenCheckoutId + "/expire") expired = true;
             return Task.CompletedTask;
         };
-        using (var deleted = await HttpJourney.PostFormAsync(owner, deletionPath, deletionForm))
+        using (var deleted = await HttpJourney.PostConfirmedFormAsync(owner, deletionPath, deletionForm))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(deleted.Headers.Location!.OriginalString).StartsWith("/organization?deleted=1");

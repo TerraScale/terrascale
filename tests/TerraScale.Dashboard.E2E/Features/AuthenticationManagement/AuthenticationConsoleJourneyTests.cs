@@ -201,8 +201,12 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         var users = await Tool(replica, secret, "auth_list_users", new { search = "northwind" });
         var user = users.GetProperty("items")[0].GetProperty("id").GetString()!;
         Check((await Tool(replica, secret, "auth_set_user_disabled", new { userId = user, disabled = true })).GetProperty("disabled").GetBoolean(), "An owner disables a user");
-        var created = await Tool(replica, secret, "auth_create_client", new { name = "CLI", type = "public", redirectUris = new[] { "http://127.0.0.1/callback" } });
-        Check(created.GetProperty("type").GetString() == "public" && !created.TryGetProperty("client_secret", out _), "A public client has no secret");
+        Error(await Call(replica, secret, "auth_create_client", new { name = "CLI", type = "public", redirectUris = new[] { "http://127.0.0.1/callback" } }),
+            TerraScale.Dashboard.Features.Auth.StepUpFlow.Required().Message);
+        var clientsPage = await Page(browser, "/auth/clients");
+        using (var created = await Post(browser, "clients", Csrf(clientsPage), ("name", "CLI"), ("type", "public"), ("redirect_uris", "http://127.0.0.1/callback")))
+            Check(created.StatusCode == HttpStatusCode.OK && !(await created.Content.ReadAsStringAsync()).Contains("tsas_", StringComparison.Ordinal), "Hosted confirmation creates a public client without a secret");
+        var clientId = (await Tool(replica, secret, "auth_list_clients", new { })).GetProperty("clients").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "CLI").GetProperty("client_id").GetString();
         var settings = await Tool(replica, secret, "auth_update_settings", new { signUp = false, themeColor = "#00AA55" });
         Check(!settings.GetProperty("methods").GetProperty("sign_up").GetBoolean() && settings.GetProperty("methods").GetProperty("password").GetBoolean() &&
             settings.GetProperty("branding").GetProperty("theme_color").GetString() == "#00aa55" && settings.GetProperty("branding").GetProperty("name").GetString() == "Northwind",
@@ -222,7 +226,7 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         using (var refused = await Post(browser, "branding", Csrf(readOnly), ("name", "Forbidden")))
             Check(refused.StatusCode == HttpStatusCode.Forbidden, "A read-only member cannot change branding");
         Check((await Tool(replica, secret, "auth_list_clients", new { })).GetProperty("clients").GetArrayLength() == 2, "A member reads applications");
-        Error(await Call(replica, secret, "auth_delete_client", new { clientId = created.GetProperty("client_id").GetString() }), "Organization management is required.");
+        Error(await Call(replica, secret, "auth_delete_client", new { clientId = clientId }), "Organization management is required.");
         await Control(producer, "");
         Error(await Call(replica, secret, "auth_get_overview", new { }), "Organization is unavailable.");
     }
@@ -261,7 +265,7 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
     private static string Csrf(string html) => WebUtility.HtmlDecode(Regex.Match(html, "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value);
 
     private static Task<HttpResponseMessage> Post(HttpClient client, string path, string csrf, params (string Key, string Value)[] fields) =>
-        HttpJourney.PostFormAsync(client, "/api/v1/auth-management/" + path, fields.Append(("_csrf", csrf)).ToDictionary(field => field.Item1, field => field.Item2));
+        HttpJourney.PostConfirmedFormAsync(client, "/api/v1/auth-management/" + path, fields.Append(("_csrf", csrf)).ToDictionary(field => field.Item1, field => field.Item2));
 
     private static Task<JsonElement> Call(HttpClient client, string secret, string name, object arguments) =>
         HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });

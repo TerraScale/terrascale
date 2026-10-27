@@ -76,6 +76,8 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         using (var foreign = await browser.GetAsync(QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>(authorize) { ["redirect_uri"] = "http://127.0.0.1:33418/other" })))
             await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
+        using var signedIn = await HttpJourney.LoginAsync(browser, persona.Email, persona.Password);
+        await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var consentPath = QueryHelpers.AddQueryString("/oauth/authorize", authorize);
         using (var consent = await browser.GetAsync(consentPath))
         {
@@ -87,11 +89,11 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         var form = authorize.Where(pair => pair.Key != "scope").ToDictionary(pair => pair.Key, pair => pair.Value!);
         form["_csrf"] = csrf;
 
-        using (var denied = await HttpJourney.PostFormAsync(browser, "/oauth/authorize", new(form) { ["decision"] = "deny" }))
+        using (var denied = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", new(form) { ["decision"] = "deny" }))
             await Assert.That(denied.Headers.Location!.OriginalString).StartsWith(Callback + "?error=access_denied&state=tunit-state");
 
         await Assert.That((await state.GetAsync(McpOAuth.ClientCollection, clientId, default))!.Document.GetRawText()).IsEqualTo(JsonSerializer.Serialize(initial));
-        var allowed = await HttpJourney.PostFormAsync(browser, "/oauth/authorize", new(form) { ["decision"] = "allow" });
+        var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", new(form) { ["decision"] = "allow" });
         await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         using var granted = await HttpJourney.HostedSignInAsync(browser, allowed, persona.Email, persona.Password);
         await Assert.That(granted.StatusCode).IsEqualTo(HttpStatusCode.Redirect);

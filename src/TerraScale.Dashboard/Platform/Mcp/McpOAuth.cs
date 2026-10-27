@@ -139,6 +139,8 @@ public static partial class McpOAuth
         if (request.Page is not null) return request.Page;
         if (request.Error is not null) return request.Error;
         var authorization = request.Authorization!;
+        if (await AccountRequest.RequireAsync(context, context.RequestServices.GetRequiredService<DashboardSessions>(), context.RequestServices.GetRequiredService<AccountService>()) is null)
+            return AccountRequest.LoginRedirect(context);
         // The consent form's redirect chain can end at the client's redirect URI, so the page's form-action allows it.
         context.Items[FormActionKey] = FormActionSource(authorization.RedirectUri);
         return McpConsentView.Create(new(new("Connect an AI client", DocumentModel.NonceFor(context)), authorization.ClientName,
@@ -156,12 +158,14 @@ public static partial class McpOAuth
         if (request.Page is not null) return request.Page;
         if (request.Error is not null) return request.Error;
         if (form["decision"] != "allow") return Denied(request.Authorization!);
-        return await AuthEndpoints.AuthorizeAsync(context, "/", mcp: request.Authorization);
+        var account = await AccountRequest.RequireAsync(context, context.RequestServices.GetRequiredService<DashboardSessions>(), context.RequestServices.GetRequiredService<AccountService>());
+        if (account is null) return AccountRequest.LoginRedirect(context);
+        return await StepUpFlow.StartAsync(context, account, "create_pat", "ts-dashboard", mcp: request.Authorization);
     }
 
     // The ts-auth callback for an MCP authorization: the fresh grant waits in its own credential
     // until the client redeems the single-use code with its PKCE verifier.
-    public static async Task<IResult> GrantAsync(HttpContext context, McpAuthorization authorization, SessionRecord fresh)
+    public static async Task<IResult> GrantAsync(HttpContext context, McpAuthorization authorization, SessionRecord fresh, StepUpIntent? proof)
     {
         var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
         var state = context.RequestServices.GetRequiredService<IDashboardState>();
@@ -174,6 +178,13 @@ public static partial class McpOAuth
             var client = await McpRegistrations.ReadActiveAsync(state, time, authorization.ClientId, context.RequestAborted);
             if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
                 throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
+            var browser = await sessions.ReadAsync(context);
+            if (proof is null || proof.Mcp != authorization || proof.Audience != "ts-dashboard" || browser?.UserId != proof.UserId ||
+                fresh.UserId != proof.UserId || StepUpFlow.Browser(context) != proof.Browser) throw StepUpFlow.Required();
+            context.Request.QueryString = new(proof.Query);
+            var account = await AccountRequest.RequireAsync(context, sessions, context.RequestServices.GetRequiredService<AccountService>()) ?? throw StepUpFlow.Required();
+            StepUpFlow.Validate(context, account, proof, "create_pat");
+            await StepUpFlow.ConsumeAsync(context, account, proof);
             client = await McpRegistrations.CompleteSignInAsync(state, time, authorization.ClientId, context.RequestAborted);
             if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
                 throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
@@ -187,7 +198,7 @@ public static partial class McpOAuth
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             try { if (credential is not null) await sessions.DeleteCredentialAsync(credential, cleanup.Token); }
             finally { await context.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(fresh, cleanup.Token); }
-            if (error is AccountAccessException) return ErrorPage(context, error.Message);
+            if (error is AccountAccessException access) return ErrorPage(context, error.Message, access.StatusCode);
             throw;
         }
         return Results.Redirect(QueryHelpers.AddQueryString(authorization.RedirectUri, new Dictionary<string, string?>
@@ -324,10 +335,10 @@ public static partial class McpOAuth
             ["resource"] = authorization.Resource
         }.Where(pair => pair.Value is not null).Select(pair => KeyValuePair.Create(pair.Key, pair.Value!)).ToArray();
 
-    private static IResult ErrorPage(HttpContext context, string message)
+    private static IResult ErrorPage(HttpContext context, string message, int statusCode = 400)
     {
         var view = McpConsentView.Create(new(new("Connect an AI client", DocumentModel.NonceFor(context)), "", "", [], "", message));
-        view.StatusCode = StatusCodes.Status400BadRequest;
+        view.StatusCode = statusCode;
         return view;
     }
 
