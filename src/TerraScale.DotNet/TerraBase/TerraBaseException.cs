@@ -32,7 +32,7 @@ public class TerraBaseException : HttpRequestException
     /// <summary>The response's canonical ULID from X-Request-ID; null when absent, invalid or ambiguous.</summary>
     public string? RequestId { get; private set; }
 
-    /// <summary>Server Retry-After when present; safe reads may retry auth_unavailable.</summary>
+    /// <summary>Server Retry-After when present; the SDK already waited and resent the refusals TerraBase marks retry-safe.</summary>
     public TimeSpan? RetryAfter { get; private set; }
 
     /// <summary>Original HTTP response headers, preserved after disposal for caller-owned routing or diagnostics.</summary>

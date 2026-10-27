@@ -16,8 +16,10 @@ store.
 `TerraScale.DotNet.TerraBase` is the SDK's database client. Its Documents and
 Management clients follow TerraBase's published contract at the pinned server
 revision `ff256067015433c8c40b59879f1282d2a40480ce`; they add no route, field
-or header the server does not document. Requests are sent once because
-TerraBase documents no retryable failure and rejects `Idempotency-Key`.
+or header the server does not document. TerraBase rejects `Idempotency-Key`, so
+requests are sent once, except the 503 refusals TerraBase documents as answered
+before execution with `Retry-After` (`remote_region_unavailable`,
+`confirmation_busy`, `catalog_stale`; `auth_unavailable` and `storage_busy` for reads).
 Optimistic concurrency uses document versions through `If-Match` and
 `If-None-Match: *`.
 
