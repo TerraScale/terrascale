@@ -9,7 +9,8 @@ namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>
 /// Sends TerraBase requests over a caller-owned <see cref="HttpClient"/> with one bearer secret and a per-request
-/// deadline. Safe reads retry <c>auth_unavailable</c>; mutations are sent once.
+/// deadline. Failures TerraBase refused before execution are resent at most twice within the deadline (see
+/// <see cref="Retryable"/>); every other request is sent once.
 /// </summary>
 internal sealed class TerraBaseConnection
 {
@@ -21,6 +22,7 @@ internal sealed class TerraBaseConnection
 
     internal static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
 
+    private const int MaxRetries = 2;
     private const int MinResponseBytes = 64 * 1024;
     private const int MaxResponseBytesLimit = 1024 * 1024 * 1024;
     private const int MaxSecretLength = 4096;
@@ -273,21 +275,24 @@ internal sealed class TerraBaseConnection
             // Null request headers do not suppress HttpClient's inherited defaults.
             if (publicAnonymous && (http.DefaultRequestHeaders.Contains("Authorization") || http.DefaultRequestHeaders.Contains("Cookie")))
                 throw new InvalidOperationException("Anonymous TerraBase requests require an HttpClient without default Authorization or Cookie headers; use a separate credential-free HttpClient with TerraBaseHttp.CreateHandler().");
+            var started = timeProvider.GetTimestamp();
             for (var attempt = 0; ; attempt++)
             {
                 response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
                 if (!throwOnError || response.IsSuccessStatusCode) break;
                 var error = await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
-                if (attempt >= 2 || (method != HttpMethod.Get && method != HttpMethod.Head)
-                    || error.StatusCode != HttpStatusCode.ServiceUnavailable || error.ErrorCode != "auth_unavailable")
-                    throw error;
-                var retry = new HttpRequestMessage(method, request.RequestUri) { Version = request.Version, VersionPolicy = request.VersionPolicy };
+                if (attempt >= MaxRetries || !Retryable(method, request.Content, error)) throw error;
+                var delay = RetryDelay(error.RetryAfter, attempt);
+                // A wait the deadline cannot cover reports TerraBase's answer now instead of a bare timeout later.
+                if (delay >= timeout - timeProvider.GetElapsedTime(started)) throw error;
+                var retry = new HttpRequestMessage(method, request.RequestUri) { Version = request.Version, VersionPolicy = request.VersionPolicy, Content = request.Content };
                 foreach (var header in request.Headers) retry.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                request.Content = null;
                 response.Dispose();
                 response = null;
                 request.Dispose();
                 request = retry;
-                await Task.Delay(error.RetryAfter ?? TimeSpan.FromSeconds(1 << attempt), timeProvider, deadline.Token).ConfigureAwait(false);
+                await Task.Delay(delay, timeProvider, deadline.Token).ConfigureAwait(false);
             }
             // Stream lifetime belongs to enumeration, not the ordinary JSON request timeout.
             if (streaming) expiry.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -323,6 +328,24 @@ internal sealed class TerraBaseConnection
             throw;
         }
     }
+
+    /// <summary>
+    /// TerraBase refuses <c>remote_region_unavailable</c>, <c>confirmation_busy</c> and <c>catalog_stale</c> before it
+    /// executes the request and answers them with Retry-After, so any buffered request may be resent. Authentication
+    /// outages and a busy storage queue are resent only for reads. Every other failure, including
+    /// <c>write_outcome_unknown</c>, is sent once.
+    /// </summary>
+    internal static bool Retryable(HttpMethod method, HttpContent? content, TerraBaseException error) =>
+        error.StatusCode == HttpStatusCode.ServiceUnavailable && error.ErrorCode switch
+        {
+            "remote_region_unavailable" or "confirmation_busy" or "catalog_stale" => content is null or ByteArrayContent,
+            "auth_unavailable" or "storage_busy" => method == HttpMethod.Get || method == HttpMethod.Head,
+            _ => false,
+        };
+
+    // Retry-After, or exponential backoff, plus up to a quarter second of jitter so clients refused together do not return together.
+    private static TimeSpan RetryDelay(TimeSpan? retryAfter, int attempt) =>
+        (retryAfter ?? TimeSpan.FromMilliseconds(500 << attempt)) + TimeSpan.FromMilliseconds(Random.Shared.Next(250));
 
     internal sealed class OpenResponse(HttpRequestMessage request, HttpResponseMessage response, CancellationTokenSource deadline, CancellationTokenSource expiry,
         CancellationToken token) : IDisposable

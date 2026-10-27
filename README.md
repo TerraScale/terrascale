@@ -322,12 +322,17 @@ and `TerraBaseKeyExpiredException` (permanent; replace the key), `TerraBaseForbi
 `TerraBasePreconditionFailedException` (412) and `TerraBaseUnavailableException`
 (503). A request that exceeds the fixed 30-second deadline throws `TimeoutException`.
 An earlier `HttpClient.Timeout` also throws `TimeoutException`; caller cancellation
-remains `OperationCanceledException`. Safe GET/HEAD reads retry `503 auth_unavailable` at most twice, honoring `Retry-After`
-with exponential backoff otherwise, within the request deadline. Authentication errors never retry.
+remains `OperationCanceledException`. TerraBase refuses `503 remote_region_unavailable`,
+`confirmation_busy` and `catalog_stale` before it executes a request, so the SDK resends any request
+with a buffered body at most twice. Safe GET/HEAD reads also resend `503 auth_unavailable` and `storage_busy`.
+Each resend waits for `Retry-After` (exponential backoff otherwise) plus up to 250 ms of jitter; when that wait
+would pass the request deadline, the 503 is thrown at once. Authentication errors never retry.
 The SDK does not exchange or cache tokens; caller-owned token providers must drop revoked/expired tokens
-and stop exchanging the refused key. Mutations and all other errors are sent once. TerraBase
+and stop exchanging the refused key. `503 write_outcome_unknown` and all other errors are sent once. TerraBase
 rejects `Idempotency-Key`. Retry a write only
 when its precondition makes the retry safe.
+`TerraBaseHttp.CreateHandler()` fails a connection attempt after 10 seconds and replaces pooled connections every
+2 minutes, so long-lived clients follow DNS changes.
 
 Supplied `HttpClient` handlers **must disable automatic redirects**. Use
 `TerraBaseHttp.CreateHandler()` or set `AllowAutoRedirect = false` on your handler

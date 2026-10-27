@@ -14,6 +14,8 @@ public sealed class TerraBaseClientOptionsTests
         using var handler = TerraBaseHttp.CreateHandler();
         await Assert.That(handler.AllowAutoRedirect).IsFalse();
         await Assert.That(handler.UseCookies).IsFalse();
+        await Assert.That(handler.ConnectTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
+        await Assert.That(handler.PooledConnectionLifetime).IsEqualTo(TimeSpan.FromMinutes(2));
     }
 
     [Test]
