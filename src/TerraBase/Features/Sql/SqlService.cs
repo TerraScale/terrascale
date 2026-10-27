@@ -12,6 +12,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Stats;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
