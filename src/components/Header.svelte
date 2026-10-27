@@ -109,24 +109,10 @@
           <Icon name={docsLink.icon} className="site-nav__icon" />
           {$dict.chrome.docs}
         </ExternalLink>
-        <ExternalLink
-          href="https://status.terrascale.tech"
-          target="_blank"
-          class="ts-status-link ts-status-link--mobile"
-        >
-          <span class="pulse-dot ts-status-link__dot"></span>
+        <ExternalLink href="https://status.terrascale.tech" target="_blank" class="site-nav__sheet-link">
+          <span class="site-nav__icon site-nav__status"><span class="pulse-dot ts-status-link__dot"></span></span>
           {$dict.chrome.status}
         </ExternalLink>
-        <ExternalLink href={loginUrl} class="ts-status-link ts-status-link--mobile">
-          {$dict.chrome.login}
-        </ExternalLink>
-        <ExternalLink href={getStartedLink.href} class="ts-cta ts-cta--mobile">
-          {$dict.chrome.getStarted}
-          <Icon name={getStartedLink.icon} className="ts-cta__icon" />
-        </ExternalLink>
-        <div class="ts-header__mobile-lang">
-          <LanguageSelector variant="inline" />
-        </div>
       </nav>
       <div class="site-nav__sheet-actions">
         <ExternalLink href={loginUrl} class="ts-btn ts-btn-secondary ts-btn-lg">{$dict.chrome.login}</ExternalLink>
@@ -310,9 +296,24 @@
     background: rgba(255, 255, 255, 0.08);
   }
 
+  :global(.site-nav__icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
+  }
+
   .site-nav__sheet-links {
     display: grid;
     gap: 2px;
+  }
+
+  .site-nav__sheet :global(.site-nav__icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
+  }
+
+  .site-nav__status {
+    display: inline-grid;
+    place-items: center;
   }
 
   .site-nav__sheet {
@@ -325,7 +326,10 @@
     overflow-y: auto;
     border-top: 1px solid var(--ts-divider);
     padding: 16px clamp(16px, 2.5vw, 40px) 20px;
-    background: rgba(var(--ts-bg-base-raw), 0.96);
+    /* Opaque: the header's own backdrop-filter makes it the backdrop root, so frost on the sheet
+       cannot blur the page and the text behind would show through. */
+    background: var(--ts-bg-base);
+    backdrop-filter: none;
   }
 
   :global(.site-nav__sheet-link) {
@@ -359,6 +363,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: var(--ts-s2);
+    margin-block: var(--ts-s4);
+    padding-top: var(--ts-s4);
+    border-top: 1px solid var(--ts-divider);
   }
 
   @media (max-width: 1240px) {
