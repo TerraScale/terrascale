@@ -16,7 +16,6 @@ using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
-using ZLogger;
 
 namespace TerraScale.Authentication;
 
@@ -195,17 +194,18 @@ public static class App
         // This pipeline owns forwarding order and trust, even when ASP.NET's automatic forwarding setting is enabled.
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";
 
+        _ = TerraBaseOrigin(options);
+        if (!options.Development && options.CloudflareEmail is null)
+        {
+            throw new AuthConfigurationException("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are required outside Development");
+        }
+
         var app = builder.Build();
         app.UseTerraScaleRequestIdentity(AuthStore.NewId, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);
         // Resolved now, so a ts-auth without storage refuses to start (see TerraBaseOrigin); tests may register their own.
         app.Services.GetRequiredService<TerraBaseDatabase>();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
         app.Services.GetRequiredService<PasswordHasher>();
-        if (options.CloudflareEmail is null && !options.Development)
-        {
-            app.Logger.ZLogWarning($"CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");
-        }
-
         app.Use((HttpContext context, RequestDelegate next) =>
         {
             context.Response.OnStarting(() =>

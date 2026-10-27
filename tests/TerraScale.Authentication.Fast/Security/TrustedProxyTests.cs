@@ -294,17 +294,21 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
         var clients = Clients(limiter, ipv6: false).Where(address => limiter.Fold(address) != limiter.Fold(socket.ToString())).Take(2).ToArray();
         var maximum = verify ? HostedAuth.PerIp : HostedAuth.MailPerIp;
+        // Distinct email IDs can share the keyed email cooldown bucket. Isolate the IP guard from those collisions,
+        // including requests sent over raw HTTP for duplicate forwarding headers.
+        var attempts = Enumerable.Range(0, 65_536).DistinctBy(attempt => limiter.Fold($"unknown-{attempt}@example.test"))
+            .Take(maximum * 2 + 4).ToArray();
         for (var attempt = 0; attempt < maximum; attempt++)
         {
-            using var response = await HostedAsync(oidc.Server, clients[0], verify, attempt);
+            using var response = await HostedAsync(oidc.Server, clients[0], verify, attempts[attempt]);
             await Assert.That(response.StatusCode).IsEqualTo(verify ? HttpStatusCode.Unauthorized : HttpStatusCode.OK);
         }
 
-        using var limited = await HostedAsync(oidc.Server, clients[0], verify, maximum);
+        using var limited = await HostedAsync(oidc.Server, clients[0], verify, attempts[maximum]);
         await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
         await Assert.That(limited.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(verify ? 55 : 895));
         await Assert.That(limited.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
-        using var independent = await HostedAsync(oidc.Server, clients[1], verify, maximum + 1);
+        using var independent = await HostedAsync(oidc.Server, clients[1], verify, attempts[maximum + 1]);
         await Assert.That(independent.StatusCode).IsEqualTo(trusted ? verify ? HttpStatusCode.Unauthorized : HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
 
         if (trusted)
@@ -318,23 +322,23 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
                 if (attempt % 6 >= 3)
                 {
                     var tail = (attempt % 6) switch { 3 => "\" \t \"", 4 => string.Empty, _ => " \t " };
-                    var (status, _) = await RawHttp.DuplicateForwardedAsync(oidc.Server.BaseAddress, path, clients[0], tail, maximum + 2 + attempt);
+                    var (status, _) = await RawHttp.DuplicateForwardedAsync(oidc.Server.BaseAddress, path, clients[0], tail, attempts[maximum + 2 + attempt]);
                     await Assert.That(status).IsEqualTo(expected);
                 }
                 else
                 {
                     var tail = (attempt % 6) switch { 0 => string.Empty, 1 => "\"\"", _ => "\" \t \"" };
-                    using var fallback = await HostedAsync(oidc.Server, clients[0], verify, maximum + 2 + attempt, tail);
+                    using var fallback = await HostedAsync(oidc.Server, clients[0], verify, attempts[maximum + 2 + attempt], tail);
                     await Assert.That(fallback.StatusCode).IsEqualTo(expected);
                 }
             }
 
-            using var socketLimited = await HostedAsync(oidc.Server, clients[0], verify, maximum * 2 + 2, "\"\"");
+            using var socketLimited = await HostedAsync(oidc.Server, clients[0], verify, attempts[maximum * 2 + 2], "\"\"");
             await Assert.That(socketLimited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
             await Assert.That(socketLimited.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(verify ? 55 : 895));
             foreach (var tail in new[] { "\"\"", string.Empty, " \t " })
             {
-                var (duplicateLimited, duplicateDelay) = await RawHttp.DuplicateForwardedAsync(oidc.Server.BaseAddress, path, clients[1], tail, maximum * 2 + 3);
+                var (duplicateLimited, duplicateDelay) = await RawHttp.DuplicateForwardedAsync(oidc.Server.BaseAddress, path, clients[1], tail, attempts[maximum * 2 + 3]);
                 await Assert.That(duplicateLimited).IsEqualTo(HttpStatusCode.TooManyRequests);
                 await Assert.That(duplicateDelay).IsEqualTo(TimeSpan.FromSeconds(verify ? 55 : 895));
             }

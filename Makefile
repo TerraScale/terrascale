@@ -43,7 +43,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
-	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
+	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-chunks
 
@@ -129,6 +129,10 @@ auth-test-slow: auth-build
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
 auth-check: auth-audit auth-openapi-check
+
+# One production signup email, fetched from a disposable inbox; no account is verified.
+auth-mail-delivery-check:
+	python3 scripts/auth/signup-mail-check.py
 
 # Self-contained ts-auth (JIT): $(PUBLISH_DIR)/ts-auth
 auth-publish:

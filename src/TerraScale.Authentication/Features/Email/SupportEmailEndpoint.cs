@@ -33,9 +33,11 @@ public sealed record EmailSupportRequest(string RequestId, string UserId, string
 
 /// <summary>Delivery state of the support message; never an address.</summary>
 /// <param name="Status">accepted, retryable, unknown or rejected.</param>
-public sealed record EmailSupportResponse(string Status);
+/// <param name="AcknowledgementStatus">Independent acknowledgement outcome, when reserved: accepted, retryable, unknown or rejected.</param>
+public sealed record EmailSupportResponse(string Status,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AcknowledgementStatus = null);
 
-internal sealed record SupportEmailDelivery(string InstanceId, string RequestId, string UserId, string Status);
+internal sealed record SupportEmailDelivery(string InstanceId, string RequestId, string UserId, string Status, string? AcknowledgementStatus = null);
 
 /// <summary>Sends a dashboard support request to the support mailbox and acknowledges it to the requester.</summary>
 public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory directory, Users users, IEmailSender sender, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
@@ -62,7 +64,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         Post("/v1/{slug}/email/support");
         Name("email_support_send");
         Summary("Send a customer support request");
-        Description("Dashboard ClientBasic email authority. ts-auth checks the user's access to the organization and project, sends the request to support@terrascale.tech with Reply-To set to the user's address, then emails the user an acknowledgement. A repeated request_id never sends again and answers the recorded status. 429 rate_limited past 5 requests per user per hour. Accepted means provider acceptance, not inbox delivery.");
+        Description("Dashboard ClientBasic email authority. ts-auth checks the user's access to the organization and project, sends the request to support@terrascale.tech with Reply-To set to the user's address, persists acceptance, then attempts an acknowledgement. Status describes the support message; optional acknowledgementStatus describes the separate acknowledgement. Repeats return recorded outcomes without resending either message, except a retryable support send releases the id for a safe retry. Unknown outcomes are never retried. 429 rate_limited past 5 requests per user per hour. Accepted means provider acceptance, not inbox delivery.");
         Tags("Email");
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailSupportRequest)), new RequiresSecurity(SecuritySchemes.ClientBasic));
         Produces<EmailSupportResponse>();
@@ -98,21 +100,23 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
 
         if (await this.ReadAsync(request, cancellationToken).ConfigureAwait(false) is { } recorded)
         {
-            return Answer(recorded.Delivery.Status);
+            return Answer(recorded.Delivery);
         }
         if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "support", user.Id, PerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "Too many support requests; retry within the hour or email support@terrascale.tech.");
         }
+        var delivery = new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending");
+        string version;
         try
         {
-            _ = await store.CreateAsync(Collection, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
-                new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending"), SupportEmailJson.Default.SupportEmailDelivery), cancellationToken).ConfigureAwait(false);
+            version = (await store.CreateAsync(Collection, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
+                delivery, SupportEmailJson.Default.SupportEmailDelivery), cancellationToken).ConfigureAwait(false)).Version;
         }
         catch (TerraBasePreconditionFailedException)
         {
             // A concurrent repeat claimed the id first; it owns the send.
-            return Answer((await this.ReadAsync(request, cancellationToken).ConfigureAwait(false))?.Delivery.Status ?? throw ApiException.Unavailable());
+            return Answer((await this.ReadAsync(request, cancellationToken).ConfigureAwait(false))?.Delivery ?? throw ApiException.Unavailable());
         }
 
         var reference = request.RequestId[^8..];
@@ -124,27 +128,42 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
             ReplyTo = user.Email,
         };
         var outcome = await sender.DeliverAsync(SupportAddress, details, cancellationToken).ConfigureAwait(false);
+        delivery = delivery with { Status = Status(outcome), AcknowledgementStatus = outcome == EmailDeliveryOutcome.Accepted ? "sending" : null };
+        if (outcome == EmailDeliveryOutcome.Retryable)
+        {
+            // Only an explicit refusal known not to have sent releases the id for another support attempt.
+            if (!await store.CompareAndDeleteAsync(Collection, OidcIssuer.InstanceId, request.RequestId, version, cancellationToken).ConfigureAwait(false))
+            {
+                throw ApiException.Unavailable();
+            }
+            return Answer(delivery);
+        }
+
+        // Persist support acceptance and reserve its one acknowledgement before making another external call.
+        version = await store.ReplaceAsync(Collection, OidcIssuer.InstanceId, request.RequestId,
+            JsonSerializer.SerializeToElement(delivery, SupportEmailJson.Default.SupportEmailDelivery), version, cancellationToken).ConfigureAwait(false)
+            ?? throw ApiException.Unavailable();
         if (outcome == EmailDeliveryOutcome.Accepted)
         {
-            // The acknowledgement is best effort: the request already reached support.
-            _ = await sender.DeliverAsync(user.Email, Acknowledgement(request, reference, subject, message) with { Purpose = EmailPurpose.Support, Tenant = request.OrganizationId! }, cancellationToken).ConfigureAwait(false);
+            EmailDeliveryOutcome acknowledgement;
+            try
+            {
+                var acknowledgementMessage = Acknowledgement(request, reference, subject, message) with { Purpose = EmailPurpose.Support, Tenant = request.OrganizationId! };
+                acknowledgement = await sender.DeliverAsync(user.Email, acknowledgementMessage, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException && !cancellationToken.IsCancellationRequested)
+            {
+                // An interrupted provider call may have sent; keep support accepted and never retry the acknowledgement.
+                acknowledgement = EmailDeliveryOutcome.Unknown;
+            }
+            delivery = delivery with { AcknowledgementStatus = Status(acknowledgement) };
+            if (!await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, request.RequestId,
+                JsonSerializer.SerializeToElement(delivery, SupportEmailJson.Default.SupportEmailDelivery), version, cancellationToken).ConfigureAwait(false))
+            {
+                throw ApiException.Unavailable();
+            }
         }
-        var status = outcome switch
-        {
-            EmailDeliveryOutcome.Accepted => "accepted",
-            EmailDeliveryOutcome.Retryable => "retryable",
-            EmailDeliveryOutcome.Rejected => "rejected",
-            _ => "unknown",
-        };
-        if (await this.ReadAsync(request, cancellationToken).ConfigureAwait(false) is { } current)
-        {
-            // A retryable send releases the id, so the user's next attempt with it sends again.
-            _ = status == "retryable"
-                ? await store.CompareAndDeleteAsync(Collection, OidcIssuer.InstanceId, request.RequestId, current.Version, cancellationToken).ConfigureAwait(false)
-                : await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
-                    current.Delivery with { Status = status }, SupportEmailJson.Default.SupportEmailDelivery), current.Version, cancellationToken).ConfigureAwait(false);
-        }
-        return Answer(status);
+        return Answer(delivery);
     }
 
     private async Task<(string Organization, string? Project)> ProjectNamesAsync(string userId, EmailSupportRequest request, CancellationToken cancellationToken)
@@ -153,8 +172,17 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         return (access.Organization.Value.Name, access.Project.Value.Name);
     }
 
-    private static JsonHttpResult<EmailSupportResponse> Answer(string status) =>
-        TypedResults.Json(new EmailSupportResponse(status == "sending" ? "unknown" : status), SupportEmailJson.Default.EmailSupportResponse);
+    private static string Status(EmailDeliveryOutcome outcome) => outcome switch
+    {
+        EmailDeliveryOutcome.Accepted => "accepted",
+        EmailDeliveryOutcome.Retryable => "retryable",
+        EmailDeliveryOutcome.Rejected => "rejected",
+        _ => "unknown",
+    };
+
+    private static JsonHttpResult<EmailSupportResponse> Answer(SupportEmailDelivery delivery) =>
+        TypedResults.Json(new EmailSupportResponse(delivery.Status == "sending" ? "unknown" : delivery.Status,
+            delivery.AcknowledgementStatus == "sending" ? "unknown" : delivery.AcknowledgementStatus), SupportEmailJson.Default.EmailSupportResponse);
 
     private string Details(EmailSupportRequest request, string email, string organizationName, string? projectName, string subject, string message)
     {

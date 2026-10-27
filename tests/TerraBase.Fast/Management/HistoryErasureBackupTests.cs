@@ -101,7 +101,7 @@ public sealed partial class HistoryErasureBackupTests
         host.Clock.Advance(TimeSpan.FromDays(8));
         await Host.CollectAndTrimAsync(api);
         await Host.PassWithBackupAsync(api, backup);
-        // A real storage-pressure/budget refusal waits for the next file window; drive the real erasure retry,
+        // A real storage-pressure/budget/drain-deadline refusal waits for the next file window; drive the real erasure retry,
         // preserving the per-attempt spacing assertions below instead of retrying inside IHealthyRewrite.
         for (var retry = 0; retry < 4; retry++)
         {
@@ -122,7 +122,7 @@ public sealed partial class HistoryErasureBackupTests
             await Assert.That((await RequestAsync(erasure, requested)).Status).IsEqualTo(HistoryErasure.Complete);
         }
 
-        await Assert.That(recording.Starts.Count - recording.BudgetOrPressureRefusals).IsEqualTo(6)
+        await Assert.That(recording.Starts.Count - recording.TransientRefusals).IsEqualTo(6)
             .Because("four successful auth rewrites and two SYSTEM rewrites complete three erasures; other refusal reasons still fail");
         foreach (var file in recording.Starts.GroupBy(call => call.Database is null))
         {
@@ -136,7 +136,7 @@ public sealed partial class HistoryErasureBackupTests
     private sealed class RecordingRewrite(IHealthyRewrite engine, TimeProvider clock) : IHealthyRewrite
     {
         public List<(TenantContext? Database, DateTimeOffset Started)> Starts { get; } = [];
-        public int BudgetOrPressureRefusals { get; private set; }
+        public int TransientRefusals { get; private set; }
 
         public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
         {
@@ -145,9 +145,9 @@ public sealed partial class HistoryErasureBackupTests
             {
                 return await engine.RewriteAsync(database, minimumOffset, cancellationToken);
             }
-            catch (RewriteRefusedException error) when (error.Reason is RewriteRefusal.Budget or RewriteRefusal.Pressure)
+            catch (RewriteRefusedException error) when (error.Reason is RewriteRefusal.Budget or RewriteRefusal.Pressure or RewriteRefusal.Deadline)
             {
-                BudgetOrPressureRefusals++;
+                TransientRefusals++;
                 Console.WriteLine($"Batched erasure rewrite refused: {error.Reason} ({error.Message})");
                 throw;
             }

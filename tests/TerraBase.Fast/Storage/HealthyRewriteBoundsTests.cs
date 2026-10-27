@@ -198,6 +198,7 @@ public sealed class HealthyRewriteBoundsTests
             var error = await Assert.ThrowsAsync<RewriteRefusedException>(async () =>
                 await rewrite.WaitAsync(TimeSpan.FromSeconds(20), token));
             await Assert.That(error!.Message).Contains("operations did not end");
+            await Assert.That(error!.Reason).IsEqualTo(RewriteRefusal.Deadline);
             await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(20));
             await Assert.That(store.Lineage).IsEqualTo(lineage + (secondWait ? 1 : 0));
             await CleanAsync(store, before, token);

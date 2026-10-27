@@ -58,23 +58,25 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// must accompany a sign-up code's redemption; or how long to wait. The token is random either way, so it reveals
     /// nothing, and only its hash is stored.
     /// </summary>
-    public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
+    public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
     {
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
             return (null, wait);
         }
 
+        using var reservation = mail.Reserve();
         // Hashed whether or not the address has an account, so both take the same time.
         var hash = await passwords.HashAsync(password, cancellationToken);
         var pending = Tokens.RandomToken(43);
         var tenant = this.Tenant;
-        mail.EnqueueIssue(() => passcodes.RequestSignUpAsync(tenant, email, hash, pending, CancellationToken.None));
+        cancellationToken.ThrowIfCancellationRequested();
+        reservation.EnqueueIssue(() => passcodes.RequestSignUpAsync(tenant, email, hash, pending, CancellationToken.None), locale);
         return (pending, null);
     }
 
     /// <summary>Emails a password-reset code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
-    public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken)
+    public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, string locale, CancellationToken cancellationToken)
     {
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
@@ -82,7 +84,9 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         var tenant = this.Tenant;
-        mail.EnqueueIssue(() => passcodes.RequestAsync(tenant, email, PasscodePurpose.PasswordReset, CancellationToken.None));
+        using var reservation = mail.Reserve();
+        cancellationToken.ThrowIfCancellationRequested();
+        reservation.EnqueueIssue(() => passcodes.RequestAsync(tenant, email, PasscodePurpose.PasswordReset, CancellationToken.None), locale);
         return null;
     }
 
@@ -90,11 +94,11 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// Redeems a password-reset code and sets <paramref name="password"/>, which signs the user out everywhere. Returns
     /// whether it did, and how long to wait when the IP's budget is spent.
     /// </summary>
-    public async Task<(bool Reset, TimeSpan? Wait)> CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken)
+    public async Task<(bool Reset, TimeSpan? Wait)> CompletePasswordResetAsync(string email, string code, string password, string ip, string locale, CancellationToken cancellationToken)
     {
         const string method = "password-reset";
         if ((await this.LimitIpAsync(ip, mails: false, cancellationToken)
-            ?? await this.LimitCodeAsync(email, PasscodePurpose.PasswordReset, issuing: false, cancellationToken)) is { } wait)
+            ?? await this.LimitCodeAsync(email, PasscodePurpose.PasswordReset, issuing: false, cancellationToken, locale)) is { } wait)
         {
             return (false, wait);
         }
@@ -144,9 +148,9 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// Charges the email's password budget, then checks <paramref name="password"/>. The account, null for any wrong
     /// email or password alike, or how long to wait. Callers charge the IP budget first and check MFA after.
     /// </summary>
-    public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken)
+    public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
-        if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken) is { } wait)
+        if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken, locale) is { } wait)
         {
             return (null, wait);
         }
@@ -253,7 +257,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             var tenant = this.Tenant;
             mail.EnqueueLockout(async () => await users.FindByEmailAsync(tenant, normalized, CancellationToken.None) is { } user
                 && await limiter.ClaimLockoutNoticeAsync(tenant, purpose, user.Id, rejection.Until, CancellationToken.None)
-                    ? new AuthEmailValues(user.Email) { LockoutUntil = rejection.Until }
+                    ? new AuthEmailValues(user.Email) { LockoutUntil = rejection.Until, Tenant = tenant }
                     : null, locale);
         }
 

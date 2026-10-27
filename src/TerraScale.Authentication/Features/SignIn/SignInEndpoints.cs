@@ -59,7 +59,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -94,10 +94,11 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
         }
 
-        if (await passcodes.RequestAsync(SignInFlow.Tenant(this.HttpContext), address, cancellationToken) is { } issued)
-        {
-            mail.Enqueue(issued, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
-        }
+        var tenant = SignInFlow.Tenant(this.HttpContext);
+        using var reservation = mail.Reserve();
+        cancellationToken.ThrowIfCancellationRequested();
+        reservation.EnqueueIssue(() => passcodes.RequestAsync(tenant, address, CancellationToken.None),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next)));
     }
@@ -219,7 +220,8 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
             return SignInFlow.Limited(this.HttpContext, SignInStep.Password, ipWait, address, next);
         }
 
-        var (user, wait) = await hosted.CheckPasswordAsync(address, form.Password, cancellationToken);
+        var (user, wait) = await hosted.CheckPasswordAsync(address, form.Password, cancellationToken,
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
         if (wait is { } retry)
         {
             AuthMetrics.SignIn("hosted_password", "rate_limited");
@@ -278,7 +280,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         Post("/ui/{slug}/sign-up");
         Name("ui_sign_up_start");
         Summary("Start a sign-up");
-        Description("Same-origin form post with email and password (8 to 1024 UTF-8 bytes). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded.");
+        Description("Same-origin form post with email and password (8 to 1024 UTF-8 bytes). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -312,7 +314,8 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             return sso;
         }
 
-        var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
+        var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
         return wait is { } retry
             ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next) { PendingToken = pending });
@@ -417,7 +420,7 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         Post("/ui/{slug}/reset");
         Name("ui_password_reset_start");
         Summary("Email a password reset code");
-        Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account.");
+        Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -438,7 +441,8 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait
+        return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } wait
             ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next));
     }
@@ -483,7 +487,8 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
             { ErrorTitle = "Password too short" }, StatusCodes.Status400BadRequest);
         }
 
-        var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
+        var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
         return wait is { } retry ? SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, retry, address, next)
             : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, SignInFlow.Tenant(this.HttpContext), address, next))
             : SignInFlow.WrongCode(this.HttpContext, SignInStep.ResetCode, address, next);

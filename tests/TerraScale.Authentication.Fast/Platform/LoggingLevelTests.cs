@@ -19,6 +19,8 @@ public sealed class LoggingLevelTests
         {
             values.Remove("environment");
             values["terrabase-url"] = "http://127.0.0.1:1";
+            values["cloudflare-account-id"] = "0123456789abcdef0123456789abcdef";
+            values["cloudflare-email-token"] = "synthetic-email-token";
         }, configure: builder =>
         {
             builder.Configuration["Logging:LogLevel:OpenIddict"] = "Trace";

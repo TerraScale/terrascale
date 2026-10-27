@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
@@ -12,12 +13,12 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// Delivers emailed codes (sign-in, password reset, sign-up), invitations (TS-598) and lockout notices after the response, so request timing never tells an account from a stranger. Codes and invitations
 /// use one worker; notices use another bounded queue and worker, so refused attempts cannot crowd out recovery mail.
 /// A slow provider holds at most two requests in flight however many requests arrive. Codes queued
-/// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
-/// can ask for another.
+/// when the host stops are drained best effort within its shutdown timeout. Admission refuses a full queue before
+/// accepting an authentication start or persisting an invitation.
 /// </summary>
 public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, ProjectAuthSettings projects, PlatformDirectory platform, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
-    /// <summary>Codes waiting for delivery before new ones are dropped.</summary>
+    /// <summary>Queued and reserved deliveries allowed before new requests are refused.</summary>
     public const int Capacity = 256;
 
     /// <summary>How long a code waits for the email configuration before it goes out with the defaults.</summary>
@@ -28,6 +29,11 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
     // Shared by both workers. ponytail: per replica, each worker can pay one timeout per backoff.
     private long configRetryAt;
+
+    private readonly Lock admission = new();
+    private int occupied;
+    private int reservations;
+    private bool accepting = true;
 
     // ponytail: one sequential sender per queue, add workers if a healthy relay cannot keep up with sign-in volume.
     private readonly Channel<(Func<Task<Outgoing?>> Prepare, string Locale)> queue =
@@ -49,22 +55,27 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     /// </summary>
     public void EnqueueIssue(Func<Task<IssuedPasscode?>> issue, string locale = AuthEmails.English)
     {
-        ArgumentNullException.ThrowIfNull(issue);
-        this.Enqueue(async () => await issue().ConfigureAwait(false) is { } passcode
-            ? new Outgoing(passcode.Email, passcode.Purpose switch
-            {
-                PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
-                PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
-                _ => AuthEmailKind.SignInCode,
-            }, new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime, Tenant = passcode.Tenant })
-            : null, locale);
+        using var reservation = this.Reserve();
+        reservation.EnqueueIssue(issue, locale);
     }
 
-    /// <summary>Queues an invitation to <paramref name="values"/>'s address, with its accept link, for delivery.</summary>
-    public void EnqueueInvitation(AuthEmailValues values, string locale = AuthEmails.English)
+    /// <summary>
+    /// Reserves bounded delivery capacity before any durable work. A full or stopping queue answers 503 regardless
+    /// of account existence. Dispose an unused reservation to release it; enqueue consumes it exactly once.
+    /// </summary>
+    public Reservation Reserve()
     {
-        ArgumentNullException.ThrowIfNull(values);
-        this.Enqueue(() => Task.FromResult<Outgoing?>(new Outgoing(values.Email, AuthEmailKind.Invitation, values)), locale);
+        lock (this.admission)
+        {
+            if (!this.accepting || this.occupied == Capacity)
+            {
+                throw new ApiException(StatusCodes.Status503ServiceUnavailable, "email_queue_unavailable", "Email delivery is busy; retry later.");
+            }
+
+            this.occupied++;
+            this.reservations++;
+            return new Reservation(this);
+        }
     }
 
     /// <summary>
@@ -74,29 +85,45 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     public void EnqueueLockout(Func<Task<AuthEmailValues?>> claim, string locale = AuthEmails.English)
     {
         ArgumentNullException.ThrowIfNull(claim);
-        this.Enqueue(async () => await claim().ConfigureAwait(false) is { } values
+        if (!this.notices.Writer.TryWrite((async () => await claim().ConfigureAwait(false) is { } values
             ? new Outgoing(values.Email, AuthEmailKind.Lockout, values)
-            : null, locale, notice: true);
+            : null, locale)))
+        {
+            logger.ZLogWarning($"Lockout notice dropped: the notice delivery queue is full or stopping");
+        }
     }
 
     /// <inheritdoc />
     public override Task StopAsync(CancellationToken cancellationToken)
     {
         // Accept nothing new; the worker drains what is queued and then ends.
-        this.queue.Writer.TryComplete();
+        lock (this.admission)
+        {
+            this.accepting = false;
+            this.CompleteIfStopped();
+        }
+
         this.notices.Writer.TryComplete();
         return base.StopAsync(cancellationToken);
     }
 
     /// <inheritdoc />
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(this.DeliverAsync(this.queue.Reader), this.DeliverAsync(this.notices.Reader));
+        Task.WhenAll(this.DeliverAsync(this.queue.Reader, notice: false), this.DeliverAsync(this.notices.Reader, notice: true));
 
-    private async Task DeliverAsync(ChannelReader<(Func<Task<Outgoing?>> Prepare, string Locale)> reader)
+    private async Task DeliverAsync(ChannelReader<(Func<Task<Outgoing?>> Prepare, string Locale)> reader, bool notice)
     {
         // Not stoppingToken: codes already issued are still delivered while the host shuts down.
         await foreach (var (prepare, locale) in reader.ReadAllAsync(CancellationToken.None))
         {
+            if (!notice)
+            {
+                lock (this.admission)
+                {
+                    this.occupied--;
+                }
+            }
+
             try
             {
                 if (await prepare().ConfigureAwait(false) is not { } outgoing)
@@ -129,7 +156,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
         // Never inherit platform copy or a customer-controlled sender identity into project authentication mail.
-        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset
+        var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout
             ? EmailConfig.Defaults(tenant) with
             {
                 Branding = new EmailBranding { SenderName = "TerraScale", FooterText = "Sent by TerraScale Authentication." },
@@ -170,12 +197,66 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    private void Enqueue(Func<Task<Outgoing?>> prepare, string locale, bool notice = false)
+    private void FinishReservation(Func<Task<Outgoing?>>? prepare, string locale)
     {
-        if (!(notice ? this.notices : this.queue).Writer.TryWrite((prepare, locale)))
+        lock (this.admission)
         {
-            logger.ZLogWarning($"Authentication email dropped: the delivery queue is full");
+            this.reservations--;
+            if (prepare is null)
+            {
+                this.occupied--;
+            }
+            else if (!this.queue.Writer.TryWrite((prepare, locale)))
+            {
+                // Reserved + queued work never exceeds Capacity, and completion waits for reservations.
+                throw new InvalidOperationException("Reserved email delivery capacity was lost.");
+            }
+
+            this.CompleteIfStopped();
         }
+    }
+
+    private void CompleteIfStopped()
+    {
+        if (!this.accepting && this.reservations == 0)
+        {
+            this.queue.Writer.TryComplete();
+        }
+    }
+
+    /// <summary>A single delivery slot held across issuance or an invitation transaction.</summary>
+    public sealed class Reservation : IDisposable
+    {
+        private SignInMail? owner;
+
+        internal Reservation(SignInMail owner) => this.owner = owner;
+
+        /// <summary>Queues issuance for known and unknown accounts alike, preserving response parity.</summary>
+        public void EnqueueIssue(Func<Task<IssuedPasscode?>> issue, string locale = AuthEmails.English)
+        {
+            ArgumentNullException.ThrowIfNull(issue);
+            this.Consume().FinishReservation(async () => await issue().ConfigureAwait(false) is { } passcode
+                ? new Outgoing(passcode.Email, passcode.Purpose switch
+                {
+                    PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
+                    PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
+                    _ => AuthEmailKind.SignInCode,
+                }, new AuthEmailValues(passcode.Email) { Code = passcode.Code, ExpiresIn = Passcodes.Lifetime, Tenant = passcode.Tenant })
+                : null, locale);
+        }
+
+        /// <summary>Queues a committed invitation using the slot reserved before its transaction.</summary>
+        public void EnqueueInvitation(AuthEmailValues values, string locale = AuthEmails.English)
+        {
+            ArgumentNullException.ThrowIfNull(values);
+            this.Consume().FinishReservation(() => Task.FromResult<Outgoing?>(new Outgoing(values.Email, AuthEmailKind.Invitation, values)), locale);
+        }
+
+        /// <inheritdoc />
+        public void Dispose() => Interlocked.Exchange(ref this.owner, null)?.FinishReservation(null, AuthEmails.English);
+
+        private SignInMail Consume() => Interlocked.Exchange(ref this.owner, null)
+            ?? throw new InvalidOperationException("The email reservation has already been consumed or released.");
     }
 
     // One email to render and send; Values never formats its code or link.
