@@ -329,7 +329,7 @@ def test_mutation_transport_error_is_commit_uncertain(fake: Fake) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "auth.test":
             return fake.handle(request)
-        raise httpx.ConnectError("boom", request=request)
+        raise httpx.ReadError("boom", request=request)
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
     client = TerraScale(API_KEY, project=PROJECT, base_url=BASE, issuer=ISSUER, http_client=http)

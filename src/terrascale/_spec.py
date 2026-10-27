@@ -20,9 +20,17 @@ DEFAULT_BASE_URL = "https://api.terrascale.tech"
 USER_AGENT_PREFIX = "terrascale-python/"
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
+# 503 codes that mean "try again later". storage_busy and unavailable are the
+# live API's documented 503 codes (openapi/v1.json).
 TRANSIENT = frozenset({
-    "rate_limited", "capacity", "storage_unavailable", "dependencies_unavailable", "changes_busy", "auth_unavailable",
+    "rate_limited", "capacity", "storage_busy", "unavailable", "storage_unavailable", "dependencies_unavailable",
+    "changes_busy", "auth_unavailable",
 })
+# Gateway answers (502 Bad Gateway, 504 Gateway Timeout): a replay-safe request can be repeated.
+GATEWAY = frozenset({502, 504})
+# Failures raised before any byte of the request reached the server, so even
+# a mutation can be repeated: the server never saw it.
+NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 @dataclass
@@ -73,7 +81,18 @@ def backoff(attempt: int, retry_after: float | None) -> float:
 
 
 def retryable(status: int, code: str) -> bool:
-    return status == 429 or (status == 503 and code in TRANSIENT | {"http_503"})
+    return status == 429 or status in GATEWAY or (status == 503 and code in TRANSIENT | {"http_503"})
+
+
+def transport_failure(method: str, attempts: int, exc: Exception) -> TerraScaleError:
+    """The error after the last transport failure, keeping its cause readable."""
+    detail = str(exc).strip()
+    text = f"{method} failed after {attempts} attempt{'s' if attempts != 1 else ''}: {type(exc).__name__}"
+    if detail:
+        text += f": {detail}"
+    if isinstance(exc, NOT_SENT):
+        text += " (the request was not sent)"
+    return TerraScaleError(text)
 
 
 def name(value: str, what: str) -> str:
