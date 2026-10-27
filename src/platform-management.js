@@ -1,7 +1,6 @@
 import { TsAuthHttp } from "./http.js";
 import { err } from "./result.js";
 import { requireId } from "./ids.js";
-import { requireName } from "./v1/ids.js";
 import { requireServiceUrl } from "./v1/transport.js";
 import { organizationRole, projectRole, scope, instant, organization, project, member, projectMember, apiKey, keySecret,
   invitation, invitationCreated, invitationLookup, acceptedInvitation, ownershipTransfer, ssoConnection, auditEvent,
