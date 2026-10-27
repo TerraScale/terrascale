@@ -14,7 +14,6 @@ public sealed class ManagementRouteIdTests
     [Arguments("database")]
     [Arguments("user")]
     [Arguments("invitation")]
-    [Arguments("key")]
     [Arguments("query")]
     [Arguments("backup")]
     [Arguments("id")]
@@ -34,7 +33,6 @@ public sealed class ManagementRouteIdTests
                 "database" => (HttpMethod.Delete, $"{database.ProjectPath}/databases/{invalid}"),
                 "user" => (HttpMethod.Delete, $"/v1/management/organizations/{database.Organization}/members/{invalid}"),
                 "invitation" => (HttpMethod.Delete, $"/v1/management/organizations/{database.Organization}/invitations/{invalid}"),
-                "key" => (HttpMethod.Delete, $"{database.ProjectPath}/api-keys/{invalid}"),
                 "query" => (HttpMethod.Delete, $"{database.ProjectPath}/saved-queries/{invalid}"),
                 "backup" => (HttpMethod.Post, $"{database.Path}/backups/{invalid}/restore"),
                 "id" => (HttpMethod.Get, $"/v1/management/commits/{invalid}"),

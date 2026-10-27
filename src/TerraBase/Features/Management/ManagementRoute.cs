@@ -58,8 +58,6 @@ internal static class ManagementRoute
         "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the internal listener only, the "
         + "platform operator instead, with X-TerraBase-User-Id naming the acting user. Organizations the user is not a member of answer 404.";
 
-    public const string ApiKeys = Project + "/api-keys";
-    public const string ApiKey = ApiKeys + "/{key}";
     public const string Sql = Database + "/sql";
     public const string SavedQueries = Project + "/saved-queries";
     public const string SavedQuery = SavedQueries + "/{query}";

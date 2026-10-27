@@ -23,7 +23,6 @@ public sealed class CommitApiTests
     private const string Lookup = "/v1/management/invitations/lookup";
     private const string ReplayedHeader = "TerraBase-Commit-Replayed";
     private static readonly Faker Faker = new();
-    private static readonly string[] ReadScope = ["documents:read"];
     private static readonly string[] StatusField = ["status"];
     private static readonly string[] RecoveryReplicas = ["sjc"];
 
@@ -715,7 +714,6 @@ public sealed class CommitApiTests
         List<HttpStatusCode> denied =
         [
             await StatusAsync(viewer.PostAsJsonAsync(Uri($"{projectPath}/saved-queries"), new { name = "all", sql = "SELECT * FROM orders" })),
-            await StatusAsync(viewer.PostAsJsonAsync(Uri($"{projectPath}/api-keys"), new { name = "key", scopes = ReadScope })),
             await StatusAsync(viewer.PostAsJsonAsync(Uri($"{databasePath}/indexes"), new { collection = "orders", fields = StatusField })),
             await StatusAsync(viewer.PutAsJsonAsync(Uri($"{databasePath}/backup-policy"), new { retentionDays = 3 })),
             await StatusAsync(viewer.PostAsync(Uri($"{databasePath}/backups"), null)),
