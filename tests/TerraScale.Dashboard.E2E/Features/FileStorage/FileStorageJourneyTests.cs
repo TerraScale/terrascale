@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -23,6 +24,11 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
         var unavailable = false;
         var requests = 0;
         var bucketDeletes = 0;
+        var paginate = false;
+        var rulesUpdated = false;
+        var bucketAfter = "";
+        var fileAfter = "";
+        string? invalidDownload = null;
         var rules = new TerraBaseFileRules("/userId", new(true, false, []), new(true, false, []));
         var bucket = new TerraBaseFileBucket(Bucket, "avatars", "gru", rules);
         var capability = new TerraBaseFileUrl(FileId, "https://fixture.r2.cloudflarestorage.com/files/test?signature=synthetic",
@@ -44,31 +50,45 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
                 if (!grant.Value.Scopes.Contains(scope)) return Results.StatusCode(403);
                 if (unavailable) return Results.Json(new { error = new { code = "unavailable", message = capability.Url } }, statusCode: 503);
                 if (http.Request.Method == "GET" && path.EndsWith("/buckets", StringComparison.Ordinal))
-                    return Results.Json(new { items = created ? new[] { bucket } : [], next = (string?)null });
+                {
+                    bucketAfter = http.Request.Query["after"].ToString();
+                    return Results.Json(new { items = created && bucketAfter.Length == 0 ? new[] { bucket } : [], next = paginate && bucketAfter.Length == 0 ? Bucket : null });
+                }
                 if (http.Request.Method == "POST" && path.EndsWith("/buckets", StringComparison.Ordinal))
                 {
                     using var body = await JsonDocument.ParseAsync(http.Request.Body);
+                    await Assert.That(body.RootElement.GetProperty("name").GetString()).IsEqualTo("avatars");
                     await Assert.That(body.RootElement.GetProperty("rules").GetProperty("owner").GetString()).IsEqualTo("/userId");
                     created = true;
                     return Results.Json(bucket, statusCode: 201);
                 }
+                if (http.Request.Method == "PUT" && path.EndsWith("/rules", StringComparison.Ordinal))
+                {
+                    using var body = await JsonDocument.ParseAsync(http.Request.Body);
+                    await Assert.That(body.RootElement.GetProperty("rules").GetProperty("read").GetProperty("public").GetBoolean()).IsTrue();
+                    rulesUpdated = true;
+                    return Results.Json(bucket);
+                }
                 if (http.Request.Method == "GET" && path.EndsWith("/files", StringComparison.Ordinal))
-                    return Results.Json(new { items = completed ? new[] { stored } : [], next = (string?)null });
+                {
+                    fileAfter = http.Request.Query["after"].ToString();
+                    return Results.Json(new { items = completed && fileAfter.Length == 0 ? new[] { stored } : [], next = paginate && fileAfter.Length == 0 ? FileId : null });
+                }
                 if (path.EndsWith("/upload", StringComparison.Ordinal))
                 {
                     using var body = await JsonDocument.ParseAsync(http.Request.Body);
+                    await Assert.That(body.RootElement.GetProperty("name").GetString()).IsEqualTo("hello.txt");
+                    await Assert.That(body.RootElement.GetProperty("contentType").GetString()).IsEqualTo("text/plain");
+                    await Assert.That(body.RootElement.GetProperty("sha256").GetString()).IsEqualTo(stored.Sha256);
                     await Assert.That(body.RootElement.GetProperty("size").GetInt64()).IsEqualTo(5);
                     await Assert.That(body.RootElement.GetProperty("metadata").GetProperty("userId").GetString()).IsEqualTo("synthetic-user");
                     return Results.Json(capability, statusCode: 201);
                 }
                 if (path.EndsWith("/complete", StringComparison.Ordinal)) { completed = true; return Results.Json(stored); }
-                if (path.EndsWith("/download", StringComparison.Ordinal)) return Results.Json(capability);
-                if (http.Request.Method == "DELETE")
-                {
-                    if (path.EndsWith("/buckets/" + Bucket, StringComparison.Ordinal)) Interlocked.Increment(ref bucketDeletes);
-                    completed = false;
-                    return Results.NoContent();
-                }
+                if (path.EndsWith("/download", StringComparison.Ordinal)) return Results.Json(capability with { Url = invalidDownload ?? capability.Url });
+                if (http.Request.Method == "DELETE" && path.EndsWith("/buckets/" + Bucket, StringComparison.Ordinal))
+                { Interlocked.Increment(ref bucketDeletes); created = false; return Results.NoContent(); }
+                if (http.Request.Method == "DELETE") { completed = false; return Results.NoContent(); }
                 return Results.NotFound();
             });
         using var client = scenario.CreateClient();
@@ -76,9 +96,12 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
         await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var secret = await HttpJourney.CreatePatAsync(client, "File storage MCP");
         var csrf = await HttpJourney.CsrfAsync(client);
         var empty = await client.GetStringAsync("/storage");
         await Assert.That(empty).Contains("No buckets yet");
+        var emptyMcp = await CallAsync("list_file_storage", new { });
+        await Assert.That(emptyMcp.GetProperty("buckets").GetProperty("items").GetArrayLength()).IsEqualTo(0);
         var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = "avatars", ["owner"] = "/userId", ["readOwner"] = "1", ["writeOwner"] = "1" };
         using var create = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/storage/bucket", form);
         await Assert.That(create.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -122,11 +145,104 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
         { ["_csrf"] = csrf, ["bucket"] = Bucket, ["confirmName"] = "avatars" });
         await Assert.That(deleteBucket.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(bucketDeletes).IsEqualTo(1);
+        var uploadMetadata = new TerraBaseFileUpload("hello.txt", "text/plain", 5, stored.Sha256, metadata.RootElement);
+        var publicRead = rules with { Read = new(true, true, []) };
+        var operations = new Dictionary<string, Dictionary<string, object>>
+        {
+            ["list_file_storage"] = new() { ["bucketId"] = Bucket },
+            ["create_file_bucket"] = new() { ["name"] = " avatars ", ["rules"] = rules },
+            ["set_file_bucket_rules"] = new() { ["bucketId"] = Bucket, ["rules"] = publicRead },
+            ["delete_file_bucket"] = new() { ["bucketId"] = Bucket, ["confirmName"] = "avatars" },
+            ["create_file_upload"] = new() { ["bucketId"] = Bucket, ["upload"] = uploadMetadata },
+            ["complete_file_upload"] = new() { ["bucketId"] = Bucket, ["fileId"] = FileId },
+            ["delete_file"] = new() { ["bucketId"] = Bucket, ["fileId"] = FileId, ["confirmFileId"] = FileId },
+            ["create_file_download"] = new() { ["bucketId"] = Bucket, ["fileId"] = FileId }
+        };
+        var inventory = (await HttpJourney.McpAsync(client, secret, "tools/list", new { })).GetProperty("result").GetProperty("tools")
+            .EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
+        before = requests;
+        foreach (var (name, arguments) in operations)
+        {
+            await Assert.That(inventory[name].TryGetProperty("outputSchema", out _)).IsTrue();
+            await ErrorAsync(name, new Dictionary<string, object>(arguments) { ["projectId"] = "01JA0000000000000000000001" });
+        }
+        await Assert.That(requests).IsEqualTo(before).Because("foreign projects never reach the file API");
+        foreach (var name in new[] { "delete_file", "delete_file_bucket" })
+            await Assert.That(inventory[name].GetProperty("annotations").GetProperty("destructiveHint").GetBoolean()).IsTrue();
+        created = false;
+        await CallAsync("create_file_bucket", operations["create_file_bucket"]);
+        await Assert.That(created).IsTrue();
+        await CallAsync("set_file_bucket_rules", operations["set_file_bucket_rules"]);
+        await Assert.That(rulesUpdated).IsTrue();
+        var mcpUpload = await CallAsync("create_file_upload", operations["create_file_upload"]);
+        await Assert.That(mcpUpload.GetProperty("url").GetString()).IsEqualTo(capability.Url);
+        await Assert.That(mcpUpload.GetProperty("headers").GetProperty("Content-Length").GetString()).IsEqualTo("5");
+        await CallAsync("complete_file_upload", operations["complete_file_upload"]);
+        await Assert.That(completed).IsTrue();
+        paginate = true;
+        var first = await CallAsync("list_file_storage", operations["list_file_storage"]);
+        await Assert.That(first.GetProperty("files").GetProperty("items")[0].GetProperty("name").GetString()).IsEqualTo("hello.txt");
+        await Assert.That(first.GetProperty("buckets").GetProperty("next").GetString()).IsEqualTo(Bucket);
+        await Assert.That(first.GetProperty("files").GetProperty("next").GetString()).IsEqualTo(FileId);
+        await CallAsync("list_file_storage", new { bucketId = Bucket, bucketAfter = Bucket, after = FileId });
+        await Assert.That(bucketAfter).IsEqualTo(Bucket);
+        await Assert.That(fileAfter).IsEqualTo(FileId);
+        paginate = false;
+        var mcpDownload = await CallAsync("create_file_download", operations["create_file_download"]);
+        await Assert.That(mcpDownload.GetProperty("url").GetString()).IsEqualTo(capability.Url);
+        foreach (var url in new[] { "http://fixture.r2.cloudflarestorage.com/file", "https://user@fixture.r2.cloudflarestorage.com/file", "https://fixture.r2.cloudflarestorage.com/file#fragment", "https://example.test/file" })
+        {
+            invalidDownload = url;
+            await ErrorAsync("create_file_download", operations["create_file_download"]);
+        }
+        invalidDownload = null;
+        before = requests;
+        await ErrorAsync("delete_file", new { bucketId = Bucket, fileId = FileId, confirmFileId = "wrong" });
+        await Assert.That(requests).IsEqualTo(before);
+        var deletesBefore = bucketDeletes;
+        await ErrorAsync("delete_file_bucket", new { bucketId = Bucket, confirmName = "wrong" });
+        await Assert.That(bucketDeletes).IsEqualTo(deletesBefore);
+        before = requests;
+        await ErrorAsync("create_file_upload", new { bucketId = Bucket, upload = uploadMetadata with { Size = 0 } });
+        await ErrorAsync("create_file_upload", new { bucketId = Bucket, upload = uploadMetadata with { Metadata = JsonSerializer.SerializeToElement(Array.Empty<string>()) } });
+        await Assert.That(requests).IsEqualTo(before);
+        await RoleAsync("viewer");
+        before = requests;
+        foreach (var (name, arguments) in operations.Where(item => item.Key is not ("list_file_storage" or "create_file_download")))
+            await ErrorAsync(name, arguments);
+        await Assert.That(requests).IsEqualTo(before).Because("viewer writes never reach the file API");
+        await CallAsync("list_file_storage", operations["list_file_storage"]);
+        await CallAsync("create_file_download", operations["create_file_download"]);
+        await RoleAsync("owner");
+        await CallAsync("delete_file", operations["delete_file"]);
+        await Assert.That(completed).IsFalse();
+        await CallAsync("delete_file_bucket", operations["delete_file_bucket"]);
+        await Assert.That(created).IsFalse();
         unavailable = true;
         using var error = await client.GetAsync("/storage");
         await Assert.That(error.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var failure = await error.Content.ReadAsStringAsync();
         await Assert.That(failure).Contains("File storage is temporarily unavailable");
         await Assert.That(failure.Contains("signature=synthetic", StringComparison.Ordinal)).IsFalse();
+
+        async Task<JsonElement> CallAsync(string name, object arguments)
+        {
+            var response = await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });
+            var result = response.GetProperty("result");
+            await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsFalse().Because(name);
+            return result.GetProperty("structuredContent");
+        }
+        async Task ErrorAsync(string name, object arguments)
+        {
+            var response = await HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });
+            await Assert.That(response.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue().Because(name);
+            await Assert.That(response.GetRawText()).DoesNotContain("signature=synthetic");
+        }
+        async Task RoleAsync(string value)
+        {
+            using var controls = scenario.CreateProviderClient();
+            using var response = await controls.PostAsJsonAsync("/__test/control", new { command = "role", value });
+            response.EnsureSuccessStatusCode();
+        }
     }
 }

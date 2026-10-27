@@ -49,9 +49,6 @@ public static class FileStorageEndpoints
                         case "delete": await files.DeleteAsync(context, bucket, file, http.RequestAborted); break;
                         case "download":
                             var signed = await files.DownloadAsync(context, bucket, file, http.RequestAborted);
-                            if (!Uri.TryCreate(signed.Url, UriKind.Absolute, out var url) || url.Scheme != "https" || url.UserInfo.Length > 0
-                                || url.Fragment.Length > 0 || !url.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase))
-                                throw new HttpRequestException("Invalid download capability.");
                             // Avoid redirect result logging: the Location is a private bearer capability.
                             http.Response.StatusCode = StatusCodes.Status303SeeOther;
                             http.Response.Headers.Location = signed.Url;
