@@ -40,7 +40,7 @@ public sealed record ReadinessObservation(bool Ready, string? Region, string? Er
 public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
-    // The probe's conditional create and delete each commit across regions; on gru they take up to ~2.5 s apiece.
+    // The probe's conditional create and delete commit in this region only (local_durable), so a slow peer does not fail it.
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(15);
     private const string TimedOut = "timed out";
