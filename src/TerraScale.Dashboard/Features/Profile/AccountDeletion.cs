@@ -13,7 +13,8 @@ namespace TerraScale.Dashboard.Features.Profile;
 // ts-auth deletes the user, its sessions, tokens, memberships and the organizations only
 // the user belongs to, including project/database erasure; the dashboard then drops
 // its own records for the scope confirmed by ts-auth.
-// Paid plans of those organizations end immediately in Stripe, without a refund.
+// ts-auth fences that scope atomically; paid plans end in Stripe, without a refund, only for
+// organizations it proves deleted, so a membership change can never cancel a shared plan.
 public static partial class AccountDeletion
 {
     private const string Operations = "account_deletions";
@@ -26,11 +27,11 @@ public static partial class AccountDeletion
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
         if (await ReadOperationAsync(http, state, identity) is { } pending)
-            return await AdvanceAsync(http, sessions, platform, state, tokens, pending);
+            return await AdvanceAsync(http, sessions, platform, state, tokens, billing, pending);
         var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var cancellationToken = http.RequestAborted;
-        List<OrganizationRecord> sole = [];
+        List<string> sole = [];
         var persisted = false;
         var confirmed = false;
         try
@@ -49,11 +50,9 @@ public static partial class AccountDeletion
                         throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409);
                     continue;
                 }
-                sole.Add(org);
+                sole.Add(org.Id);
             }
-            // Shared organizations keep their subscriptions; only organizations deleted with the account are canceled.
-            foreach (var org in sole) await billing.CancelForAccountDeletionAsync(org.Id, org.Name, cancellationToken);
-            var operation = new Operation(context.Session, sole.Select(org => org.Id).ToArray(),
+            var operation = new Operation(context.Session, [.. sole],
                 Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)));
             await WriteOperationAsync(http, state, identity, operation);
             persisted = true;
@@ -66,7 +65,7 @@ public static partial class AccountDeletion
             { throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409); }
             // Dashboard records go only after ts-auth confirms; a 401/404 can mean an expired token or a ts-auth without the route.
             confirmed = true;
-            return await CompleteAsync(http, sessions, platform, state, tokens, operation);
+            return await CompleteAsync(http, sessions, platform, state, tokens, billing, operation);
         }
         catch (AccountAccessException) when (confirmed) { return Retry(http); }
         catch (Exception error) when (persisted && Transient(error, http)) { return Retry(http); }
@@ -85,15 +84,15 @@ public static partial class AccountDeletion
         }
     }
 
-    public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, IDashboardIdentity identity)
+    public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
     {
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
         return await ReadOperationAsync(http, state, identity) is { } operation
-            ? await AdvanceAsync(http, sessions, platform, state, tokens, operation) : Results.Unauthorized();
+            ? await AdvanceAsync(http, sessions, platform, state, tokens, billing, operation) : Results.Unauthorized();
     }
 
-    private static async Task<IResult> AdvanceAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, Operation operation)
+    private static async Task<IResult> AdvanceAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, Operation operation)
     {
         var requesting = false;
         try
@@ -109,7 +108,7 @@ public static partial class AccountDeletion
                 completed = await platform.DeleteAccountAsync(renewed ?? operation.Session, operation.Receipt, http.RequestAborted);
             }
             requesting = false;
-            return completed ? await CompleteAsync(http, sessions, platform, state, tokens, operation) : HttpRedirects.SeeOther("/account-deletion");
+            return completed ? await CompleteAsync(http, sessions, platform, state, tokens, billing, operation) : HttpRedirects.SeeOther("/account-deletion");
         }
         catch (AccountAccessException error)
         {
@@ -126,7 +125,7 @@ public static partial class AccountDeletion
         return HttpRedirects.SeeOther("/account-deletion?retry=" + Math.Min(5, Math.Clamp(attempt, 0, 5) + 1));
     }
 
-    private static async Task<IResult> CompleteAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, Operation operation)
+    private static async Task<IResult> CompleteAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling? billing, Operation operation)
     {
         var cancellationToken = http.RequestAborted;
         foreach (var orgId in operation.Organizations)
@@ -134,10 +133,11 @@ public static partial class AccountDeletion
             // A sole organization can become shared before ts-auth fences it. Only its own deletion proof permits cleanup.
             try { if (!await platform.AccountDeletionOrganizationCompletedAsync(operation.Receipt, orgId, cancellationToken)) continue; }
             catch (AccountAccessException error) when (error.StatusCode == 404) { continue; }
-            if (await state.GetAsync(StripeBilling.Collection, orgId, cancellationToken) is { } document &&
-                StripeBilling.ReadBinding(document, orgId).CustomerId is { Length: > 0 } customer)
-                await DropAsync(state, StripeBilling.CustomersCollection, customer, cancellationToken);
-            await DropAsync(state, StripeBilling.Collection, orgId, cancellationToken);
+            // The billing binding stays for DeletionReconciler, which ends the plan from the same proof
+            // until it succeeds and only then fences billing; this attempt just ends it without waiting.
+            if (billing is not null)
+                try { await billing.EndSubscriptionAsync(orgId, cancellationToken, completedDeletion: true); }
+                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested) { }
             await AccountService.FenceOrganizationDeletionAsync(state, orgId, AccountService.NewId(), cancellationToken);
         }
         await AccountService.FenceDeletionAsync(state, operation.Session.UserId, AccountService.NewId(), cancellationToken);

@@ -38,7 +38,7 @@ public static partial class AccountDeletion
                 return PendingPage(http, "Deletion status needs attention", "This browser has no saved deletion receipt. Sign in to review your account; missing records do not confirm deletion.", attempt, 403, attention: true);
             var completed = await platform.AccountDeletionCompletedAsync(operation.Receipt, budget.Token);
             if (completed && sessions is not null && tokens is not null)
-                return await CompleteAsync(http, sessions, platform, state, tokens, operation);
+                return await CompleteAsync(http, sessions, platform, state, tokens, null, operation);
             return PendingPage(http, completed ? "Finalizing dashboard cleanup" : "Account deletion is pending",
                 completed ? "ts-auth has confirmed account closure. Continue to finish dashboard cleanup and sign out." :
                 "Account closure is still pending. Completion requires project deletion confirmation from every storage region that holds your data. If a required region is unavailable, confirmation waits for recovery. This status does not identify a specific waiting step or region.",

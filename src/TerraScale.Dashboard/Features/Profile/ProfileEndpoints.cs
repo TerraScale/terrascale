@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Shared.UI;
 
@@ -70,8 +71,8 @@ public static class ProfileEndpoints
         endpoints.MapGet("/account-deletion", AccountDeletion.ProgressAsync);
         endpoints.MapPost("/api/v1/dashboard/profile/delete/status", AccountDeletion.StatusAsync);
         endpoints.MapPost("/api/v1/dashboard/profile/delete/continue", (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform,
-            IDashboardState state, AccessTokens tokens, IDashboardIdentity identity) =>
-            AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, identity));
+            IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity) =>
+            AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, billing, identity));
         endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/unlink", SignInMethods.UnlinkAsync);
         return endpoints;
     }
