@@ -104,6 +104,12 @@ public sealed record PasscodeRecord(
     /// <summary>Pruning removes code material but retains the issuance anchor.</summary>
     public bool Pruned { get; init; }
 
+    /// <summary>The live code this one replaced, still redeemable until <see cref="PreviousExpiresAt"/>, so a slow email works after a resend.</summary>
+    public string? PreviousCodeHash { get; init; }
+
+    /// <summary>Expiry of <see cref="PreviousCodeHash"/>.</summary>
+    public DateTimeOffset? PreviousExpiresAt { get; init; }
+
     /// <summary>The winning redemption this result depends on; not part of the stored passcode.</summary>
     [JsonIgnore]
     public CredentialBinding? Binding { get; init; }

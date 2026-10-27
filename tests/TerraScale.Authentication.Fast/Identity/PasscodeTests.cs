@@ -144,26 +144,29 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_code_signs_in_once_and_a_reissue_supersedes_the_previous_code()
+    public async Task A_code_signs_in_once_and_a_reissue_keeps_the_previous_code_until_one_is_redeemed()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         var options = AuthOptions.Load(AuthTestServer.DefaultSettings());
         var (users, sessions, passcodes) = this.Stack(tenant, TimeProvider.System, options);
         var user = (await users.CreateAsync("instance", Email))!;
 
-        var superseded = (await passcodes.RequestAsync("instance", Email))!;
+        var earlier = (await passcodes.RequestAsync("instance", Email))!;
         var current = (await passcodes.RequestAsync("instance", Email))!;
+        var latest = (await passcodes.RequestAsync("instance", Email))!;
         await Assert.That((await database.ListDocumentsAsync("passcodes")).Items.Count).IsEqualTo(1);
-        // Equal codes (one in a million) would make the superseded code indistinguishable from the current one.
-        if (superseded.Code != current.Code)
+        // Only the code a reissue replaces stays live; equal codes (one in a million) would be indistinguishable.
+        if (earlier.Code != current.Code && earlier.Code != latest.Code)
         {
-            await Assert.That(await passcodes.VerifyAsync("instance", Email, superseded.Code)).IsNull();
+            await Assert.That(await passcodes.VerifyAsync("instance", Email, earlier.Code)).IsNull();
         }
 
+        // A slow email's code still works after a resend, and either code redeems the pair once.
         var signedIn = await this.Stack(tenant, TimeProvider.System, options).Passcodes.VerifyAsync("instance", "ALICE@example.test", $" {current.Code} ");
         await Assert.That(signedIn).IsNotNull();
         await Assert.That((await sessions.ResolveAsync("instance", signedIn!.Token))!.Value.User.Id).IsEqualTo(user.Id);
         await Assert.That(await passcodes.VerifyAsync("instance", Email, current.Code)).IsNull();
+        await Assert.That(await passcodes.VerifyAsync("instance", Email, latest.Code)).IsNull();
         var stored = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
         await Assert.That(stored.GetProperty("consumed").GetBoolean()).IsTrue();
         await Assert.That((await database.ListDocumentsAsync("sessions")).Items.Count).IsEqualTo(1);
@@ -247,7 +250,36 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_verification_paused_across_a_reissue_cannot_consume_or_overwrite_the_replacement()
+    public async Task A_replaced_code_stops_at_its_own_expiry_and_a_sign_up_resend_keeps_it()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        var clock = new StoreTestClock();
+        var (users, _, passcodes) = this.Stack(tenant, clock, AuthOptions.Load(AuthTestServer.DefaultSettings()));
+        await users.CreateAsync("instance", Email);
+        var first = (await passcodes.RequestAsync("instance", Email))!;
+        clock.UtcNow += TimeSpan.FromMinutes(10);
+        var second = (await passcodes.RequestAsync("instance", Email))!;
+        await Assert.That(second.ExpiresAt).IsEqualTo(clock.UtcNow + Passcodes.Lifetime);
+        clock.UtcNow = first.ExpiresAt;
+        if (first.Code != second.Code)
+        {
+            await Assert.That(await passcodes.VerifyAsync("instance", Email, first.Code)).IsNull();
+        }
+
+        await Assert.That(await passcodes.VerifyAsync("instance", Email, second.Code)).IsNotNull();
+
+        // A sign-up resend keeps the first code too, redeemed with the latest pending token.
+        _ = (await passcodes.RequestSignUpAsync("instance", "new@example.test", "argon2-hash", "first-token"))!;
+        var signUp = (await passcodes.RequestSignUpAsync("instance", "new@example.test", "argon2-hash", "first-token"))!;
+        var resent = (await passcodes.RequestSignUpAsync("instance", "new@example.test", "argon2-hash", "second-token"))!;
+        await Assert.That(await passcodes.RedeemSignUpAsync("instance", "new@example.test", signUp.Code, "first-token")).IsNull();
+        var created = await passcodes.RedeemSignUpAsync("instance", "new@example.test", signUp.Code, "second-token");
+        await Assert.That(created?.Email).IsEqualTo("new@example.test");
+        await Assert.That(await passcodes.RedeemSignUpAsync("instance", "new@example.test", resent.Code, "second-token")).IsNull();
+    }
+
+    [Test]
+    public async Task A_verification_paused_across_a_reissue_redeems_once_against_the_replacement()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         var options = AuthOptions.Load(AuthTestServer.DefaultSettings());
@@ -269,13 +301,13 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         }
 
         paused.Release();
-        await Assert.That(await verification).IsNull();
+        // The stale write lost; the retry was judged against the replacement record, which keeps the replaced code
+        // live, so it redeems the pair once and the replacement no longer works.
+        await Assert.That(await verification).IsNotNull();
         var stored = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
-        await Assert.That(stored.GetProperty("consumed").GetBoolean()).IsFalse();
-        // The stale write lost; the retry was judged against the replacement and charged as one wrong guess.
-        await Assert.That(stored.GetProperty("failedAttempts").GetInt32()).IsEqualTo(1);
-        await Assert.That((await database.ListDocumentsAsync("sessions")).Items.Count).IsEqualTo(0);
-        await Assert.That(await passcodes.VerifyAsync("instance", Email, replacement.Code)).IsNotNull();
+        await Assert.That(stored.GetProperty("consumed").GetBoolean()).IsTrue();
+        await Assert.That((await database.ListDocumentsAsync("sessions")).Items.Count).IsEqualTo(1);
+        await Assert.That(await passcodes.VerifyAsync("instance", Email, replacement.Code)).IsNull();
     }
 
     [Test]

@@ -6,7 +6,7 @@ Digite este código para terminar de entrar em TerraScale como jane@example.com.
 
     123456
 
-Este código expira em 10 minutos e só pode ser usado uma vez.
+Este código expira em 30 minutos e só pode ser usado uma vez.
 
 Não tentou entrar? Alguém pode saber sua senha: troque-a agora. Nunca compartilhe este código com ninguém.
 

@@ -67,7 +67,7 @@ public sealed partial class HostedEmailLocaleTests(TerraBaseFixture fixture)
         await Assert.That(code).IsNotEmpty();
         await Assert.That(message.Subject).IsEqualTo($"{code} {subject}");
         await Assert.That(message.Html).Contains(portuguese ? "<html lang=\"pt-BR\"" : "<html lang=\"en\"");
-        await Assert.That(message.Text).Contains(portuguese ? "10 minutos" : "10 minutes");
+        await Assert.That(message.Text).Contains(portuguese ? "30 minutos" : "30 minutes");
         await Assert.That(message.Tenant).IsEqualTo(tenant);
         await Assert.That(message.Purpose).IsEqualTo(EmailPurpose.Authentication);
 

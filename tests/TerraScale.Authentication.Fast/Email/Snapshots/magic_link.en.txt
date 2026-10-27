@@ -7,7 +7,7 @@ Click the button below to sign in as jane@example.com.
 Sign in:
 https://auth.test.invalid/ui/terrascale/sign-in
 
-This link expires in 15 minutes and works only once.
+This link expires in 30 minutes and works only once.
 
 Didn't try to sign in? You can safely ignore this email. Never forward this link to anyone.
 
