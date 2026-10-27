@@ -13,8 +13,11 @@ internal enum InsertMode
     /// <summary>An existing primary key fails with <c>SQLITE_CONSTRAINT_PRIMARYKEY</c>.</summary>
     Plain,
 
-    /// <summary><c>OR IGNORE</c>, <c>ON CONFLICT DO NOTHING</c>: an existing row is skipped.</summary>
+    /// <summary><c>OR IGNORE</c>: uniqueness and NOT NULL violations skip the input row.</summary>
     Ignore,
+
+    /// <summary><c>ON CONFLICT DO NOTHING</c>: only the selected uniqueness violation skips the row.</summary>
+    DoNothing,
 
     /// <summary><c>OR REPLACE</c>, <c>REPLACE</c>: an unconditional put.</summary>
     Replace,
@@ -31,6 +34,9 @@ internal sealed record InsertSql(string Table, IReadOnlyList<string>? Columns, R
 
     /// <summary>The <c>RETURNING</c> list, or <see langword="null"/>.</summary>
     public IReadOnlyList<SqlReturning>? Returning { get; init; }
+
+    /// <summary>UPSERT target columns; null means any primary or unique key.</summary>
+    public IReadOnlyList<string>? ConflictColumns { get; init; }
 }
 
 /// <summary>A <c>RETURNING</c> item: a column of the written table, or every column for <c>*</c>.</summary>
@@ -64,6 +70,11 @@ internal static class SqlWrite
 
     public static InsertSql Insert(InsertOperation insert)
     {
+        if (insert.Or is SqliteOnConflict.Fail or SqliteOnConflict.Rollback || ((insert.Or != SqliteOnConflict.None || insert.ReplaceInto) && insert.On is not null))
+        {
+            throw new FormatException("OR FAIL, OR ROLLBACK and combining OR with ON CONFLICT are not supported");
+        }
+
         var mode = insert.On switch
         {
             null => insert.Or switch
@@ -72,7 +83,7 @@ internal static class SqlWrite
                 SqliteOnConflict.Replace => InsertMode.Replace,
                 _ => insert.ReplaceInto ? InsertMode.Replace : InsertMode.Plain,
             },
-            OnInsert.Conflict { OnConflict.OnConflictAction: OnConflictAction.DoNothing } => InsertMode.Ignore,
+            OnInsert.Conflict { OnConflict.OnConflictAction: OnConflictAction.DoNothing } => InsertMode.DoNothing,
             _ => throw new FormatException("ON CONFLICT supports DO NOTHING only"),
         };
         var columns = insert.Columns is { Count: > 0 } named ? named.Select(SqlParse.ColumnName).ToList() : null;
@@ -80,6 +91,11 @@ internal static class SqlWrite
         return new InsertSql(table, columns, insert.Source is { Query: var query } ? SqlRead.Read(query) : null, mode)
         {
             Returning = Returning(insert.Returning, table),
+            ConflictColumns = insert.On is OnInsert.Conflict { OnConflict.ConflictTarget: { } target } ? target switch
+            {
+                ConflictTarget.Column { Columns: var names } => names.Select(SqlParse.ColumnName).ToList(),
+                _ => throw new FormatException("ON CONFLICT targets a primary or unique column list only"),
+            } : null,
         };
     }
 

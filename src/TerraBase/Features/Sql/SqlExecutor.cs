@@ -325,6 +325,15 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return SqlErrors.Error("no such table");
         }
 
+        var constraints = await transaction.GetUniqueConstraintsAsync(insert.Table, cancellationToken).ConfigureAwait(false);
+        var primaryTarget = insert.ConflictColumns is null || SameKey(insert.ConflictColumns, table.PrimaryKey);
+        var uniqueTargets = constraints.Where(constraint => insert.ConflictColumns is null
+            || (constraint.Normalization == "none" && SameKey(insert.ConflictColumns, constraint.Fields))).Select(constraint => constraint.Name).ToHashSet(StringComparer.Ordinal);
+        if (insert.ConflictColumns is not null && !primaryTarget && uniqueTargets.Count == 0)
+        {
+            return SqlErrors.Error("ON CONFLICT target does not match a PRIMARY KEY or UNIQUE constraint");
+        }
+
         var targets = new List<SqlColumnDefinition>();
         foreach (var name in insert.Columns ?? [.. table.Columns.Select(column => column.Name)])
         {
@@ -389,6 +398,14 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 values[column.Name] = SqlWrite.Apply(column.Affinity, value);
             }
 
+            if (insert.Mode == InsertMode.Replace)
+            {
+                foreach (var column in table.Columns.Where(column => column.Name != integerKey && column.NotNull && values[column.Name].Kind == SqlValueKind.Null && column.Default is not null))
+                {
+                    values[column.Name] = SqlWrite.Apply(column.Affinity, SqlWrite.Default(column.Default!.Value));
+                }
+            }
+
             // Defaults bypass the engine read; validate the final values before key or document serialization.
             if (values.Values.Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
             {
@@ -410,6 +427,11 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
             if (table.Columns.FirstOrDefault(column => column.NotNull && values[column.Name].Kind == SqlValueKind.Null) is not null)
             {
+                if (insert.Mode == InsertMode.Ignore)
+                {
+                    continue;
+                }
+
                 return SqlErrors.Constraint("NOTNULL", "a NOT NULL column has no value");
             }
 
@@ -418,14 +440,45 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 return new SqlError("SQLITE_MISMATCH", "a primary key is an integer or text, and a key at most 256 characters without control characters");
             }
 
-            // A plain INSERT's Absent precondition refuses an existing row itself.
-            if (insert.Mode == InsertMode.Ignore && await transaction.GetVersionAsync(insert.Table, id, cancellationToken).ConfigureAwait(false) is { Deleted: false })
+            var body = Document(values);
+            if (insert.Mode != InsertMode.Plain)
             {
-                continue;
+                if (values.TryGetValue("id", out var identity) && identity.Kind == SqlValueKind.Text && identity.Text == id
+                    && constraints.Any(constraint => constraint.Fields.Contains("id", StringComparer.Ordinal)))
+                {
+                    return SqlErrors.Error("conflict handling for UNIQUE keys containing an elided document id is not supported");
+                }
+
+                // A UNIQUE rejection faults the storage transaction: find conflicts before any document mutation.
+                var primary = await transaction.GetVersionAsync(insert.Table, id, cancellationToken).ConfigureAwait(false) is { Deleted: false };
+                IReadOnlyList<(string Constraint, string Id)> conflicts = constraints.Count == 0 ? []
+                    : await transaction.GetUniqueConflictsAsync(insert.Table, body, SqlWrite.MaxRows + 1, cancellationToken).ConfigureAwait(false);
+                if (conflicts.Count > SqlWrite.MaxRows)
+                {
+                    return SqlErrors.TooBig("a statement resolves at most 1024 unique conflicts");
+                }
+
+                if ((insert.Mode == InsertMode.Ignore && (primary || conflicts.Count > 0))
+                    || (insert.Mode == InsertMode.DoNothing && ((primary && primaryTarget) || conflicts.Any(conflict => uniqueTargets.Contains(conflict.Constraint)))))
+                {
+                    continue;
+                }
+
+                if (insert.Mode == InsertMode.Replace)
+                {
+                    foreach (var replaced in conflicts.Select(conflict => conflict.Id).Where(replaced => replaced != id).Distinct(StringComparer.Ordinal))
+                    {
+                        var delete = new DeleteOperation(insert.Table, replaced, new Precondition(null, false, false));
+                        if (await ApplyAsync(transaction, delete, replaced, tally, cancellationToken).ConfigureAwait(false) is { } rejected)
+                        {
+                            return rejected;
+                        }
+                    }
+                }
             }
 
             var absent = insert.Mode != InsertMode.Replace;
-            var put = new PutOperation(insert.Table, id, Document(values), absent ? Precondition.Absent : new Precondition(null, false, false));
+            var put = new PutOperation(insert.Table, id, body, absent ? Precondition.Absent : new Precondition(null, false, false));
             if (await ApplyAsync(transaction, put, id, tally, cancellationToken, absent).ConfigureAwait(false) is { } refused)
             {
                 return refused;
@@ -441,6 +494,10 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
         return new SqlResult(returned?.Columns ?? [], output, affected, lastRowid);
     }
+
+    private static bool SameKey(IReadOnlyList<string> target, IReadOnlyList<string> key) =>
+        target.Count > 0 && target.Count == key.Count && target.Distinct(StringComparer.OrdinalIgnoreCase).Count() == target.Count
+        && target.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(key);
 
     private async ValueTask<SqlOutcome> ChangeAsync(
         IStorageTransaction transaction, ChangeSql change, SqlCommand command, SqlTally tally, CancellationToken cancellationToken)

@@ -30,8 +30,8 @@ tree, so the engine never sees text the validator did not see.
 | --- | --- |
 | `SELECT`, `VALUES`, `WITH … SELECT` (joins, subqueries, aggregates, `GROUP BY`, window functions, `UNION`, `LIMIT/OFFSET`) | one engine read (section 4) |
 | `INSERT INTO t [(cols)] VALUES … \| SELECT …` | evaluate the rows with one engine read, then a create-only `put` per row (`Precondition.Absent`) |
-| `INSERT OR REPLACE`, `REPLACE` | unconditional `put` |
-| `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING` | create-only `put`, existing rows skipped |
+| `INSERT OR REPLACE`, `REPLACE` | delete documents holding conflicting UNIQUE keys, then an unconditional `put` ([conflict compatibility](conflict-compatibility.md)) |
+| `INSERT OR IGNORE`, `ON CONFLICT [(cols)] DO NOTHING` | uniqueness lookup, then a create-only `put`; skipped rows follow [conflict compatibility](conflict-compatibility.md) |
 | `UPDATE t SET … WHERE …` | engine read `SELECT <key>, <new values> FROM t WHERE …`, then a `patch` per row: `c = NULL` → `unset`; `c = c ± <integer literal>` on an `INTEGER NOT NULL` column → `inc` (counters add across regions), on any other column the computed value (NULL stays NULL); anything else → `set` (per-field last-writer-wins) |
 | `DELETE FROM t WHERE …` | engine read of the keys, then a `delete` per row |
 | `CREATE TABLE [IF NOT EXISTS]` | create the collection and write its definition |
@@ -41,7 +41,7 @@ tree, so the engine never sees text the validator did not see.
 | `INSERT`/`UPDATE`/`DELETE … RETURNING` columns, `*` or `column AS name` | the written rows: new values, old ones for a delete |
 | `PRAGMA foreign_keys = …`, `PRAGMA read_uncommitted`, `PRAGMA [main.\|temp.]table_info(t)` | no-op, `0`, SQLite's column rows (ORMs and libSQL clients send them) |
 
-Refused with an error that never quotes client text: `RETURNING` expressions, `ON CONFLICT DO UPDATE`, `ALTER TABLE`,
+Refused with an error that never quotes client text: `RETURNING` expressions, `ON CONFLICT DO UPDATE`, `OR FAIL`/`OR ROLLBACK`, `ALTER TABLE`,
 triggers, views, other `PRAGMA`s, `ATTACH`, `VACUUM`, savepoints, schemas other than `main` (`main.t` is `t`), every table reference that is not a SQL table
 of the database or a CTE of the statement, and every function outside the allow-list (core scalar, aggregate, window,
 date/time and JSON functions of SQLite; no table-valued functions). Blob values are refused: a JSON document cannot
