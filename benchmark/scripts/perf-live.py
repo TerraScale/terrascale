@@ -18,23 +18,60 @@ import sys
 import threading
 import time
 
-work, region, sha, output, probe, rt6 = sys.argv[1:]
+work, region, sha, output, probe, rt6, *operation = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("rt6", rt6)
 matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(matrix)
 signal.signal(signal.SIGTERM, lambda *_: sys.exit("terminated; cleaning synthetic tenant"))
-subprocess.run([probe, "-h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+if not operation:
+    subprocess.run([probe, "-h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 
 class Live(matrix.Matrix):
     def __init__(self, stream):
         self.work, self.sha, self.output = work, sha, stream
         self.lock = threading.Lock()
-        self.node = {parts[1]: (parts[0], parts[2]) for line in pathlib.Path(work, "peers").read_text().splitlines()
-                     if len(parts := line.split()) == 3}
-        if set(self.node) != set(matrix.REGIONS):
-            raise RuntimeError("unexpected serving regions")
+        peers = [line.split() for line in pathlib.Path(work, "peers").read_text().splitlines() if line.strip()]
+        if any(len(parts) != 3 for parts in peers) or len({parts[1] for parts in peers}) != len(peers):
+            raise RuntimeError("peers must contain one well-formed serving node per region")
+        self.node = {parts[1]: (parts[0], parts[2]) for parts in peers}
+        if region not in self.node:
+            raise RuntimeError("local serving region absent from peers file")
+        matrix.REGIONS = tuple(sorted(self.node))
         matrix.NATIVE_RELAYS.update({region: dict(postgres=5432, wire=7464)})
+
+    def recover(self):
+        # The persisted acting-user ULID belongs only to this run. Recover even if
+        # it died between the organization creation response and the tenant log.
+        _, body = self.http("sjc", "GET", "/v1/management/organizations", user=True, expect={200})
+        if len(body["items"]) > 1:
+            raise RuntimeError("unexpected recovery tenant count; review required")
+        for organization in body["items"]:
+            if organization["name"] != "rt6 endpoint matrix":
+                raise RuntimeError("recovery organization is not this benchmark's tenant")
+            self.organization = organization["id"]
+            path = f"/v1/management/organizations/{self.organization}/projects"
+            _, body = self.http("sjc", "GET", path, user=True, expect={200})
+            if len(body["items"]) > 1:
+                raise RuntimeError("unexpected recovery project count; review required")
+            for project in body["items"]:
+                if project["name"] != "rt6":
+                    raise RuntimeError("recovery project is not this benchmark's tenant")
+                self.project, self.management = project["id"], path + "/" + project["id"]
+                _, body = self.http("sjc", "GET", self.management + "/databases", user=True, expect={200})
+                if len(body["items"]) > 1:
+                    raise RuntimeError("unexpected recovery database count; review required")
+                if body["items"]:
+                    self.database = body["items"][0]["id"]
+            self.teardown()
+
+
+if operation:
+    if operation != ["cleanup"]:
+        raise ValueError("unknown live operation")
+    with open(output + ".cleanup.jsonl", "a") as stream:
+        Live(stream).recover()
+    sys.exit(0)
 
 
 with open(output, "x") as stream:
@@ -46,6 +83,8 @@ with open(output, "x") as stream:
             if status != 200:
                 raise RuntimeError("regional readiness failed")
             revisions[target] = body.get("revision")
+        if len(set(revisions.values())) != 1 or any(not isinstance(value, str) or not value for value in revisions.values()):
+            raise RuntimeError("serving regions have different or missing revisions")
         live.record(kind="metadata", host=os.uname().nodename, region=region, revisions=revisions,
                     load=os.getloadavg(), pressure=pathlib.Path('/proc/pressure/cpu').read_text())
         live.provision()

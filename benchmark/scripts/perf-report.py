@@ -10,6 +10,8 @@ import sys
 def report(directory, baseline=None):
     directory = pathlib.Path(directory)
     metadata = json.loads((directory / "metadata.json").read_text())
+    load = directory / "load.jsonl"
+    metadata["load_samples"] = [json.loads(line) for line in load.read_text().splitlines()] if load.exists() else []
     raw = directory / "local.raw"
     cells = [json.loads(line) for line in (raw.read_text() if raw.exists() else "").splitlines()
              if line.startswith('{"Lane":')]
@@ -19,7 +21,7 @@ def report(directory, baseline=None):
     expected = {(size, operation, concurrency, lane) for size in ("small", "medium")
                 for operation in ("read", "write") for concurrency in (1, 16)
                 for lane in ("turso", "turso-cdc", "engine", "api", "api-query", "api-batch", "sql", "pg", "hrana", "wire", "tcp-echo")}
-    invalid = set(groups) != expected or any(len(rows) != 3 or {r["Repeat"] for r in rows} != {1, 2, 3}
+    invalid = bool(metadata.get("tracked_changes") or metadata.get("untracked_source")) or set(groups) != expected or any(len(rows) != 3 or {r["Repeat"] for r in rows} != {1, 2, 3}
                                or any(r["Errors"] or r["OpsPerSecond"] <= 0 for r in rows)
                                for rows in groups.values())
     med = lambda rows, field: statistics.median(r[field] for r in rows)
@@ -45,27 +47,32 @@ def report(directory, baseline=None):
     gaps.sort(key=lambda row: row["gap_ratio"], reverse=True)
     data = dict(metadata=metadata, valid=not invalid, cells=cells, ranked_read_gaps=gaps)
     comparison = []
-    if baseline is not None:
-        before = json.loads(pathlib.Path(baseline).read_text())
-        if not before["valid"] or not data["valid"] or before["metadata"]["host"] != metadata["host"]:
-            raise ValueError("comparison requires complete zero-error runs on the same host")
-        if any(before["metadata"].get(key) != metadata.get(key) for key in ("cpus", "dotnet", "cpu_model")):
-            raise ValueError("comparison host CPU or .NET SDK identity differs")
-        old = collections.defaultdict(list)
-        for cell in before["cells"]:
-            old[cell["Size"], cell["Workload"], cell["Concurrency"], cell["Lane"]].append(cell)
-        if set(old) != set(groups) or any({r.get("Seconds") for r in old[key]} != {r.get("Seconds") for r in rows}
-                                          for key, rows in groups.items()):
-            raise ValueError("comparison cell matrix or measurement durations differ")
-        for key, rows in groups.items():
-            changes = {field: 100 * (med(rows, field) / med(old[key], field) - 1)
-                       for field in ("OpsPerSecond", "P50Micros", "P99Micros")}
-            comparison.append(dict(size=key[0], workload=key[1], concurrency=key[2], lane=key[3], delta_percent=changes))
-        data["comparison"] = dict(baseline_sha=before["metadata"]["sha"], cells=comparison)
+    try:
+        if baseline is not None:
+            before = json.loads(pathlib.Path(baseline).read_text())
+            if not before["valid"] or not data["valid"] or before["metadata"]["host"] != metadata["host"]:
+                raise ValueError("comparison requires complete zero-error runs on the same host")
+            if any(before["metadata"].get(key) != metadata.get(key) for key in ("cpus", "dotnet", "cpu_model")):
+                raise ValueError("comparison host CPU or .NET SDK identity differs")
+            old = collections.defaultdict(list)
+            for cell in before["cells"]:
+                old[cell["Size"], cell["Workload"], cell["Concurrency"], cell["Lane"]].append(cell)
+            if set(old) != set(groups) or any({r.get("Seconds") for r in old[key]} != {r.get("Seconds") for r in rows}
+                                              for key, rows in groups.items()):
+                raise ValueError("comparison cell matrix or measurement durations differ")
+            for key, rows in groups.items():
+                changes = {field: 100 * (med(rows, field) / med(old[key], field) - 1)
+                           for field in ("OpsPerSecond", "P50Micros", "P99Micros")}
+                comparison.append(dict(size=key[0], workload=key[1], concurrency=key[2], lane=key[3], delta_percent=changes))
+            data["comparison"] = dict(baseline_sha=before["metadata"]["sha"], cells=comparison)
+    except (OSError, ValueError, KeyError, ZeroDivisionError) as error:
+        invalid, data["valid"], data["comparison_error"] = True, False, str(error)
+        comparison.clear()
     (directory / "results.json").write_text(json.dumps(data, indent=2) + "\n")
     lines = ["# TerraScale performance baseline", "", f"Source: `{metadata['sha']}`; host: `{metadata['host']}`.",
              f"Main source: `{metadata['main_sha']}`; CPUs: {metadata['cpus']}; starting load: {metadata['load_before']}.",
-             f"Starting CPU pressure: `{metadata['cpu_pressure_before'].splitlines()[0]}`. Load samples include build and preload.",
+             f"Starting CPU pressure: `{metadata['cpu_pressure_before'].splitlines()[0]}`. "
+             f"Recorded {len(metadata['load_samples'])} load/pressure observations, including build and preload.", data.get("comparison_error", ""),
              f"Three interleaved repeats; status: {'INVALID / incomplete or failed cells' if invalid else 'complete, zero operation errors'}.",
              "", "Q-PARITY read targets: c=1 each percentile ≤ 1.1 × (raw Turso + TCP echo); "
              "c=16 ops/s ≥ 0.9 × min(raw Turso, TCP echo). Applying the Wire budget to other endpoints is an aspirational comparison.",

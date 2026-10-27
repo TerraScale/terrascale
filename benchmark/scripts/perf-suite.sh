@@ -11,6 +11,10 @@ if [[ ${1:-} == report ]]; then
   cat "$evidence/local/summary.md" "$evidence/live-summary.md"
   exit "$status"
 fi
+if [[ ${1:-} == cleanup ]]; then
+  shift
+  exec bash benchmark/scripts/perf-live.sh "$@" cleanup
+fi
 if [[ ${1:-} == live ]]; then
   shift
   exec bash benchmark/scripts/perf-live.sh "$@"
@@ -24,6 +28,8 @@ data = dict(sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True)
             host=platform.node(), platform=platform.platform(), cpus=os.cpu_count(),
             at=datetime.datetime.now(datetime.timezone.utc).isoformat(), load_before=os.getloadavg(),
             dotnet=subprocess.check_output(['dotnet', '--version'], text=True).strip(),
+            tracked_changes=subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], text=True),
+            untracked_source=subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', 'src', 'tests', 'benchmark/dotnet', 'benchmark/scripts'], text=True),
             cpu_model=next(line.strip() for line in pathlib.Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name')),
             cpu_pressure_before=pathlib.Path('/proc/pressure/cpu').read_text())
 pathlib.Path(sys.argv[1]).write_text(json.dumps(data, indent=2) + '\n')

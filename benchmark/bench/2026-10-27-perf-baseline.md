@@ -63,6 +63,10 @@ which differs from the local source SHA. Live results are not a same-build local
 The runner discovers serving regions from the running service's ts-orch peers file,
 uses OCI-Vault-delivered operator credentials only on the host, creates its own tenant,
 and verifies project deletion in every region after revoking its key and deleting its database.
+SIGTERM runs cleanup. For an abrupt benchmark-process kill or host crash, its persisted
+acting-user receipt supports `perf-suite.sh cleanup <live-output-directory> <probe-binary> <source-sha>`
+on the same serving host. Recovery is confined to that synthetic user and refuses
+unexpected organization/project/database counts. It does not claim cleanup while a host is unavailable.
 
 Live latency uses c=1, 60 reads per endpoint/size/repeat at at most 10 requests/s,
 with persistent clients on each serving host. This measures normal service load, not
@@ -86,3 +90,5 @@ with zero missing probes and successful project deletion in all regions.
 The two inbound GRU directions and GRU endpoint latency await trusted NetBird SSH access;
 two host-key verification failures were escalated rather than disabling verification.
 No repeat/stress runs or workflow changes were added to GitHub CI.
+The superseded short-window local calibration and the SJC x86 probe attempt are retained
+under `perf-baseline-20261027/diagnostics/` and excluded from qualification.
