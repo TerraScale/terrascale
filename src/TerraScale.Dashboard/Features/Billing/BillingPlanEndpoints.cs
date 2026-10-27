@@ -49,7 +49,10 @@ public static class BillingPlanEndpoints
         error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
     private static IResult Failure(Exception error, HttpContext http)
     {
-        if (error is AccountAccessException access) return Results.Text(access.Message, statusCode: access.StatusCode);
+        if (error is AccountAccessException access) return DatabaseEndpoints.WantsHtml(http)
+            ? BillingRecoveryModel.Response(http, access.StatusCode, access.StatusCode == 404 ? "Checkout unavailable" : "Billing request not completed",
+                access.Message + " Return to billing to check your current plan before trying again.")
+            : Results.Text(access.Message, statusCode: access.StatusCode);
         if (error is OnboardingValidationException validation) return Results.Text(validation.Message, statusCode: 400);
         http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingPlanEndpoints)).LogWarning("Billing change failed ({ErrorType}: {Error})", error.GetType().Name, Describe(error));
         if (DatabaseEndpoints.WantsHtml(http))

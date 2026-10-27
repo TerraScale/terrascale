@@ -295,6 +295,11 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(invalid.Content.Headers.ContentType!.MediaType).IsEqualTo("text/plain");
         using var foreignReturn = await client.GetAsync("/billing/checkout/return?session_id=foreign-checkout");
         await Assert.That(foreignReturn.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(foreignReturn.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
+        var foreignHtml = await foreignReturn.Content.ReadAsStringAsync();
+        foreach (var text in new[] { "<html lang=\"en\"", "<title>Checkout unavailable · TerraScale</title>", "role=\"alert\"", "Checkout is unavailable. Return to billing to check your current plan before trying again.", ">Return to billing</a>" })
+            await Assert.That(foreignHtml).Contains(text);
+        await Assert.That(foreignHtml.Contains("<form", StringComparison.Ordinal)).IsFalse().Because("The recovery page never resubmits a billing mutation.");
         using var foreignCancel = await HttpJourney.PostFormAsync(client, "/checkout/foreign-checkout/cancel", new() { ["_csrf"] = csrf });
         await Assert.That(foreignCancel.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
