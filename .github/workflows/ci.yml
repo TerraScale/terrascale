@@ -405,10 +405,10 @@ jobs:
           IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
         run: |
           { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure.
-      # TerraBase releases stay by hand until FR1's batch-2 wipe (#408, #398); then drop the AREA check.
+      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on
+      # failure. Both services release; the production-<area> concurrency group keeps one release of each in flight.
       - name: Release to every region
-        if: github.event_name == 'push' && env.AREA == 'auth'
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
