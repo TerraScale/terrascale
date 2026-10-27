@@ -75,6 +75,8 @@ jobs:
           path: |
             ${{ runner.temp }}/qualified-package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
             ${{ runner.temp }}/qualified-package/provenance.json
+            ${{ runner.temp }}/qualified-package/consumer-nuget-audit.log
+            ${{ runner.temp }}/qualified-package/consumer.packages.lock.json
           if-no-files-found: error
 
   github-packages:
@@ -114,7 +116,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-          sparse-checkout: tests/TerraScale.DotNet.PackageConsumer
+          sparse-checkout: |
+            tests/TerraScale.DotNet.PackageConsumer
+            scripts
       - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
@@ -132,6 +136,8 @@ jobs:
           export NUGET_PACKAGES="$RUNNER_TEMP/nuget-packages" NUGET_HTTP_CACHE_PATH="$RUNNER_TEMP/nuget-http"
           consumer="$RUNNER_TEMP/consumer"
           cp -r tests/TerraScale.DotNet.PackageConsumer "$consumer"
+          checker="$GITHUB_WORKSPACE/scripts/check-nuget-vulnerabilities.cs"
+          dotnet restore "$checker" --locked-mode
           cd "$consumer"
           cat > nuget.config <<EOF
           <configuration>
@@ -152,11 +158,20 @@ jobs:
             </packageSourceCredentials>
           </configuration>
           EOF
-          dotnet restore -p:TerraScaleDotNetVersion="$VERSION"
+          export TerraScaleDotNetVersion="$VERSION"
+          dotnet restore --use-lock-file
           echo "$SHA256  $NUGET_PACKAGES/terrascale.dotnet/$VERSION/terrascale.dotnet.$VERSION.nupkg" | sha256sum --check
+          dotnet run --no-restore --file "$checker" -- "$consumer/TerraScale.DotNet.PackageConsumer.csproj" | tee "$RUNNER_TEMP/consumer-nuget-audit.log"
           for framework in net10.0 net11.0; do
             dotnet run --no-restore --configuration Release --framework "$framework" -p:TerraScaleDotNetVersion="$VERSION" -- "$VERSION" "$GITHUB_SHA"
           done
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: registry-consumer-audit
+          path: |
+            ${{ runner.temp }}/consumer/packages.lock.json
+            ${{ runner.temp }}/consumer-nuget-audit.log
+          if-no-files-found: error
       # Registry metadata, for the record: the REST API may refuse the job token, which does not fail the release.
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

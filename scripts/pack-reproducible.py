@@ -83,12 +83,17 @@ def main(destination):
           <add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources>
           <packageSourceMapping><packageSource key="sdk"><package pattern="TerraScale.DotNet"/></packageSource>
           <packageSource key="nuget.org"><package pattern="*"/></packageSource></packageSourceMapping></configuration>''')
-        env = dict(os.environ, NUGET_PACKAGES=str(temporary / "consumer-packages"),
+        env = dict(os.environ, TerraScaleDotNetVersion=version,
+                   NUGET_PACKAGES=str(temporary / "consumer-packages"),
                    NUGET_HTTP_CACHE_PATH=str(temporary / "consumer-http"))
-        run("dotnet", "restore", f"-p:TerraScaleDotNetVersion={version}", cwd=consumer, env=env)
+        run("dotnet", "restore", "--use-lock-file", cwd=consumer, env=env)
         restored = Path(env["NUGET_PACKAGES"]) / "terrascale.dotnet" / version / name.lower()
         if digest(restored.read_bytes()) != digest(first):
             raise SystemExit("The installed consumer restored different SDK bytes.")
+        checker = str(ROOT / "scripts/check-nuget-vulnerabilities.cs")
+        run("dotnet", "restore", checker, "--locked-mode", env=env)
+        audit = run("dotnet", "run", "--no-restore", "--file", checker, "--",
+                    str(consumer / "TerraScale.DotNet.PackageConsumer.csproj"), env=env, capture=True)
         for framework in ("net10.0", "net11.0"):
             run("dotnet", "run", "--configuration", "Release", "--no-restore", "--framework", framework,
                 f"-p:TerraScaleDotNetVersion={version}", "--", version, revision, cwd=consumer, env=env)
@@ -97,6 +102,8 @@ def main(destination):
         if target.exists() and target.read_bytes() != first:
             raise SystemExit("Artifact destination already contains different bytes for this package identity.")
         target.write_bytes(first)
+        (output / "consumer-nuget-audit.log").write_bytes(audit)
+        shutil.copy(consumer / "packages.lock.json", output / "consumer.packages.lock.json")
         metadata = {
             "package": "TerraScale.DotNet", "version": version,
             "repository": "https://github.com/TerraScale/ts-dotnet", "sourceRevision": revision,
@@ -105,7 +112,7 @@ def main(destination):
             "sha256": digest(first), "assemblySha256ByFramework": assemblies,
             "contractSha256ByPath": contracts,
             "sdk": json.loads((ROOT / "global.json").read_text())["sdk"]["version"],
-            "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified."
+            "qualification": "Two clean locked builds produced identical package bytes; installed-package graph passed the fail-closed transitive NuGet audit and HTTP fake consumer on net10.0 and net11.0. Locally built, not published or live-service qualified."
         }
         (output / "provenance.json").write_text(json.dumps(metadata, indent=2) + "\n")
         print(json.dumps(metadata, indent=2))
