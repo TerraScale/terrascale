@@ -16,7 +16,7 @@ TerraBase provides a PostgreSQL v3 (PGv3) driver adapter over the TerraBase SQL 
 Checked on 2026-10-24 against production (`pg.terrascale.tech`) with a dashboard API key as the password: `psql` 18, `pg` 8.23.1 and `pgx` v5.11.0 ran tables, writes, joins, parameters, prepared statements, transactions and indexes; a read-only key got `42501` on writes. This dated driver check does not validate the revocation bounds below.
 :::
 
-The [Drizzle](/ru/guides/orm-drizzle), [Prisma](/ru/guides/orm-prisma) and [SQLAlchemy](/ru/guides/orm-sqlalchemy) guides use SQLite/libSQL, not this adapter. The current live adapter does not support `RETURNING`, savepoints, schema-qualified names or general PostgreSQL catalog reflection; native binary UUID, numeric, temporal, bytea and array bindings may be rejected. Foreign-key declarations are not enforced. Test your exact ORM/provider, generated SQL and native types; the dated verification above covers only the listed driver flows.
+The [Drizzle](/ru/guides/orm-drizzle), [Prisma](/ru/guides/orm-prisma) and [SQLAlchemy](/ru/guides/orm-sqlalchemy) guides use SQLite/libSQL, not this adapter. The current live adapter does not support savepoints, schema-qualified names or general PostgreSQL catalog reflection; native binary UUID, numeric, temporal, bytea and array bindings may be rejected. Foreign-key declarations are not enforced. Test your exact ORM/provider, generated SQL and native types; the dated verification above covers only the listed driver flows.
 
 ## Connection URL
 
@@ -183,6 +183,7 @@ Use the PostgreSQL JDBC driver (`org.postgresql:postgresql`), the same `PGPASSWO
 | `CREATE TABLE`, `DROP TABLE` | Supported |
 | `CREATE [UNIQUE] INDEX`, `DROP INDEX` | Supported; a `UNIQUE` index rejects duplicates with `23505` |
 | `INSERT`, `UPDATE`, `DELETE` with affected-row counts | Supported |
+| `RETURNING` on `INSERT`, `UPDATE` and `DELETE` | Supported with columns, `*` or `column AS name`; expressions are refused |
 | `SELECT` with joins | Supported |
 | `BEGIN`, `COMMIT`, `ROLLBACK` | Supported, optimistic (see [Transactions](#transactions)) |
 | `psql` `\dt`, `\d`, `\d table`, `\l`, `\dn` | Supported |

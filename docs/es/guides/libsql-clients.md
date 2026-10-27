@@ -175,7 +175,7 @@ Refused with an error: partial and expression indexes, `WITH RECURSIVE`, blob va
 
 - **Reads scan tables.** Indexes, including those from `CREATE INDEX`, do not speed up SQL reads yet: every read scans each table it references. A read that would scan more than about 150,000 rows fails as too expensive. Keep SQL tables below that size, or use the [Documents API queries](/es/guides/queries) for larger collections.
 - A result holds at most 10,000 rows and 8 MiB. A write that would pass that fails; page larger reads with `LIMIT` and a key condition.
-- A request body is at most 1 MiB, a statement's SQL text at most 16 KiB, and a request at most 1000 statements.
+- A request body is at most 1 MiB, a statement's SQL text at most 16 KiB, and a request holds 1 to 256 statements.
 - **Transactions are optimistic.** A transaction that spans requests, such as `db.transaction()` in JavaScript or `BEGIN` in Go, Rust or Python, does not lock the database. At `COMMIT`, TerraBase checks that everything the transaction read is unchanged. If another writer changed it, the commit fails with `SQLITE_BUSY` and nothing is written; retry the whole transaction. Statements that use `random()` or the current time inside such a transaction can also fail at commit.
 - A transaction holds at most 256 statements, 1 MiB of statements and arguments and 1024 written rows, and expires after 30 seconds without a request. An expired transaction answers "stream not found"; start it again.
 - Writes from several regions to the same row merge per column, and `SET c = c + 1` style updates add across regions.

@@ -9,7 +9,7 @@ npm install
 npm run check
 ```
 
-The manifest pins published SDK 0.0.16 and generator peer 16.0.0. `generate` uses the installed `terrascale-models` CLI; verification compares it with two `generateDocumentModels` calls. Generated `models.ts` is reproducible; regenerate when the declaration changes. Keep tooling out of browser bundles.
+The manifest pins published SDK 0.0.17 and generator peer 16.0.0. `generate` uses the installed `terrascale-models` CLI; verification compares it with two `generateDocumentModels` calls. Generated `models.ts` is reproducible; regenerate when the declaration changes. Keep tooling out of browser bundles.
 
 Strict compilation covers required quantity, nullable note, exact numeric values, optional-field deletion, and seven expected type errors. An unused `@ts-expect-error` fails compilation. Range and integer constraints still require server validation: TypeScript accepts negative/fractional numbers. Reads remain JSON; generated aliases do not validate historical data or narrow a read automatically. `id` and `version` remain envelope fields.
 

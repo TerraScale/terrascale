@@ -10,7 +10,7 @@ description: Install the published TerraScale SDK and create, read, update, quer
 
 # JavaScript quickstart
 
-Install `@terrascale/sdk@0.0.16` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ru/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
+Install `@terrascale/sdk@0.0.17` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ru/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
 
 ## 1. Install the SDK
 
@@ -20,10 +20,10 @@ Use Node.js **22 or 24** and npm **11 or newer**, matching the published package
 mkdir terrabase-quickstart
 cd terrabase-quickstart
 npm init -y
-npm install --save-exact @terrascale/sdk@0.0.16
+npm install --save-exact @terrascale/sdk@0.0.17
 ```
 
-The package is available on [public npm registry](https://registry.npmjs.org/@terrascale/sdk/0.0.16). Do not substitute the old unpublished `0.3.0` starter pin.
+The package is available on [public npm registry](https://registry.npmjs.org/@terrascale/sdk/0.0.17). Do not substitute the old unpublished `0.3.0` starter pin.
 
 ## 2. Supply connection details
 
@@ -49,7 +49,7 @@ The key is the client secret and its part before `_` is the client ID; sending t
 
 ## 3. Connect through the SDK
 
-Download [quickstart.mjs](/examples/terrabase-js/quickstart.mjs) into this directory. The connection uses the public package entrypoint:
+Download [quickstart.mjs](/examples/terrabase-js/quickstart.mjs) into this directory. `@terrascale/sdk` is ESM-only, so the example is an ES module (`.mjs`) and uses `import`. `require("@terrascale/sdk")` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; from CommonJS code, call `const { createTerraBaseV1Client } = await import("@terrascale/sdk")` inside an async function. The connection uses the public package entrypoint:
 
 <<< @/../examples/terrabase-js/quickstart.mjs#connection{js}
 
@@ -77,7 +77,7 @@ Success prints `PASS_TERRABASE_CRUD_QUERY`. The assertions verify persisted fiel
 
 ## 5. Continue safely
 
-For a long-running server, use the complete [renewing token provider](/examples/server-token-provider/README.txt), which pins published SDK 0.0.16.
+For a long-running server, use the complete [renewing token provider](/examples/server-token-provider/README.txt), which pins published SDK 0.0.17.
 
 Generate [TypeScript document models](/ru/guides/schema-validation#generate-typescript-document-models) from a declared collection schema.
 

@@ -10,7 +10,7 @@ description: Install the published Go SDK and create, get, query, read SQL, stre
 
 # Go quickstart
 
-Install `terrascale.tech/sdk@v0.0.6` with **Go 1.25 or newer**. The example uses the public API at `https://api.terrascale.tech` and an existing project database.
+Install `terrascale.tech/sdk@v0.0.8` with **Go 1.25 or newer**. The example uses the public API at `https://api.terrascale.tech` and an existing project database.
 
 ## 1. Install the published module
 
@@ -18,10 +18,10 @@ Install `terrascale.tech/sdk@v0.0.6` with **Go 1.25 or newer**. The example uses
 mkdir terrabase-go-quickstart
 cd terrabase-go-quickstart
 go mod init example.com/terrabase-quickstart
-go get terrascale.tech/sdk@v0.0.6
+go get terrascale.tech/sdk@v0.0.8
 ```
 
-The [published module](https://proxy.golang.org/terrascale.tech/sdk/@v/v0.0.6.info) includes the `terrascale.tech/sdk/v1` and `terrascale.tech/sdk/tsauth` packages. Install the root module; `/v1` is the client package's import path.
+The [published module](https://proxy.golang.org/terrascale.tech/sdk/@v/v0.0.8.info) includes the `terrascale.tech/sdk/v1` and `terrascale.tech/sdk/tsauth` packages. Install the root module; `/v1` is the client package's import path.
 
 ## 2. Supply your project and API key
 
