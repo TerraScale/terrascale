@@ -32,45 +32,23 @@
   </div>
 </section>
 
-<section class="contact-body">
-  <div class="contact-body__inner">
-    <div class="contact-body__grid">
-      <div class="contact-channels">
-        <h2 class="contact-channels__title">{$dict.contact.channelsTitle}</h2>
-        <div class="contact-channels__list">
-          {#each channels as c (c.label)}
-            {#if c.kind === 'external'}
-              <ExternalLink
-                href={c.href}
-                target="_blank"
-                class="contact-channel ts-glass"
-              >
-                <div class="contact-channel__icon">
-                  <Icon name={c.icon} className="contact-channel__icon-svg" />
-                </div>
-                <div class="contact-channel__body">
-                  <div class="contact-channel__label">{c.label}</div>
-                  <div class="contact-channel__value">{c.value}</div>
-                </div>
-                <Icon name="chevronRight" className="contact-channel__chev" />
-              </ExternalLink>
-            {:else}
-              <ExternalLink href={c.href} class="contact-channel ts-glass">
-                <div class="contact-channel__icon">
-                  <Icon name={c.icon} className="contact-channel__icon-svg" />
-                </div>
-                <div class="contact-channel__body">
-                  <div class="contact-channel__label">{c.label}</div>
-                  <div class="contact-channel__value">{c.value}</div>
-                </div>
-                <Icon name="chevronRight" className="contact-channel__chev" />
-              </ExternalLink>
-            {/if}
-          {/each}
-        </div>
-
-      </div>
-    </div>
+<section class="ts-section contact-body">
+  <div class="ts-container contact-body__inner">
+    <h2 class="contact-body__title">{$dict.contact.channelsTitle}</h2>
+    <ul class="contact-channels">
+      {#each channels as c (c.label)}
+        <li>
+          <ExternalLink href={c.href} target={c.kind === 'external' ? '_blank' : undefined} class="contact-channel">
+            <span class="ts-icon-tile"><Icon name={c.icon} /></span>
+            <span class="contact-channel__body">
+              <span class="contact-channel__label">{c.label}</span>
+              <span class="contact-channel__value">{c.value}</span>
+            </span>
+            <Icon name="chevronRight" className="contact-channel__chev" />
+          </ExternalLink>
+        </li>
+      {/each}
+    </ul>
   </div>
 </section>
 
@@ -99,14 +77,21 @@
   }
 
   .contact-body__inner {
-    max-width: 1120px;
-    margin: 0 auto;
-    padding: 0 40px;
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--ts-s12);
+    align-items: start;
   }
 
-  .contact-body__grid {
-    max-width: 560px;
-    margin: 0 auto;
+  .contact-body__title {
+    font-size: var(--ts-fs-3xl);
+  }
+
+  .contact-channels {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--ts-line);
   }
 
   .contact-channels li {
@@ -116,9 +101,9 @@
   .contact-channels :global(.contact-channel) {
     display: flex;
     align-items: center;
-    gap: var(--ts-s3);
-    min-height: 56px;
-    padding: 0 var(--ts-s2);
+    gap: var(--ts-s4);
+    min-height: 72px;
+    padding: var(--ts-s3) var(--ts-s3);
     color: var(--ts-ink);
     transition: background-color var(--ts-fast) var(--ts-ease);
   }
@@ -126,6 +111,15 @@
   .contact-channels :global(.contact-channel:hover) {
     background: var(--ts-surface);
     text-decoration: none;
+  }
+
+  /* Label and value side by side on wide screens, stacked when the row gets narrow. */
+  .contact-channel__body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--ts-s1) var(--ts-s4);
+    min-width: 0;
   }
 
   .contact-channel__label {
@@ -144,6 +138,12 @@
     height: var(--ts-icon);
     margin-left: auto;
     color: var(--ts-ink-3);
+    transition: transform var(--ts-fast) var(--ts-ease);
+  }
+
+  .contact-channels :global(.contact-channel:hover .contact-channel__chev) {
+    transform: translateX(2px);
+    color: var(--ts-ink);
   }
 
   @media (max-width: 860px) {
@@ -151,7 +151,15 @@
       font-size: var(--ts-fs-4xl);
     }
     .contact-body__inner {
-      padding: 0 20px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s6);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .contact-channel__body {
+      flex-direction: column;
+      align-items: flex-start;
     }
   }
 </style>
