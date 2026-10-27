@@ -26,6 +26,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
+trap 'exit 129' HUP
 container=$(join <(sudo -n ctr -n terrascale containers ls | awk '$2 ~ /terrascale\/terrabase@/ {print $1}' | sort) \
   <(sudo -n ctr -n terrascale tasks ls | awk '$3 == "RUNNING" {print $1}' | sort))
 [[ -n "$container" && "$container" != *$'\n'* ]] || { echo 'expected one running TerraBase'; exit 1; }

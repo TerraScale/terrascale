@@ -26,8 +26,9 @@ for path in sorted(directory.glob("*/live.jsonl")):
     extra = path.with_name(path.name + ".cleanup.jsonl")
     rows += [json.loads(line) for line in extra.read_text().splitlines()] if extra.exists() else []
     for row in rows:
-        if "target_sha" in row:
-            row["legacy_operator_source_hint"] = row.pop("target_sha")
+        for legacy in ("target_sha", "harness_sha"):
+            if legacy in row:
+                row["legacy_operator_source_hint"] = row.pop(legacy)
     first = next(row for row in rows if row["kind"] == "metadata")
     region = first["region"]
     if region in metadata:

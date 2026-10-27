@@ -40,10 +40,19 @@ export TERRABASE_VS_TURSO_WORKLOADS=read,write
 export TERRABASE_VS_TURSO_REPEATS=3 TERRABASE_VS_TURSO_SECONDS=5 TERRABASE_VS_TURSO_CONCURRENCY=1,16
 setsid bash benchmark/dotnet/VsTurso/run.sh "$out/local.raw" >"$out/run.log" 2>&1 &
 job=$!
-cleanup() { kill -TERM -- "-$job" 2>/dev/null || true; wait "$job" 2>/dev/null || true; }
+cleanup() {
+  kill -TERM -- "-$job" 2>/dev/null || true
+  for ((attempt=0; attempt<50; attempt++)); do
+    kill -0 -- "-$job" 2>/dev/null || break
+    sleep .1
+  done
+  kill -KILL -- "-$job" 2>/dev/null || true
+  wait "$job" 2>/dev/null || true
+}
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
+trap 'exit 129' HUP
 while kill -0 "$job" 2>/dev/null; do
   python3 - "$out/load.jsonl" <<'PY'
 import json, os, pathlib, sys, time
