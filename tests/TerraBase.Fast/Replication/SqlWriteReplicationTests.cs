@@ -22,14 +22,21 @@ public sealed class SqlWriteReplicationTests
     public async Task Sql_inserts_updates_and_deletes_in_gru_and_a_hrana_insert_in_sjc_are_read_with_sql_in_every_region()
     {
         await using var cell = await Cell.StartAsync();
-        var names = new Faker().Make(4, () => new Faker().Name.FirstName());
+        // Exercise JSON escaping deterministically as well as Bogus names such as D'angelo.
+        var names = new Faker().Make(4, index => index == 0 ? "D'angelo \"quoted\" \\ é <&>" : new Faker().Name.FirstName());
         await OkAsync(cell.Gru, Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INTEGER)"));
         await OkAsync(cell.Gru, [.. names.Take(3).Select((name, i) => Statement("INSERT INTO people (id, name, age) VALUES (?, ?, ?)", i + 1, name, 20 + i * 10))]);
-        await RowsEverywhereAsync(cell, $"""[[1,"{names[0]}",20],[2,"{names[1]}",30],[3,"{names[2]}",40]]""");
+        await RowsEverywhereAsync(cell, JsonSerializer.Serialize(new object[][]
+        {
+            [1, names[0], 20], [2, names[1], 30], [3, names[2], 40],
+        }));
 
         await OkAsync(cell.Gru, Statement("UPDATE people SET age = age + 1 WHERE id = ?", 1), Statement("DELETE FROM people WHERE id = ?", 2));
         await HranaInsertAsync(cell.Sjc, 4, names[3]);
-        await RowsEverywhereAsync(cell, $"""[[1,"{names[0]}",21],[3,"{names[2]}",40],[4,"{names[3]}",50]]""");
+        await RowsEverywhereAsync(cell, JsonSerializer.Serialize(new object[][]
+        {
+            [1, names[0], 21], [3, names[2], 40], [4, names[3], 50],
+        }));
     }
 
     [Test]
