@@ -48,7 +48,8 @@ jobs:
           # Baseline is a capture, not a claim that old markup passes the new assertions.
           s = re.sub(r'await Assert\.That\(await point\.EvaluateAsync<bool>\(""".*?"""\)\).*?;', '', s, flags=re.S)
           s = re.sub(r'^\s*await Assert\..*?;\n', '\n', s, flags=re.M)
-          s = s.replace('details.ts-menu', 'details').replace('.ts-menu-panel', '.ts-dropdown-panel')
+          # The base may already contain the shared menu introduced by the original design PR.
+          s = s.replace('details.ts-menu', 'details').replace('.ts-menu-panel', ':is(.ts-menu-panel, .ts-dropdown-panel)')
           s = s.replace('summary.ts-card-head', 'summary').replace('design-system"', 'design-system-before"')
           p.write_text(s)
           PY
