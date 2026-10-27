@@ -66,12 +66,12 @@
         </div>
     </div>
     <dialog id="ts-notifications-dialog" class="ts-dialog" closedby="any" aria-labelledby="ts-notifications-dialog-title"
-            data-signals="{_notificationsPending: 0, _notificationsLoaded: false}"
-            data-on:datastar-fetch="(evt.detail.el.getAttribute('data-on:click')?.includes('/notifications/dialog') || evt.detail.el.getAttribute('data-on:submit')?.includes('/api/v1/notifications/')) &amp;&amp; (evt.detail.type === 'started' ? ($_notificationsPending++, $_notificationsLoaded = false) : evt.detail.type === 'finished' ? $_notificationsPending = Math.max(0, $_notificationsPending - 1) : evt.detail.type === 'datastar-patch-elements' ? $_notificationsLoaded = true : null)"
+            data-signals="{_notificationsPending: 0, _notificationsLoaded: false, _notificationsFailed: false}"
+            data-on:datastar-fetch="(evt.detail.el.getAttribute('data-on:click')?.includes('/notifications/dialog') || evt.detail.el.getAttribute('data-on:submit')?.includes('/api/v1/notifications/')) &amp;&amp; (evt.detail.type === 'started' ? ($_notificationsPending++, $_notificationsLoaded = false, $_notificationsFailed = false) : evt.detail.type === 'finished' ? ($_notificationsPending = Math.max(0, $_notificationsPending - 1), $_notificationsFailed = !$_notificationsLoaded) : evt.detail.type === 'datastar-patch-elements' ? $_notificationsLoaded = true : null)"
             data-on:close="el.dataset.returnFocusSelector &amp;&amp; document.querySelector(el.dataset.returnFocusSelector)?.focus()">
         <div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="ts-notifications-dialog-title">Notifications</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="ts-notifications-dialog">@ShellIcons.Svg("x", 18)</button></header>
-            <p role="status" aria-live="polite" aria-atomic="true" data-text="$_notificationsPending ? 'Loading notifications…' : ($_notificationsLoaded ? '' : 'Unable to load notifications. Please try again.')"></p>
-            <div class="ts-row" data-show="!$_notificationsPending &amp;&amp; !$_notificationsLoaded">
+            <p role="status" aria-live="polite" aria-atomic="true" data-text="$_notificationsPending ? 'Loading notifications…' : ($_notificationsFailed ? 'Unable to load notifications. Please try again.' : '')"></p>
+            <div class="ts-row" hidden data-attr:hidden="$_notificationsPending || !$_notificationsFailed">
                 <button class="ts-btn ts-btn-ghost" type="button" data-on:click="@@get('/notifications/dialog', {retryMaxCount: 0})">Retry</button>
                 <a class="ts-btn ts-btn-ghost" href="/notifications">Open inbox</a>
             </div>
