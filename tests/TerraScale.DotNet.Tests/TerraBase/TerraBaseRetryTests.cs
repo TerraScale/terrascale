@@ -73,12 +73,68 @@ public sealed class TerraBaseRetryTests
         await Assert.That(calls).IsEqualTo(3);
     }
 
+    [Test]
+    [Arguments(429, "tenant_busy")]
+    [Arguments(503, "capacity")]
+    [Arguments(502, null)]
+    [Arguments(504, null)]
+    public async Task TransientReadFailuresResendOnlyReads(int status, string? code)
+    {
+        foreach (var mutation in new[] { false, true })
+        {
+            var calls = 0;
+            using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(
+                ++calls == 1 ? Error(code, TimeSpan.Zero, (HttpStatusCode)status) : new HttpResponseMessage(HttpStatusCode.NoContent)));
+            using var http = new HttpClient(handler);
+            var call = () => Connection(http).SendAsync(mutation ? HttpMethod.Post : HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
+            if (mutation) await Assert.ThrowsAsync<TerraBaseException>(call);
+            else await call();
+            await Assert.That(calls).IsEqualTo(mutation ? 1 : 2);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ALostConnectionResendsOnlyReads(bool mutation)
+    {
+        var calls = 0;
+        using var handler = new TerraBaseTestHandler((_, _) => ++calls == 1
+            ? throw new HttpRequestException(HttpRequestError.ConnectionError, "reset")
+            : Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using var http = new HttpClient(handler);
+        var call = () => Connection(http).SendAsync(mutation ? HttpMethod.Post : HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
+        if (mutation) await Assert.ThrowsAsync<HttpRequestException>(call);
+        else await call();
+        await Assert.That(calls).IsEqualTo(mutation ? 1 : 2);
+    }
+
+    [Test]
+    public async Task EachAttemptAsksTheTokenProviderAgain()
+    {
+        var sent = new List<string>();
+        var issued = 0;
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            sent.Add(request.Headers.Authorization?.Parameter ?? "");
+            return Task.FromResult(sent.Count == 1 ? Error("auth_unavailable", TimeSpan.Zero) : new HttpResponseMessage(HttpStatusCode.NoContent));
+        });
+        using var http = new HttpClient(handler);
+        var connection = new TerraBaseConnection(http, new Uri("https://terrabase.example.test/"), null, null, "ApiKey", TimeSpan.FromSeconds(30),
+            TerraBaseConnection.DefaultMaxResponseBytes, accessTokenProvider: _ => ValueTask.FromResult($"token{++issued}"));
+        await connection.SendAsync(HttpMethod.Get, "/v1/test", null, null, CancellationToken.None);
+        await Assert.That(sent).IsEquivalentTo(["token1", "token2"]);
+    }
+
     private static TerraBaseConnection Connection(HttpClient http) =>
         new(http, new Uri("https://terrabase.example.test/"), null, "key", "ApiKey", TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes);
 
-    private static HttpResponseMessage Error(string code, TimeSpan? retryAfter)
+    private static HttpResponseMessage Error(string? code, TimeSpan? retryAfter, HttpStatusCode status = HttpStatusCode.ServiceUnavailable)
     {
-        var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent($"{{\"error\":{{\"code\":\"{code}\",\"message\":\"Try again.\"}}}}") };
+        var response = new HttpResponseMessage(status)
+        {
+            Content = new StringContent(code is null ? "Bad gateway" : $"{{\"error\":{{\"code\":\"{code}\",\"message\":\"Try again.\"}}}}"),
+        };
         if (retryAfter is { } delay) response.Headers.RetryAfter = new RetryConditionHeaderValue(delay);
         return response;
     }
