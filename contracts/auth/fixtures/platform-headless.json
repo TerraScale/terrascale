@@ -2,6 +2,18 @@
   "mintEndUserToken": {"request": {"user_id": "{user}", "claims": {"roles": ["reader"]}}, "response": {"access_token": "fixture-sensitive-token-canary", "token_type": "Bearer", "expires_in": 900}},
   "get_account_mfa": {"request": null, "response": {"enabled": true, "recovery_codes_remaining": 8, "manage_url": "https://auth.example.test/ui/terrascale/security"}},
   "set_organization_mfa_policy": {"request": {"require_mfa": true}, "response": {"id": "{organization}", "name": "Synthetic organization", "created_by": "{user}", "created_at": "2026-10-13T00:00:00+00:00", "role": "owner", "require_mfa": true}},
+  "request_step_up": {
+    "request": {"purpose":"create_pat","audience":"ts-dashboard","return_uri":"https://dashboard.example.test/auth/step-up/callback"},
+    "response": {"proof":"fixture-proof-canary","step_up_url":"https://auth.example.test/ui/terrascale/step-up/01JA0000000000000000000005","expires_at":"2026-10-26T12:05:00Z"}
+  },
+  "consume_step_up": {
+    "request": {"proof":"fixture-proof-canary","purpose":"create_pat","audience":"ts-dashboard","operation_receipt":null},
+    "response": null
+  },
+  "consume_step_up_delete": {
+    "request": {"proof":"fixture-proof-canary","purpose":"delete_account","audience":"ts-dashboard","operation_receipt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+    "response": {"operation_grant":"fixture-operation-grant-canary"}
+  },
   "create_organization": {
     "request": {
       "name": "Synthetic project"

@@ -107,12 +107,12 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
         SendAsync(HttpMethod.Get, accessToken, projectId, "/clients",
             Json.TerraScaleAuthPlatformPageTerraScaleAuthProjectOAuthClient, HttpStatusCode.OK, cancellationToken);
 
-    /// <summary>POST /v1/{project}/clients (admin). A confidential client's secret is returned once.</summary>
+    /// <summary>POST /v1/{project}/clients (admin, create_oauth_client/ts-auth proof). A confidential client's secret is returned once.</summary>
     public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(
-        string accessToken, string projectId, TerraScaleAuthProjectCreateOAuthClient request, CancellationToken cancellationToken = default) =>
+        string accessToken, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string stepUpProof, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/clients"),
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectCreateOAuthClient,
-            Json.TerraScaleAuthProjectOAuthClient, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, MaxRequestBytes, cancellationToken);
+            Json.TerraScaleAuthProjectOAuthClient, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, MaxRequestBytes, cancellationToken, TerraScaleAuthPlatformClient.Proof(stepUpProof));
 
     /// <summary>DELETE /v1/{project}/clients/{client_id} (admin).</summary>
     public Task DeleteClientAsync(

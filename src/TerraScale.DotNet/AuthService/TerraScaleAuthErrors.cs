@@ -192,6 +192,7 @@ internal static class TerraScaleAuthErrors
         "session_not_found",
         "session_required",
         "slow_down",
+        "step_up_required",
         "stripe_error",
         "subscription_exists",
         "template_changed",

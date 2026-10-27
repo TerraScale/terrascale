@@ -57,11 +57,12 @@ public sealed class TerraScaleAuthProjectsContractTests
             "list_sessions" => projects.ListSessionsAsync(Token, project, userId: user, limit: 2, after: "opaque+/cursor="),
             "revoke_session" => projects.RevokeSessionAsync(Token, project, session),
             "list_clients" => projects.ListClientsAsync(Token, project),
-            "create_client" => projects.CreateClientAsync(Token, project, JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectCreateOAuthClient)!),
+            "create_client" => projects.CreateClientAsync(Token, project, JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectCreateOAuthClient)!, "fixture-step-up"),
             "delete_client" => projects.DeleteClientAsync(Token, project, clientId),
             _ => throw new ArgumentException("Unknown contract operation.", nameof(operation))
         };
         await call;
+        await Assert.That(handler.StepUpProof).IsEqualTo(operation == "create_client" ? "fixture-step-up" : null);
         string? resultJson = call switch
         {
             Task<TerraScaleAuthProjectSettings> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectSettings),
@@ -260,9 +261,11 @@ public sealed class TerraScaleAuthProjectsContractTests
         public string? Body { get; private set; }
         public string? MediaType { get; private set; }
         public AuthenticationHeaderValue? Authorization { get; private set; }
+        public string? StepUpProof { get; private set; }
         public int Calls { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            StepUpProof = request.Headers.TryGetValues("X-TerraScale-Step-Up-Proof", out var proofs) ? proofs.Single() : null;
             Calls++; Uri = request.RequestUri; Method = request.Method.Method; Authorization = request.Headers.Authorization;
             MediaType = request.Content?.Headers.ContentType?.MediaType;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);

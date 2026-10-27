@@ -66,6 +66,7 @@
   },
   "create_client": {
     "method": "POST", "path": "/v1/{project}/clients", "status": 201,
+    "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_oauth_client", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
     "request": {"name": "Synthetic app", "type": "confidential", "redirect_uris": ["http://localhost:3000/callback"]},
     "response": {"client_id": "{client}", "name": "Synthetic app", "type": "confidential", "redirect_uris": ["http://localhost:3000/callback"], "created_at": "2026-10-13T00:00:00+00:00", "client_secret": "fixture-client-secret"}
   },

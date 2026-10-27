@@ -105,7 +105,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "change_member_role" => client.Platform.ChangeMemberRoleAsync("fixture-sign-in", organizationId, userId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRole)!, cancellationToken: cancellationToken),
             "remove_member" => client.Platform.RemoveMemberAsync("fixture-sign-in", organizationId, userId, cancellationToken: cancellationToken),
             "leave_organization" => client.Platform.LeaveOrganizationAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
-            "delete_account" => client.Platform.DeleteAccountAsync("fixture-sign-in", cancellationToken: cancellationToken),
+            "delete_account" => client.Platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up", cancellationToken: cancellationToken),
             "create_project" => client.Platform.CreateProjectAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName)!, cancellationToken: cancellationToken),
             "list_projects" => client.Platform.ListProjectsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "get_project" => client.Platform.GetProjectAsync("fixture-sign-in", organizationId, projectId, cancellationToken: cancellationToken),
@@ -114,16 +114,16 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "list_project_members" => client.Platform.ListProjectMembersAsync("fixture-sign-in", organizationId, projectId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "set_project_member_role" => client.Platform.SetProjectMemberRoleAsync("fixture-sign-in", organizationId, projectId, userId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRole)!, cancellationToken: cancellationToken),
             "remove_project_member" => client.Platform.RemoveProjectMemberAsync("fixture-sign-in", organizationId, projectId, userId, cancellationToken: cancellationToken),
-            "create_organization_api_key" => client.Platform.CreateOrganizationApiKeyAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey)!, cancellationToken: cancellationToken),
+            "create_organization_api_key" => client.Platform.CreateOrganizationApiKeyAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey)!, "fixture-step-up", cancellationToken: cancellationToken),
             "list_organization_api_keys" => client.Platform.ListOrganizationApiKeysAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "get_organization_api_key" => client.Platform.GetOrganizationApiKeyAsync("fixture-sign-in", organizationId, keyId, cancellationToken: cancellationToken),
             "revoke_organization_api_key" => client.Platform.RevokeOrganizationApiKeyAsync("fixture-sign-in", organizationId, keyId, cancellationToken: cancellationToken),
-            "rotate_organization_api_key" => client.Platform.RotateOrganizationApiKeyAsync("fixture-sign-in", organizationId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRotateApiKey)!, cancellationToken: cancellationToken),
-            "create_project_api_key" => client.Platform.CreateProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey)!, cancellationToken: cancellationToken),
+            "rotate_organization_api_key" => client.Platform.RotateOrganizationApiKeyAsync("fixture-sign-in", organizationId, keyId, "fixture-step-up", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRotateApiKey)!, cancellationToken: cancellationToken),
+            "create_project_api_key" => client.Platform.CreateProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateApiKey)!, "fixture-step-up", cancellationToken: cancellationToken),
             "list_project_api_keys" => client.Platform.ListProjectApiKeysAsync("fixture-sign-in", organizationId, projectId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "get_project_api_key" => client.Platform.GetProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, cancellationToken: cancellationToken),
             "revoke_project_api_key" => client.Platform.RevokeProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, cancellationToken: cancellationToken),
-            "rotate_project_api_key" => client.Platform.RotateProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRotateApiKey)!, cancellationToken: cancellationToken),
+            "rotate_project_api_key" => client.Platform.RotateProjectApiKeyAsync("fixture-sign-in", organizationId, projectId, keyId, "fixture-step-up", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRotateApiKey)!, cancellationToken: cancellationToken),
             "create_invitation" => client.Platform.CreateInvitationAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateInvitation)!, cancellationToken: cancellationToken),
             "list_invitations" => client.Platform.ListInvitationsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "revoke_invitation" => client.Platform.RevokeInvitationAsync("fixture-sign-in", organizationId, invitationId, cancellationToken: cancellationToken),
@@ -151,6 +151,10 @@ public sealed class TerraScaleAuthIntegrationContractTests
         await Assert.That(handler.Uri.Host).IsEqualTo("auth.example.test");
         await Assert.That(handler.Calls).IsEqualTo(1);
         await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
+        var needsProof = operation is "delete_account" or "create_organization_api_key" or "rotate_organization_api_key"
+            or "create_project_api_key" or "rotate_project_api_key";
+        await Assert.That(handler.StepUpProof).IsEqualTo(needsProof ? "fixture-step-up" : null);
+        await Assert.That(http.DefaultRequestHeaders.Contains("X-TerraScale-Step-Up-Proof")).IsFalse();
         if (requestJson is not null)
         {
             await Assert.That(handler.MediaType).IsEqualTo("application/json");
@@ -174,7 +178,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
         using var http = new HttpClient(handler);
         var platform = Client(http).Platform;
         var answer = operation == "delete_account"
-            ? await platform.DeleteAccountAsync("fixture-sign-in")
+            ? (await platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up")).Completed
             : await platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006");
         await Assert.That(answer).IsEqualTo(done);
         await Assert.That(handler.Calls).IsEqualTo(1);
@@ -207,7 +211,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
         using var http = new HttpClient(handler);
         var platform = Client(http).Platform;
         var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => operation == "delete_account"
-            ? platform.DeleteAccountAsync("fixture-sign-in")
+            ? (Task)platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up")
             : platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006"));
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(exception.ErrorCode).IsEqualTo(code);
@@ -219,7 +223,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
     {
         using var handler = new CaptureHandler(HttpStatusCode.Conflict, """{"error":{"code":"last_owner","message":"transfer ownership first"}}""");
         using var http = new HttpClient(handler);
-        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.DeleteAccountAsync("fixture-sign-in"));
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up"));
         await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(exception.ErrorCode).IsEqualTo("last_owner");
         await Assert.That(handler.Calls).IsEqualTo(1);
@@ -235,6 +239,8 @@ public sealed class TerraScaleAuthIntegrationContractTests
         foreach (var operation in routes.RootElement.GetProperty("operations").EnumerateArray())
         {
             var fixture = fixtures.RootElement.GetProperty(operation.GetProperty("operation_id").GetString()!);
+            if (operation.TryGetProperty("deletion_response_dto", out var deletionDto))
+                await AssertFixtureShapeAsync(fixtures.RootElement.GetProperty("consume_step_up_delete").GetProperty("response"), dtos, deletionDto.GetString()!);
             foreach (var kind in new[] { "request", "response" })
             {
                 var dto = operation.GetProperty(kind + "_dto");
@@ -363,8 +369,8 @@ public sealed class TerraScaleAuthIntegrationContractTests
         using var http = new HttpClient(handler);
         var platform = Client(http).Platform;
         var request = new TerraScaleAuthPlatformCreateApiKey("CIDR key", ["documents:read"], AllowedCidrs: ["192.0.2.129/24"]);
-        var result = project ? await platform.CreateProjectApiKeyAsync("fixture-sign-in", CidrId, CidrId, request)
-            : await platform.CreateOrganizationApiKeyAsync("fixture-sign-in", CidrId, request);
+        var result = project ? await platform.CreateProjectApiKeyAsync("fixture-sign-in", CidrId, CidrId, request, "fixture-step-up")
+            : await platform.CreateOrganizationApiKeyAsync("fixture-sign-in", CidrId, request, "fixture-step-up");
         await Assert.That(handler.Body).IsEqualTo("""{"name":"CIDR key","scopes":["documents:read"],"database":null,"expires_at":null,"allowed_cidrs":["192.0.2.129/24"]}""");
         await Assert.That(result.ApiKey.AllowedCidrs.Single()).IsEqualTo("192.0.2.0/24");
         await Assert.That(handler.Calls).IsEqualTo(1);
@@ -468,9 +474,11 @@ public sealed class TerraScaleAuthIntegrationContractTests
         public string? Body { get; private set; }
         public string? MediaType { get; private set; }
         public AuthenticationHeaderValue? Authorization { get; private set; }
+        public string? StepUpProof { get; private set; }
         public int Calls { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            StepUpProof = request.Headers.TryGetValues("X-TerraScale-Step-Up-Proof", out var proofs) ? proofs.Single() : null;
             Calls++; Uri = request.RequestUri; Method = request.Method.Method; Authorization = request.Headers.Authorization;
             MediaType = request.Content?.Headers.ContentType?.MediaType;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
