@@ -36,6 +36,9 @@ def report(directory):
             observed = med(rows, field)
             target = (1.1 * (med(raw, field) + med(echo, field)) if concurrency == 1
                       else 0.9 * min(med(raw, field), med(echo, field)))
+            if observed <= 0 or target <= 0:
+                invalid = True
+                continue
             ratio = observed / target if concurrency == 1 else target / observed
             gaps.append(dict(lane=lane, size=size, concurrency=concurrency, metric=field,
                              observed=observed, target=target, gap_ratio=ratio))

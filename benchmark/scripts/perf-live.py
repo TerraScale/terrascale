@@ -23,6 +23,7 @@ spec = importlib.util.spec_from_file_location("rt6", rt6)
 matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(matrix)
 signal.signal(signal.SIGTERM, lambda *_: sys.exit("terminated; cleaning synthetic tenant"))
+subprocess.run([probe, "-h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 
 class Live(matrix.Matrix):
@@ -122,5 +123,10 @@ with open(output, "x") as stream:
                                         "-project", live.project, "-database", live.name, "-collection", tables["small"][0],
                                         "-key-file", str(key), "-label", f"{origin}->{region}", "-n", "60"],
                                        stdout=evidence, check=True)
+        for target, expected in revisions.items():
+            status, body = live.http(target, "GET", "/readyz")
+            live.record(kind="revision_end", region=target, revision=body.get("revision"), status=status)
+            if status != 200 or body.get("revision") != expected:
+                raise RuntimeError("serving revision changed during measurement")
     finally:
         live.teardown()
