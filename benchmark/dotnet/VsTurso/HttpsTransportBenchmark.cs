@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
@@ -23,6 +24,8 @@ namespace TerraBase.E2E
             Skip.When(string.IsNullOrEmpty(output), "run this public TLS control explicitly");
             var origin = new Uri(Environment.GetEnvironmentVariable("TERRABASE_HTTPS_TRANSPORT_ORIGIN") ?? "https://auth.terrascale.tech/");
             var label = Environment.GetEnvironmentVariable("TERRABASE_HTTPS_TRANSPORT_LABEL") ?? "unlabelled";
+            var first = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_HTTPS_TRANSPORT_FIRST") ?? "1", CultureInfo.InvariantCulture);
+            var repeats = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_HTTPS_TRANSPORT_REPEATS") ?? "3", CultureInfo.InvariantCulture);
             if (origin.Scheme != Uri.UriSchemeHttps || origin.AbsolutePath != "/" || origin.UserInfo.Length != 0)
             {
                 throw new ArgumentException("The transport control requires an HTTPS origin.");
@@ -32,7 +35,7 @@ namespace TerraBase.E2E
             await log.WriteLineAsync($"# host={Environment.MachineName} runtime={Environment.Version} serverGC={GCSettings.IsServerGC} SDK={label} origin={origin.Host}");
             await log.WriteLineAsync("| Repeat | c | Lane | Protocol | Connections | Cold wave ms | p50 ms | p99 ms | ops/s |");
             await log.WriteLineAsync("| ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |");
-            for (var repeat = 1; repeat <= 3; repeat++)
+            for (var repeat = first; repeat < first + repeats; repeat++)
             {
                 foreach (var concurrency in new[] { 1, 16 })
                 {
