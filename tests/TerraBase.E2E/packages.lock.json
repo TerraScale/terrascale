@@ -600,6 +600,13 @@
           "ZString": "[2.6.0, )"
         }
       },
+      "terrascale.dotnet": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.Http": "[10.0.11, )",
+          "NUlid": "[1.7.3, )"
+        }
+      },
       "terrascale.endpoints": {
         "type": "Project",
         "dependencies": {
