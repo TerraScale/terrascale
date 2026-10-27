@@ -120,7 +120,11 @@ jobs:
               - scripts/ci/test-area.sh
               - src/TerraBase*/**
               - tests/TerraBase*/**
-              - scripts/terrabase/**
+              - scripts/terrabase/*
+              # Rust proof inputs qualify rust-proof; they do not change the .NET server or its image.
+              - scripts/terrabase/!(libsql)/**
+              - scripts/terrabase/libsql/*
+              - scripts/terrabase/libsql/!(rust)/**
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_artifacts && '[]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
