@@ -3,8 +3,10 @@ using System.Globalization;
 using System.Runtime;
 using System.Text;
 using System.Text.Json;
+using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Documents;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -62,7 +64,10 @@ namespace TerraBase.E2E
                 }
 
                 // One node outside a cell: change capture, change groups and the feed run, nothing ships and no write waits for a remote ack.
-                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "floor" || plugins.Any(plugin => plugin.Name == lane)) ? await ManagementApi.StartAsync() : null)
+                // Its attribution splits each measured HTTP request into server, engine and overhead time; it stops listening before the cluster.
+                using (var attribution = new ServerAttribution())
+                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "floor" || plugins.Any(plugin => plugin.Name == lane))
+                    ? await ManagementApi.StartAsync(services: attribution.Install) : null)
                 {
                     if (node is not null)
                     {
@@ -70,12 +75,20 @@ namespace TerraBase.E2E
                         var database = await node.CreateManagedDatabaseAsync("bench");
                         await node.SetPlanAsync(node.User, database.Organization, "enterprise", cancellationToken);
                         await node.VerifyProjectBindingAsync(database.Organization, database.Project, owner);
-                        var token = node.Issuer.Mint(node.User, descriptor =>
+                        // A synthetic API key's client credentials token, as ts-auth issues one: key_id and key_gen send every request
+                        // through the key revocation path, against the test issuer. Runs with the earlier key-less token are diagnostic only.
+                        var keyId = EntityIds.New().ToString();
+                        var key = keyId + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
+                        var token = node.Issuer.Mint(keyId, descriptor =>
                         {
                             descriptor.Claims["project_id"] = database.Project;
                             descriptor.Claims["scope"] = "databases:read databases:write documents:read documents:write";
+                            descriptor.Claims["key_id"] = keyId;
+                            descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
                             descriptor.Expires = DateTime.UtcNow.AddHours(12);
                         });
+                        node.Issuer.GrantClient(key, () => token);
+                        await log.WriteLineAsync($"# token: synthetic API key {keyId} (key_id, key_gen), project-scoped, 12 h");
                         using (var data = node.WithToken(token))
                         {
                             await ManagementApi.CreateCollectionAsync(data, database, "bench", cancellationToken);
@@ -91,7 +104,7 @@ namespace TerraBase.E2E
                         }
                     }
 
-                    await RunAsync(single, workloads, concurrencies, repeats, duration, cells, log, cancellationToken);
+                    await RunAsync(single, workloads, concurrencies, repeats, duration, cells, log, node is null ? null : attribution, cancellationToken);
                 }
 
                 await using (var cluster = lanes.Any(lane => lane.EndsWith("-3", StringComparison.Ordinal)) ? await Cluster.StartAsync([Cluster.Gru, Cluster.Sjc, Cluster.Fra]) : null)
@@ -102,7 +115,7 @@ namespace TerraBase.E2E
                         var (address, token, _) = cluster.Endpoint(Cluster.Gru);
                         var targets = Targets(
                             lanes, "-3", services, database, address, token, $"{cluster.DatabasePath}/collections/{cluster.Collection}/documents/by-key?id=", cluster.Collection);
-                        await RunAsync(targets, workloads, concurrencies, repeats, duration, cells, log, cancellationToken);
+                        await RunAsync(targets, workloads, concurrencies, repeats, duration, cells, log, null, cancellationToken);
                     }
                 }
 
@@ -128,7 +141,9 @@ namespace TerraBase.E2E
             string[] lanes, string suffix, IServiceProvider services, TenantContext database, Uri address, string token, string path, string collection)
         {
             var targets = new List<(string, ITarget)>();
-            var engine = new EngineTarget(services.GetRequiredService<IDocumentService>(), database, collection);
+            // The engine lane calls the node's own service, never the attribution's decorator.
+            var documents = services.GetRequiredService<IDocumentService>();
+            var engine = new EngineTarget(documents is AttributedDocuments attributed ? attributed.Inner : documents, database, collection);
             if (lanes.Contains("engine" + suffix))
             {
                 targets.Add(("engine" + suffix, engine));
@@ -149,7 +164,8 @@ namespace TerraBase.E2E
         }
 
         private static async Task RunAsync(
-            List<(string Lane, ITarget Target)> targets, string[] workloads, int[] concurrencies, int repeats, TimeSpan duration, List<Cell> cells, StreamWriter log, CancellationToken cancellationToken)
+            List<(string Lane, ITarget Target)> targets, string[] workloads, int[] concurrencies, int repeats, TimeSpan duration, List<Cell> cells, StreamWriter log,
+            ServerAttribution? attribution, CancellationToken cancellationToken)
         {
             foreach (var (lane, target) in targets)
             {
@@ -179,10 +195,14 @@ namespace TerraBase.E2E
                         {
                             foreach (var (lane, target) in targets)
                             {
-                                var cell = await MeasureAsync(target, body, workload, concurrency, duration) with { Lane = lane, Repeat = repeat };
+                                var cell = await MeasureAsync(target, body, workload, concurrency, duration, attribution) with { Lane = lane, Repeat = repeat };
                                 cells.Add(cell);
                                 await log.WriteLineAsync(JsonSerializer.Serialize(cell, VsTursoJson.Default.Cell));
                                 await log.FlushAsync(cancellationToken);
+                                if (attribution is not null && (lane is "api" or "api-json" or "sdk") && cell.Server is null)
+                                {
+                                    throw new InvalidOperationException($"{lane}: HTTP attribution is missing; reject this run.");
+                                }
                             }
                         }
                     }
@@ -190,12 +210,13 @@ namespace TerraBase.E2E
             }
         }
 
-        private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration)
+        private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration, ServerAttribution? attribution)
         {
             var warmup = TimeSpan.FromSeconds(1);
             var start = Stopwatch.GetTimestamp();
             var measureFrom = start + (long)(warmup.TotalSeconds * Stopwatch.Frequency);
             var end = measureFrom + (long)(duration.TotalSeconds * Stopwatch.Frequency);
+            attribution?.Open(measureFrom, end);
             var latencies = new List<long>[concurrency];
             var errors = 0;
             var cpuBefore = TimeSpan.Zero;
@@ -250,6 +271,7 @@ namespace TerraBase.E2E
             await Task.WhenAll(workers);
             var cpu = Process.GetCurrentProcess().TotalProcessorTime - cpuBefore;
             var allocated = GC.GetTotalAllocatedBytes() - gcBefore;
+            var server = attribution?.Close();
             var all = latencies.SelectMany(list => list).Order().ToArray();
             double Micros(double quantile)
             {
@@ -259,7 +281,7 @@ namespace TerraBase.E2E
             var ops = all.Length;
             return new Cell(
                 string.Empty, 0, body.Size, workload, concurrency, Math.Round(ops / duration.TotalSeconds), Math.Round(Micros(0.50), 1), Math.Round(Micros(0.99), 1),
-                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors);
+                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors, server);
         }
 
         private static string Summary(List<Cell> cells)
@@ -278,6 +300,22 @@ namespace TerraBase.E2E
                 text.AppendLine(CultureInfo.InvariantCulture, $"| {group.Key.Size} | {group.Key.Workload} | {group.Key.Concurrency} | {group.Key.Lane} | {ops:N0} ({runs.Min(run => run.OpsPerSecond):N0}–{runs.Max(run => run.OpsPerSecond):N0}) | {versus} | {Median(runs.Select(run => run.P50Micros)):0.0} | {Median(runs.Select(run => run.P99Micros)):0.0} | {Median(runs.Select(run => run.CpuMicrosPerOp)):0.0} | {Median(runs.Select(run => (double)run.AllocatedBytesPerOp)):N0} | {runs.Sum(run => run.Errors)} |");
             }
 
+            // Server-side attribution, only for lanes whose requests the node's HTTP pipeline measured (none for engine, wire or floor).
+            text.AppendLine();
+            text.AppendLine("Per-request wall time inside the node (hosting activity), medians of each repeat's quantiles; instrumentation included, not CPU.");
+            text.AppendLine();
+            text.AppendLine("| Size | Workload | Conc | Lane | requests (sampled) | server p50 / p99 µs | engine p50 / p99 µs | overhead p50 / p99 µs | overhead / engine p50 |");
+            text.AppendLine("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |");
+            foreach (var group in cells.Where(cell => cell.Server is not null).GroupBy(cell => (cell.Size, cell.Workload, cell.Concurrency, cell.Lane)))
+            {
+                var runs = group.Select(cell => cell.Server!).ToList();
+                double Of(Func<ServerStats, double> value)
+                {
+                    return Median(runs.Select(value));
+                }
+                text.AppendLine(CultureInfo.InvariantCulture, $"| {group.Key.Size} | {group.Key.Workload} | {group.Key.Concurrency} | {group.Key.Lane} | {Of(run => run.Requests):N0} ({Of(run => run.Sampled):N0}) | {Of(run => run.ServerP50Micros):0.0} / {Of(run => run.ServerP99Micros):0.0} | {Of(run => run.EngineP50Micros):0.0} / {Of(run => run.EngineP99Micros):0.0} | {Of(run => run.OverheadP50Micros):0.0} / {Of(run => run.OverheadP99Micros):0.0} | {Of(run => run.OverheadP50Micros) / Of(run => run.EngineP50Micros) * 100:0.0} % |");
+            }
+
             return text.ToString();
         }
 
@@ -289,7 +327,7 @@ namespace TerraBase.E2E
 
         internal sealed record Cell(
             string Lane, int Repeat, string Size, string Workload, int Concurrency, double OpsPerSecond, double P50Micros, double P99Micros,
-            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors);
+            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, ServerStats? Server = null);
 
         /// <summary>JSON documents of one size: a fixed shape with a 13-digit counter, so no write repeats the stored body.</summary>
         private sealed class Bodies
