@@ -1163,3 +1163,6 @@ mod tests {
         assert_eq!(backoff_with(&long, 25, 0), Duration::from_secs(300));
     }
 }
+
+#[path = "export_stream.rs"]
+mod export_stream;
