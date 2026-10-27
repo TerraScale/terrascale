@@ -443,6 +443,16 @@ public sealed class CollectionAccessRulesTests
         }
     }
 
+    [Test]
+    public async Task A_platform_user_session_token_is_not_a_data_credential()
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        using var user = api.Management.As(api.Tenant.User);
+        var response = await DocumentApi.SendAsync(user, HttpMethod.Get, api.Documents, null);
+        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(response.Json.GetRawText()).Contains("invalid_key");
+    }
+
     internal static async Task<DocumentApi> StartAsync()
     {
         var api = await DocumentApi.StartAsync();

@@ -271,7 +271,7 @@ public sealed class DevicePageEndpoint(TotpCredentials mfa, AuthOptions options)
         Get("/ui/{slug}/device");
         Name("ui_device");
         Summary("Hosted device page");
-        Description("The RFC 8628 verification page. Without a live tsauth_session cookie it redirects to /ui/{slug}/sign-in and returns here with the same user_code. With user_code it shows the code, the client and the signed-in account with Approve and Deny buttons; opening it never approves. Each code lookup charges the IP sign-in budget (30 per minute) and 20 per user per 15 minutes; exhaustion answers 429 with Retry-After.");
+        Description("The RFC 8628 verification page. Without a live tsauth_session cookie it redirects to /ui/{slug}/sign-in and returns here with the same user_code. With user_code it shows the code, the client and the signed-in account with Approve and Deny buttons; opening it never approves. Each code lookup charges the IP sign-in call bucket (120, refilling 30 per minute) and 20 per user per 15 minutes; exhaustion answers 429 with Retry-After.");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status302Found);

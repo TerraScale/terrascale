@@ -66,7 +66,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -123,7 +123,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 30 minutes (a resend keeps the code it replaces working until that code expires), and dies after 5 wrong guesses. Hosted sign-in pages share 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
+        Description("Same-origin form post. A code works once, for 30 minutes (a resend keeps the code it replaces working until that code expires), and dies after 5 wrong guesses. Hosted sign-in pages share the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
@@ -188,7 +188,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         Post("/ui/{slug}/sign-in/password");
         Name("ui_sign_in_password");
         Summary("Sign in with a password");
-        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: the IP call bucket of 120 refilling 30 per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -348,7 +348,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         Post("/ui/{slug}/sign-up/verify");
         Name("ui_sign_up_verify");
         Summary("Verify a sign-up");
-        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -471,7 +471,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Post("/ui/{slug}/reset/complete");
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("Same-origin form post with email, code and password. Limits: 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Description("Same-origin form post with email, code and password. Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
