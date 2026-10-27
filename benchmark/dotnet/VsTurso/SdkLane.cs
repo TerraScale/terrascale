@@ -52,7 +52,10 @@ namespace TerraBase.E2E
             _ = await database.PutDocumentAsync(collection, id, document.RootElement);
         }
 
-        public Task PreloadAsync(IReadOnlyList<(string Id, byte[] Json)> documents) => preload.PreloadAsync(documents);
+        public Task PreloadAsync(IReadOnlyList<(string Id, byte[] Json)> documents)
+        {
+            return preload.PreloadAsync(documents);
+        }
 
         public ValueTask DisposeAsync()
         {
@@ -83,7 +86,10 @@ namespace TerraBase.E2E
             using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
         }
 
-        public Task PreloadAsync(IReadOnlyList<(string Id, byte[] Json)> documents) => preload.PreloadAsync(documents);
+        public Task PreloadAsync(IReadOnlyList<(string Id, byte[] Json)> documents)
+        {
+            return preload.PreloadAsync(documents);
+        }
 
         public ValueTask DisposeAsync()
         {
