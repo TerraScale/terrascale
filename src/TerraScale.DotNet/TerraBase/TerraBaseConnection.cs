@@ -265,6 +265,11 @@ internal sealed class TerraBaseConnection
                 request.Version = HttpVersion.Version20;
                 request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             }
+            else if (origin.Scheme == Uri.UriSchemeHttps)
+            {
+                request.Version = HttpVersion.Version20;
+                request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+            }
             await AuthorizeAsync(request, deadline.Token).ConfigureAwait(false);
             request.RequestUri = new Uri(origin, path);
             // Null request headers do not suppress HttpClient's inherited defaults.

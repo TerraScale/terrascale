@@ -444,6 +444,11 @@ public sealed partial class TerraScaleAuthClient
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
+        if (request.RequestUri!.Scheme == Uri.UriSchemeHttps)
+        {
+            request.Version = HttpVersion.Version20;
+            request.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+        }
         if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Contains("Authorization"))
         {
             throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
