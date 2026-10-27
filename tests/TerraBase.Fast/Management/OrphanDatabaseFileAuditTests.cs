@@ -67,6 +67,39 @@ public sealed partial class DatabaseRecoveryTests
         await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, orphan.OrganizationId, orphan.ProjectId!, orphan.DatabaseId + ".db"))).IsTrue();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_orphan_past_its_grace_period_is_deleted_unless_it_was_registered(bool registerFirst, CancellationToken token)
+    {
+        await using var api = await ManagementApi.StartAsync(services: ManualAudit);
+        var registered = await api.CreateManagedDatabaseAsync();
+        var orphan = new TenantContext(registered.Organization, PlanTier.Hobby, registered.Project, EntityIds.New().ToString());
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        await engine.CreateDatabaseAsync(orphan, token);
+        var path = Path.Combine(api.Server.DataDirectory, orphan.OrganizationId, orphan.ProjectId!, orphan.DatabaseId + ".db");
+        await AuditAsync(api, token);
+        await Assert.That(File.Exists(path)).IsTrue();
+        var seen = await ObservationAsync(api, orphan);
+        var system = await engine.OpenSystemDatabaseAsync(token);
+        await using (var transaction = await system.BeginTransactionAsync(write: true, token))
+        {
+            await SystemCatalog.PutAsync(transaction, "orphan_database_files/" + api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId,
+                $"{orphan.OrganizationId}:{orphan.ProjectId}:{orphan.DatabaseId}", seen! with { FirstSeen = DateTimeOffset.UtcNow.AddHours(-25) },
+                TerraBaseJsonContext.Default.OrphanDatabaseFile, token);
+            if (registerFirst)
+            {
+                await SystemCatalog.PutAsync(transaction, $"projects/{orphan.ProjectId}/databases", orphan.DatabaseId!, new ManagedDatabase(orphan.DatabaseId!, orphan.ProjectId!, "adopted", null, DateTimeOffset.UtcNow), TerraBaseJsonContext.Default.ManagedDatabase, token);
+            }
+            await transaction.CommitAsync(token);
+        }
+        await AuditAsync(api, token);
+        await Assert.That(File.Exists(path)).IsEqualTo(registerFirst);
+        await Assert.That(await ObservationAsync(api, orphan)).IsNull();
+        await Assert.That(await CatalogAsync(api, "pending_database_cleanup", orphan.DatabaseId!)).IsNull();
+        await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, registered.Organization, registered.Project, registered.Id + ".db"))).IsTrue();
+    }
+
     private static void ManualAudit(IServiceCollection services) => services.Remove(services.Single(descriptor =>
         descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence)));
     private static ValueTask AuditAsync(ManagementApi api, CancellationToken token) => api.Server.Services.GetRequiredService<EngineManagementService>().AuditFilesAsync(token);
