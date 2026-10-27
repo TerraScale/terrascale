@@ -118,7 +118,7 @@ namespace TerraBase.E2E
 
             await log.WriteLineAsync();
             await log.WriteLineAsync(Summary(cells));
-            if (cells.Any(cell => cell.Errors != 0 || cell.OpsPerSecond == 0))
+            if (cells.Count == 0 || cells.Any(cell => cell.Errors != 0 || cell.OpsPerSecond == 0))
             {
                 throw new InvalidOperationException("The benchmark contains failed or empty cells; retain the evidence and reject the run.");
             }
