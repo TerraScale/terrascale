@@ -42,7 +42,7 @@ public static class OnboardingEndpoints
         }
         page = page with
         {
-            DisplayName = draft?["displayName"].ToString() ?? account.Name,
+            DisplayName = draft?["displayName"].ToString() ?? ProfileName(account.Name, account.Email),
             Email = account.Email,
             Step = account.OnboardingStep,
             PaymentCanceled = payment == "canceled",
@@ -64,6 +64,11 @@ public static class OnboardingEndpoints
         view.StatusCode = status;
         return view;
     }
+
+    // ts-auth names a new account after its email (or the email's handle) until the user gives a name;
+    // only a real profile name is offered as the Full name default.
+    internal static string ProfileName(string name, string email) =>
+        name.Equals(email, StringComparison.OrdinalIgnoreCase) || name.Equals(email.Split('@')[0], StringComparison.OrdinalIgnoreCase) ? "" : name;
 
     private static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
     {
