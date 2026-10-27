@@ -173,7 +173,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
 
     /// <summary>Reads a document and its opaque ETag version. Missing parents and outages propagate.</summary>
     public Task<TerraBaseDocument?> GetAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
-        local.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
+        AuthStorageTelemetry.ReadAsync(collection, "get", () => local.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken));
 
     /// <summary>Reads this region's replicated copy, without a remote fallback.</summary>
     public Task<TerraBaseDocument?> GetLocalAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
@@ -228,7 +228,8 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in <paramref name="sort"/> order, then id order.</summary>
     public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<TerraBaseSort>? sort, CancellationToken cancellationToken = default) =>
-        (await local.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
+        (await AuthStorageTelemetry.ReadAsync(collection, "query", () => local.QueryAsync(collection,
+            new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken)).ConfigureAwait(false)).Items;
 
     /// <summary>How many of the instance's documents <paramref name="collection"/> holds; a lower bound beyond 100000.</summary>
     public async Task<long> CountAsync(string collection, string instanceId, CancellationToken cancellationToken = default)
@@ -468,7 +469,8 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>The owner of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<string?> FindUniqueOwnerAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await local.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await AuthStorageTelemetry.ReadAsync(UniqueCollection, "get", () => local.GetDocumentAsync(UniqueCollection,
+            NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken)).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? claim.OwnerId : null;
     }
@@ -656,7 +658,8 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>The owner and version of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<(string OwnerId, string Version)?> FindUniqueAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await local.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await AuthStorageTelemetry.ReadAsync(UniqueCollection, "get", () => local.GetDocumentAsync(UniqueCollection,
+            NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken)).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, document!.Version) : null;
     }
