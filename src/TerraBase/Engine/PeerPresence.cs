@@ -66,6 +66,20 @@ internal sealed class PeerPresence
         }
     }
 
+    /// <summary>
+    /// Every listed machine's current identity, once this process has heard each one; null before that, or while nothing is
+    /// listed. A peer identity outside it belongs to no listed machine any more: a replaced data directory or a departed machine.
+    /// </summary>
+    public IReadOnlyList<ReplicaId>? Current()
+    {
+        lock (_gate)
+        {
+            return _nodes is { Count: > 0 } && _nodes.Values.All(known => known.Node is not null)
+                ? _nodes.Values.Select(known => known.Node!.Value).ToList()
+                : null;
+        }
+    }
+
     public bool Absent(ReplicaId node, long sinceMilliseconds)
     {
         lock (_gate)

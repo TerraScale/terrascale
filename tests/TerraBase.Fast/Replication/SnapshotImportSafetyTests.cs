@@ -245,7 +245,7 @@ public sealed class SnapshotImportSafetyTests
         await using (var write = (TursoStorageTransaction)await store.BeginDurableTransactionAsync(token))
         {
             await write.RecordAppliedAsync(retired, before, token);
-            _ = await write.RecordAckedAsync(live, store.Incarnation, 0, default, null, now, token);
+            _ = await write.RecordAckedAsync(live, store.Incarnation, 0, default, null, now, members: null, token);
             _ = await write.CommitAsync(token);
         }
         await Assert.That(await api.Server.Services.GetRequiredService<IReplicaSnapshotImporter>().ImportAsync(ChangeGroups.System,

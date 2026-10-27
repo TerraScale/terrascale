@@ -102,7 +102,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         await using (var ack = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             // Seed bookkeeping directly: an ACK through the source would also read its tail gauge.
-            _ = await ack.RecordAckedAsync(peer, store.Incarnation, before, default, store.BackupAnchor, time.GetUtcNow(), CancellationToken.None);
+            _ = await ack.RecordAckedAsync(peer, store.Incarnation, before, default, store.BackupAnchor, time.GetUtcNow(), members: null, CancellationToken.None);
             _ = await ack.CommitAsync(CancellationToken.None);
         }
         await using (var write = await store.BeginDurableTransactionAsync(CancellationToken.None))

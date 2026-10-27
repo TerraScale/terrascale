@@ -656,7 +656,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         long? floor;
         await using (transaction.ConfigureAwait(false))
         {
-            if (await transaction.RecordAckedAsync(peer, incarnation, changeId, stable, store.BackupAnchor, _engine.HostTime.GetUtcNow(), cancellationToken)
+            if (await transaction.RecordAckedAsync(peer, incarnation, changeId, stable, store.BackupAnchor, _engine.HostTime.GetUtcNow(),
+                    store.Member?.Presence.Current(), cancellationToken)
                 .ConfigureAwait(false) is not (var left, var lowest))
             {
                 return false;
