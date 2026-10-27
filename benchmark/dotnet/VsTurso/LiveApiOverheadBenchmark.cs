@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraBase.Primitives;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
@@ -13,6 +14,8 @@ namespace TerraBase.E2E
     [Category("benchmark-host")]
     public sealed class LiveApiOverheadBenchmark
     {
+        private static readonly string[] RequiredRegions = ["gru", "sjc", "fra"];
+
         [Test]
         [Timeout(30 * 60 * 1000)]
         public async Task Measures_authenticated_regional_round_trips(CancellationToken cancellationToken)
@@ -32,7 +35,7 @@ namespace TerraBase.E2E
             using var tokens = new LiveTokens(auth.Oidc, credentials);
             using var discovery = new HttpClient(TerraBaseHttp.CreateHandler());
             var regions = (await new TerraBaseRegionsClient(discovery).ListRegionsAsync(cancellationToken)).Regions;
-            if (new[] { "gru", "sjc", "fra" }.Except(regions, StringComparer.Ordinal).Any())
+            if (RequiredRegions.Except(regions, StringComparer.Ordinal).Any())
             {
                 throw new InvalidOperationException("The required serving regions are absent from discovery.");
             }
