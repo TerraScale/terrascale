@@ -374,13 +374,16 @@ internal static class SqlRead
 
         return null;
 
-        bool IsKey(Expression expression) => expression switch
+        bool IsKey(Expression expression)
         {
-            Expression.Identifier { Ident.Value: var column } => column.Equals(key, StringComparison.OrdinalIgnoreCase),
-            Expression.CompoundIdentifier { Idents: [var qualifier, var column] } =>
-                qualifier.Value.Equals(alias, StringComparison.OrdinalIgnoreCase) && column.Value.Equals(key, StringComparison.OrdinalIgnoreCase),
-            _ => false,
-        };
+            return expression switch
+            {
+                Expression.Identifier { Ident.Value: var column } => column.Equals(key, StringComparison.OrdinalIgnoreCase),
+                Expression.CompoundIdentifier { Idents: [var qualifier, var column] } =>
+                    qualifier.Value.Equals(alias, StringComparison.OrdinalIgnoreCase) && column.Value.Equals(key, StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            };
+        }
 
         static IEnumerable<Expression> Terms(Expression expression)
         {
