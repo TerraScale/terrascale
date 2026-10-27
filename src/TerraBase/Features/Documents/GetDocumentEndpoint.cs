@@ -106,7 +106,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
             return ErrorResponse.From(Missing);
         }
 
-        var body = Body(key.Collection, document, cancellationToken: cancellationToken, version: version);
+        var body = Body(key.Collection, document, null, version, cancellationToken);
         documents.AcceptRead(key, document);
         return TypedResults.Ok(body);
     }
@@ -114,7 +114,11 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
     private static readonly NotFound Missing = new("the document does not exist", "not_found");
 
     internal static DocumentBody Body(
-        string collection, StoredDocument document, IReadOnlyList<DocumentPath>? project = null, CancellationToken cancellationToken = default, string? version = null)
+        string collection, StoredDocument document, IReadOnlyList<DocumentPath>? project = null, CancellationToken cancellationToken = default) =>
+        Body(collection, document, project, null, cancellationToken);
+
+    private static DocumentBody Body(
+        string collection, StoredDocument document, IReadOnlyList<DocumentPath>? project, string? version, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var json = JsonDocument.Parse(document.Json, RequestJson.StoredDocumentOptions);
