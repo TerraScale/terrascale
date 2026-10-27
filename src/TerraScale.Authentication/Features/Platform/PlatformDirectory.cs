@@ -468,6 +468,13 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         if (access.Role is { } role)
         {
             var page = await this.PageAsync(AuthStore.ProjectCollection, [Equal("/organizationId", organizationId)], PlatformJson.Default.ProjectRecord, "/id", limit, after, cancellationToken).ConfigureAwait(false);
+            // An organization owner/admin already has the highest project role. An explicit grant cannot raise it.
+            if (Roles.Implied(role) == Roles.Admin)
+            {
+                return new(page.Items.Where(project => project.Value.OrganizationId == organizationId)
+                    .Select(project => (project.Value, Roles.Admin)).ToArray(), page.Next);
+            }
+
             // Only this page's grants: one point read per project, never the user's whole grant list.
             projects.AddRange(await ReadEachAsync(page.Items, async (project, token) =>
                 project.Value.OrganizationId == organizationId

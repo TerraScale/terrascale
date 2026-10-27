@@ -22,6 +22,32 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
 
     [Test]
+    public async Task Project_lists_use_the_fresh_inherited_role_after_an_admin_is_demoted()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, ownerToken) = await oidc.SignInUserAsync("owner@example.test");
+        var (member, memberToken) = await oidc.SignInUserAsync("member@example.test");
+        var organization = await oidc.CreateOrganizationAsync(ownerToken);
+        await oidc.AddMemberAsync(organization, member.Id, "admin");
+        var project = await oidc.CreateProjectAsync(ownerToken, organization, "Production");
+        var path = $"{Organizations}/{organization}/projects";
+        await oidc.OkAsync(HttpMethod.Put, $"{path}/{project}/members/{member.Id}", ownerToken, new { role = "member" });
+
+        foreach (var token in new[] { ownerToken, memberToken })
+        {
+            var page = await oidc.OkAsync(HttpMethod.Get, path, token);
+            await Assert.That(page.GetProperty("items")[0].GetProperty("role").GetString()).IsEqualTo("admin");
+        }
+
+        await oidc.OkAsync(HttpMethod.Put, $"{Organizations}/{organization}/members/{member.Id}", ownerToken, new { role = "viewer" });
+        var demoted = await oidc.OkAsync(HttpMethod.Get, path, memberToken);
+        await Assert.That(demoted.GetProperty("items")[0].GetProperty("role").GetString()).IsEqualTo("member");
+        await oidc.OkAsync(HttpMethod.Delete, $"{path}/{project}/members/{member.Id}", ownerToken, status: HttpStatusCode.NoContent);
+        var inherited = await oidc.OkAsync(HttpMethod.Get, path, memberToken);
+        await Assert.That(inherited.GetProperty("items")[0].GetProperty("role").GetString()).IsEqualTo("viewer");
+    }
+
+    [Test]
     public async Task Only_the_callers_own_live_sign_in_token_opens_the_api()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, values =>

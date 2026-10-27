@@ -691,47 +691,62 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
             return false;
         }
 
-        foreach (var binding in bindings)
+        // Reject malformed lineage before issuing reads. Independent ancestors have no ordering dependency;
+        // bound the fan-out and retain every check, including user-state/email and device authorization checks.
+        if (bindings.Any(binding => binding is null || string.IsNullOrEmpty(binding.Kind)
+            || string.IsNullOrEmpty(binding.Key) || string.IsNullOrEmpty(binding.OwnerId)))
         {
-            if (binding is null || string.IsNullOrEmpty(binding.Kind) || string.IsNullOrEmpty(binding.Key) || string.IsNullOrEmpty(binding.OwnerId))
+            return false;
+        }
+
+        var distinct = bindings.Distinct().ToArray();
+        for (var offset = 0; offset < distinct.Length; offset += 8)
+        {
+            var checks = distinct.Skip(offset).Take(8).Select(binding => this.IsCredentialCurrentAsync(instanceId, binding, cancellationToken));
+            if ((await Task.WhenAll(checks).ConfigureAwait(false)).Any(current => !current))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private async Task<bool> IsCredentialCurrentAsync(string instanceId, CredentialBinding binding, CancellationToken cancellationToken)
+    {
+        if (binding.Kind == "credential:user-state")
+        {
+            var user = await this.GetAsync(UserCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+            if (user is null || !user.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
+                || !user.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
+                || !user.Document.TryGetProperty("authStamp", out var stamp) || stamp.GetString() != binding.OwnerId
+                || !user.Document.TryGetProperty("email", out var email) || email.GetString() is not { } address
+                || await this.FindUniqueOwnerAsync(instanceId, "email", address, cancellationToken).ConfigureAwait(false) != binding.Key)
             {
                 return false;
             }
 
-            if (binding.Kind == "credential:user-state")
-            {
-                var user = await this.GetAsync(UserCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
-                if (user is null || !user.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
-                    || !user.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
-                    || !user.Document.TryGetProperty("authStamp", out var stamp) || stamp.GetString() != binding.OwnerId
-                    || !user.Document.TryGetProperty("email", out var email) || email.GetString() is not { } address
-                    || await this.FindUniqueOwnerAsync(instanceId, "email", address, cancellationToken).ConfigureAwait(false) != binding.Key)
-                {
-                    return false;
-                }
+            return true;
+        }
 
-                continue;
-            }
-
-            if (binding.Kind == "credential:authorization")
-            {
-                var authorization = await this.GetAsync(OidcAuthorizationCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
-                if (binding.OwnerId != binding.Key || authorization is null
-                    || !authorization.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
-                    || !authorization.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
-                    || !authorization.Document.TryGetProperty("status", out var status) || status.GetString() != "valid")
-                {
-                    return false;
-                }
-
-                continue;
-            }
-
-            if (!binding.Kind.StartsWith("credential:", StringComparison.Ordinal)
-                || await this.FindUniqueOwnerAsync(instanceId, binding.Kind, binding.Key, cancellationToken).ConfigureAwait(false) != binding.OwnerId)
+        if (binding.Kind == "credential:authorization")
+        {
+            var authorization = await this.GetAsync(OidcAuthorizationCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+            if (binding.OwnerId != binding.Key || authorization is null
+                || !authorization.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
+                || !authorization.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
+                || !authorization.Document.TryGetProperty("status", out var status) || status.GetString() != "valid")
             {
                 return false;
             }
+
+            return true;
+        }
+
+        if (!binding.Kind.StartsWith("credential:", StringComparison.Ordinal)
+            || await this.FindUniqueOwnerAsync(instanceId, binding.Kind, binding.Key, cancellationToken).ConfigureAwait(false) != binding.OwnerId)
+        {
+            return false;
         }
 
         return true;
