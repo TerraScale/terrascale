@@ -95,6 +95,7 @@ public static class DashboardApplication
             .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
+        RazorSliceWarmup.EnsureWarmed();
 
         var slo = app.Services.GetRequiredService<ServiceSloTelemetry>();
         var privateScrapeKey = new object();
