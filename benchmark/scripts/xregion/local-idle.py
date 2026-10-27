@@ -6,6 +6,7 @@
   local-idle.py rates <out> <window>                    per-node rates between metrics-a-* and metrics-b-*, as Markdown
 """
 import json
+import os
 import re
 import sys
 import time
@@ -31,7 +32,7 @@ def provision(path, placed, single):
                     break
             except urllib.error.HTTPError as error:
                 if error.code not in (429, 503) or attempt == 29:
-                    raise
+                    raise RuntimeError(f"database {index}: {error.code} {error.read()[:300]!r}") from error
                 time.sleep(1)
 
 
@@ -69,6 +70,8 @@ def rates(out, window):
                         if key[0] == name and labels in key[1])
             cells.append(f"{total / window:.1f}")
         print(f"| {label} | " + " | ".join(cells) + " |")
+    ticks = [int(open(f"{out}/cpu-{point}.txt", encoding="utf-8").read()) for point in "ab"]
+    print(f"\nHost process CPU (three nodes): {(ticks[1] - ticks[0]) / os.sysconf('SC_CLK_TCK') / window * 100:.1f} % of one core")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,8 @@ scrape() {
   for r in "${regions[@]}"; do
     curl -fsS "$(metrics "$r")/metrics" >"$out/metrics-$1-$r.txt"
   done
+  # The three nodes share one host process: its user and system CPU time, in clock ticks.
+  awk '{print $14 + $15}' "/proc/$(jq -r .pid "$targets")/stat" >"$out/cpu-$1.txt"
 }
 python3 -I "$root/benchmark/scripts/xregion/local-idle.py" provision "$targets" "$placed" "$single" >"$out/provision.log" 2>&1 \
   || { cat "$out/provision.log"; exit 1; }

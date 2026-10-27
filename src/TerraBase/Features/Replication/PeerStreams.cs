@@ -34,6 +34,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
+    // Timers count coarse clock ticks and may fire a few milliseconds before a deadline: an item due within the slack is due,
+    // or the loop wakes before it, finds nothing due and spins until it is.
+    private static readonly TimeSpan TimerSlack = TimeSpan.FromMilliseconds(15);
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
     // Linked nodes HeldOriginsAsync considers at most; past it none is held. The membership bounds links well below it.
@@ -733,7 +736,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         for (var index = 0; index < (maintenance ? 1 : count); index++)
         {
             await drain().ConfigureAwait(false);
-            if (!work.Take(maintenance, _time.GetTimestamp(), out var database))
+            if (!work.Take(maintenance, _time.GetTimestamp() + (long)(TimerSlack.TotalSeconds * _time.TimestampFrequency), out var database))
             {
                 break;
             }
@@ -1686,13 +1689,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
+        // Zero once the first item is within TimerSlack of its deadline, which Take then treats as due.
         public TimeSpan Delay(TimeProvider time)
         {
             lock (_gate)
             {
-                return _due.Count > 0
-                    ? TimeSpan.FromSeconds(Math.Clamp((double)(_due.Min.At - time.GetTimestamp()) / time.TimestampFrequency, 0, Idle.TotalSeconds))
-                    : Idle;
+                var seconds = _due.Count > 0 ? (double)(_due.Min.At - time.GetTimestamp()) / time.TimestampFrequency : Idle.TotalSeconds;
+                return seconds <= TimerSlack.TotalSeconds ? TimeSpan.Zero : TimeSpan.FromSeconds(Math.Min(seconds, Idle.TotalSeconds));
             }
         }
     }
