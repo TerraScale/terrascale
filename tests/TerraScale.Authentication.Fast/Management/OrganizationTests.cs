@@ -39,7 +39,7 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
             await Assert.That(page.GetProperty("items")[0].GetProperty("role").GetString()).IsEqualTo("admin");
         }
 
-        await oidc.OkAsync(HttpMethod.Put, $"{Organizations}/{organization}/members/{member.Id}", ownerToken, new { role = "viewer" });
+        await oidc.OkAsync(HttpMethod.Patch, $"{Organizations}/{organization}/members/{member.Id}", ownerToken, new { role = "viewer" });
         var demoted = await oidc.OkAsync(HttpMethod.Get, path, memberToken);
         await Assert.That(demoted.GetProperty("items")[0].GetProperty("role").GetString()).IsEqualTo("member");
         await oidc.OkAsync(HttpMethod.Delete, $"{path}/{project}/members/{member.Id}", ownerToken, status: HttpStatusCode.NoContent);
