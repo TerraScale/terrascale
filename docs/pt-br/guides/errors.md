@@ -56,7 +56,7 @@ Do not turn every 421 into an automatic mutation retry. An explicit rejection is
 
 ## Retry behavior by SDK
 
-JavaScript and C# send requests once. Go applies a bounded retry policy to replay-safe requests, including eligible overload responses; it does not replay an uncertain mutation. SDK retry policies are not interchangeable.
+JavaScript (from 0.0.17), Go, Python and Rust resend replay-safe requests (reads and read-only queries) a bounded number of times after a transient refusal: `429` (such as `tenant_busy`), a gateway `502` or `504`, or a transient `503` such as `storage_busy` or `remote_region_unavailable`. They wait at least the server's `Retry-After`, otherwise a jittered exponential backoff, and give up rather than outlast the call's deadline or cancellation. None of them resends a mutation the server may have received, and validation, authorization, not-found, conflict and quota failures are never retried. C# sends requests once. The exact codes and attempt limits differ by SDK, so SDK retry policies are not interchangeable; see each SDK's reference.
 
 For a repeatable read/query, wait as directed by the server, bound attempts and honor cancellation. Validation, authorization and deterministic conflict failures need a fix before another attempt. Do not hide those failures in an infinite retry loop.
 
