@@ -360,30 +360,45 @@ export class V1Transport {
   }
 
   /**
-   * Calls only a named producer route. Redirects and failed mutations are never replayed.
+   * Calls only a named producer route. Redirects and mutations are never replayed.
+   * A replay-safe read has one 60-second deadline over resolution, credentials, retries and its body.
    * @param {V1Operation} operation
    * @param {Readonly<Record<string, string>>} params
    * @param {V1CallOptions} [options]
    * @returns {Promise<V1CallResult>}
    */
   async call(operation, params, options = {}) {
-    const response = await this.#send(operation, params, options);
-    if (response.status === 307) {
-      await response.body?.cancel();
-      return { status: response.status, headers: response.headers, value: undefined };
+    const deadline = operationDeadline(operation, options.signal);
+    try {
+      const scoped = { ...options, signal: deadline.signal };
+      const response = await this.#send(operation, params, scoped, deadline.expiresAt);
+      if (response.status === 307) {
+        await response.body?.cancel();
+        return { status: response.status, headers: response.headers, value: undefined };
+      }
+      return { status: response.status, headers: response.headers, value: await this.readJson(response, scoped.signal),
+        ...(response.redirected ? { redirectedTo: response.url } : {}) };
+    } finally {
+      deadline.clear();
     }
-    return { status: response.status, headers: response.headers, value: await this.readJson(response, options.signal),
-      ...(response.redirected ? { redirectedTo: response.url } : {}) };
   }
 
   /**
+   * The read deadline lasts until response headers; the open stream then ends only by the caller's signal.
    * @param {"streamDatabaseChanges" | "exportDatabase"} operation
    * @param {Readonly<Record<string, string>>} params
    * @param {V1CallOptions} [options]
    * @returns {Promise<Response>}
    */
   async openStream(operation, params, options = {}) {
-    const response = await this.#send(operation, params, options);
+    const deadline = operationDeadline(operation, options.signal);
+    /** @type {Response} */
+    let response;
+    try {
+      response = await this.#send(operation, params, { ...options, signal: deadline.signal }, deadline.expiresAt);
+    } finally {
+      deadline.clear();
+    }
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     const expected = v1Route(operation).responseMediaType;
     if (mediaType !== expected || response.body === null) {
@@ -393,46 +408,62 @@ export class V1Transport {
     return response;
   }
 
-  /** @param {V1Operation} operation @param {Readonly<Record<string, string>>} params @param {V1CallOptions} options @returns {Promise<Response>} */
-  async #send(operation, params, options) {
+  /**
+   * @param {V1Operation} operation @param {Readonly<Record<string, string>>} params @param {V1CallOptions} options
+   * @param {number} expiresAt Epoch milliseconds when the read deadline expires.
+   * @returns {Promise<Response>}
+   */
+  async #send(operation, params, options, expiresAt) {
     const route = v1Route(operation);
+    const signal = options.signal;
     const bytes = typeof options.body === "string" ? new TextEncoder().encode(options.body) : options.body;
     if (bytes !== undefined && bytes.byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
-    let url = await this.url(operation, params, options.signal);
+    let url = await this.url(operation, params, signal);
     if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
-    const headers = new Headers(options.headers);
-    if (route.permission !== "anonymous" && this.#token !== undefined)
-      headers.set("authorization", `Bearer ${await this.#accessToken(options.signal)}`);
-    if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
-    if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
-    /** @type {RequestInit & { duplex?: "half" }} */
-    const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
-    if (options.cache !== undefined) init.cache = options.cache;
-    if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
-      // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
-      if (operation === "uploadImportSource" && bytes !== undefined) headers.set("content-length", String(bytes.byteLength));
-      init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
-      init.duplex = "half";
-    } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
-    if (options.signal !== undefined) init.signal = options.signal;
-    options.signal?.throwIfAborted();
+    // Shape reads publish stale state and resume through their own recovery; they are not resent here.
+    const replaySafe = isReplaySafe(operation) && !selfRecovering.has(operation);
     for (let attempt = 0; ; attempt++) {
+      const headers = new Headers(options.headers);
+      // Resolve the credential per attempt so a retry never sends a token the provider has replaced.
+      if (route.permission !== "anonymous" && this.#token !== undefined)
+        headers.set("authorization", `Bearer ${await this.#accessToken(signal)}`);
+      if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
+      if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
+      /** @type {RequestInit & { duplex?: "half" }} */
+      const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
+      if (options.cache !== undefined) init.cache = options.cache;
+      if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
+        // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
+        if (operation === "uploadImportSource" && bytes !== undefined) headers.set("content-length", String(bytes.byteLength));
+        init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
+        init.duplex = "half";
+      } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
+      if (signal !== undefined) init.signal = signal;
+      signal?.throwIfAborted();
       /** @type {Response} */
       let response;
       try { response = await this.#fetch(url, init); }
-      catch (error) { options.signal?.throwIfAborted(); throw new RequestTransportError(error); }
-      if (options.signal?.aborted) {
+      catch (error) {
+        signal?.throwIfAborted();
+        // No response arrived. Only a read may be resent; a mutation's outcome is unknown.
+        if (!replaySafe || attempt >= maximumReadRetries) throw new RequestTransportError(error);
+        await waitForRetry(backoff(attempt), signal);
+        continue;
+      }
+      if (signal?.aborted) {
         void response.body?.cancel().catch(() => undefined);
-        options.signal.throwIfAborted();
+        signal.throwIfAborted();
       }
       if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
       if (!route.successStatuses.includes(response.status)) {
-        const error = await this.error(response, options.signal);
-        if (route.method !== "GET" || attempt >= 2 || error.status !== 503 || error.code !== "auth_unavailable") throw error;
-        const delay = Math.max(250 * 2 ** attempt, (error.retryAfter ?? 0) * 1000);
-        if (delay > 30_000) throw error;
-        await waitForAuthority(delay, options.signal);
+        const error = await this.error(response, signal);
+        if (!replaySafe || attempt >= maximumReadRetries || !transientRefusal(error)) throw error;
+        // Wait at least Retry-After, plus jitter so clients refused together do not return in lockstep.
+        // A wait the deadline cannot cover surfaces the refusal now.
+        const delay = (error.retryAfter ?? 0) * 1000 + backoff(attempt);
+        if (delay > expiresAt - Date.now()) throw error;
+        await waitForRetry(delay, signal);
         continue;
       }
       return response;
@@ -440,8 +471,57 @@ export class V1Transport {
   }
 }
 
+/** One fixed bound for a replay-safe read, retries included; a caller's signal can only shorten it. */
+const readDeadlineMs = 60_000;
+/** Resends after the first attempt, for replay-safe requests only. */
+const maximumReadRetries = 3;
+/** Shape reads with their own stale-state publication and resume. */
+const selfRecovering = new Set(["readFreeShape", "readShape", "getShapeKey"]);
+/** Read-only POST operations; every other non-GET operation may mutate and is sent once. */
+const readOnlyPosts = new Set(["queryDocuments", "runSql", "checkSql", "explainSql"]);
+/** Producer refusals before execution that clear on their own (429 budgets, 503 busy/unavailable). */
+const transientCodes = new Map([
+  [429, new Set(["tenant_busy", "tenant_memory", "shape_busy"])],
+  [503, new Set(["storage_busy", "unavailable", "auth_unavailable", "catalog_stale",
+    "remote_region_unavailable", "confirmation_busy", "http_503"])],
+  // Gateway failures carry no producer body.
+  [502, new Set(["http_502"])],
+  [504, new Set(["http_504"])],
+]);
+
+/** @param {TerraBaseV1Error} error @returns {boolean} */
+function transientRefusal(error) {
+  return transientCodes.get(error.status)?.has(error.code) === true;
+}
+
+/** Exponential backoff with full jitter. @param {number} attempt @returns {number} */
+function backoff(attempt) {
+  return Math.round(Math.random() * Math.min(2_000, 250 * 2 ** attempt));
+}
+
+/** @param {V1Operation} operation @returns {boolean} */
+function isReplaySafe(operation) {
+  return v1Route(operation).method === "GET" || readOnlyPosts.has(operation);
+}
+
+/**
+ * Combines the caller's signal with the fixed deadline of a replay-safe read. The caller's abort reason is preserved.
+ * Mutations keep only the caller's signal: abandoning one makes its outcome uncertain, and some legitimately run long.
+ * @param {V1Operation} operation
+ * @param {AbortSignal | undefined} callerSignal
+ * @returns {{ signal: AbortSignal | undefined; expiresAt: number; clear: () => void }}
+ */
+function operationDeadline(operation, callerSignal) {
+  if (!isReplaySafe(operation)) return { signal: callerSignal, expiresAt: Infinity, clear: () => {} };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException(
+    `TerraBase read exceeded its ${readDeadlineMs / 1000}-second deadline.`, "TimeoutError")), readDeadlineMs);
+  const signal = callerSignal === undefined ? controller.signal : AbortSignal.any([callerSignal, controller.signal]);
+  return { signal, expiresAt: Date.now() + readDeadlineMs, clear: () => clearTimeout(timer) };
+}
+
 /** @param {number} milliseconds @param {AbortSignal | undefined} signal @returns {Promise<void>} */
-function waitForAuthority(milliseconds, signal) {
+function waitForRetry(milliseconds, signal) {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason); };

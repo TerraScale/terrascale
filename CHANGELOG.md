@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.17 — read deadline and transient retries
+
+Replay-safe v1 reads (GETs and read-only query/SQL POSTs) now have one fixed
+60-second deadline, including retries and the body, and reject with a
+`TimeoutError` instead of hanging. They retry up to three times after a
+connection failure, the producer's transient 429/503 refusals (for example
+`429 tenant_busy` from the per-plan concurrency budget) or a body-less gateway
+502/503/504, waiting at least `Retry-After` plus full-jitter backoff. The token
+provider is asked again for each attempt. Mutations remain single-attempt.
+`401 key_revoked` and `key_expired` throw `V1KeyRevokedError` and
+`V1KeyExpiredError`.
+
 ## 0.0.16 — remove retired SDK runtimes
 
 Delete `./local`, `./postgres`, `./schema`, `./sql`, `./tanstack` and the
