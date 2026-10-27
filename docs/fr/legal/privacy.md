@@ -53,7 +53,7 @@ We share personal data only with providers that help us run the Service, under w
 
 | Subprocessor | Purpose | Location |
 | --- | --- | --- |
-| Oracle Cloud Infrastructure | database and application hosting | the regions you select: Brazil (São Paulo), United States (San Jose), Germany (Frankfurt) |
+| Oracle Cloud Infrastructure | database and application hosting | the regions you select: Brazil (São Paulo), United States (San Francisco Bay Area), Germany (Frankfurt) |
 | Cloudflare | content delivery, DNS, DDoS protection, websites | global edge network |
 | Tigris Data | encrypted backups and object storage | United States and the region nearest your database |
 | Stripe | payments, invoicing and fraud prevention | United States, Ireland |

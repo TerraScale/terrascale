@@ -21,6 +21,22 @@ const mode = ["--sync", "--check", "--build"].find((flag) => process.argv.includ
 
 const vendoredPath = (file) => join(root, "data", "canonical", file);
 
+export function validateCanonical(file, text) {
+  const catalog = JSON.parse(text);
+  if (file === "regions.json") {
+    const expected = [
+      ["gru", "São Paulo", "sa-saopaulo-1"],
+      ["sjc", "San Francisco Bay Area", "us-sanjose-1"],
+      ["fra", "Frankfurt", "eu-frankfurt-1"],
+    ];
+    if (!Array.isArray(catalog.regions) || catalog.regions.length !== expected.length ||
+        expected.some(([id, name, providerRegion]) => !catalog.regions.some((region) =>
+          region?.id === id && region.name === name && region.provider === "oci" && region.providerRegion === providerRegion))) {
+      throw new Error("regions.json must list the three OCI launch regions with their canonical names and OCI region identifiers.");
+    }
+  }
+}
+
 const isNetworkError = (error) =>
   error?.name === "TimeoutError" || error?.name === "AbortError" ||
   ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH",
@@ -33,7 +49,7 @@ export async function fetchCanonical(file) {
       const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
       if (!response.ok) throw new Error(`GET ${url} returned HTTP ${response.status}`);
       const text = await response.text();
-      JSON.parse(text);
+      validateCanonical(file, text);
       return text;
     } catch (error) {
       if (attempt === 1 || !isNetworkError(error)) throw error;
@@ -46,6 +62,13 @@ export async function fetchCanonical(file) {
 export async function main() {
   let failed = false;
   for (const file of files) {
+    try {
+      if (mode !== "--sync") validateCanonical(file, readFileSync(vendoredPath(file), "utf8"));
+    } catch (error) {
+      console.error(`FAIL: data/canonical/${file}: ${error.message}`);
+      failed = true;
+      continue;
+    }
     let published;
     try {
       published = await fetchCanonical(file);

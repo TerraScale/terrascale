@@ -73,7 +73,7 @@ Each party's liability under this DPA is subject to the limits in the Terms, exc
 
 | Subprocessor | Purpose | Location |
 | --- | --- | --- |
-| Oracle Cloud Infrastructure | database and application hosting | regions selected by Controller: Brazil (São Paulo), United States (San Jose), Germany (Frankfurt) |
+| Oracle Cloud Infrastructure | database and application hosting | regions selected by Controller: Brazil (São Paulo), United States (San Francisco Bay Area), Germany (Frankfurt) |
 | Cloudflare | content delivery, DNS, DDoS protection | global edge network |
 | Tigris Data | encrypted backups and object storage | United States and the region nearest the database |
 | Stripe | payments and invoicing (account billing data only) | United States, Ireland |

@@ -2,7 +2,22 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import timers from 'node:timers/promises';
-import { fetchCanonical, main } from './canonical-data.mjs';
+import { fetchCanonical, main, validateCanonical } from './canonical-data.mjs';
+
+test('region validation rejects stale providers, names, and provider identifiers independently of byte parity', async (t) => {
+  const text = readFileSync(new URL('../data/canonical/regions.json', import.meta.url), 'utf8');
+  assert.doesNotThrow(() => validateCanonical('regions.json', text));
+  for (const [field, value] of [['provider', 'fly'], ['name', 'San Jose'], ['providerRegion', 'sjc']]) {
+    const catalog = JSON.parse(text);
+    catalog.regions.find((region) => region.id === 'sjc')[field] = value;
+    const stale = JSON.stringify(catalog);
+    assert.throws(() => validateCanonical('regions.json', stale), /OCI launch regions/);
+    const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(stale));
+    await assert.rejects(fetchCanonical('regions.json'), /OCI launch regions/);
+    assert.equal(fetch.mock.callCount(), 1);
+    fetch.mock.restore();
+  }
+});
 
 test('catalog transport errors get one retry after a mocked five-second wait', async (t) => {
   for (const error of [
