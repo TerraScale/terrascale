@@ -359,10 +359,10 @@ class Matrix:
         self.name = "rt6-" + secrets.token_hex(4)
         _, body = self.http("sjc", "POST", self.management + "/databases", {"name": self.name, "allRegions": True}, user=True, expect={201})
         self.database = body["id"]
-        _, body = self.http("sjc", "POST", self.management + "/api-keys",
-                            {"name": "rt6 matrix", "scopes": ["documents:read", "documents:write"], "databaseId": self.database},
-                            user=True, expect={201})
-        self.key_id, self.key = body["key"]["id"], body["secret"]
+        _, body = self.http("sjc", "POST", "/admin/api-keys",
+                            {"name": "rt6 matrix", "scopes": ["documents:read", "documents:write"], "organizationId": self.organization,
+                             "projectId": self.project, "databaseId": self.database}, expect={201})
+        self.key_id, self.key = body["id"], body["secret"]
         self.record(kind="database", database=self.database, name=self.name, key_id=self.key_id)
         for route in (self.name, self.database):
             for region in REGIONS:
@@ -578,19 +578,14 @@ class Matrix:
             self.record(kind="wire_delete", target=region, supported=self.wire_delete[region])
 
     def teardown(self):
-        def remove(step, path):
-            status, body = self.http("sjc", "DELETE", path, user=True)
+        def remove(step, path, user=True):
+            status, body = self.http("sjc", "DELETE", path, user=user)
             self.record(kind="teardown", step=step, status=status)
             print(f"teardown {step}: {status}", flush=True)
             if status not in (204, 404):
                 raise HttpError(status, json.dumps(body))
-        if getattr(self, "project", None):
-            status, body = self.http("sjc", "GET", self.management + "/api-keys", user=True)
-            if status == 200:
-                for key in body["items"]:
-                    remove("revoke key", self.management + "/api-keys/" + key["id"])
-            elif status != 404:
-                raise HttpError(status, json.dumps(body))
+        if getattr(self, "key_id", None):
+            remove("revoke key", "/admin/api-keys/" + self.key_id, user=False)
         if getattr(self, "database", None):
             remove("delete database", self.management + "/databases/" + self.database)
         if getattr(self, "project", None):
