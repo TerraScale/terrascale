@@ -314,8 +314,8 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             return sso;
         }
 
-        var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken,
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
         return wait is { } retry
             ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next) { PendingToken = pending });
@@ -441,8 +441,8 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken,
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage)) is { } wait
+        return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } wait
             ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next));
     }
@@ -487,8 +487,8 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
             { ErrorTitle = "Password too short" }, StatusCodes.Status400BadRequest);
         }
 
-        var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken,
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
         return wait is { } retry ? SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, retry, address, next)
             : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, SignInFlow.Tenant(this.HttpContext), address, next))
             : SignInFlow.WrongCode(this.HttpContext, SignInStep.ResetCode, address, next);

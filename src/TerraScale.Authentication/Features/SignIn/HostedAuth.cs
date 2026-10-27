@@ -58,7 +58,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// must accompany a sign-up code's redemption; or how long to wait. The token is random either way, so it reveals
     /// nothing, and only its hash is stored.
     /// </summary>
-    public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken, string locale)
+    public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
     {
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
@@ -76,7 +76,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     }
 
     /// <summary>Emails a password-reset code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
-    public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken, string locale)
+    public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, string locale, CancellationToken cancellationToken)
     {
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
@@ -94,7 +94,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// Redeems a password-reset code and sets <paramref name="password"/>, which signs the user out everywhere. Returns
     /// whether it did, and how long to wait when the IP's budget is spent.
     /// </summary>
-    public async Task<(bool Reset, TimeSpan? Wait)> CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken, string locale)
+    public async Task<(bool Reset, TimeSpan? Wait)> CompletePasswordResetAsync(string email, string code, string password, string ip, string locale, CancellationToken cancellationToken)
     {
         const string method = "password-reset";
         if ((await this.LimitIpAsync(ip, mails: false, cancellationToken)
