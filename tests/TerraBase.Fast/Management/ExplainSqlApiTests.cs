@@ -110,7 +110,8 @@ public sealed class ExplainSqlApiTests
         await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         // The internal listener serves the route but never takes a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(ExplainPath(database), new { sql = Sql }), HttpStatusCode.NotFound, "unknown_database", "the database does not exist");
+        // A sign-in token names no project, so it is not a data credential.
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(ExplainPath(database), new { sql = Sql }), HttpStatusCode.Unauthorized, "invalid_key", "this token does not authorize project routes; use an API key or its project token");
     }
 
     [Test]
@@ -121,7 +122,7 @@ public sealed class ExplainSqlApiTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         (string? Project, string? Scope, string? Database, string RouteProject, HttpStatusCode Status)[] cases =
         [
-            (null, "databases:read", null, database.Project, HttpStatusCode.NotFound),
+            (null, "databases:read", null, database.Project, HttpStatusCode.Unauthorized),
             ("not-a-project", "databases:read", null, database.Project, HttpStatusCode.Unauthorized),
             (EntityIds.New().ToString(), "databases:read", null, database.Project, HttpStatusCode.NotFound),
             ("not-a-project", "databases:read", null, "not-a-project", HttpStatusCode.Unauthorized),

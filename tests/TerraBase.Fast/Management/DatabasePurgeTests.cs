@@ -220,7 +220,12 @@ public sealed class DatabasePurgeTests
         var management = api.Server.Services.GetRequiredService<EngineManagementService>();
         await Assert.That(await management.AdoptDatabaseAsync(tenant, "recovered", new DatabasePlacement("local", [], 1), CancellationToken.None) is TerraBase.Errors.Conflict).IsTrue();
         await Assert.That(await management.UpdatePlacementAsync(tenant, new DatabasePlacement("local", [], 99), CancellationToken.None) is PlacementUpdate { Updated: false }).IsTrue();
-        using var branch = await api.Client.PostAsJsonAsync(new Uri(database.Data + "/branches", UriKind.Relative), new { name = "restored" });
+        using var project = api.WithToken(api.Issuer.Mint(api.User, token =>
+        {
+            token.Claims["project_id"] = database.Project;
+            token.Claims["scope"] = "databases:read databases:write";
+        }));
+        using var branch = await project.PostAsJsonAsync(new Uri(database.Data + "/branches", UriKind.Relative), new { name = "restored" });
         await Assert.That(branch.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 

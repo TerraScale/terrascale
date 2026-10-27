@@ -333,7 +333,7 @@ public sealed class ProjectTokenTests
         using var readOnly = api.WithToken(Token(api, actor, database.Project, "databases:read documents:read"));
 
         await Assert.That(await StatusAsync(wrongProject.GetAsync(Uri(database.Data)))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(noProject.GetAsync(Uri(database.Data)))).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await StatusAsync(noProject.GetAsync(Uri(database.Data)))).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(await StatusAsync(wrongProject.PostAsJsonAsync(Uri(database.Data + "/collections"), new { name = "people" })))
             .IsEqualTo(HttpStatusCode.NotFound);
         await ErrorAssert.ErrorAsync(noScope.GetAsync(Uri(database.Data)), HttpStatusCode.Forbidden, "forbidden_scope");
