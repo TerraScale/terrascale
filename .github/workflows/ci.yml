@@ -1,20 +1,25 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  merge_group:
+  schedule:
+    # Recheck every supported interpreter and refresh main caches weekly.
+    - cron: '23 4 * * 2'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -44,8 +49,11 @@ jobs:
         if: matrix.python == '3.12'
         run: pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt --cache-dir ~/.cache/pip-audit
       - run: uv pip install --no-deps --no-build-isolation -e '.[dev]' && uv pip check
+      # Both tools target Python 3.10 in pyproject.toml; their result is interpreter-independent.
       - run: ruff check src tests
+        if: matrix.python == '3.12'
       - run: mypy
+        if: matrix.python == '3.12'
       - run: pytest -q
       - name: build
         if: matrix.python == '3.12'
