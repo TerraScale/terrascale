@@ -165,7 +165,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
     [Test]
     public async Task Reset_attempts_are_limited_before_hashing_even_without_a_live_code_and_resume_next_window()
     {
-        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 900 * 900));
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / (long)HostedAuth.CodeWindow.TotalSeconds * (long)HostedAuth.CodeWindow.TotalSeconds));
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         await oidc.CreateUserAsync();
         foreach (var email in new[] { "alice@example.test", UnknownEmail(oidc) })
