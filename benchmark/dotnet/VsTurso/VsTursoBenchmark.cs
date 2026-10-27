@@ -23,7 +23,7 @@ namespace TerraBase.E2E
     [Category("benchmark-host")]
     public sealed class VsTursoBenchmark
     {
-        private const int Keys = 10_000;
+        internal const int Keys = 10_000;
         private static readonly (string Name, int Bytes)[] Sizes = [("small", 256), ("medium", 4096)];
         private static readonly string[] Workloads = ["write", "read", "mixed"];
         private static readonly int[] DefaultConcurrencies = [1, 16];
