@@ -5,6 +5,7 @@ Uses RT6 only for tenant lifecycle and native client framing. HTTP reads use a
 persistent authenticated client, rather than timing curl process launches.
 """
 import concurrent.futures
+import hashlib
 import http.client
 import importlib.util
 import json
@@ -40,6 +41,36 @@ class Live(matrix.Matrix):
         matrix.REGIONS = tuple(sorted(self.node))
         matrix.NATIVE_RELAYS.update({region: dict(postgres=5432, wire=7464)})
 
+    def record(self, **result):
+        result.update(harness_source_hint=self.sha, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        with self.lock:
+            self.output.write(json.dumps(result) + "\n")
+            self.output.flush()
+
+    def verify_cleanup(self):
+        receipt = pathlib.Path(output)
+        rows = [json.loads(line) for line in receipt.read_text().splitlines()] if receipt.exists() else []
+        identity = {key: row[key] for row in rows for key in ("organization", "project", "database") if key in row}
+        identity.update({key: getattr(self, key) for key in ("organization", "project", "database") if hasattr(self, key)})
+        if "organization" not in identity:
+            return
+        path = "/v1/management/organizations/" + identity["organization"]
+        paths = [("organization gone", path)]
+        if "project" in identity and "database" in identity:
+            paths.append(("database gone", path + "/projects/" + identity["project"] + "/databases/" + identity["database"]))
+        for target in self.node:
+            for step, path in paths:
+                deadline = time.monotonic() + 120
+                while self.http(target, "GET", path, user=True)[0] != 404:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f"{step}: cleanup not observed in {target}")
+                    time.sleep(1)
+                self.record(kind="teardown", step=step, target=target, status=404)
+
+    def teardown(self):
+        super().teardown()
+        self.verify_cleanup()
+
     def recover(self):
         # The persisted acting-user ULID belongs only to this run. Recover even if
         # it died between the organization creation response and the tenant log.
@@ -72,6 +103,7 @@ class Live(matrix.Matrix):
                         if row.get("kind") == "database":
                             self.key_id = row.get("key_id")
             self.teardown()
+        self.verify_cleanup()
 
 
 if operation:
@@ -94,6 +126,8 @@ with open(output, "x") as stream:
         if len(set(revisions.values())) != 1 or any(not isinstance(value, str) or not value for value in revisions.values()):
             raise RuntimeError("serving regions have different or missing revisions")
         live.record(kind="metadata", host=os.uname().nodename, region=region, revisions=revisions,
+                    harness_files_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                          for path in (pathlib.Path(__file__), pathlib.Path(__file__).with_suffix('.sh'), pathlib.Path(rt6), pathlib.Path(probe))},
                     load=os.getloadavg(), pressure=pathlib.Path('/proc/pressure/cpu').read_text())
         live.provision()
         tables = {}

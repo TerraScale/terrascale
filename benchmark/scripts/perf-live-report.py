@@ -23,14 +23,20 @@ def number(value):
 
 for path in sorted(directory.glob("*/live.jsonl")):
     rows = [json.loads(line) for line in path.read_text().splitlines()]
+    extra = path.with_name(path.name + ".cleanup.jsonl")
+    rows += [json.loads(line) for line in extra.read_text().splitlines()] if extra.exists() else []
+    for row in rows:
+        if "target_sha" in row:
+            row["legacy_operator_source_hint"] = row.pop("target_sha")
     first = next(row for row in rows if row["kind"] == "metadata")
     region = first["region"]
     if region in metadata:
         raise ValueError("duplicate regional evidence")
     metadata[region] = first
     cleanup[region] = [row for row in rows if row["kind"] == "teardown"]
-    valid &= all(any(row.get("step") == "project gone" and row.get("target") == target and row["status"] == 404
-                     for row in cleanup[region]) for target in first["revisions"])
+    valid &= all(any(row.get("step") == step and row.get("target") == target and row["status"] == 404
+                     for row in cleanup[region]) for target in first["revisions"]
+                 for step in ("project gone", "organization gone", "database gone"))
     endings = [row for row in rows if row["kind"] == "revision_end"]
     valid &= len(endings) == len(first["revisions"]) and {row["region"] for row in endings} == set(first["revisions"])
     valid &= all(isinstance(value, str) and bool(value) for value in first["revisions"].values())
@@ -57,9 +63,12 @@ valid &= set(reads) == expected and set(lag) == directions
 valid &= all(len(runs) == 3 and {run["repeat"] for run in runs} == {1, 2, 3}
              and all(len(run["samples_ms"]) == 60 for run in runs) for runs in reads.values())
 valid &= all(len(runs) == 3 and {run["repeat"] for run in runs} == {1, 2, 3} for runs in lag.values())
-lines = ["# Live regional baseline", "", f"Evidence {'complete' if valid else 'INVALID / incomplete'}; observed production load is recorded in metadata. "
+lines = ["# Live regional baseline", "", "Serving revision(s): " + ", ".join(sorted({str(v) for m in metadata.values() for v in m['revisions'].values()})) + ".",
+         "Harness provenance is separate: older target_sha fields are retained as legacy_operator_source_hint, not serving revisions.",
+         f"Evidence {'complete' if valid else 'INVALID / incomplete'}; observed production load is recorded in metadata. "
          "Reads are c=1, paced at most 10/s; percentiles pool 180 samples. These are host-local endpoint latencies, not public WAN latencies.",
-         "", "| Region | Endpoint | Size | N | p50 ms | p99 ms | p99 per-repeat min–max ms |",
+         "Nearest-rank pooled p99 is the second-largest of 180 samples; each 60-sample repeat's p99 equals its maximum. These are descriptive tails, not confidence bounds.",
+         "", "| Region | Endpoint | Size | N | p50 ms | Pooled p99 ms | Repeat maxima min–max ms |",
          "| --- | --- | --- | ---: | ---: | ---: | --- |"]
 for (region, endpoint, size), runs in sorted(reads.items()):
     values = [value for run in runs for value in run["samples_ms"]]

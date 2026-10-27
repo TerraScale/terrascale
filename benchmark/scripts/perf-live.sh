@@ -4,11 +4,17 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(realpath -m "${1:?output directory}")
 probe=$(realpath "${2:?xregion-probe executable}")
-sha=${3:?source SHA}
+sha=${3:?full harness SHA}
+[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'expected full harness commit SHA'; exit 1; }
 mkdir -p "$(dirname "$out")"
 if [[ ${4:-} != cleanup ]]; then mkdir "$out"; fi
 umask 077
-work=$(mktemp -d)
+exec 9>"$out/.lock"
+flock -n 9 || { echo 'this output still has an active benchmark'; exit 1; }
+# A deterministic private tmpfs directory lets recovery remove SIGKILL leftovers.
+work="/dev/shm/terrascale-perf-$UID-$(printf '%s' "$out" | sha256sum | cut -c 1-32)"
+if [[ ${4:-} == cleanup ]]; then rm -rf -- "$work"; fi
+mkdir "$work"
 job=
 cleanup() {
   if [[ -n "$job" ]] && kill -0 "$job" 2>/dev/null; then
