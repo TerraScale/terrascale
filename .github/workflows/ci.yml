@@ -73,20 +73,19 @@ jobs:
             exit 1
           fi
       - name: Set up the reviewed Node runtime
-        if: steps.changes.outputs.check == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '22.23.2' || '24.21.0' }}
       - name: Restore npm cache
         id: npm-cache
-        if: steps.changes.outputs.check == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
       - name: Provision the reviewed npm CLI
-        if: steps.changes.outputs.check == 'true'
         run: node scripts/provision-reviewed-npm.js
+      - name: Audit every committed npm graph
+        run: npm run check:vulnerabilities
       - name: Install locked dependencies
         if: steps.changes.outputs.check == 'true'
         run: npm ci
@@ -102,9 +101,6 @@ jobs:
       - name: Run SDK tests
         if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
         run: npm test
-      - name: Audit dependencies
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
-        run: npm run check:vulnerabilities
       - name: Checked tree ${{ steps.changes.outputs.tree }}
         if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
         run: echo 'All checks passed for this Git tree.'
