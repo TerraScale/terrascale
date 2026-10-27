@@ -101,6 +101,8 @@ public sealed partial class DatabaseRecoveryTests
         await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, registered.Organization, registered.Project, registered.Id + ".db"))).IsTrue();
     }
 
+    private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports"];
+
     // Backup frames and native temporary files filled every node's log with one warning per file per pass (2026-10-27).
     [Test]
     public async Task Scratch_files_are_not_audited_and_an_orphan_file_is_named_once(CancellationToken token)
@@ -111,7 +113,7 @@ public sealed partial class DatabaseRecoveryTests
             ManualAudit(services);
             services.AddSingleton<ILoggerProvider>(logs);
         });
-        string[] scratch = [.. new[] { ".tmp", ".backup", ".import", ".exports" }.Select(name =>
+        string[] scratch = [.. ScratchDirectories.Select(name =>
             Path.Combine(api.Server.DataDirectory, name, EntityIds.New() + ".frames"))];
         foreach (var path in scratch)
         {
