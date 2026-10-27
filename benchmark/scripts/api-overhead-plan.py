@@ -29,10 +29,10 @@ environment = dict(part.split(b"=", 1) for part in read(["sudo", "-n", "cat", ro
 secret_path = environment.get(b"TERRABASE_PEER_SECRET_FILE")
 credential = read(["sudo", "-n", "cat", root + "/root" + secret_path.decode()]).strip() if secret_path else environment[b"TERRABASE_PEER_SECRET"]
 peers = read(["sudo", "-n", "cat", root + "/root" + environment[b"TS_PEERS_FILE"].decode()]).decode().splitlines()
-region = environment[b"TS_REGION"].decode()
-addresses = [line.split()[2] for line in peers if len(line.split()) == 3 and line.split()[1] == region]
+node = environment[b"TS_NODE"].decode()
+addresses = [line.split()[2] for line in peers if len(line.split()) == 3 and line.split()[0] == node]
 if len(addresses) != 1:
-    sys.exit("Local region is ambiguous in admitted peers")
+    sys.exit("Local node is ambiguous in admitted peers")
 with tempfile.NamedTemporaryFile() as header:
     header.write(b"X-TerraBase-Peer-Credential: " + credential + b"\n")
     header.flush()

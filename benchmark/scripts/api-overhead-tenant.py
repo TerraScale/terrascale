@@ -43,8 +43,11 @@ class Tenant:
                      refresh=self.refresh, key=self.key, project=self.project, deletion_receipt=self.receipt,
                      deletion_started=self.deletion_started)
         path = self.directory / "recovery.json"
-        with open(path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+        with tempfile.NamedTemporaryFile(mode="w", dir=self.directory, delete=False) as stream:
             json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(stream.name, path)
 
     def form(self, url, fields):
         return self.http.request(url, "POST", form=fields)
@@ -126,16 +129,15 @@ class Tenant:
         return organization
 
     def close(self):
-        if not self.token and not self.deletion_started:
-            raise Failure("No user grant for cleanup; private recovery material retained")
-        if self.deletion_started:
-            status, _, _ = self.http.request(PLATFORM + "/account/deletion",
-                headers={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
-        else:
-            status, _, _ = self.platform("/account", "DELETE", purpose="delete_account",
-                extra={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
+        status, _, _ = self.http.request(PLATFORM + "/account/deletion",
+            headers={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204, 404))
+        if status == 404:
+            if not self.token:
+                raise Failure("No user grant for cleanup; private recovery material retained")
             self.deletion_started = True
             self.checkpoint()
+            status, _, _ = self.platform("/account", "DELETE", purpose="delete_account",
+                extra={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
         deadline = time.monotonic() + 180
         while status == 202 and time.monotonic() < deadline:
             time.sleep(2)
@@ -182,12 +184,12 @@ def main():
                 shutil.rmtree(directory)
                 print("Synthetic account and inbox cleanup settled.", flush=True)
             else:
-                print("Cleanup incomplete; recovery material retained in private directory: " + directory, file=sys.stderr)
+                print("Cleanup incomplete; recovery material retained in private directory: " + str(directory), file=sys.stderr)
 
 
 if __name__ == "__main__":
     try:
         main()
     except (Failure, subprocess.CalledProcessError) as error:
-        print("API overhead tenant run failed: " + (str(error) if isinstance(error, Failure) else "Child command failed") , file=sys.stderr)
+        print("API overhead tenant run failed: " + (str(error) if isinstance(error, Failure) else "Child command failed"), file=sys.stderr)
         sys.exit(1)
