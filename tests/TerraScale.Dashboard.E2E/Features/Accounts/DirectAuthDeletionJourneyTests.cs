@@ -325,10 +325,35 @@ public sealed class DirectAuthDeletionJourneyTests
         var deletionPath = organizationDeletion ? "/api/v1/dashboard/organization/deletion" : "/api/v1/dashboard/profile/delete";
         var deletionForm = new Dictionary<string, string>
         { ["_csrf"] = csrf, [organizationDeletion ? "confirmation" : "email"] = organizationDeletion ? organizationName : email };
+        if (!organizationDeletion)
+        {
+            // Billing waits for ts-auth's organization proof, so the outage neither blocks the account nor loses the hidden Checkout.
+            using (var deleted = await HttpJourney.PostFormAsync(owner, deletionPath, deletionForm))
+                await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
+            var held = StripeBilling.ReadBinding((await scenario.GetAsync(StripeBilling.Collection, organizationId))!, organizationId);
+            await Assert.That(held.State).IsEqualTo("deleting");
+            await Assert.That(held.RequestId).IsEqualTo(original.RequestId);
+            await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(organizationId)).IsFalse();
+            var expiredLater = false;
+            scenario.BeforeForwardAsync = request =>
+            {
+                if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/v1/checkout/sessions/" + hiddenCheckoutId + "/expire") expiredLater = true;
+                return Task.CompletedTask;
+            };
+            scenario.Producer.Proofs.Add(new(scenario.Id(), "organization", organizationId, organizationId));
+            await scenario.RunAsync();
+            if (completedCheckout)
+                await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus("sub_" + hiddenCheckoutId![3..])).IsEqualTo("canceled");
+            else await Assert.That(expiredLater).IsTrue();
+            await Assert.That(scenario.Producer.Acknowledgements).IsEqualTo(1);
+            await Assert.That(AccountService.IsDeletionFence((await scenario.GetAsync(StripeBilling.Collection, organizationId))!)).IsTrue();
+            using var unaffected = await unrelated.GetAsync("/api/v1/auth/me");
+            await Assert.That(unaffected.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            return;
+        }
         using (var pending = await HttpJourney.PostFormAsync(owner, deletionPath, deletionForm))
-            await Assert.That(pending.StatusCode).IsEqualTo(organizationDeletion ? HttpStatusCode.Accepted : HttpStatusCode.BadGateway);
-        if (organizationDeletion)
-            await Assert.That(AccountService.Read<OrganizationRecord>((await scenario.GetAsync(AccountService.OrganizationsCollection, organizationId))!).DeletionRequested).IsTrue();
+            await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(AccountService.Read<OrganizationRecord>((await scenario.GetAsync(AccountService.OrganizationsCollection, organizationId))!).DeletionRequested).IsTrue();
         var retained = StripeBilling.ReadBinding((await scenario.GetAsync(StripeBilling.Collection, organizationId))!, organizationId);
         await Assert.That(retained.State).IsEqualTo("deleting");
         await Assert.That(retained.RequestId).IsEqualTo(original.RequestId);
@@ -339,7 +364,7 @@ public sealed class DirectAuthDeletionJourneyTests
         await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(organizationId)).IsTrue();
         using (var stalePublication = await HttpJourney.PostFormAsync(owner, "/billing/checkout", new()
         { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" }))
-            await Assert.That(stalePublication.StatusCode).IsEqualTo(organizationDeletion ? HttpStatusCode.Forbidden : HttpStatusCode.ServiceUnavailable);
+            await Assert.That(stalePublication.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         var expired = false;
         scenario.BeforeForwardAsync = request =>
         {
@@ -349,20 +374,16 @@ public sealed class DirectAuthDeletionJourneyTests
         using (var deleted = await HttpJourney.PostFormAsync(owner, deletionPath, deletionForm))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            if (organizationDeletion) await Assert.That(deleted.Headers.Location!.OriginalString).StartsWith("/organization?deleted=1");
-            else await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
+            await Assert.That(deleted.Headers.Location!.OriginalString).StartsWith("/organization?deleted=1");
         }
         if (completedCheckout)
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus("sub_" + hiddenCheckoutId![3..])).IsEqualTo("canceled");
         else await Assert.That(expired).IsTrue();
         await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(organizationId)).IsFalse();
-        if (organizationDeletion)
-        {
-            await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personalOrganization)).IsTrue();
-            await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(personalBinding.SubscriptionId)).IsEqualTo("active");
-            using var retainedOwner = await owner.GetAsync("/api/v1/auth/me");
-            await Assert.That(retainedOwner.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personalOrganization)).IsTrue();
+        await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(personalBinding.SubscriptionId)).IsEqualTo("active");
+        using var retainedOwner = await owner.GetAsync("/api/v1/auth/me");
+        await Assert.That(retainedOwner.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(scenario.Producer.Acknowledgements).IsEqualTo(0);
         await Assert.That(scenario.Producer.Proofs.Count).IsEqualTo(0);
         using var preserved = await unrelated.GetAsync("/api/v1/auth/me");

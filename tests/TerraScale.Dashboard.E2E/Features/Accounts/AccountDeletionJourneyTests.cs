@@ -89,9 +89,36 @@ public sealed class AccountDeletionJourneyTests
     }
 
     [Test]
-    public async Task PaidSoleOrganizationEndsImmediatelyAndStripeFailureKeepsTheAccount()
+    public async Task PaidSoleOrganizationEndsAfterAuthDeletesIt()
     {
-        await using var scenario = await Scenario.StartAsync(signIn: false);
+        var (scenario, userId, personal, binding) = await PaidAsync("confirmed");
+        await using var _ = scenario;
+        await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("canceled");
+        await Assert.That(scenario.Environment.BillingPlans.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
+        // The binding stays until DeletionReconciler fences it from the same auth proof.
+        await Assert.That(StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal).Status).IsEqualTo("canceled");
+        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
+    }
+
+    [Test]
+    public async Task StripeOutageNeitherBlocksDeletionNorLosesThePlanToEnd()
+    {
+        var (scenario, userId, personal, binding) = await PaidAsync("offline");
+        await using var _ = scenario;
+        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
+        // The exact binding stays in its deleting state for DeletionReconciler to end the plan.
+        var retained = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal);
+        await Assert.That(retained.State).IsEqualTo("deleting");
+        await Assert.That(retained.SubscriptionId).IsEqualTo(binding.SubscriptionId);
+        await Assert.That(await scenario.ExistsAsync(StripeBilling.CustomersCollection, binding.CustomerId)).IsTrue();
+    }
+
+    // Billing never runs before ts-auth admits the deletion, so a Stripe outage cannot fail the request.
+    private static async Task<(Scenario Scenario, string UserId, string Personal, BillingBinding Binding)> PaidAsync(string stripeScenario)
+    {
+        var scenario = await Scenario.StartAsync(signIn: false);
         var suffix = Guid.NewGuid().ToString()[..8];
         var email = "paid-delete-" + suffix + "@example.test";
         await Billing.BillingPlanJourneyTests.SignUpPaidAsync(scenario.Client, email, "E2E-delete-" + suffix, suffix);
@@ -102,31 +129,14 @@ public sealed class AccountDeletionJourneyTests
         using (var free = await HttpJourney.PostFormAsync(scenario.Client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "free" }))
             await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var binding = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal);
-        var stripe = scenario.Environment.BillingPlans;
-        await Assert.That(stripe.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
-
-        stripe.SetScenario(binding.CustomerId, "offline");
-        using (var failed = await scenario.DeleteAsync(email))
-        {
-            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
-            await Assert.That(await failed.Content.ReadAsStringAsync()).Contains("Stripe could not cancel the paid plan of");
-        }
-        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId))).IsTrue();
-        await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsTrue();
-        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsTrue();
-
-        stripe.SetScenario(binding.CustomerId, "confirmed");
+        await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
+        scenario.Environment.BillingPlans.SetScenario(binding.CustomerId, stripeScenario);
         using (var deleted = await scenario.DeleteAsync(email))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
         }
-        await Assert.That(stripe.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("canceled");
-        await Assert.That(stripe.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
-        await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsFalse();
-        await Assert.That(await scenario.ExistsAsync(StripeBilling.CustomersCollection, binding.CustomerId)).IsFalse();
-        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
-        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
+        return (scenario, userId, personal, binding);
     }
 
     private sealed class Scenario : IAsyncDisposable
