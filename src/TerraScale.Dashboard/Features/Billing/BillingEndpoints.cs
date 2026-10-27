@@ -133,6 +133,8 @@ public static class BillingEndpoints
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);
             try { return HttpRedirects.SeeOther(await billing.PortalAsync(context, http.RequestAborted)); }
+            catch (AccountAccessException error) when (DatabaseEndpoints.WantsHtml(http))
+            { return BillingRecoveryModel.Response(http, error.StatusCode, "Billing portal unavailable", error.Message + " Return to billing to choose a plan or finish checkout."); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
         });
         endpoints.MapStripeWebhooks();

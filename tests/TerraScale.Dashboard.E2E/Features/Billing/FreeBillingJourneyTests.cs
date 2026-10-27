@@ -44,6 +44,19 @@ public sealed class FreeBillingJourneyTests
             await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             await Assert.That(vendor.Calls).IsEqualTo(0);
         }
+        using var portalProblem = await client.GetAsync("/billing/portal");
+        await Assert.That(portalProblem.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(portalProblem.Content.Headers.ContentType!.MediaType).IsEqualTo("application/problem+json");
+        using var portalRequest = new HttpRequestMessage(HttpMethod.Get, "/billing/portal");
+        portalRequest.Headers.Accept.ParseAdd("text/html");
+        using var portalPage = await client.SendAsync(portalRequest);
+        await Assert.That(portalPage.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(portalPage.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
+        var portalHtml = await portalPage.Content.ReadAsStringAsync();
+        foreach (var text in new[] { "<html lang=\"en\"", "<title>Billing portal unavailable · TerraScale</title>", "role=\"alert\"", "Set up billing before opening the customer portal.", ">Return to billing</a>", "autofocus" })
+            await Assert.That(portalHtml).Contains(text);
+        await Assert.That(System.Text.RegularExpressions.Regex.IsMatch(portalHtml, "<a[^>]+href=\"/organization\\?tab=billing[^\"]*\"[^>]*>Return to billing</a>")).IsTrue();
+        await Assert.That(vendor.Calls).IsEqualTo(0);
         await Assert.That(plans.Requests).IsNotEmpty();
         await Assert.That(plans.Requests.All(request => request.Plan == "hobby" && request.Status == HttpStatusCode.NotFound)).IsTrue();
         await app.StopAsync();
