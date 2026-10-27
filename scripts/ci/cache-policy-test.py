@@ -57,6 +57,18 @@ assert all_projects <= formatted | {build_check}, all_projects - formatted - {bu
 assert "needs: [changes, native, libs, auth, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
 
+# Cheap policy failures stop native downloads and every expensive area; Slow runs independently of publication.
+changes = workflow.split("\n  changes:\n", 1)[1].split("\n  native:\n", 1)[0]
+for check in ("path-filter-test.py", "slow-report-test.py", "cache-policy-test.py",
+              "turso-native-pipeline-test.py", "storage-format-check-test.sh", "e2e-summary-test.sh",
+              "storage-format-check.sh"):
+    assert check in changes, f"{check} must run before builds"
+for area in ("auth", "terrabase"):
+    slow = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  slow-{area}-main:\n", 1)[1], maxsplit=1)[0]
+    assert "needs: [changes, native]" in slow, "Slow must not wait for image publication or rollout"
+    assert "cancel-in-progress: true" not in slow, "Main results must survive superseding pushes"
+assert "restore-keys: ${{ runner.os }}-nuget-${{ env.TS_DOTNET_REV }}-" in workflow
+
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
 command = inputs.split("\nRUN ", 1)[1].split("\n\n", 1)[0].replace("\\\n", " ")
 fixtures = {

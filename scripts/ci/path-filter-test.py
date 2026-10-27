@@ -73,7 +73,9 @@ all_areas = {"libs", "auth", "terrabase"}
 vendor_paths = ("src/vendor/Turso.Data.Sqlite/Connection.cs", "tests/Turso.Data.Sqlite.Tests/ConnectionTests.cs", "scripts/vendor/audit/check.sh")
 cases = [(path, status, all_areas) for path in vendor_paths for status in ("added", "modified", "deleted")]
 cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", all_areas),
-          ("scripts/ci/path-filter-test.py", "modified", {"libs"}),
+          ("scripts/ci/path-filter-test.py", "modified", set()),
+          ("scripts/ci/cache-policy-test.py", "modified", set()),
+          ("scripts/ci/test-area.sh", "modified", {"libs", "terrabase"}),
           ("README.md", "modified", set()),
           ("docs/auth/mfa.md", "modified", set()),
           ("docs/terrabase/ci.md", "modified", set()),

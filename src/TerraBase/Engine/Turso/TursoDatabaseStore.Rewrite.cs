@@ -17,6 +17,7 @@ internal sealed partial class TursoDatabaseStore
     internal int BackupTaps;
     internal Action<int>? RewriteRoundCompleted { get; set; }
     internal Action? RewriteBeforeWriter { get; set; }
+    internal Action? RewriteSessionWaiting { get; set; }
     internal Action<CancellationToken>? RewriteFinalStarting { get; set; }
     // One list drives both replay-digest exclusions and final refreshes.
     private string[] RewriteRefreshTables => IsSystem ? ["_tb_peers", "_tb_rebuild"] : ["_tb_peers"];
@@ -173,6 +174,10 @@ internal sealed partial class TursoDatabaseStore
             // Bulk work and the initial quiet checks are done. Existing taps must end before acquiring the writer:
             // their owner checks lineage on its next backup pass. Quiescing was published first to close the tap-open race.
             Interlocked.Increment(ref _lineage);
+            // Close reader admission before the last off-writer drain. Otherwise a reader can rent during the
+            // checkpoint/catch-up/writer wait and then depend on the writer this rewrite holds while draining it.
+            pool.PauseReaders(this);
+            quiesced.Paused = true;
             var taps = Stopwatch.GetTimestamp();
             while (pool.BusyOf(this, _writerSession) > 0)
             {
@@ -571,7 +576,7 @@ internal sealed partial class TursoDatabaseStore
     private void Resume() => pool.Resume(this);
 
     // Retries a pool call a healthy rewrite paused, once the store resumes.
-    private static async ValueTask<T> WhileRewritingAsync<T>(Func<T> call, CancellationToken cancellationToken)
+    private async ValueTask<T> WhileRewritingAsync<T>(Func<T> call, CancellationToken cancellationToken)
     {
         while (true)
         {
@@ -582,6 +587,7 @@ internal sealed partial class TursoDatabaseStore
             }
             catch (StorePausedException paused)
             {
+                RewriteSessionWaiting?.Invoke();
                 resumed = paused.Resumed;
             }
 
@@ -589,7 +595,7 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
-    private static ValueTask WhileRewritingAsync(Action call, CancellationToken cancellationToken) =>
+    private ValueTask WhileRewritingAsync(Action call, CancellationToken cancellationToken) =>
         new(WhileRewritingAsync(() =>
         {
             call();

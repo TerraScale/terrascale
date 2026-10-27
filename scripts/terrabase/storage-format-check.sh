@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Storage train: format feature PRs carry storage-format and "Needs format bump" for the coordinated reset;
 # the reset PR bumps StorageFormat.Version. Unchanged layouts carry storage-format-unchanged. Needs GH_TOKEN
-# with pull-requests:read. CI runs it in the `test` job; scripts/terrabase/storage-format-check-test.sh checks it.
+# with pull-requests:read. CI runs it in the `changes` job; scripts/terrabase/storage-format-check-test.sh checks it.
 #
 #   scripts/terrabase/storage-format-check.sh <owner/repo> <pull request number>
 set -euo pipefail
