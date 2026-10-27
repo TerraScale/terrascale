@@ -259,7 +259,7 @@ internal sealed partial class TursoDatabaseStore
                     }
                     catch (OperationCanceledException error) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
-                        throw new RewriteRefusedException("the database's operations did not end before its writer was taken", error);
+                        throw new RewriteRefusedException("the database's operations did not end before its writer was taken", error, RewriteRefusal.Deadline);
                     }
                 }
             }

@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Tests;
 
@@ -29,6 +30,7 @@ public sealed class EmailTests
     private const string Html = $"<p><a href=\"{Body}\">Reset your password</a></p>";
     private const string AccountId = "0123456789abcdef0123456789abcdef";
     private const string ApiToken = "cf-token-5c1e";
+    private const string AcceptedResponse = "{\"success\":true,\"result\":{\"delivered\":[],\"queued\":[\"" + Recipient + "\"],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}";
 
     [Test]
     public async Task Without_cloudflare_settings_mail_is_not_sent_and_only_sizes_and_a_safe_outcome_are_logged()
@@ -45,23 +47,15 @@ public sealed class EmailTests
     }
 
     [Test]
-    [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
-    public async Task Production_without_cloudflare_settings_warns_at_startup(TerraBaseFixture fixture)
+    public async Task Production_without_cloudflare_settings_refuses_to_start()
     {
-        var logs = new EmailLogs();
-        var (tenant, _) = await fixture.CreateDatabaseAsync();
-        // Production background workers need a reachable, provisioned database through shutdown.
-        await using var server = await AuthTestServer.StartAsync(settings: values =>
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
         {
             values["environment"] = "Production";
-            values["terrabase-url"] = fixture.Server.InternalAddress.GetLeftPart(UriPartial.Authority);
-        }, services: services =>
-        {
-            fixture.UseStorage(services, tenant);
-            services.AddSingleton<ILoggerProvider>(logs);
-        });
+            values["terrabase-url"] = "https://terrabase.example.invalid";
+        }));
 
-        await Assert.That(logs.Text).Contains("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");
+        await Assert.That(exception!.Message).Contains("CLOUDFLARE_ACCOUNT_ID").And.Contains("CLOUDFLARE_EMAIL_TOKEN");
     }
 
     [Test]
@@ -183,7 +177,7 @@ public sealed class EmailTests
     }
 
     [Test]
-    [Arguments(200, "{\"success\":true}", EmailDeliveryOutcome.Accepted)]
+    [Arguments(200, AcceptedResponse, EmailDeliveryOutcome.Accepted)]
     [Arguments(200, "{\"success\":true,\"result\":{\"permanent_bounces\":[\"suppressed\"]}}", EmailDeliveryOutcome.Rejected)]
     [Arguments(403, "{}", EmailDeliveryOutcome.Rejected)]
     [Arguments(429, "{}", EmailDeliveryOutcome.Retryable)]
@@ -204,6 +198,20 @@ public sealed class EmailTests
     [Arguments(500, "provider response containing secrets", "error", EmailDeliveryOutcome.Unknown)]
     [Arguments(200, "{\"success\":false}", "error", EmailDeliveryOutcome.Rejected)]
     [Arguments(200, "invalid JSON", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "null", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "[]", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":null,\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true,\"result\":null}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[],\"delivered\":[]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"someone-else@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[null,\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"permanent_bounces\":[null]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":false,\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"suppressed_recipients\":[\"private-person@example.test\"]}}", "bounced", EmailDeliveryOutcome.Rejected)]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"suppressed_recipients\":null}}", "error", EmailDeliveryOutcome.Unknown)]
     public async Task Provider_errors_have_one_safe_information_outcome(int status, string body, string outcome, EmailDeliveryOutcome expected)
     {
         var logs = new EmailLogs();
@@ -216,6 +224,19 @@ public sealed class EmailTests
         await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(expected.ToString());
         await AssertOutcomeAsync(logs, outcome);
         await Assert.That(logs.Text).DoesNotContain(body);
+        await AssertNoMessageDataAsync(logs.Text);
+    }
+
+    [Test]
+    public async Task A_delivered_recipient_is_also_explicit_provider_acceptance()
+    {
+        var logs = new EmailLogs();
+        await using var cloudflare = await FakeCloudflare.StartAsync(body:
+            $$"""{"success":true,"result":{"delivered":["{{Recipient}}"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}""");
+        await using var server = await StartAsync(logs, cloudflare);
+        using var response = await server.Client.PostAsync("/__test/email", null);
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(nameof(EmailDeliveryOutcome.Accepted));
+        await AssertOutcomeAsync(logs, "queued");
         await AssertNoMessageDataAsync(logs.Text);
     }
 
@@ -329,7 +350,7 @@ public sealed class EmailTests
     }
 
     /// <summary>A real HTTP provider on a test-owned ephemeral loopback port.</summary>
-    private sealed class FakeCloudflare(WebApplication app) : IAsyncDisposable
+    internal sealed class FakeCloudflare(WebApplication app) : IAsyncDisposable
     {
         private readonly WebApplication app = app;
 
@@ -341,7 +362,9 @@ public sealed class EmailTests
 
         public string? Body { get; private set; }
 
-        public static async Task<FakeCloudflare> StartAsync(HttpStatusCode status = HttpStatusCode.OK, bool abort = false, string body = "{\"success\":true}")
+        public int Calls { get; private set; }
+
+        public static async Task<FakeCloudflare> StartAsync(HttpStatusCode status = HttpStatusCode.OK, bool abort = false, string body = AcceptedResponse)
         {
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Logging.ClearProviders();
@@ -364,6 +387,7 @@ public sealed class EmailTests
         private static void MapProvider(FakeCloudflare provider, HttpStatusCode status, bool abort, string body) => provider.app.Run(async context =>
         {
             provider.Authorization = context.Request.Headers.Authorization.ToString();
+            provider.Calls++;
             using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
             provider.Body = await reader.ReadToEndAsync(context.RequestAborted);
             if (abort)
@@ -380,7 +404,7 @@ public sealed class EmailTests
         public ValueTask DisposeAsync() => this.app.DisposeAsync();
     }
 
-    private sealed class ProviderRoute(Uri address, FakeCloudflare provider) : DelegatingHandler
+    internal sealed class ProviderRoute(Uri address, FakeCloudflare provider) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

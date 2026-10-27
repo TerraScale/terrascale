@@ -192,16 +192,21 @@ public sealed class EmailAdmissionTests(TerraBaseFixture fixture)
         public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
         public DateTimeOffset? Reset { get; init; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             _ = Interlocked.Increment(ref this.Calls);
-            var response = new HttpResponseMessage(this.Status) { Content = new StringContent("{\"success\":true}") };
+            using var sent = await JsonDocument.ParseAsync(await request.Content!.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+            var recipient = sent.RootElement.GetProperty("to").GetRawText();
+            var response = new HttpResponseMessage(this.Status)
+            {
+                Content = new StringContent($$"""{"success":true,"result":{"queued":[{{recipient}}],"delivered":[],"permanent_bounces":[],"suppressed_recipients":[]}}"""),
+            };
             if (this.Reset is { } reset)
             {
                 response.Headers.RetryAfter = new RetryConditionHeaderValue(reset);
             }
-            return Task.FromResult(response);
+            return response;
         }
     }
 }

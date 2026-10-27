@@ -97,6 +97,8 @@ public sealed class ConfigurationTests
                 if (!development)
                 {
                     values.Remove("environment");
+                    values["cloudflare-account-id"] = "0123456789abcdef0123456789abcdef";
+                    values["cloudflare-email-token"] = "synthetic-email-token";
                 }
 
                 values["terrabase-url"] = storage;
@@ -370,6 +372,8 @@ public sealed class ConfigurationTests
         var settings = AuthTestServer.DefaultSettings();
         settings.Remove("environment");
         settings["terrabase-url"] = terrabase.InternalAddress.GetLeftPart(UriPartial.Authority);
+        settings["cloudflare-account-id"] = "0123456789abcdef0123456789abcdef";
+        settings["cloudflare-email-token"] = "synthetic-email-token";
         // Secrets arrive as <NAME>_FILE with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
         // variable, which would stop the start if it were read.
         var secrets = Directory.CreateTempSubdirectory("ts-auth-secrets-");
@@ -523,7 +527,8 @@ public sealed class ConfigurationTests
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
             };
-            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
+            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("CLOUDFLARE_", StringComparison.Ordinal)
+                || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
             {
                 start.Environment.Remove(name);
             }
@@ -610,6 +615,7 @@ public sealed class ConfigurationTests
         // Isolate application and host configuration while preserving runtime paths and bundle extraction settings.
         foreach (var name in start.Environment.Keys.Where(key =>
             key.StartsWith("TS_AUTH_", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("CLOUDFLARE_", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("ASPNETCORE_", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("Logging__", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("Kestrel__", StringComparison.OrdinalIgnoreCase) || key.StartsWith("Sentry__", StringComparison.OrdinalIgnoreCase)

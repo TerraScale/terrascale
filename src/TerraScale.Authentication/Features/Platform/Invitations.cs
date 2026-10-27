@@ -73,6 +73,11 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
             throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "This organization sent too many invitations; retry within the hour.");
         }
 
+        // Hold capacity across the commit: a known-full queue must never leave an undeliverable pending invite.
+        // Dispose releases it on every failed authorization, conflict, cancellation or transaction failure.
+        var dashboard = options.DashboardClient;
+        using var reservation = dashboard is not null ? mail.Reserve() : null;
+        cancellationToken.ThrowIfCancellationRequested();
         var (invitation, token, organizationName) = await directory.CommitAsync(async () =>
         {
             var (authority, organizationName) = await AuthorizeAsync().ConfigureAwait(false);
@@ -116,9 +121,9 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
         }, cancellationToken).ConfigureAwait(false);
 
         // The dashboard serves the accept page at /invitations/{token} on the origin of its first sign-in callback.
-        if (options.DashboardClient is { } dashboard)
+        if (dashboard is not null)
         {
-            mail.EnqueueInvitation(new AuthEmailValues(invitation.Email)
+            reservation!.EnqueueInvitation(new AuthEmailValues(invitation.Email)
             {
                 Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
                 ExpiresIn = Lifetime,

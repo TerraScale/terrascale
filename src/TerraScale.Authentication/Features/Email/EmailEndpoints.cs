@@ -115,12 +115,16 @@ public sealed record EmailTestRequest(
     [property: JsonPropertyName("branding")] EmailBranding? Branding = null,
     [property: JsonPropertyName("fields")] EmailTemplateFields? Fields = null);
 
-/// <summary>A test email that was handed to the relay.</summary>
+/// <summary>A test email accepted by the provider; this does not confirm inbox delivery.</summary>
 /// <param name="To">The recipient.</param>
 /// <param name="Subject">The subject it was sent with.</param>
 public sealed record EmailTestResponse(
     [property: JsonPropertyName("to")] string To,
     [property: JsonPropertyName("subject")] string Subject);
+
+[JsonSerializable(typeof(EmailTestResponse))]
+[JsonSerializable(typeof(ErrorBody))]
+internal sealed partial class EmailEndpointJson : JsonSerializerContext;
 
 /// <summary>One saved version.</summary>
 /// <param name="Version">Its number.</param>
@@ -246,7 +250,7 @@ internal static class EmailApi
     }
 
     public static IResult Error(int status, string code, string message) =>
-        TypedResults.Json(new ErrorBody(new ErrorDetail(code, message)), statusCode: status);
+        TypedResults.Json(new ErrorBody(new ErrorDetail(code, message)), EmailEndpointJson.Default.ErrorBody, statusCode: status);
 }
 
 /// <summary><c>GET /v1/{slug}/email/branding</c>: the saved branding and the defaults.</summary>
@@ -475,7 +479,7 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
         Post("/v1/{slug}/email/test");
         Name("email_test_send");
         Summary("Send a test email");
-        Description("Renders like preview (auto colour scheme) and sends it to `to` with the subject prefixed [Test]. Delivery happens before the response but its failure is not reported. At most 10 per instance per minute (429 with Retry-After).");
+        Description("Renders like preview (auto colour scheme) and sends it to `to` with the subject prefixed [Test]. 202 confirms provider acceptance, not inbox delivery. Rejected or unknown acceptance returns 502; do not automatically retry unknown acceptance. At most 10 per instance per minute; capacity refusals also return 429 with Retry-After.");
         Tags("Email");
         // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailTestRequest)));
@@ -485,6 +489,7 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status422UnprocessableEntity);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status502BadGateway);
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
@@ -510,12 +515,19 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
 
         var message = await emails.RenderAsync(kind, locale, EmailApi.Sample(kind, to, options, clock.GetUtcNow()), config, cancellationToken: cancellationToken);
         message = message with { Subject = "[Test] " + message.Subject, Purpose = EmailPurpose.Test };
-        if (await email.DeliverAsync(to, message, cancellationToken) == EmailDeliveryOutcome.Retryable)
+        var outcome = await email.DeliverAsync(to, message, cancellationToken);
+        if (outcome == EmailDeliveryOutcome.Retryable)
         {
             this.HttpContext.Response.Headers.RetryAfter = "60";
             return EmailApi.Error(StatusCodes.Status429TooManyRequests, "rate_limited", "Email capacity is reserved for authentication; try later.");
         }
-        return TypedResults.Json(new EmailTestResponse(to, message.Subject), statusCode: StatusCodes.Status202Accepted);
+        if (outcome != EmailDeliveryOutcome.Accepted)
+        {
+            return outcome == EmailDeliveryOutcome.Rejected
+                ? EmailApi.Error(StatusCodes.Status502BadGateway, "email_rejected", "The email provider rejected the test message.")
+                : EmailApi.Error(StatusCodes.Status502BadGateway, "email_acceptance_unknown", "The email provider did not confirm acceptance; do not automatically retry.");
+        }
+        return TypedResults.Json(new EmailTestResponse(to, message.Subject), EmailEndpointJson.Default.EmailTestResponse, statusCode: StatusCodes.Status202Accepted);
     }
 }
 

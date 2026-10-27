@@ -6,6 +6,7 @@ import http.cookiejar
 import json
 import re
 import secrets
+import signal
 import sys
 import time
 import urllib.error
@@ -193,4 +194,10 @@ def run():
 
 if __name__ == "__main__":
     argparse.ArgumentParser(description=__doc__).parse_args()
+
+    def interrupted(signum, frame):
+        raise CheckFailure("Check interrupted")
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
     sys.exit(run())

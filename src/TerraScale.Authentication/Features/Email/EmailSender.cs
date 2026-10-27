@@ -33,8 +33,8 @@ public sealed record EmailMessage(string Subject, string Text, string? Html = nu
 }
 
 /// <summary>
-/// Sends transactional email. Delivery failures are logged and swallowed, so a flow's outcome
-/// never reveals whether mail could be delivered. Only caller cancellation propagates.
+/// Sends transactional email. SendAsync swallows provider failures; DeliverAsync reports acceptance
+/// for private APIs and durable ledgers. Public authentication flows preserve anti-enumeration. Only caller cancellation propagates.
 /// </summary>
 public interface IEmailSender
 {
@@ -142,20 +142,38 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
                     : (int)response.StatusCode < 500 ? EmailDeliveryOutcome.Rejected : EmailDeliveryOutcome.Unknown;
             }
 
-            // A 2xx still lists a suppressed or invalid recipient under permanent_bounces; it never arrives.
+            // HTTP success alone does not confirm acceptance of this recipient.
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
-            if (body.RootElement.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False)
+            var root = body.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !UniqueProperties(root))
+            {
+                AuthMetrics.Email("failed");
+                return EmailDeliveryOutcome.Unknown;
+            }
+            if (root.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False)
             {
                 AuthMetrics.Email("failed");
                 return EmailDeliveryOutcome.Rejected;
             }
-            if (body.RootElement.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object
-                && result.TryGetProperty("permanent_bounces", out var bounces) && bounces.ValueKind == JsonValueKind.Array && bounces.GetArrayLength() > 0)
+            var hasResult = root.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object;
+            if (!hasResult || !UniqueProperties(result) || !ValidRecipientLists(result))
+            {
+                AuthMetrics.Email("failed");
+                return EmailDeliveryOutcome.Unknown;
+            }
+            if (NonemptyArray(result, "permanent_bounces") || NonemptyArray(result, "suppressed_recipients"))
             {
                 AuthMetrics.Email("bounced");
                 outcome = "bounced";
                 this.LogProviderFailure(null);
                 return EmailDeliveryOutcome.Rejected;
+            }
+
+            if (success.ValueKind != JsonValueKind.True
+                || !(ContainsRecipient(result, "queued", recipient) || ContainsRecipient(result, "delivered", recipient)))
+            {
+                AuthMetrics.Email("failed");
+                return EmailDeliveryOutcome.Unknown;
             }
 
             AuthMetrics.Email("sent");
@@ -187,6 +205,28 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
         }
     }
 
+    private static bool NonemptyArray(JsonElement result, string name) =>
+        result.TryGetProperty(name, out var list) && list.ValueKind == JsonValueKind.Array && list.GetArrayLength() > 0;
+
+    private static bool UniqueProperties(JsonElement value) =>
+        value.EnumerateObject().Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() == value.EnumerateObject().Count();
+
+    private static bool ValidRecipientLists(JsonElement result)
+    {
+        foreach (var name in new[] { "queued", "delivered", "permanent_bounces", "suppressed_recipients" })
+        {
+            if (result.TryGetProperty(name, out var list)
+                && (list.ValueKind != JsonValueKind.Array || list.EnumerateArray().Any(value => value.ValueKind != JsonValueKind.String)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool ContainsRecipient(JsonElement result, string name, string recipient) =>
+        result.TryGetProperty(name, out var list) && list.EnumerateArray().Any(value => value.ValueEquals(recipient));
+
     private void LogProviderFailure(int? status)
     {
         try
@@ -197,7 +237,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
             }
             else
             {
-                logger.ZLogError($"Email delivery failed: Cloudflare reported a permanent bounce");
+                logger.ZLogError($"Email delivery failed: Cloudflare reported a permanent bounce or suppression");
             }
         }
         catch (Exception logFailure) when (logFailure is not OutOfMemoryException)

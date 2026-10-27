@@ -210,6 +210,8 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
             {
                 values.Remove("environment");
                 values["terrabase-url"] = origin.GetLeftPart(UriPartial.Authority);
+                values["cloudflare-account-id"] = "0123456789abcdef0123456789abcdef";
+                values["cloudflare-email-token"] = "synthetic-email-token";
             },
             services: services => services.AddSingleton(new TerraBaseTransport.HostResolver(Resolve)));
         TerraBaseDatabase Through(HttpClient client, Uri address) => new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions { BaseAddress = address }).Database(tenant.Project.Id, "auth");

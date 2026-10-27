@@ -126,7 +126,7 @@ public sealed partial class HistoryErasureBackupTests
             await Assert.That(receipt.Auth).IsEqualTo(first.Auth);
             await Assert.That(receipt.System).IsEqualTo(first.System);
         }
-        await Assert.That(recording.Starts.Count - recording.BudgetOrPressureRefusals).IsEqualTo(2);
+        await Assert.That(recording.Starts.Count - recording.TransientRefusals).IsEqualTo(2);
         await Assert.That(authWrites).IsGreaterThan(0);
         await Assert.That(systemWrites).IsGreaterThan(0);
         await Assert.That(committed).IsLessThan(2048);

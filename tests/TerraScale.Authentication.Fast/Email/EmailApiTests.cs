@@ -10,7 +10,11 @@ using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
+using TerraScale.Authentication.Fast.Platform;
 
 namespace TerraScale.Authentication.Fast.Email;
 
@@ -93,6 +97,9 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 
         await Assert.That(paths.GetProperty("/v1/{slug}/email/templates/{kind}/{locale}").GetProperty("get").GetProperty("description").GetString())
             .Contains("lockout").And.Contains("locked_until");
+        var test = paths.GetProperty("/v1/{slug}/email/test").GetProperty("post");
+        await Assert.That(test.GetProperty("responses").GetProperty("502").GetProperty("content").GetProperty("application/json")
+            .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/ErrorBody");
     }
 
     [Test]
@@ -414,7 +421,9 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_test_send_delivers_a_marked_sample_and_is_limited_per_minute()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var captured = new CapturingEmailSender();
+        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured,
+            services: services => services.AddSingleton<IEmailSender>(new ProductSender(captured)));
         var request = new JsonObject
         {
             ["kind"] = "password_reset",
@@ -457,6 +466,95 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
             await Assert.That(limited.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(60));
             await Assert.That(await ErrorCodeAsync(limited)).IsEqualTo("rate_limited");
+        }
+    }
+
+    [Test]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"admin@example.test\"],\"delivered\":[],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}", 202, null)]
+    [Arguments(429, "{}", 429, "rate_limited")]
+    [Arguments(403, "{}", 502, "email_rejected")]
+    [Arguments(200, "{\"success\":true,\"result\":{\"suppressed_recipients\":[\"admin@example.test\"]}}", 502, "email_rejected")]
+    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"someone-else@example.test\"]}}", 502, "email_acceptance_unknown")]
+    [Arguments(200, "{\"result\":{\"queued\":[\"admin@example.test\"]}}", 502, "email_acceptance_unknown")]
+    [Arguments(200, "null", 502, "email_acceptance_unknown")]
+    public async Task Test_sends_report_actual_provider_acceptance(int status, string body, int expected, string? error)
+    {
+        await using var provider = await EmailTests.FakeCloudflare.StartAsync((HttpStatusCode)status, body: body);
+        using var http = ProviderClient(provider);
+        var captured = new CapturingEmailSender();
+        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services =>
+            services.AddSingleton<IEmailSender>(new ProductSender(captured, Cloudflare(http))));
+        using var response = await SendAsync(oidc, HttpMethod.Post, Base + "/test", new JsonObject
+        {
+            ["kind"] = "password_reset", ["locale"] = "en", ["to"] = "admin@example.test", ["actor"] = Actor.DeepClone(),
+        });
+        await Assert.That((int)response.StatusCode).IsEqualTo(expected);
+        await Assert.That(provider.Calls).IsEqualTo(1);
+        if (error is not null)
+        {
+            await Assert.That(await ErrorCodeAsync(response)).IsEqualTo(error);
+            await Assert.That(response.Headers.RetryAfter is not null).IsEqualTo(expected == 429);
+        }
+    }
+
+    [Test]
+    [Arguments("{}", "unknown")]
+    [Arguments("{\"success\":true,\"result\":{\"suppressed_recipients\":[\"provider-owner@example.test\"]}}", "rejected")]
+    public async Task Product_ledgers_preserve_unconfirmed_provider_outcomes_without_resending(string body, string expected)
+    {
+        await using var provider = await EmailTests.FakeCloudflare.StartAsync(body: body);
+        using var http = ProviderClient(provider);
+        var captured = new CapturingEmailSender();
+        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services =>
+            services.AddSingleton<IEmailSender>(new ProductSender(captured, Cloudflare(http))));
+        var (user, _, tokens) = await oidc.SignInAndRedeemAsync("provider-owner@example.test");
+        var access = tokens.GetProperty("access_token").GetString()!;
+        var organization = (await oidc.OkAsync(HttpMethod.Post, PlatformCalls.Organizations, access, new { name = "Provider fixture" }, HttpStatusCode.Created))
+            .GetProperty("id").GetString()!;
+        var project = (await oidc.OkAsync(HttpMethod.Post, $"{PlatformCalls.Organizations}/{organization}/projects", access, new { name = "Provider fixture" }, HttpStatusCode.Created))
+            .GetProperty("id").GetString()!;
+        (string Path, JsonObject Request)[] deliveries =
+        [
+            ("/allowance", new() { ["organizationId"] = organization, ["billingMonth"] = DateTimeOffset.UtcNow.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture),
+                ["metric"] = "operations", ["threshold"] = 80, ["used"] = 81, ["allowance"] = 100 }),
+            ("/alert", new() { ["organizationId"] = organization, ["projectId"] = project, ["alertId"] = AuthStore.NewId(),
+                ["state"] = "firing", ["ruleName"] = "Synthetic alert", ["metric"] = "storage_gb", ["threshold"] = 1, ["value"] = 2 }),
+            ("/support", new() { ["requestId"] = AuthStore.NewId(), ["userId"] = user.Id, ["organizationId"] = organization,
+                ["plan"] = "pro", ["severity"] = "normal", ["subject"] = "Synthetic request", ["message"] = "Integration fixture" }),
+        ];
+        foreach (var (path, request) in deliveries)
+        {
+            for (var repeat = 0; repeat < 2; repeat++)
+            {
+                using var response = await SendAsync(oidc, HttpMethod.Post, Base + path, request.DeepClone());
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString()).IsEqualTo(expected);
+            }
+        }
+        // One attempt for each ledger; no retry or support acknowledgement after an unconfirmed send.
+        await Assert.That(provider.Calls).IsEqualTo(deliveries.Length);
+    }
+
+    private static HttpClient ProviderClient(EmailTests.FakeCloudflare provider) => new(new EmailTests.ProviderRoute(provider.Address, provider)
+    {
+        InnerHandler = new HttpClientHandler { AllowAutoRedirect = false },
+    });
+
+    private static CloudflareEmailSender Cloudflare(HttpClient http) => new(http,
+        new CloudflareEmailOptions("synthetic-account", "synthetic-token"), NullLogger<CloudflareEmailSender>.Instance);
+
+    private sealed class ProductSender(CapturingEmailSender signIn, IEmailSender? provider = null) : IEmailSender
+    {
+        public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) => signIn.SendAsync(recipient, message, cancellationToken);
+
+        public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+        {
+            if (provider is not null)
+            {
+                return await provider.DeliverAsync(recipient, message, cancellationToken);
+            }
+            await signIn.SendAsync(recipient, message, cancellationToken);
+            return EmailDeliveryOutcome.Accepted;
         }
     }
 
