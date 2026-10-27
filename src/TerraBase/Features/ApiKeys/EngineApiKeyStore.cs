@@ -78,7 +78,11 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                 return new NotFound();
             }
 
+            // Project keys issued before the reverse lookup existed keep their hash in the project entry.
             var hash = await GetAsync(transaction, Hashes, keyId, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false)
+                ?? (key.ProjectId is { } owner
+                    ? (await GetAsync(transaction, ProjectKeys(owner), keyId, TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false))?.Hash
+                    : null)
                 ?? throw new InvalidOperationException("the API key has no secret lookup");
             await transaction.DeleteAsync(Collection, keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Hashes, hash, cancellationToken).ConfigureAwait(false);
@@ -97,10 +101,10 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         var page = await transaction.ListAsync(ProjectKeys(project), null, limit, maxBytes, token).ConfigureAwait(false);
         foreach (var document in page.Documents)
         {
-            var hash = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.String)
-                ?? throw new InvalidOperationException("a closing project's API key hash is invalid");
+            var entry = EntityPayload.Read(document, TerraBaseJsonContext.Default.ProjectKeyEntry)
+                ?? throw new InvalidOperationException("a closing project's API key is invalid");
             await transaction.DeleteAsync(Collection, document.Id, token).ConfigureAwait(false);
-            await transaction.DeleteAsync(Hashes, hash, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, entry.Hash, token).ConfigureAwait(false);
             await transaction.DeleteAsync(Hashes, document.Id, token).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeys(project), document.Id, token).ConfigureAwait(false);
         }
@@ -118,7 +122,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         await PutAsync(transaction, Hashes, key.Id, hash, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
         if (projectId is not null)
         {
-            await PutAsync(transaction, ProjectKeys(projectId), key.Id, hash, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, ProjectKeys(projectId), key.Id, new ProjectKeyEntry(hash), TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false);
         }
 
         return key;
@@ -130,3 +134,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
 
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
+
+/// <summary>A project-scoped key's closure entry: the secret hash to delete with it.</summary>
+/// <param name="Hash">The SHA-256 of the key's secret.</param>
+internal sealed record ProjectKeyEntry(string Hash);

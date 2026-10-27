@@ -196,6 +196,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectClosureRequest))]
 [JsonSerializable(typeof(ProjectClosureStatus))]
 [JsonSerializable(typeof(ProjectBindingRequest))]
+[JsonSerializable(typeof(ProjectKeyEntry))]
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(ProjectAnalytics))]
