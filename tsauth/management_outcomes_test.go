@@ -241,7 +241,7 @@ func TestAPIKeyDatabaseScopeUsesImmutableULID(t *testing.T) {
 				t.Error("key must carry the database ULID")
 			}
 		}
-		key := `{"id":"` + managementID + `","organization_id":"` + managementID + `","created_by":"` + managementID + `","database":"` + managementID + `"}`
+		key := `{"id":"` + managementID + `","organization_id":"` + managementID + `","created_by":"` + managementID + `","database":"` + managementID + `","name":"test","scopes":["documents:read"],"created_at":"2026-10-26T04:00:00Z"}`
 		if r.Method == http.MethodPost {
 			fmt.Fprintf(w, `{"api_key":%s,"key":"test-only"}`, key)
 		} else {
