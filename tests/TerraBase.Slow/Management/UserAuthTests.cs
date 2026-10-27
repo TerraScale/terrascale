@@ -88,20 +88,22 @@ public sealed class UserAuthTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var auth = await RealAuthFixture.StartAsync(token);
-        var (accessToken, project, seedToken) = await auth.GitHubActionsTokenAsync(token);
+        var (organization, project, seedToken) = await auth.SeedProjectAsync(token);
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
         {
             tls.Apply(settings);
             RealAuthFixture.Configure(settings);
         }, auth.TrustIssuer);
-        using var client = tls.CreateClient(server.ClientAddress!, accessToken);
         var database = $"/v1/projects/{project}/databases/ci-e2e";
 
         // A separate project-admin fixture credential provisions data; the workload receives only documents:read.
         using var seed = tls.CreateClient(server.ClientAddress!, seedToken);
         using var created = await seed.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var databaseId = (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
+        var accessToken = await auth.GitHubActionsTokenAsync(organization, project, databaseId, token);
+        using var client = tls.CreateClient(server.ClientAddress!, accessToken);
         using var collection = await seed.PostAsJsonAsync(new Uri(database + "/collections", UriKind.Relative), new { name = "runs" }, token);
         await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var name = new Faker().Lorem.Word();
@@ -137,7 +139,7 @@ public sealed class UserAuthTests
         using var elsewhere = await client.PostAsJsonAsync(new Uri($"/v1/projects/{EntityIds.New()}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(elsewhere.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await StatusAsync(client, "/v1/management/organizations", token)).IsEqualTo(HttpStatusCode.NotFound);
-        var organization = new JsonWebToken(accessToken).GetClaim("org_id").Value;
+        await Assert.That(new JsonWebToken(accessToken).GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(await StatusAsync(client, $"/v1/management/organizations/{organization}/projects/{project}/databases", token))
             .IsEqualTo(HttpStatusCode.NotFound);
     }
