@@ -44,7 +44,7 @@ public sealed class HttpVersionTests
             received.Enqueue((context.Request.Protocol, context.Connection.Id, context.Request.Headers.Authorization.ToString()));
             context.Response.ContentType = "application/json";
             await context.Response.WriteAsync(client == "auth" ? "{\"keys\":[]}"
-                : "{\"name\":\"users\",\"created_at\":0,\"id\":\"01J00000000000000000000000\"}");
+                : "{\"name\":\"users\",\"created_at\":\"0\",\"id\":\"01J00000000000000000000000\"}");
         });
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
