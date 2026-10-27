@@ -1,0 +1,61 @@
+name: Live signup email delivery
+
+on:
+  schedule:
+    - cron: '23 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  delivery:
+    # Only reviewed main code may spend the production mail allowance.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Fetch signup email from disposable inbox
+        id: delivery
+        timeout-minutes: 6
+        run: |
+          set -o pipefail
+          make auth-mail-delivery-check | tee mail-delivery.jsonl
+      - name: Report delivery failure
+        if: always() && steps.delivery.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          title = "Live signup email delivery check failure"
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          log_path = pathlib.Path("mail-delivery.jsonl")
+          logs = log_path.read_text() if log_path.exists() else "Check did not produce a report; inspect the run logs."
+          body = f"""The independent live signup email check failed.
+
+          Commit: {os.environ['GITHUB_SHA']}
+          Environment: GitHub-hosted ubuntu-latest; production auth.terrascale.tech; mail.tm inbox
+          Reproduce locally: `nice -n 19 make auth-mail-delivery-check`
+          Expected: one hosted signup request delivers a verification code to a fresh disposable inbox within 120 seconds, then the inbox is deleted.
+          Actual: a check stage failed; delivery evidence and cleanup failures are reported separately below. No account verification was submitted.
+          Run: {run_url}
+
+          Sanitized logs (no codes, credentials or message bodies):
+          ```json
+          {logs}
+          ```
+          """
+          pathlib.Path("mail-delivery-issue.md").write_text(body)
+          reports = json.loads(subprocess.check_output(["gh", "issue", "list", "--state", "open", "--search", f'"{title}" in:title', "--json", "number,title"], text=True))
+          existing = next((str(issue["number"]) for issue in reports if issue["title"] == title), None)
+          command = ["gh", "issue", "comment", existing] if existing else ["gh", "issue", "create", "--title", title]
+          subprocess.run(command + ["--body-file", "mail-delivery-issue.md"], check=True)
+          PY
