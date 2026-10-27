@@ -175,7 +175,11 @@ namespace TerraBase.E2E
                         {
                             foreach (var (lane, target) in targets)
                             {
-                                var cell = await MeasureAsync(target, body, workload, concurrency, duration) with { Lane = lane, Repeat = repeat };
+                                // Relational point reads currently scan the full table. Five seconds can finish no
+                                // measured requests at c=16; give these cells a useful sample window on the same dataset.
+                                var window = workload == "read" && lane is "sql" or "hrana" or "pg"
+                                    ? TimeSpan.FromSeconds(Math.Max(30, duration.TotalSeconds)) : duration;
+                                var cell = await MeasureAsync(target, body, workload, concurrency, window) with { Lane = lane, Repeat = repeat };
                                 cells.Add(cell);
                                 await log.WriteLineAsync(JsonSerializer.Serialize(cell, VsTursoJson.Default.Cell));
                                 await log.FlushAsync(cancellationToken);
