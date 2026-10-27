@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
@@ -98,6 +99,41 @@ public sealed partial class DatabaseRecoveryTests
         await Assert.That(await ObservationAsync(api, orphan)).IsNull();
         await Assert.That(await CatalogAsync(api, "pending_database_cleanup", orphan.DatabaseId!)).IsNull();
         await Assert.That(File.Exists(Path.Combine(api.Server.DataDirectory, registered.Organization, registered.Project, registered.Id + ".db"))).IsTrue();
+    }
+
+    private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports"];
+
+    // Backup frames and native temporary files filled every node's log with one warning per file per pass (2026-10-27).
+    [Test]
+    public async Task Scratch_files_are_not_audited_and_an_orphan_file_is_named_once(CancellationToken token)
+    {
+        var logs = new CapturedLogs();
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            ManualAudit(services);
+            services.AddSingleton<ILoggerProvider>(logs);
+        });
+        string[] scratch = [.. ScratchDirectories.Select(name =>
+            Path.Combine(api.Server.DataDirectory, name, EntityIds.New() + ".frames"))];
+        foreach (var path in scratch)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, [1], token);
+        }
+
+        var registered = await api.CreateManagedDatabaseAsync();
+        var orphan = new TenantContext(registered.Organization, PlanTier.Hobby, registered.Project, EntityIds.New().ToString());
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        await engine.CreateDatabaseAsync(orphan, token);
+        await AuditAsync(api, token);
+        await AuditAsync(api, token);
+
+        await Assert.That(engine.EnumerateDatabaseFiles(token).Select(file => file.Path).Intersect(scratch)).IsEmpty();
+        var main = Path.Combine(api.Server.DataDirectory, orphan.OrganizationId, orphan.ProjectId!, orphan.DatabaseId + ".db");
+        string[] files = [.. logs.Messages.Where(message => message.StartsWith("Warning: Preserved database file without a catalog registration: ", StringComparison.Ordinal))];
+        await Assert.That(files).IsEquivalentTo(["Warning: Preserved database file without a catalog registration: " + main]);
+        await Assert.That(logs.Messages.Count(message => message.StartsWith("Warning: Preserved database without a catalog registration: " + orphan.DatabaseId + ",",
+            StringComparison.Ordinal))).IsEqualTo(2);
     }
 
     private static void ManualAudit(IServiceCollection services) => services.Remove(services.Single(descriptor =>

@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Amazon.Runtime;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
@@ -157,10 +158,18 @@ internal sealed class DatabaseBackupPurge(
             return absentAt is null || !await store.SnapshotsEnabledAsync(stop.Token).ConfigureAwait(false)
                 || !(await store.ListSnapshotsAsync(stop.Token).ConfigureAwait(false)).Any(snapshot => snapshot.At <= absentAt);
         }
-        catch (Exception) when (!token.IsCancellationRequested)
+        catch (Exception error) when (!token.IsCancellationRequested)
         {
             _failures.Add(1, new KeyValuePair<string, object?>("reason", "storage_unavailable"));
-            logger.ZLogWarning($"Backup erasure destination remains pending after a storage failure");
+            // Provider messages can hold credentials: only the error's type, HTTP status and bucket kind. Without them 31
+            // erasures failed every pass for two days on every node with nothing saying why (2026-10-27).
+            var status = error switch
+            {
+                HttpRequestException { StatusCode: { } code } => (int)code,
+                AmazonServiceException service => (int)service.StatusCode,
+                _ => 0,
+            };
+            logger.ZLogWarning($"Backup erasure destination remains pending after a storage failure: {error.GetType().Name:@Error}, HTTP status {status:@Status}, {(destination is null ? "platform" : "customer"):@Bucket} bucket");
             return false;
         }
     }

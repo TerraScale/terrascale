@@ -33,6 +33,7 @@ internal sealed partial class EngineManagementService
             var (_, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
             var complete = version == CatalogVersion;
             var pass = EntityIds.New();
+            var started = time.GetUtcNow();
             long count = 0, bytes = 0;
             var ownership = new Dictionary<TenantContext, bool>();
             foreach (var file in engine.EnumerateDatabaseFiles(cancellationToken))
@@ -75,7 +76,7 @@ internal sealed partial class EngineManagementService
                 }
                 // Only orphan paths write. Per-pass totals live in the catalog, so arbitrary sidecar ordering and
                 // bounded cache eviction cannot duplicate a warning or require an unbounded in-memory inventory.
-                var recorded = await WriteAsync<bool>(async transaction =>
+                var firstSeen = await WriteAsync<bool>(async transaction =>
                 {
                     if (await OwnedFileAsync(transaction, database, cancellationToken).ConfigureAwait(false))
                     {
@@ -92,10 +93,12 @@ internal sealed partial class EngineManagementService
                     var next = new OrphanDatabaseFile(database, seen?.FirstSeen ?? time.GetUtcNow(), pass,
                         (seen?.Seen == pass ? seen.Files : 0) + 1, (seen?.Seen == pass ? seen.Bytes : 0) + size);
                     await PutAsync(transaction, OrphanFiles, id, next, TerraBaseJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
-                    return true;
+                    // A sidecar listed before its main file may have created the record earlier in this pass.
+                    return next.FirstSeen >= started;
                 }, _ => { complete = false; return false; }, cancellationToken).ConfigureAwait(false);
-                // The main file names the database on disk: an operator finds it by this path.
-                if (recorded && file.Path.EndsWith(".db", StringComparison.Ordinal))
+                // The main file names the database on disk: an operator finds it by this path, once. Every pass after that
+                // reports the database in its summary below.
+                if (firstSeen && file.Path.EndsWith(".db", StringComparison.Ordinal))
                 {
                     logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
                 }

@@ -370,6 +370,30 @@ public sealed class UsageApiTests
         }
     }
 
+    // A flush prunes a page of buckets at a time; every expired one goes, however many pages they fill.
+    [Test]
+    public async Task A_flush_prunes_more_expired_buckets_than_one_page_holds()
+    {
+        var time = new FakeTimeProvider(Instant("2026-10-06T23:30:00Z"));
+        await using var api = await ManagementApi.StartAsync(time: time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        var owner = new DatabaseOwner(database.Organization, database.Project, database.Id);
+        for (var hour = 0; hour < 20; hour++)
+        {
+            meter.Add(new UsageKey(owner, Hour("2026-10-06T00:00:00Z") + hour), new OpCounts(1, 0));
+        }
+
+        await meter.FlushAsync(CancellationToken.None);
+        await Assert.That((await BucketsAsync(api.Server.DataDirectory, database.Id, "hours")).Count).IsEqualTo(20);
+
+        // 36 days later every one of those hours is past the 35 kept days.
+        time.Advance(TimeSpan.FromDays(36));
+        meter.Add(new UsageKey(owner, Hour("2026-11-11T23:00:00Z")), new OpCounts(1, 0));
+        await meter.FlushAsync(CancellationToken.None);
+        await Assert.That(await BucketsAsync(api.Server.DataDirectory, database.Id, "hours")).IsEquivalentTo(["2026-11-11T23"]);
+    }
+
     [Test]
     public async Task Counts_folded_into_a_day_or_the_lifetime_never_show_as_an_hour_or_as_1970()
     {

@@ -133,6 +133,10 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // SYSTEM's writer for up to 4.3 s on gru, and catalog anchors and replication applies queued behind it.
     internal const int FlushDatabases = 16;
 
+    // A flush usually expires at most one bucket per granularity of a database, under SYSTEM's writer. Pages of 100 read up
+    // to 300 buckets of every database saved to delete about one; flushes held the writer 0.4-0.6 s on average (2026-10-27).
+    private const int PrunePage = 8;
+
     // Best-effort dashboard usage, not billing: counts live only here until a flush saves them, so a crash loses at most
     // those counted since the last successful flush. A failed flush keeps them for the next; a clean shutdown flushes.
     private readonly ConcurrentDictionary<DatabaseOwner, ConcurrentDictionary<UsageKey, OpCounts>> _pending = new();
@@ -556,7 +560,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     {
         while (true)
         {
-            var page = await transaction.ListAsync(collection, afterId: null, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            var page = await transaction.ListAsync(collection, afterId: null, PrunePage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             var expired = page.Documents.TakeWhile(document => string.CompareOrdinal(document.Id, oldestKept) < 0).ToList();
             foreach (var document in expired)
             {

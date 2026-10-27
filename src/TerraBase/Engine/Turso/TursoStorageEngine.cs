@@ -45,6 +45,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix];
+
+    // The data directory's own scratch: native temporary files (.tmp), backup frames (.backup), import staging (.import) and
+    // export scratch (.exports). Never databases: the file audit warned about every backup frame and native temp file each
+    // pass, about 500 lines an hour per node (2026-10-27).
+    private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports"];
     internal DatabaseKeys Encryption { get; }
 
     // Opened stores, keyed by tenant and database; a database is bootstrapped once per process.
@@ -902,6 +907,17 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             ShouldRecursePredicate = (ref entry) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (entry.Directory.SequenceEqual(entry.RootDirectory))
+                {
+                    foreach (var scratch in ScratchDirectories)
+                    {
+                        if (entry.FileName.SequenceEqual(scratch))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
                 return (entry.Attributes & FileAttributes.ReparsePoint) == 0;
             },
             ShouldIncludePredicate = (ref entry) =>
