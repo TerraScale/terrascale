@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.E2E.Platform;
 // Every slice is initialized before a host serves, so cold concurrent first renders never share RazorSlices'
 // non-thread-safe initializer state. Each round loads fresh copies of the dashboard and RazorSlices, so the slice
 // initializers are cold again, as in a newly started process.
-public sealed class RazorSliceWarmupTests
+public sealed class RazorSliceWarmupContractTests
 {
     [Test]
     public async Task WarmupCoversEverySliceFile()
