@@ -15,17 +15,18 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <summary>
 /// The credential checks and attempt budgets behind the hosted sign-in, sign-up and password-reset pages and the device
 /// verification page. Every call is limited per end-user IP (an IPv6 address per /64, and per /48 at
-/// <see cref="SiteFactor"/> times the budget), and calls that send mail have a tighter per-IP budget; password attempts
-/// are also limited per email. Limits are shared by every replica and apply alike to addresses with and without an
+/// <see cref="SiteFactor"/> times the budget), and calls that send mail have a tighter per-IP budget. IP budgets are
+/// refilling token buckets sized for many users behind one NAT, so a burst from one office never locks it out for long;
+/// password and code attempts are also limited per email, which is what stops guessing against one account. Limits are shared by every replica and apply alike to addresses with and without an
 /// account, and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
 public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
 {
-    /// <summary>Calls per end-user IP per minute.</summary>
-    public const int PerIp = 30;
+    /// <summary>Calls an end-user IP may burst; one more is regained every <see cref="IpInterval"/>.</summary>
+    public const int PerIp = 120;
 
-    /// <summary>Mail-sending calls per end-user IP per <see cref="MailWindow"/>.</summary>
-    public const int MailPerIp = 10;
+    /// <summary>Mail-sending calls an end-user IP may burst; one more is regained every <see cref="MailInterval"/>.</summary>
+    public const int MailPerIp = 30;
 
     /// <summary>Password attempts per email per <see cref="PasswordWindow"/>.</summary>
     public const int PasswordPerEmail = 10;
@@ -33,8 +34,11 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// <summary>How many times an IP's budgets an IPv6 /48 (a site) gets, so holding many /64s buys little.</summary>
     public const int SiteFactor = 4;
 
-    /// <summary>The mail budget's window.</summary>
-    public static readonly TimeSpan MailWindow = TimeSpan.FromMinutes(15);
+    /// <summary>How often an IP regains one call: 30 a minute, sustained.</summary>
+    public static readonly TimeSpan IpInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>How often an IP regains one mail-sending call: 60 an hour, sustained.</summary>
+    public static readonly TimeSpan MailInterval = TimeSpan.FromMinutes(1);
 
     /// <summary>The password budget's window.</summary>
     public static readonly TimeSpan PasswordWindow = TimeSpan.FromMinutes(15);
@@ -47,8 +51,6 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
     /// <summary>The code budget's window; password reset has its own budget.</summary>
     public static readonly TimeSpan CodeWindow = TimeSpan.FromMinutes(30);
-
-    private static readonly TimeSpan IpWindow = TimeSpan.FromMinutes(1);
 
     // The hosted page's tenant: accounts, codes and rate-limit buckets never cross tenants.
     private string Tenant => Tenancy.Current(http.HttpContext);
@@ -202,24 +204,24 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     public async Task<TimeSpan?> LimitIpAsync(string ip, bool mails, CancellationToken cancellationToken)
     {
         var site = IPAddress.Parse(ip) is { AddressFamily: AddressFamily.InterNetworkV6 } v6 ? Prefix(v6, 6) : null;
-        List<(string Purpose, string Subject, int Maximum, TimeSpan Window)> budgets = [("headless-ip", ip, PerIp, IpWindow)];
+        List<(string Purpose, string Subject, int Burst, TimeSpan Interval)> budgets = [("hosted-ip", ip, PerIp, IpInterval)];
         if (site is not null)
         {
-            budgets.Add(("headless-ip-site", site, PerIp * SiteFactor, IpWindow));
+            budgets.Add(("hosted-ip-site", site, PerIp * SiteFactor, IpInterval / SiteFactor));
         }
 
         if (mails)
         {
-            budgets.Add(("headless-ip-mail", ip, MailPerIp, MailWindow));
+            budgets.Add(("hosted-ip-mail", ip, MailPerIp, MailInterval));
             if (site is not null)
             {
-                budgets.Add(("headless-ip-site-mail", site, MailPerIp * SiteFactor, MailWindow));
+                budgets.Add(("hosted-ip-site-mail", site, MailPerIp * SiteFactor, MailInterval / SiteFactor));
             }
         }
 
-        foreach (var (purpose, subject, maximum, window) in budgets)
+        foreach (var (purpose, subject, burst, interval) in budgets)
         {
-            if (await limiter.AcquireAsync(this.Tenant, purpose, limiter.Fold(subject), maximum, window, cancellationToken) is { } wait)
+            if (await limiter.AcquireTokenAsync(this.Tenant, purpose, limiter.Fold(subject), burst, interval, cancellationToken) is { } wait)
             {
                 logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
                 return wait;

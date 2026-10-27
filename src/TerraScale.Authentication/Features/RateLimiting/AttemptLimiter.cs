@@ -30,6 +30,9 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     // that keeps rejecting writes (or a stampede beyond it) reaches the ceiling and fails closed.
     private const int MaxRounds = 64;
 
+    // Milliseconds a token bucket's stored payoff time may lead this replica's clock before it counts as corrupt.
+    private const long MaxClockSkew = 24 * 60 * 60 * 1000;
+
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
 
     private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
@@ -89,6 +92,53 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// </summary>
     public async Task<TimeSpan?> AcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
         (await this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken))?.RetryAfter;
+
+    /// <summary>
+    /// Admits one request from a token bucket holding <paramref name="burst"/> tokens that regains one token per
+    /// <paramref name="interval"/> (GCRA). Each region stores the instant its own admissions are paid off; a request is
+    /// admitted while the summed outstanding debt leaves room for one more interval. Refused requests change nothing, so
+    /// retrying while limited never extends the wait. Returns <see langword="null"/> when admitted, otherwise the delay
+    /// after which the debt has drained enough (an upper bound, rounded up to whole seconds, at least one). Uses its
+    /// own purposes, never shared with fixed windows or cooldowns; attacker-chosen subjects must be folded.
+    /// </summary>
+    public async Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        ArgumentException.ThrowIfNullOrEmpty(purpose);
+        ArgumentNullException.ThrowIfNull(subject);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(burst);
+        var step = (long)interval.TotalMilliseconds;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(step, nameof(interval));
+        var capacity = checked(burst * step);
+        var keys = Regions.Select(component => this.BucketKey(purpose, component + ":" + subject)).ToArray();
+        for (var attempt = 0; attempt < Math.Min(burst + 2L, MaxRounds); attempt++)
+        {
+            var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
+            var components = await Task.WhenAll(keys.Select(component => this.store.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
+            if (components.Any(component => component is not null && (component.Document is not { Window: >= 0, Used: 0 }
+                || component.Document.Window > now + capacity + MaxClockSkew)))
+            {
+                throw ApiException.Unavailable(new InvalidDataException("A stored token bucket holds an invalid payoff time."));
+            }
+
+            var debt = components.Sum(component => component is null ? 0 : Math.Max(0L, component.Document.Window - now));
+            if (debt + step > capacity)
+            {
+                return TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((debt + step - capacity) / 1000.0)));
+            }
+
+            var current = components[this.regionIndex];
+            var bucket = new AttemptBucket(Math.Max(current?.Document.Window ?? 0, now) + step, 0);
+            if (current is null
+                ? await this.store.TryCreateAsync(Collection, instanceId, keys[this.regionIndex], bucket, cancellationToken)
+                : await this.store.TryReplaceAsync(Collection, instanceId, keys[this.regionIndex], bucket, current.Version, cancellationToken))
+            {
+                return null;
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
 
     /// <summary>
     /// Claims one notice attempt for an actual account and authentication purpose at the persisted lockout deadline.

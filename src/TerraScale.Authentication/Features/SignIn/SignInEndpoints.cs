@@ -40,11 +40,18 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
-            ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]),
-                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null)));
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (SignInFlow.WrongSlug(this.HttpContext))
+        {
+            return Results.NotFound();
+        }
+
+        var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
+        return await SignInFlow.ResumeAsync(this.HttpContext, next, cancellationToken)
+            ?? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, SignInFlow.Tenant(this.HttpContext), Next: next,
+                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null));
+    }
 }
 
 /// <summary>
@@ -262,10 +269,17 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
-            ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]))));
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (SignInFlow.WrongSlug(this.HttpContext))
+        {
+            return Results.NotFound();
+        }
+
+        var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
+        return await SignInFlow.ResumeAsync(this.HttpContext, next, cancellationToken)
+            ?? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), Next: next));
+    }
 }
 
 /// <summary>
@@ -576,6 +590,33 @@ internal static class SignInFlow
         await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
+    }
+
+    /// <summary>
+    /// A redirect back to the authorization request in <paramref name="next"/> when the browser already holds a live
+    /// session for the page's tenant, so a signed-in visitor sent to sign in or sign up again (an application that lost
+    /// its own session) returns without a second sign-in; otherwise null. The authorization endpoint still enforces
+    /// max_age and prompt, and refuses rather than redirects back here, so this never loops.
+    /// </summary>
+    public static async Task<IResult?> ResumeAsync(HttpContext context, string? next, CancellationToken cancellationToken)
+    {
+        var tenant = Tenant(context);
+        if (next is null || !next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+            || context.Request.Cookies[Tenancy.SessionCookie(tenant)] is not { Length: > 0 } token)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await context.RequestServices.GetRequiredService<Sessions>().ResolveAsync(tenant, token, cancellationToken) is null
+                ? null : Results.Redirect(next);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        {
+            // The page still works; the authorization request checks the session again.
+            return null;
+        }
     }
 
     /// <summary>The single sign-on page when <paramref name="email"/> must sign in through its organization's identity provider; otherwise null.</summary>
