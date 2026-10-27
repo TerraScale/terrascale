@@ -97,7 +97,7 @@ public sealed partial class HostedEmailLocaleTests(TerraBaseFixture fixture)
     [Arguments("reset/complete", false)]
     public async Task Project_lockout_notices_keep_tenant_branding_locale_and_notification_purpose(string action, bool branded)
     {
-        var clock = new ManualClock(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var faker = new Faker();
         var (_, token) = await oidc.SignInUserAsync(faker.Internet.Email().ToLowerInvariant());
@@ -129,6 +129,9 @@ public sealed partial class HostedEmailLocaleTests(TerraBaseFixture fixture)
 
         var form = new Dictionary<string, string> { ["email"] = address, ["password"] = "Wrong-password-123!", ["code"] = "not-a-code" };
         var maximum = action == "sign-in/password" ? HostedAuth.PasswordPerEmail : HostedAuth.CodePerEmail;
+        var window = action == "sign-in/password" ? HostedAuth.PasswordWindow : HostedAuth.CodeWindow;
+        var seconds = (long)window.TotalSeconds;
+        var deadline = DateTimeOffset.FromUnixTimeSeconds((clock.GetUtcNow().ToUnixTimeSeconds() / seconds + 1) * seconds);
         for (var attempt = 0; attempt < maximum; attempt++)
         {
             using var admitted = await oidc.PostFormAsync($"/ui/{project}/{action}", form);
@@ -141,7 +144,7 @@ public sealed partial class HostedEmailLocaleTests(TerraBaseFixture fixture)
             using var request = Form($"/ui/{project}/{action}", form, "pt-BR,pt;q=0.9,en;q=0.8");
             using var locked = await oidc.Client.SendAsync(request);
             await Assert.That(locked.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(locked.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.CodeWindow);
+            await Assert.That(locked.Headers.RetryAfter!.Delta).IsEqualTo(deadline - clock.GetUtcNow());
             await Assert.That(OidcHarness.SessionCookie(locked)).IsNull();
         }
 
@@ -161,7 +164,7 @@ public sealed partial class HostedEmailLocaleTests(TerraBaseFixture fixture)
         await Assert.That(message.ReplyTo).IsNull();
         await Assert.That(message.Subject).IsEqualTo($"Pausa temporária de autenticação em {name}");
         await Assert.That(message.Html).Contains("<html lang=\"pt-BR\"");
-        await Assert.That(message.Text).Contains((clock.GetUtcNow() + HostedAuth.CodeWindow).UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture));
+        await Assert.That(message.Text).Contains(deadline.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture));
         await Assert.That(message.Text).Contains("Sent by TerraScale Authentication.").And.DoesNotContain("Platform-only").And.DoesNotContain("Other tenant brand");
         await Assert.That(message.Html).DoesNotContain("Platform-only").And.DoesNotContain("Other tenant brand");
         if (branded)

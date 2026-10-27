@@ -29,7 +29,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
     [Arguments("reset", true)]
     public async Task Full_queue_refuses_known_and_unknown_mail_starts_and_preserves_abuse_limits(string action, bool projectTenant)
     {
-        var clock = new ManualClock(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         var captured = new CapturingEmailSender();
         var sender = new GatedEmailSender(captured);
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, clock: clock,
