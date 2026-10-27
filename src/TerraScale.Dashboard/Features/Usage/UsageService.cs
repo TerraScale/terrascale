@@ -27,6 +27,8 @@ public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, strin
     string PlanName, UsageReading? Scope, AnalyticsLinePlot? History, string UsageSource, string UsageError, string AllowanceError, string PlanUsageNote, bool OrganizationStorageMeasured, UsageReplication Replication)
 {
     public UsageStorageFact? StoredScope { get; init; }
+    // Set when a plan without overage billing has used its monthly operation units: TerraBase refuses new writes.
+    public string WritesPaused { get; init; } = "";
     public InternalBill? InternalBill { get; init; }
     public long? ScopeLogicalBytes => Scope?.LogicalBytes ?? StoredScope?.LogicalBytes;
     public bool ScopeStorageMeasured => ScopeLogicalBytes is not null;
@@ -41,6 +43,14 @@ public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, strin
 
 public sealed class UsageService(IUsageMeasurements measurements, SpendingService spending, IUsageReplication replication, IUsageStorage storage, TimeProvider time)
 {
+    // A plan without overage billing stops new writes at its monthly operation units (TerraBase answers operation_allowance).
+    public static string WritesPaused(BillingPlan? plan, long monthlyOperations, long? units, DateTimeOffset now)
+    {
+        if (plan is not { PriceCents: 0 } || monthlyOperations is <= 0 or long.MaxValue || units is not { } used || used < monthlyOperations) return "";
+        var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        return string.Create(CultureInfo.InvariantCulture, $"Writes are paused: this organization used all {monthlyOperations:N0} operation units of the {plan.Name} plan for {month:MMMM yyyy}. Reads and deletes keep working, and writes resume on {month.AddMonths(1):MMMM d} (UTC).");
+    }
+
     public async Task<UsagePage> LoadAsync(ShellModel shell, UsageSelection selection, string tab, string saved, CancellationToken cancellationToken)
     {
         var controls = await spending.ReadAsync(selection.Context, cancellationToken);
@@ -83,6 +93,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, 0, true, false),
             Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
         };
+        var writesPaused = WritesPaused(plan, limits.MonthlyOperations, units, time.GetUtcNow());
         var scope = result.Scope.State == UsageSourceState.Measured ? result.Scope.Reading : null;
         if (scope is not null && (scope.ProjectId != selection.Context.Project?.Id || scope.DatabaseId != selection.DatabaseId)) throw new IOException("Selected usage scope is invalid.");
         var scopeName = selection.DatabaseId.Length > 0 ? "database" : "project";
@@ -118,6 +129,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.", organizationStorage is not null, await replicationRead)
         {
             StoredScope = selection.DatabaseId.Length > 0 ? stored?.Scope(selection) : null,
+            WritesPaused = writesPaused,
             InternalBill = selection.Context.Organization!.InternalBilling is not null
             ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
         };
