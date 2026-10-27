@@ -14,6 +14,7 @@ restore() { git -C "$sdk" restore --source="$head" -- "${files[@]}"; }
 trap restore EXIT
 bin="$root/benchmark/dotnet/VsTurso/bin/https"
 mkdir -p "$bin" "$(dirname "$prefix")"
+"$root/scripts/vendor/download-turso-native.sh"
 build() {
   dotnet build "$root/tests/TerraBase.E2E" --configuration Release -p:TsDotnetRoot="$sdk"
   mkdir -p "$bin/$1"
