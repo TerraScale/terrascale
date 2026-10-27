@@ -55,8 +55,14 @@ public sealed class FileStorageService(AccountService accounts, IProjectAccessTo
     public async Task DeleteAsync(AccountContext context, string bucket, string file, CancellationToken token) =>
         await (await ProjectAsync(context, true, token)).DeleteBucketFileAsync(bucket, file, token);
 
-    public async Task<TerraBaseFileUrl> DownloadAsync(AccountContext context, string bucket, string file, CancellationToken token) =>
-        await (await ProjectAsync(context, false, token)).CreateFileDownloadAsync(bucket, file, token);
+    public async Task<TerraBaseFileUrl> DownloadAsync(AccountContext context, string bucket, string file, CancellationToken token)
+    {
+        var signed = await (await ProjectAsync(context, false, token)).CreateFileDownloadAsync(bucket, file, token);
+        if (!Uri.TryCreate(signed.Url, UriKind.Absolute, out var url) || url.Scheme != "https" || url.UserInfo.Length > 0
+            || url.Fragment.Length > 0 || !url.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase))
+            throw new HttpRequestException("Invalid download capability.");
+        return signed;
+    }
 
     private async Task<TerraBaseProjectClient> ProjectAsync(AccountContext context, bool write, CancellationToken token)
     {
