@@ -66,7 +66,11 @@ and verifies project deletion in every region after revoking its key and deletin
 SIGTERM runs cleanup. For an abrupt benchmark-process kill or host crash, its persisted
 acting-user receipt supports `perf-suite.sh cleanup <live-output-directory> <probe-binary> <source-sha>`
 on the same serving host. Recovery is confined to that synthetic user and refuses
-unexpected organization/project/database counts. It does not claim cleanup while a host is unavailable.
+unexpected organization/project/database counts or names. An abrupt-process-kill test
+on SJC returned exit 137, then recovery revoked its key and deleted its database,
+project and organization (204); the project was absent in all three regions (404).
+Receipts are retained under `perf-baseline-20261027/diagnostics/recovery-test/`.
+It does not claim cleanup while a host is unavailable.
 
 Live latency uses c=1, 60 reads per endpoint/size/repeat at at most 10 requests/s,
 with persistent clients on each serving host. This measures normal service load, not
@@ -87,8 +91,8 @@ with zero missing probes and successful project deletion in all regions.
 | gru → fra | 180 | 202.543 | 1,107.936 | not met |
 | sjc → fra | 180 | 131.725 | 1,443.139 | not met |
 
-The two inbound GRU directions and GRU endpoint latency await trusted NetBird SSH access;
-two host-key verification failures were escalated rather than disabling verification.
+GRU endpoint latency and its two inbound directions are running after the parent supplied
+a working trusted SSH entry; the peers file confirms this is the serving GRU node.
 No repeat/stress runs or workflow changes were added to GitHub CI.
 The superseded short-window local calibration and the SJC x86 probe attempt are retained
 under `perf-baseline-20261027/diagnostics/` and excluded from qualification.
