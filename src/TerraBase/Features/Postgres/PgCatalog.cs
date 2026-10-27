@@ -177,7 +177,9 @@ internal static partial class PgCatalog
 
     private static PgColumn[] Text(params string[] names) => [.. names.Select(name => new PgColumn(name, PostgresStatements.TextOid))];
 
-    [GeneratedRegex(@"\b(?:pg_catalog|information_schema)\s*\.|\b(?:FROM|JOIN)\s+pg_\w+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    // A schema-qualified catalog name, or an unqualified catalog relation or view (pg_catalog is searched first). A user
+    // table that only starts with pg_, such as pg_orders, is ordinary SQL.
+    [GeneratedRegex(@"\b(?:pg_catalog|information_schema)\s*\.|\b(?:FROM|JOIN)\s+(?:pg_(?:aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|available_extensions|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|group|index|indexes|inherits|language|locks|matviews|namespace|opclass|operator|opfamily|policies|policy|prepared_statements|proc|publication|range|replication_slots|rewrite|roles|rules|sequence|sequences|settings|shadow|shdepend|shdescription|statistic|statistic_ext|tables|tablespace|timezone_names|trigger|ts_config|ts_dict|type|user|user_mappings|views)|pg_stat(?:io)?_\w+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CatalogPattern();
 
     [GeneratedRegex(@"\ASELECT\s+((?:(?:pg_catalog\.)?(?:current_database\(\)|current_schema(?:\(\))?|current_user|session_user|version\(\))\s*(?:,\s*|\z))+)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
