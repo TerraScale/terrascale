@@ -265,6 +265,7 @@ public sealed class DocumentApiTests
         await Assert.That(Offset(replaced)).IsGreaterThan(Offset(created));
         await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.ETag).IsEqualTo(replaced.Version);
+        await Assert.That(read.Version).IsEqualTo(read.ETag);
         await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(read.Json.GetProperty("state").GetString()).IsEqualTo("value");
         await Assert.That(read.Json.GetProperty("document").GetProperty("email").GetString()).IsEqualTo(person.email);
