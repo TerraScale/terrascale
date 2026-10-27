@@ -6,6 +6,8 @@ using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
@@ -30,7 +32,21 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
         ArgumentNullException.ThrowIfNull(application);
         application.ClientId = TerraScaleIds.Validate(application.ClientId);
         (application.Id, application.InstanceId) = (application.ClientId, this.Tenant);
-        application.Version = (await store.CreateAsync(Collection, this.Tenant, application.ClientId, Serialize(application), cancellationToken).ConfigureAwait(false)).Version;
+        if (http.HttpContext?.Items[TenantDirectory.ClientIssuanceCaller] is UserRecord caller)
+        {
+            application.SecretBindings = caller.StepUpBindings;
+            if (await store.TransactAsync([.. StepUpProofs.Requirements(caller), AuthStore.Create(Collection, this.Tenant, application.ClientId, Serialize(application))], cancellationToken).ConfigureAwait(false) is not null)
+            {
+                throw StepUpProofs.Required();
+            }
+
+            application.Version = (await store.GetAsync(Collection, this.Tenant, application.ClientId, cancellationToken).ConfigureAwait(false))?.Version
+                ?? throw StepUpProofs.Required();
+        }
+        else
+        {
+            application.Version = (await store.CreateAsync(Collection, this.Tenant, application.ClientId, Serialize(application), cancellationToken).ConfigureAwait(false)).Version;
+        }
     }
 
     /// <inheritdoc />
@@ -68,6 +84,12 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 
         var application = document.Document.Deserialize(OidcJson.Default.OidcApplication);
         if (application is null || application.InstanceId != this.Tenant || application.ClientId != identifier || application.Id != identifier)
+        {
+            return null;
+        }
+
+        if (application.ClientSecret is not null && Tenancy.IsProject(application.InstanceId)
+            && (application.SecretBindings.Count == 0 || !await store.AreCredentialsCurrentAsync(PlatformDirectory.Instance, application.SecretBindings, cancellationToken).ConfigureAwait(false)))
         {
             return null;
         }

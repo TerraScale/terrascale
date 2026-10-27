@@ -20,6 +20,9 @@ public enum PasscodePurpose
 
     /// <summary>Creates the account a sign-up asked for.</summary>
     SignUp,
+
+    /// <summary>Reauthenticates one purpose-bound step-up request.</summary>
+    StepUp,
 }
 
 /// <summary>A freshly issued passcode for the caller to email. It is not stored and cannot be recovered.</summary>
@@ -69,6 +72,26 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// <summary>Issues a sign-in code; see <see cref="RequestAsync(string, string, PasscodePurpose, CancellationToken)"/>.</summary>
     public Task<IssuedPasscode?> RequestAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
         this.RequestAsync(instanceId, email, PasscodePurpose.SignIn, cancellationToken);
+
+    /// <summary>Issues a dedicated code bound to a hosted step-up request, sharing the user's mail budget.</summary>
+    internal Task<IssuedPasscode?> RequestStepUpAsync(UserRecord user, string requestId, CancellationToken cancellationToken) =>
+        this.IssueAsync(user.InstanceId, requestId, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.StepUp,
+            null, Tokens.Sha256Hex(requestId), cancellationToken);
+
+    /// <summary>Consumes only this request's step-up code and retains its winning credential lineage.</summary>
+    internal async Task<UserRecord?> RedeemStepUpAsync(UserRecord user, string requestId, string code, CancellationToken cancellationToken)
+    {
+        if (!WellFormed(code))
+        {
+            return null;
+        }
+
+        var consumed = await this.ConsumeAsync(user.InstanceId, requestId, code.Trim(), PasscodePurpose.StepUp,
+            value => value.UserId == user.Id && value.AuthEpoch == user.AuthEpoch && value.AuthStamp == user.AuthStamp
+                && value.PendingTokenHash == Tokens.Sha256Hex(requestId), cancellationToken).ConfigureAwait(false);
+        return consumed?.AuthenticatedUser ?? (consumed is { Binding: { } binding }
+            ? user with { AuthenticationBindings = [.. user.AuthenticationBindings, .. consumed.IssuanceBindings, binding] } : null);
+    }
 
     /// <summary>
     /// Issues a sign-in or password-reset code that replaces the user's previous code. Returns <see langword="null"/>
@@ -231,6 +254,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     {
         PasscodePurpose.PasswordReset => "password-reset",
         PasscodePurpose.SignUp => "sign-up",
+        PasscodePurpose.StepUp => "step-up",
         _ => null,
     };
 
@@ -242,8 +266,15 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         string? passwordHash, string? pendingTokenHash, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
+        var collection = purpose == PasscodePurpose.StepUp ? AuthStore.StepUpPasscodeCollection : AuthStore.PasscodeCollection;
+        var document = await store.GetAsync(collection, instanceId, key, cancellationToken).ConfigureAwait(false);
         var previous = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
+        // One isolated issuance per step-up attempt. Sign-in ancestry and its recovery rollover never enter this row.
+        if (purpose == PasscodePurpose.StepUp && previous is not null)
+        {
+            return null;
+        }
+
         if (previous is not null && (previous.InstanceId != instanceId || previous.Email != email
             || (purpose is not PasscodePurpose.SignUp && previous.UserId != userId)))
         {
@@ -280,11 +311,12 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             ResetsAuthentication = recovery,
             PreviousCodeHash = carried?.CodeHash,
             PreviousExpiresAt = carried?.ExpiresAt,
+            StepUpRequestId = purpose == PasscodePurpose.StepUp ? key : null,
         };
         var record = JsonSerializer.SerializeToElement(passcode, IdentityJson.Default.PasscodeRecord);
         List<StoreOperation> operations = [document is null
-            ? AuthStore.Create(AuthStore.PasscodeCollection, instanceId, key, record)
-            : AuthStore.Replace(AuthStore.PasscodeCollection, instanceId, key, record, document.Version)];
+            ? AuthStore.Create(collection, instanceId, key, record)
+            : AuthStore.Replace(collection, instanceId, key, record, document.Version)];
         if (issuance is not null)
         {
             operations.Add(AuthStore.CredentialClaim(instanceId, issuance));
@@ -302,11 +334,12 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     private async Task<PasscodeRecord?> ConsumeAsync(string instanceId, string key, string code, PasscodePurpose purpose, Func<PasscodeRecord, bool> belongs,
         CancellationToken cancellationToken, string? passwordHash = null)
     {
+        var collection = purpose == PasscodePurpose.StepUp ? AuthStore.StepUpPasscodeCollection : AuthStore.PasscodeCollection;
         // A round loses its write only to another charged guess, a redemption or a reissue, each bounded, so these
         // rounds reach a verdict under any realistic contention. Running out reveals nothing and charges nothing.
         for (var round = 0; round < MaxAttempts + 2; round++)
         {
-            var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
+            var document = await store.GetAsync(collection, instanceId, key, cancellationToken).ConfigureAwait(false);
             var passcode = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
             var now = clock.GetUtcNow();
             if (passcode is null || passcode.Consumed || passcode.FailedAttempts >= MaxAttempts || passcode.ExpiresAt <= now
@@ -323,7 +356,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             var matches = expires > now;
             var charged = matches ? passcode with { Consumed = true, PasswordHash = null } : passcode with { FailedAttempts = passcode.FailedAttempts + 1 };
             var binding = matches ? AuthStore.NewCredentialBinding("passcode", AuthStore.NaturalKeyId(instanceId, key, passcode.IssueId.Length > 0 ? passcode.IssueId : passcode.CodeHash)) : null;
-            List<StoreOperation> operations = [AuthStore.Replace(AuthStore.PasscodeCollection, instanceId, key,
+            List<StoreOperation> operations = [AuthStore.Replace(collection, instanceId, key,
                 JsonSerializer.SerializeToElement(charged, IdentityJson.Default.PasscodeRecord), document!.Version)];
             if (binding is not null)
             {
@@ -331,7 +364,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             }
 
             UserRecord? authenticated = null;
-            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not PasscodePurpose.SignUp)))
+            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not (PasscodePurpose.SignUp or PasscodePurpose.StepUp))))
             {
                 if (await users.GetVersionedAsync(instanceId, passcode.UserId, cancellationToken).ConfigureAwait(false) is not { } current
                     || current.User.AuthEpoch != passcode.AuthEpoch || current.User.AuthStamp != passcode.AuthStamp)

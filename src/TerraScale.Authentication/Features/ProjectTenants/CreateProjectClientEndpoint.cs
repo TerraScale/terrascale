@@ -8,7 +8,7 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 
 /// <summary><c>POST /v1/{project}/clients</c>.</summary>
 public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenIddictApplicationManager applications, PlatformAuthentication authentication,
-    ProjectAuthSettings settings) : ProjectTenantEndpoint(tenants, authentication)
+    ProjectAuthSettings settings, StepUpProofs proofs) : ProjectTenantEndpoint(tenants, authentication)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -38,7 +38,8 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             }
         }
 
-        var (client, secret) = await this.Tenants.CreateClientAsync(this.HttpContext, projectId, name, type, redirects, applications, cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "create_oauth_client", cancellationToken);
+        var (client, secret) = await this.Tenants.CreateClientAsync(this.HttpContext, caller, projectId, name, type, redirects, applications, cancellationToken);
         return Results.Json(Map(client, secret), ProjectTenantJson.Default.ClientBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/clients/{client.ClientId}");
     }

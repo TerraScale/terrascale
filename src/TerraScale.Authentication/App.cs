@@ -28,6 +28,16 @@ public static class App
     /// <summary>Service key for peer-only management calls to the regional TerraBase endpoint.</summary>
     public const string StorageAuthority = "terrabase-authority";
 
+    /// <summary>Single-use proofs and shared mail budgets require GRU's one TerraBase writer in production.</summary>
+    public static void ValidateAuthenticationAuthority(AuthOptions options, string? region)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if ((!options.Development || options.CloudflareEmail is not null) && (region ?? (options.Development ? "gru" : null)) != "gru")
+        {
+            throw new AuthConfigurationException("Authentication requires the GRU authority for durable single-use proofs and email admission");
+        }
+    }
+
     /// <summary>
     /// The trusted regional storage endpoint, required outside Development. Reads and writes use this copy without
     /// remote fallback; replicated winner claims reconcile concurrent conditional credentials.
@@ -108,6 +118,7 @@ public static class App
         builder.Services.AddHostedService(services => services.GetRequiredService<DeletionCleanup>());
         builder.Services.AddSingleton<PlatformBootstrap>();
         builder.Services.AddSingleton<PlatformAuthentication>();
+        builder.Services.AddSingleton<StepUpProofs>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<EndUserAccessTokens>();
@@ -173,11 +184,7 @@ public static class App
 
         configure?.Invoke(builder);
 
-        // TS-996: hosted auth serves only GRU. Regional LWW writes would lose concurrent mail charges.
-        if (options.CloudflareEmail is not null && (builder.Configuration["TS_REGION"] ?? (options.Development ? "gru" : null)) != "gru")
-        {
-            throw new AuthConfigurationException("Shared email admission requires the GRU authentication authority");
-        }
+        ValidateAuthenticationAuthority(options, builder.Configuration["TS_REGION"]);
 
         // A named TerraBase requires a valid peer credential before the first storage request.
         if (options.TerraBaseUrl is not null
