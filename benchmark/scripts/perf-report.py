@@ -49,6 +49,8 @@ def report(directory, baseline=None):
         before = json.loads(pathlib.Path(baseline).read_text())
         if not before["valid"] or not data["valid"] or before["metadata"]["host"] != metadata["host"]:
             raise ValueError("comparison requires complete zero-error runs on the same host")
+        if any(before["metadata"].get(key) != metadata.get(key) for key in ("cpus", "dotnet", "cpu_model")):
+            raise ValueError("comparison host CPU or .NET SDK identity differs")
         old = collections.defaultdict(list)
         for cell in before["cells"]:
             old[cell["Size"], cell["Workload"], cell["Concurrency"], cell["Lane"]].append(cell)
