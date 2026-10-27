@@ -9,7 +9,17 @@ mkdir -p "$(dirname "$out")"
 if [[ ${4:-} != cleanup ]]; then mkdir "$out"; fi
 umask 077
 work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+job=
+cleanup() {
+  if [[ -n "$job" ]] && kill -0 "$job" 2>/dev/null; then
+    kill -TERM "$job" 2>/dev/null || true
+    wait "$job" || true
+  fi
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 container=$(join <(sudo -n ctr -n terrascale containers ls | awk '$2 ~ /terrascale\/terrabase@/ {print $1}' | sort) \
   <(sudo -n ctr -n terrascale tasks ls | awk '$3 == "RUNNING" {print $1}' | sort))
 [[ -n "$container" && "$container" != *$'\n'* ]] || { echo 'expected one running TerraBase'; exit 1; }
@@ -35,4 +45,7 @@ PY
 fi
 cp "$out/user" "$work/user"
 python3 -I "$root/benchmark/scripts/perf-live.py" "$work" "$region" "$sha" "$out/live.jsonl" "$probe" \
-  "$root/scripts/terrabase/endpoint-replication-proof.py" "${@:4}"
+  "$root/scripts/terrabase/endpoint-replication-proof.py" "${@:4}" &
+job=$!
+wait "$job"
+job=
