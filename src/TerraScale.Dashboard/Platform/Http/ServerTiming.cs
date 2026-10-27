@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Http;
 
@@ -56,10 +58,20 @@ public sealed class ServerTiming
         async Task<T> StartAsync() => await read();
     }
 
-    // Token exchange and refresh grants change no account, organization or billing state.
+    // Token grants and publishing storage allowances change none of the account/permission/billing
+    // records the dashboard context reads. All other mutations still invalidate it, including failed writes.
     private static bool Mutates(HttpRequestMessage request) =>
         request.Method != HttpMethod.Get && request.Method != HttpMethod.Head && request.Method != HttpMethod.Options &&
-        !(Upstream(request.RequestUri) == "auth" && request.RequestUri!.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal));
+        !(Upstream(request.RequestUri) == "auth" && request.RequestUri!.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal)) &&
+        !PublishesPlan(request);
+
+    private static bool PublishesPlan(HttpRequestMessage request)
+    {
+        if (request.Method != HttpMethod.Put || Upstream(request.RequestUri) != "state" ||
+            !request.Options.TryGetValue(TerraBasePlanSync.Publication, out _)) return false;
+        return request.RequestUri!.AbsolutePath.Split('/') is
+            ["", "admin", "organizations" or "projects", var id, "plan"] && TerraScaleIds.IsValid(id);
+    }
 
     // Upstream names by host: ts-auth, TerraBase's public API, the dashboard's own state database, Stripe.
     public static string Upstream(Uri? uri) => uri?.Host switch
