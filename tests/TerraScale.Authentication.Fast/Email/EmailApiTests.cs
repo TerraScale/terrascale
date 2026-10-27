@@ -486,7 +486,10 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             services.AddSingleton<IEmailSender>(new ProductSender(captured, Cloudflare(http))));
         using var response = await SendAsync(oidc, HttpMethod.Post, Base + "/test", new JsonObject
         {
-            ["kind"] = "password_reset", ["locale"] = "en", ["to"] = "admin@example.test", ["actor"] = Actor.DeepClone(),
+            ["kind"] = "password_reset",
+            ["locale"] = "en",
+            ["to"] = "admin@example.test",
+            ["actor"] = Actor.DeepClone(),
         });
         await Assert.That((int)response.StatusCode).IsEqualTo(expected);
         await Assert.That(provider.Calls).IsEqualTo(1);
