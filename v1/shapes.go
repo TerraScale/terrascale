@@ -210,7 +210,7 @@ func (c *Client) shapeGET(ctx context.Context, path []string, query url.Values, 
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
 		shapeRetry := (resp.status == http.StatusTooManyRequests && apiErr.Code == ErrShapeBusy) || (resp.status == http.StatusServiceUnavailable && (apiErr.Code == ErrShapeTooLarge || apiErr.Code == ErrUnavailable))
-		delay, retry := retryDelay(apiErr, attempt, true)
+		delay, retry := retryDelay(apiErr, attempt, true, true)
 		if shapeRetry {
 			delay, retry = backoff(attempt), true
 			if apiErr.retryAfterSet {

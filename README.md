@@ -136,7 +136,8 @@ RetryAfter, ETag, Body, RequestID}`, and every error code is also an error value
 `tb.ErrUnknownDatabase` or `tb.ErrNameTaken`. A 404 for a deleted document
 carries the tombstone version in `ETag`, which recreates it with `IfMatch`.
 `Body` preserves the complete error response, including malformed JSON;
-`RequestID` preserves an `X-Request-ID` response header when supplied. Truncated
+`RequestID` preserves an `X-Request-ID` response header when supplied, and
+`Error()` ends with `[request <id>]` so logged errors can be traced. Truncated
 or oversized error responses retain bounded bytes and an unwrap-able read
 cause. Successful typed responses reject empty, null and malformed envelopes.
 
@@ -145,10 +146,11 @@ so the client never sends one. Only requests a replay cannot apply twice are
 retried: reads, read-only SQL, queries and writes with an `IfMatch`
 version (a transaction when every write op has one). `IfNoneMatchAny` is not
 enough, since a tombstone left by another writer satisfies it again. For
-those, 429 is retried after `Retry-After`, and the transient rejections
+those, 429 `rate_limited` and `tenant_busy` (an admission refusal) are
+retried after `Retry-After`, and the transient rejections
 (`capacity`, `storage_unavailable`, `dependencies_unavailable`) with backoff.
-Transport errors and `commit_uncertain` are retried only for reads and
-queries. Mutations return uncertain outcomes without a replay: use
+Transport errors, gateway `502`/`504` answers and `commit_uncertain` are
+retried only for reads and queries. Mutations return uncertain outcomes without a replay: use
 `errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
@@ -594,11 +596,15 @@ ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
   organization or project token, as ts-dashboard (confidential, `ClientSecret`)
   or ts-cli (public) does.
 
-Both return a `*tsauth.TokenSource`: it caches the token until 60 seconds
-before it expires, concurrent callers share one request, failures are not
-cached, and `Invalidate(token)` drops a token a resource server refused. It
-satisfies `v1.TokenSource`. Errors from the token endpoint are
-`*tsauth.Error{Status, Code, Description, RetryAfter}`. The issuer defaults to
+Both return a `*tsauth.TokenSource`: from 60 seconds (at most half the
+lifetime) before expiry it refreshes the token in the background while callers
+keep using the cached one; callers wait for a new token only 10 seconds (at most
+a quarter of the lifetime) before expiry. Concurrent callers share one request.
+A refresh retries 429, 502, 503, 504 and transport failures up to three times
+with full-jitter backoff or `Retry-After` inside its 30-second budget; other
+failures are returned and not cached. `Invalidate(token)` drops a token a
+resource server refused. It satisfies `v1.TokenSource`. Errors from the token
+endpoint are `*tsauth.Error{Status, Code, Description, RetryAfter, RequestID}`. The issuer defaults to
 `https://auth.terrascale.tech/terrascale`.
 
 ```go

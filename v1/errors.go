@@ -42,6 +42,7 @@ const (
 	ErrPayloadTooLarge      ErrorCode = "payload_too_large"
 	ErrUnsupportedMediaType ErrorCode = "unsupported_media_type"
 	ErrRateLimited          ErrorCode = "rate_limited"
+	ErrTenantBusy           ErrorCode = "tenant_busy"    // 429: refused at admission, before execution; retry after Retry-After
 	ErrInternalError        ErrorCode = "internal_error" // 500; never retried, its effect is unknown
 	ErrCapacity             ErrorCode = "capacity"
 	ErrStorageUnavailable   ErrorCode = "storage_unavailable"
@@ -134,6 +135,9 @@ func (e *APIError) Error() string {
 	}
 	if e.Op != nil {
 		fmt.Fprintf(&b, " (op %d)", *e.Op)
+	}
+	if e.RequestID != "" {
+		fmt.Fprintf(&b, " [request %s]", e.RequestID)
 	}
 	return b.String()
 }
