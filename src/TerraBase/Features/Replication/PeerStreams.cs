@@ -43,7 +43,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         new("no machine of another region that holds the database is connected; this write executed nothing, retry later", "remote_region_unavailable");
 
     private static readonly Conflict SingleCopy =
-        new("the database is placed in its home region alone and takes no writes; this write executed nothing, add replicaRegions or allRegions",
+        new("the database is placed in its home region alone and takes no writes; this write executed nothing. Add a region to its placement: replicaRegions or allRegions in a placement update (CLI: ts db regions <database> <region>)",
             "placement_needs_two_regions");
 
     private readonly IMembership _membership;

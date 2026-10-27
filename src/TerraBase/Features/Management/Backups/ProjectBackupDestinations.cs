@@ -22,10 +22,13 @@ internal sealed class ProjectBackupDestinations(
     // At most four entries, one per organization; rejected callers never form a queue.
     private readonly HashSet<string> _saving = [with(StringComparer.Ordinal)];
 
+    // Still not_found, so callers that test the code keep working; the message says nothing is configured.
+    private static readonly NotFound NotSet = new("no backup destination is set for this project; set one with setBackupDestination");
+
     public ValueTask<ReadBackupDestinationResult> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken) =>
         catalog.ReadAsync<ReadBackupDestinationResult>(async transaction =>
             await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false)
-                is { } record ? record : new NotFound(), static error => error, cancellationToken);
+                is { } record ? record : NotSet, static error => error, cancellationToken);
 
     public async Task<SaveBackupDestinationResult> SaveAsync(
         string userId, string organizationId, string projectId, ProjectBackupDestinationRequest request, CancellationToken cancellationToken)

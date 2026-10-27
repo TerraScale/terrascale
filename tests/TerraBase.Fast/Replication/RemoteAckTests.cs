@@ -293,8 +293,10 @@ public sealed class RemoteAckTests
         var id = EntityIds.New().ToString();
         using var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("error").GetProperty("code").GetString())
-            .IsEqualTo("placement_needs_two_regions");
+        var error = (await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("error");
+        await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("placement_needs_two_regions");
+        // The refusal names the fix for API and CLI callers alike.
+        await Assert.That(error.GetProperty("message").GetString()).Contains("ts db regions <database> <region>");
         await Assert.That(response.Headers.RetryAfter).IsNull();
         using (var absent = await pair.Client.GetAsync(pair.Document(id), pair.Token))
         {
