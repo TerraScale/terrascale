@@ -3,6 +3,14 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
+if [[ ${1:-} == report ]]; then
+  evidence=${2:?evidence directory}
+  status=0
+  python3 benchmark/scripts/perf-report.py "$evidence/local" || status=1
+  python3 benchmark/scripts/perf-live-report.py "$evidence" || status=1
+  cat "$evidence/local/summary.md" "$evidence/live-summary.md"
+  exit "$status"
+fi
 if [[ ${1:-} == live ]]; then
   shift
   exec bash benchmark/scripts/perf-live.sh "$@"

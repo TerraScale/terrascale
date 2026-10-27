@@ -7,7 +7,7 @@ import statistics
 import sys
 
 
-def report(directory):
+def report(directory, baseline=None):
     directory = pathlib.Path(directory)
     metadata = json.loads((directory / "metadata.json").read_text())
     raw = directory / "local.raw"
@@ -44,8 +44,26 @@ def report(directory):
                              observed=observed, target=target, gap_ratio=ratio))
     gaps.sort(key=lambda row: row["gap_ratio"], reverse=True)
     data = dict(metadata=metadata, valid=not invalid, cells=cells, ranked_read_gaps=gaps)
+    comparison = []
+    if baseline is not None:
+        before = json.loads(pathlib.Path(baseline).read_text())
+        if not before["valid"] or not data["valid"] or before["metadata"]["host"] != metadata["host"]:
+            raise ValueError("comparison requires complete zero-error runs on the same host")
+        old = collections.defaultdict(list)
+        for cell in before["cells"]:
+            old[cell["Size"], cell["Workload"], cell["Concurrency"], cell["Lane"]].append(cell)
+        if set(old) != set(groups) or any({r.get("Seconds") for r in old[key]} != {r.get("Seconds") for r in rows}
+                                          for key, rows in groups.items()):
+            raise ValueError("comparison cell matrix or measurement durations differ")
+        for key, rows in groups.items():
+            changes = {field: 100 * (med(rows, field) / med(old[key], field) - 1)
+                       for field in ("OpsPerSecond", "P50Micros", "P99Micros")}
+            comparison.append(dict(size=key[0], workload=key[1], concurrency=key[2], lane=key[3], delta_percent=changes))
+        data["comparison"] = dict(baseline_sha=before["metadata"]["sha"], cells=comparison)
     (directory / "results.json").write_text(json.dumps(data, indent=2) + "\n")
     lines = ["# TerraScale performance baseline", "", f"Source: `{metadata['sha']}`; host: `{metadata['host']}`.",
+             f"Main source: `{metadata['main_sha']}`; CPUs: {metadata['cpus']}; starting load: {metadata['load_before']}.",
+             f"Starting CPU pressure: `{metadata['cpu_pressure_before'].splitlines()[0]}`. Load samples include build and preload.",
              f"Three interleaved repeats; status: {'INVALID / incomplete or failed cells' if invalid else 'complete, zero operation errors'}.",
              "", "Q-PARITY read targets: c=1 each percentile ≤ 1.1 × (raw Turso + TCP echo); "
              "c=16 ops/s ≥ 0.9 × min(raw Turso, TCP echo). Applying the Wire budget to other endpoints is an aspirational comparison.",
@@ -56,16 +74,25 @@ def report(directory):
                      f"{gap['observed']:.1f} | {gap['target']:.1f} | {gap['gap_ratio']:.2f}× |")
     lines += ["", "## All local cells", "", "Percentiles are medians of per-repeat percentiles, not pooled percentiles. "
               "Batch throughput counts requests; each batch contains 16 documents. These are closed-loop measurements.",
-              "", "| Size | Operation | c | Lane | ops/s median (min–max) | p50 µs | p99 µs | Errors |",
-              "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |"]
+              "", "| Size | Operation | c | Lane | ops/s median (min–max) | p50 µs | p99 µs | Samples | Errors |",
+              "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |"]
     for (size, workload, concurrency, lane), rows in groups.items():
         rates = [r["OpsPerSecond"] for r in rows]
         lines.append(f"| {size} | {workload} | {concurrency} | {lane} | {statistics.median(rates):.0f} "
                      f"({min(rates):.0f}–{max(rates):.0f}) | {med(rows, 'P50Micros'):.1f} | "
-                     f"{med(rows, 'P99Micros'):.1f} | {sum(r['Errors'] for r in rows)} |")
+                     f"{med(rows, 'P99Micros'):.1f} | {sum(r.get('Samples', 0) for r in rows)} | {sum(r['Errors'] for r in rows)} |")
+    if comparison:
+        lines += ["", "## Change vs baseline", "", "Deltas compare three-repeat medians; positive throughput and negative latency are improvements. "
+                  "These deltas alone do not establish statistical significance. Inspect repeat spreads and host load.",
+                  "", "| Size | Operation | c | Lane | ops/s Δ % | p50 Δ % | p99 Δ % |",
+                  "| --- | --- | ---: | --- | ---: | ---: | ---: |"]
+        for row in comparison:
+            change = row["delta_percent"]
+            lines.append(f"| {row['size']} | {row['workload']} | {row['concurrency']} | {row['lane']} | "
+                         f"{change['OpsPerSecond']:+.2f} | {change['P50Micros']:+.2f} | {change['P99Micros']:+.2f} |")
     (directory / "summary.md").write_text("\n".join(lines) + "\n")
     return int(invalid)
 
 
 if __name__ == "__main__":
-    sys.exit(report(sys.argv[1]))
+    sys.exit(report(*sys.argv[1:]))
