@@ -148,8 +148,8 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
             EmailDeliveryOutcome acknowledgement;
             try
             {
-                acknowledgement = await sender.DeliverAsync(user.Email, Acknowledgement(request, reference, subject, message)
-                    with { Purpose = EmailPurpose.Support, Tenant = request.OrganizationId! }, cancellationToken).ConfigureAwait(false);
+                var acknowledgementMessage = Acknowledgement(request, reference, subject, message) with { Purpose = EmailPurpose.Support, Tenant = request.OrganizationId! };
+                acknowledgement = await sender.DeliverAsync(user.Email, acknowledgementMessage, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException && !cancellationToken.IsCancellationRequested)
             {
