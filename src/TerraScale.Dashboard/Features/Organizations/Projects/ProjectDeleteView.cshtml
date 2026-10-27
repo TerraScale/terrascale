@@ -5,11 +5,11 @@
     @if (project.Databases.Count > 0)
     {
         <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">Project still has @ValueFormat.Plural(project.Databases.Count, "database")</p><p class="ts-alert-body">Delete @(project.Databases.Count == 1 ? "it" : "them") first, then delete the project.</p></div>
-        <div class="ts-dialog-actions"><form method="post" action="/api/v1/dashboard/switch-project"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><input type="hidden" name="projectId" value="@project.Id" /><input type="hidden" name="returnUrl" value="/databases" /><button class="ts-btn ts-btn-secondary" type="submit">Open databases</button></form><button class="ts-btn ts-btn-danger" type="button" disabled>Delete project</button></div>
+        <div class="ts-dialog-footer"><form method="post" action="/api/v1/dashboard/switch-project"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><input type="hidden" name="projectId" value="@project.Id" /><input type="hidden" name="returnUrl" value="/databases" /><button class="ts-btn ts-btn-secondary" type="submit">Open databases</button></form><button class="ts-btn ts-btn-danger" type="button" disabled>Delete project</button></div>
     }
     else
     {
-        <form method="post" action="@("/api/v1/dashboard/organization/projects/" + Uri.EscapeDataString(project.Id) + "/delete")" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="delete-project-confirmation-@project.Id">Enter “@project.Name” to confirm</label><input class="ts-input" id="delete-project-confirmation-@project.Id" name="confirmation" autocomplete="off" required /></div><div class="ts-dialog-actions"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="delete-project-@project.Id">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete project</button></div></form>
+        <form method="post" action="@("/api/v1/dashboard/organization/projects/" + Uri.EscapeDataString(project.Id) + "/delete")" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="delete-project-confirmation-@project.Id">Enter “@project.Name” to confirm</label><input class="ts-input" id="delete-project-confirmation-@project.Id" name="confirmation" autocomplete="off" required /></div><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="delete-project-@project.Id">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Delete project</button></div></form>
     }
     </div></dialog>
 }

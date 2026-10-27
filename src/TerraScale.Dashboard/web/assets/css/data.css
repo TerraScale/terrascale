@@ -288,10 +288,11 @@ code:not(pre code) {
 .ts-chart-area { fill: var(--ts-chart-1); fill-opacity: 0.18; }
 
 /* Hover columns: a guide line, dots per value, and a tooltip, revealed on
-   hover and keyboard focus. The focused column tints its band instead of
-   drawing an outline around the hidden tooltip. */
-.ts-chart-column {
-  outline: none;
+   hover and keyboard focus. Keep a solid ring as well as the band tint so
+   keyboard focus does not depend on a subtle background change. */
+.ts-chart-column:focus-visible {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: -2px;
 }
 
 .ts-chart-hit {

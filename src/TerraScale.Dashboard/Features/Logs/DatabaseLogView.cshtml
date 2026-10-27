@@ -2,7 +2,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Logs.DatabaseLogPage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @using System.Globalization
-<main class="ts-page ts-db-detail" data-database-id="@Model.Database.Id">
+<main class="ts-page" data-database-id="@Model.Database.Id">
     @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "logs")))
     <section class="ts-card" aria-labelledby="request-logs-title">
         <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="request-logs-title">Request logs</h2><p class="ts-card-description">The latest 100 recorded requests within 24 hours, newest first. Restarts and capacity limits can omit requests. Recent requests from other regions may arrive later. Requests older than 24 hours are excluded; stored records are pruned on the next database log flush.</p></div></header>

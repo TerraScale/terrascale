@@ -41,7 +41,7 @@
                 {
                     <div class="ts-row"><button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="remove-sso">Remove connection</button></div>
                     <dialog id="remove-sso" class="ts-dialog" closedby="any" aria-labelledby="remove-sso-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="remove-sso-title">Remove single sign-on</h2><p class="ts-dialog-description">People at @connection.Domain go back to email code and password sign-in. Their accounts and memberships stay.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="remove-sso">@Icons.Render("X", 18)</button></header>
-                        <form method="post" action="/api/v1/dashboard/organization/sso/delete" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-dialog-actions"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="remove-sso">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Remove connection</button></div></form></div></dialog>
+                        <form method="post" action="/api/v1/dashboard/organization/sso/delete" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="remove-sso">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Remove connection</button></div></form></div></dialog>
                 }
             }
         }
@@ -54,7 +54,7 @@
                     <div class="ts-field"><label class="ts-label" for="sso-issuer">Issuer URL</label><input class="ts-input" id="sso-issuer" name="oidc_issuer" type="url" required value="@connection?.Oidc?.Issuer" placeholder="https://idp.example/realms/acme" /></div>
                     <div class="ts-field"><label class="ts-label" for="sso-client-id">Client ID</label><input class="ts-input" id="sso-client-id" name="oidc_client_id" required value="@connection?.Oidc?.ClientId" autocomplete="off" /></div>
                     <div class="ts-field"><label class="ts-label" for="sso-client-secret">Client secret</label><input class="ts-input" id="sso-client-secret" name="oidc_client_secret" type="password" autocomplete="new-password" /><p class="ts-hint">@(connection?.Oidc?.ClientSecretSet == true ? "A secret is set. Leave this blank to keep it, or enter a new one to replace it." : "Write-only: it is never shown again.")</p></div>
-                    <div class="ts-dialog-actions"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="configure-sso">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save connection</button></div>
+                    <div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="configure-sso">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save connection</button></div>
                 </form></div></dialog>
         }
     </div>

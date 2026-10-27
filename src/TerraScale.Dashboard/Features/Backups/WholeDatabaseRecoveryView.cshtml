@@ -2,7 +2,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Backups
 @using TerraScale.Dashboard.Features.Databases
-<main class="ts-page ts-db-detail">
+<main class="ts-page">
 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
 <section class="ts-card" aria-labelledby="pitr-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="pitr-title">Restore database at UTC time</h2><p class="ts-card-description">Restore retained history into a new database in this project. @Model.Database.Name stays unchanged.</p></div></header><div class="ts-card-body ts-stack-lg">
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}

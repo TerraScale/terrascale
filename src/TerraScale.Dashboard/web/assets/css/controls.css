@@ -1,5 +1,21 @@
 /* Buttons and form controls. */
 
+/* Keyboard shortcuts, including the sidebar search hint. */
+.ts-kbd {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 var(--ts-s1);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+  font-weight: 500;
+  line-height: var(--ts-lh);
+}
+
 .ts-btn {
   display: inline-flex;
   flex: none;

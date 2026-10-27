@@ -18,7 +18,7 @@
     }
     @if (Model.Listing is { } listing)
     {
-        <section class="ts-card" aria-label="File buckets"><div class="ts-card-header"><h2 class="ts-card-title">Buckets</h2></div>
+        <section class="ts-card" aria-label="File buckets"><div class="ts-card-head"><h2 class="ts-card-title">Buckets</h2></div>
             @if (listing.Buckets.Items.Count == 0)
             {
                 <div class="ts-empty"><p class="ts-empty-title">No buckets yet</p><p class="ts-meta">Create a bucket to store project files and choose who can read or write them.</p></div>
@@ -39,7 +39,7 @@
         </section>
         @if (canWrite)
         {
-            <details class="ts-card ts-card-boxed"><summary class="ts-card-header">Create bucket</summary><div class="ts-card-body">
+            <details class="ts-card ts-card-boxed"><summary class="ts-card-head">Create bucket</summary><div class="ts-card-body">
                 <form method="post" action="/api/v1/dashboard/storage/bucket" class="ts-form">
                     <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
                     <div class="ts-field"><label class="ts-label" for="bucket-name">Bucket name</label><input class="ts-input" id="bucket-name" name="name" required maxlength="63" placeholder="avatars" /></div>
@@ -50,7 +50,7 @@
         }
         @if (listing.BucketId is { } bucketId && listing.Files is { } files)
         {
-            <section class="ts-card" aria-label="Stored files"><div class="ts-card-header"><h2 class="ts-card-title">@(selected?.Name ?? "Selected bucket")</h2><p class="ts-meta">Completed files. Deleted and expired upload reservations remain in usage until cleanup succeeds.</p></div>
+            <section class="ts-card" aria-label="Stored files"><div class="ts-card-head"><h2 class="ts-card-title">@(selected?.Name ?? "Selected bucket")</h2><p class="ts-meta">Completed files. Deleted and expired upload reservations remain in usage until cleanup succeeds.</p></div>
                 @if (files.Items.Count == 0)
                 {
                     <div class="ts-empty"><p class="ts-empty-title">No completed files</p><p class="ts-meta">Upload a file to this bucket to get started.</p></div>
@@ -77,7 +77,7 @@
             </section>
             @if (canWrite)
             {
-                <section class="ts-card ts-card-boxed" aria-label="Upload file"><div class="ts-card-header"><h2 class="ts-card-title">Upload file</h2></div><div class="ts-card-body">
+                <section class="ts-card ts-card-boxed" aria-label="Upload file"><div class="ts-card-head"><h2 class="ts-card-title">Upload file</h2></div><div class="ts-card-body">
                     <form class="ts-form" method="post" action="/api/v1/dashboard/storage/upload" data-file-upload>
                         <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
                         <div class="ts-field"><label class="ts-label" for="storage-file">File</label><input class="ts-input" type="file" id="storage-file" name="file" required /><p class="ts-hint">1 byte–100 MiB. Your browser hashes the file before upload. Contents and metadata cannot be changed afterward.</p></div>
@@ -89,7 +89,7 @@
                 </div></section>
                 @if (selected is not null)
                 {
-                    <details class="ts-card ts-card-boxed"><summary class="ts-card-header">Bucket access rules</summary><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/storage/rules">
+                    <details class="ts-card ts-card-boxed"><summary class="ts-card-head">Bucket access rules</summary><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/storage/rules">
                         <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" />
                         @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", selected.Rules, true)))
                         <p class="ts-hint">Changes stop new capabilities. Download URLs already issued remain valid for up to 60 seconds.</p>

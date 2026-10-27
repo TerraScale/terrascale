@@ -22,7 +22,7 @@
                 @foreach (var range in OrganizationFilters.Ranges.Where(range => range.Days <= Math.Max(7, Model.Access?.AuditRetentionDays ?? 90))) { <option value="@range.Id" selected="@(Model.Filter.Range == range.Id ? "selected" : null)">@range.Label</option> }
             </select></label>
             <button class="ts-btn ts-btn-primary ts-btn-sm ts-audit-apply" type="submit">Apply filters</button>
-            <details class="ts-dropdown ts-dropdown-end"><summary class="ts-dropdown-trigger ts-btn ts-btn-secondary ts-btn-sm" aria-label="Export audit events">@Icons.Render("Download", 16)<span>Export</span></summary><div class="ts-dropdown-panel" aria-label="Export formats"><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "csv")">@Icons.Render("FileText", 15)<span>Export CSV</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "json")">@Icons.Render("FileJson", 15)<span>Export JSON</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "ndjson")">@Icons.Render("FileJson", 15)<span>Export NDJSON</span></a></div></details>
+            <details class="ts-menu ts-menu-end" data-on:click__outside="el.open = false" data-on:click="evt.target.closest('.ts-menu-panel a') &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.open &amp;&amp; (el.open = false, el.querySelector('summary').focus())"><summary class="ts-btn ts-btn-secondary ts-btn-sm" aria-label="Export audit events">@Icons.Render("Download", 16)<span>Export</span></summary><div class="ts-menu-panel" aria-label="Export formats"><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "csv")">@Icons.Render("FileText", 15)<span>Export CSV</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "json")">@Icons.Render("FileJson", 15)<span>Export JSON</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "ndjson")">@Icons.Render("FileJson", 15)<span>Export NDJSON</span></a></div></details>
         </form>
         @if (Model.AuditRows.Count > 0)
         {
@@ -44,7 +44,7 @@
         @if (Model.Access?.AuditEvents.Any(item => OrganizationFilters.AuditSeverity(item) == "unknown") == true) { <p class="ts-meta" role="status">Severity is not reported for some provider events.</p> }
     </div>
 </section>
-<section class="ts-card ts-card-boxed" id="audit-breakdown" aria-labelledby="audit-breakdown-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="audit-breakdown-title">Severity breakdown</h2><p class="ts-card-description">Events in the current filtered view</p></div></header><div class="ts-card-body"><dl class="ts-grid-3 ts-audit-breakdown">
+<section class="ts-card ts-card-boxed" id="audit-breakdown" aria-labelledby="audit-breakdown-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="audit-breakdown-title">Severity breakdown</h2><p class="ts-card-description">Events in the current filtered view</p></div></header><div class="ts-card-body"><dl class="ts-grid-3">
     @foreach (var share in new[] { ("Informational", "info", "info"), ("Warning", "warning", "warn"), ("Critical severity", "danger", "critical"), ("Not reported", "neutral", "unknown") })
     {
         var count = Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == share.Item3); var total = Model.AuditMatches.Count; var percent = total == 0 ? 0 : (int)Math.Round(count * 100d / total, MidpointRounding.AwayFromZero);

@@ -522,14 +522,6 @@ details[open] > .ts-account-trigger {
   white-space: nowrap;
 }
 
-.ts-search kbd {
-  padding: 0 var(--ts-s1);
-  border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-sm);
-  color: var(--ts-ink-3);
-  font: 500 11px / 18px var(--ts-font-mono);
-}
-
 #ts-search-dialog {
   width: min(560px, calc(100vw - 32px));
   margin-top: 12vh;
