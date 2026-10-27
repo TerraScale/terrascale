@@ -301,6 +301,7 @@ public class SqliteCommand : DbCommand
     private SqliteDataReader Execute(string method, CommandBehavior behavior = CommandBehavior.Default)
     {
         EnsureExecutable(method);
+        Turso.Raw.Public.TursoBindings.DiagCount(Turso.Raw.Public.TursoBindings.DiagExecutes, CommandText);
         if (Connection!.IsManagedConnection)
         {
             return ExecuteManagedAsync(method, behavior, CancellationToken.None)

@@ -7,6 +7,16 @@ namespace Turso.Raw.Public;
 
 public static class TursoBindings
 {
+    // SCRATCH DIAGNOSTIC, never merged.
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long>? DiagPrepares =
+        Environment.GetEnvironmentVariable("TB_DIAG_PREPARES") is { Length: > 0 } ? new() : null;
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long>? DiagExecutes =
+        Environment.GetEnvironmentVariable("TB_DIAG_PREPARES") is { Length: > 0 } ? new() : null;
+    public static void DiagCount(System.Collections.Concurrent.ConcurrentDictionary<string, long>? counts, string sql)
+    {
+        counts?.AddOrUpdate((Thread.CurrentThread.Name ?? "pool") + " | " + sql.ReplaceLineEndings(" "), 1, (_, n) => n + 1);
+    }
+
     public static TursoDatabaseHandle OpenDatabase(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
@@ -114,6 +124,7 @@ public static class TursoBindings
     {
         db.ThrowIfInvalid();
         ArgumentNullException.ThrowIfNull(sql);
+        DiagCount(DiagPrepares, sql);
 
         var status = TursoInterop.ConnectionPrepareSingle(db, sql, out var statementPtr, out var errorPtr);
         ThrowIfError(status, errorPtr, "Unable to prepare statement: ");

@@ -212,6 +212,8 @@ namespace TerraBase.E2E
 
                     if (now >= measureFrom && Interlocked.Exchange(ref cpuMarked, 1) == 0)
                     {
+                        Turso.Raw.Public.TursoBindings.DiagPrepares?.Clear();
+                        Turso.Raw.Public.TursoBindings.DiagExecutes?.Clear();
                         cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
                         gcBefore = GC.GetTotalAllocatedBytes();
                     }
@@ -253,6 +255,15 @@ namespace TerraBase.E2E
             }
 
             var ops = all.Length;
+            if (Turso.Raw.Public.TursoBindings.DiagPrepares is { } diagPrepares)
+            {
+                var path = Environment.GetEnvironmentVariable("TB_DIAG_PREPARES") + $"/{target.GetType().Name}-{body.Size}-{workload}-{concurrency}.txt";
+                var lines = new List<string> { $"ops {ops}" };
+                lines.AddRange(diagPrepares.OrderByDescending(pair => pair.Value).Select(pair => $"P {pair.Value / (double)Math.Max(ops, 1):F3} {pair.Value} {pair.Key}"));
+                lines.AddRange(Turso.Raw.Public.TursoBindings.DiagExecutes!.OrderByDescending(pair => pair.Value).Select(pair => $"E {pair.Value / (double)Math.Max(ops, 1):F3} {pair.Value} {pair.Key}"));
+                File.WriteAllLines(path, lines);
+            }
+
             return new Cell(
                 string.Empty, 0, body.Size, workload, concurrency, Math.Round(ops / duration.TotalSeconds), Math.Round(Micros(0.50), 1), Math.Round(Micros(0.99), 1),
                 ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors);
