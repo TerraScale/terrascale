@@ -214,6 +214,7 @@ namespace TerraBase.E2E
                     {
                         Turso.Raw.Public.TursoBindings.DiagPrepares?.Clear();
                         Turso.Raw.Public.TursoBindings.DiagExecutes?.Clear();
+                        Turso.Raw.Public.TursoBindings.DiagTicks?.Clear();
                         cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
                         gcBefore = GC.GetTotalAllocatedBytes();
                     }
@@ -261,6 +262,7 @@ namespace TerraBase.E2E
                 var lines = new List<string> { $"ops {ops}" };
                 lines.AddRange(diagPrepares.OrderByDescending(pair => pair.Value).Select(pair => $"P {pair.Value / (double)Math.Max(ops, 1):F3} {pair.Value} {pair.Key}"));
                 lines.AddRange(Turso.Raw.Public.TursoBindings.DiagExecutes!.OrderByDescending(pair => pair.Value).Select(pair => $"E {pair.Value / (double)Math.Max(ops, 1):F3} {pair.Value} {pair.Key}"));
+                lines.AddRange(Turso.Raw.Public.TursoBindings.DiagTicks!.OrderByDescending(pair => pair.Value).Select(pair => $"T {pair.Value * 1e6 / Stopwatch.Frequency / Math.Max(ops, 1):F1}us/op {pair.Key}"));
                 File.WriteAllLines(path, lines);
             }
 

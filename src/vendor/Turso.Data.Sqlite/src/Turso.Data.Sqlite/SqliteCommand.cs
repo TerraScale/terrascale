@@ -167,6 +167,8 @@ public class SqliteCommand : DbCommand
 
     public override int ExecuteNonQuery()
     {
+        var diagStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        using var diag = new DiagScope(CommandText, diagStarted);
         using var reader = Execute("ExecuteNonQuery");
         while (reader.Read())
         {
@@ -181,6 +183,7 @@ public class SqliteCommand : DbCommand
 
     public override object? ExecuteScalar()
     {
+        using var diag = new DiagScope(CommandText, System.Diagnostics.Stopwatch.GetTimestamp());
         using var reader = Execute("ExecuteScalar");
         return reader.Read() ? reader.GetValue(0) : null;
     }
@@ -234,7 +237,16 @@ public class SqliteCommand : DbCommand
 
     public new SqliteDataReader ExecuteReader() => Execute("ExecuteReader");
 
-    public new SqliteDataReader ExecuteReader(CommandBehavior behavior) => Execute("ExecuteReader", behavior);
+    public new SqliteDataReader ExecuteReader(CommandBehavior behavior)
+    {
+        using var diag = new DiagScope("READER " + CommandText, System.Diagnostics.Stopwatch.GetTimestamp());
+        return Execute("ExecuteReader", behavior);
+    }
+
+    private readonly struct DiagScope(string sql, long started) : IDisposable
+    {
+        public void Dispose() => Turso.Raw.Public.TursoBindings.DiagTime(sql, started);
+    }
 
     protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) => Execute("ExecuteReader", behavior);
 

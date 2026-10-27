@@ -12,6 +12,13 @@ public static class TursoBindings
         Environment.GetEnvironmentVariable("TB_DIAG_PREPARES") is { Length: > 0 } ? new() : null;
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long>? DiagExecutes =
         Environment.GetEnvironmentVariable("TB_DIAG_PREPARES") is { Length: > 0 } ? new() : null;
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long>? DiagTicks =
+        Environment.GetEnvironmentVariable("TB_DIAG_PREPARES") is { Length: > 0 } ? new() : null;
+    public static void DiagTime(string sql, long started)
+    {
+        DiagTicks?.AddOrUpdate((Thread.CurrentThread.Name ?? "pool") + " | " + sql.ReplaceLineEndings(" "), System.Diagnostics.Stopwatch.GetTimestamp() - started,
+            (_, n) => n + System.Diagnostics.Stopwatch.GetTimestamp() - started);
+    }
     public static void DiagCount(System.Collections.Concurrent.ConcurrentDictionary<string, long>? counts, string sql)
     {
         counts?.AddOrUpdate((Thread.CurrentThread.Name ?? "pool") + " | " + sql.ReplaceLineEndings(" "), 1, (_, n) => n + 1);
@@ -125,8 +132,10 @@ public static class TursoBindings
         db.ThrowIfInvalid();
         ArgumentNullException.ThrowIfNull(sql);
         DiagCount(DiagPrepares, sql);
+        var diagStarted = System.Diagnostics.Stopwatch.GetTimestamp();
 
         var status = TursoInterop.ConnectionPrepareSingle(db, sql, out var statementPtr, out var errorPtr);
+        DiagTime("PREPARE " + sql, diagStarted);
         ThrowIfError(status, errorPtr, "Unable to prepare statement: ");
 
         return db.OwnStatement(statementPtr);
