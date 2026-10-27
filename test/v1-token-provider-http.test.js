@@ -147,7 +147,7 @@ describe("per-request bearer token providers over HTTP", () => {
       expect(token).toHaveBeenCalledTimes(1);
     });
 
-  test("auth_unavailable retries safe reads while retaining the token", async () => {
+  test("auth_unavailable retries safe reads, asking the provider per attempt", async () => {
     let calls = 0;
     const { baseUrl, requests } = await fixture((_request, response) => {
       if (++calls === 1) {
@@ -159,7 +159,8 @@ describe("per-request bearer token providers over HTTP", () => {
     const docs = createTerraBaseClient({ project, baseUrl, token }).database("app").collection("users");
     await expect(docs.get("01ARZ3NDEKTSV4RRFFQ69G5FA2")).resolves.toEqual(document);
     expect(requests).toHaveLength(2);
-    expect(token).toHaveBeenCalledTimes(1);
+    expect(token).toHaveBeenCalledTimes(2);
+    expect(requests.map(request => request.headers.authorization)).toEqual([`Bearer ${first}`, `Bearer ${first}`]);
   });
 
 });

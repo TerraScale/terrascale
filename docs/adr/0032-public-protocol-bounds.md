@@ -13,5 +13,6 @@ The accepted native codec and actual producer vectors are authoritative for
 operation-specific bounds. Schema helpers apply the same aggregate document
 budget. Identity discovery has its separate 64 KiB document limit. Deadlines
 cover credentials, discovery, dispatch and response consumption. Mutations are
-never automatically replayed. Invalid media, malformed values, cancellation,
+never automatically replayed; replay-safe reads retry transient refusals within
+their fixed deadline. Invalid media, malformed values, cancellation,
 and uncertain outcomes must remain observable in installed consumers.

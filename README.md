@@ -517,7 +517,27 @@ Use `oidc.introspectResource` with independently configured `issuer`, exact `aud
 are preserved. Replace the key: neither error retries or triggers token exchange.
 The SDK has no exchanged-token cache; caller-owned providers must discard the
 refused token and stop exchanging that key.
-Safe GET requests retry `503 auth_unavailable` at most twice with backoff and
-`Retry-After`, retaining the token. Waits over 30 seconds surface the error.
-Shape subscriptions also include it in their existing backoff. Mutations remain
-single-attempt.
+
+### Read deadline and retries
+
+Replay-safe reads are GET operations and the read-only `query`, `sql`, `checkSql`
+and `explainSql` POSTs. Each has one fixed 60-second deadline covering endpoint
+resolution, the token provider, retries and the response body; for `changes` and
+`export` it lasts until response headers arrive. Expiry rejects with a
+`DOMException` named `TimeoutError`. A caller's `signal` can only shorten it and
+keeps its own abort reason.
+
+A replay-safe read is resent at most three times after a connection failure
+before any response, `429 tenant_busy`/`tenant_memory`/`shape_busy`, `503
+storage_busy`/`unavailable`/`auth_unavailable`/`catalog_stale`/
+`remote_region_unavailable`/`confirmation_busy`, or a body-less 502, 503 or 504.
+It waits at least `Retry-After`, plus exponential backoff with full jitter (up to
+2 seconds), so clients refused together do not return in lockstep. A wait the
+deadline cannot cover surfaces the refusal at once. Each attempt asks the token
+provider again. The last refusal surfaces as the typed `TerraBaseV1Error`.
+Validation, authentication, authorization, not-found, conflict, quota and other
+503 refusals are never retried. Shape reads and subscriptions keep their own
+stale-state publication and backoff.
+
+Mutations are sent once and carry only the caller's `signal`: abandoning one
+makes its outcome uncertain, and index builds, restores and branches can run long.

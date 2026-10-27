@@ -13,7 +13,7 @@ import { managementV1Routes } from "./management-routes.js";
  * @property {string} responseMediaType
  * @property {readonly number[]} successStatuses
  * @property {"none"} idempotencyKey The producer rejects Idempotency-Key.
- * @property {boolean} replaySafe Informational only; requests are never automatically replayed.
+ * @property {boolean} replaySafe Informational; the transport resends only reads and read-only queries, never mutations.
  * @property {string} contract
  * @property {readonly string[]} contractText
  */
