@@ -43,11 +43,11 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         }
         await SaveStepAsync(client, new() { ["step"] = "payment-method", ["bypass"] = "1" });
         var name = new string('P', 101);
-        using var rejected = await PostStepAsync(client, new() { ["step"] = "project", ["name"] = name, ["region"] = "SFO" });
+        using var rejected = await PostStepAsync(client, new() { ["step"] = "project", ["name"] = name, ["region"] = "SJC" });
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
         var draft = await rejected.Content.ReadAsStringAsync();
         await Assert.That(draft).Contains("value=\"" + name + "\"");
-        await Assert.That(draft).Contains("value=\"SFO\" selected=\"selected\"");
+        await Assert.That(draft).Contains("value=\"SJC\" selected=\"selected\"");
         await Assert.That(draft).Contains("Use a project name with 100 characters or fewer.");
     }
 
