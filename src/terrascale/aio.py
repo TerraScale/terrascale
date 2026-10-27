@@ -127,13 +127,13 @@ class AsyncTerraScale:
         return await self._send(_spec.list_databases(self.project, limit, cursor))
 
     async def rename_database(self, database_id: str, name: str) -> models.Database:
-        """Rename by immutable ULID with ``databases:write``; return metadata.
+        """Rename by immutable ULID or current name with ``databases:write``; return metadata.
 
-        Availability remains held pending the owning API; see docs/database-rename.md.
-        The pending contract keeps ID, data, keys and placement unchanged. Invalid names return
-        400 (or local ValueError); duplicate names in the project return 409.
-        Old name routes return 404. Update name-based connection strings and
-        handles; ID-based strings remain stable. Reconcile uncertain failures
+        See docs/database-rename.md for producer availability and conflict handling.
+        ID, data, keys and placement stay unchanged. Invalid names return
+        400 (or local ValueError); known same-region duplicates return 409.
+        After convergence the old name has no alias and may be claimed again.
+        Update name-based connection strings and handles; ID-based strings remain stable. Reconcile uncertain failures
         before explicitly retrying this mutation.
         """
         return await self._send(_spec.rename_database(self.project, database_id, name))

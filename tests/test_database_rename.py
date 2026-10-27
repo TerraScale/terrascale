@@ -16,11 +16,12 @@ RENAMED = {"id": DATABASE_ID, "projectId": PROJECT, "name": "orders_new", "regio
            "replicaRegions": ["fra"], "allRegions": False, "createdAt": "2026-10-26T00:00:00Z"}
 
 
+@pytest.mark.parametrize("selector", [DATABASE_ID, "orders"])
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 409, 421, 503, 0])
-async def test_rename_contract_and_errors(asynchronous: bool, status: int) -> None:
+async def test_rename_contract_and_errors(asynchronous: bool, status: int, selector: str) -> None:
     requests = []
-    code = {400: "invalid_request", 409: "name_taken", 421: "wrong_region"}.get(status, "storage_unavailable")
+    code = {400: "invalid_request", 404: "unknown_database", 409: "name_taken", 421: "wrong_region"}.get(status, "storage_unavailable")
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -33,7 +34,7 @@ async def test_rename_contract_and_errors(asynchronous: bool, status: int) -> No
             assert request.url.path == f"/v1/projects/{PROJECT}/databases/{DATABASE_ID}"
             return httpx.Response(200, json=RENAMED)
         assert request.method == "PATCH"
-        assert request.url.path == f"/v1/projects/{PROJECT}/databases/{DATABASE_ID}"
+        assert request.url.path == f"/v1/projects/{PROJECT}/databases/{selector}"
         assert _route_ok(request.method, request.url.path)
         assert json.loads(request.content) == {"name": "orders_new"}
         assert request.headers["authorization"] == "Bearer fixture-only"
@@ -54,19 +55,19 @@ async def test_rename_contract_and_errors(asynchronous: bool, status: int) -> No
 
     try:
         if status == 200:
-            result = await rename(DATABASE_ID, "orders_new")
+            result = await rename(selector, "orders_new")
             assert result.id == DATABASE_ID and result.project_id == PROJECT and result.name == "orders_new"
             assert result.raw["homeRegion"] == "gru" and result.raw["replicaRegions"] == ["fra"]
         elif status == 0:
             with pytest.raises(CommitUncertainError):
-                await rename(DATABASE_ID, "orders_new")
+                await rename(selector, "orders_new")
         else:
             with pytest.raises(APIError) as error:
-                await rename(DATABASE_ID, "orders_new")
+                await rename(selector, "orders_new")
             assert error.value.status == status
             assert error.value.code == code
         assert len(requests) == 1
-        for database_id, name in [("orders", "orders_new"), (DATABASE_ID, ""), (DATABASE_ID, "../escape")]:
+        for database_id, name in [("../escape", "orders_new"), (DATABASE_ID, ""), (DATABASE_ID, "../escape")]:
             with pytest.raises(ValueError):
                 await rename(database_id, name)
         if status == 200:
@@ -100,3 +101,21 @@ async def test_rename_contract_and_errors(asynchronous: bool, status: int) -> No
 
 def test_rename_surface_signatures_match() -> None:
     assert inspect.signature(TerraScale.rename_database) == inspect.signature(AsyncTerraScale.rename_database)
+
+
+@pytest.mark.parametrize("fields", [{}, {"previousName": None, "conflictOf": None},
+                                    {"previousName": "orders", "conflictOf": PROJECT}])
+def test_conflict_metadata_on_database_and_page(fields: dict) -> None:
+    from terrascale.models import Database, DatabasePage
+
+    body = {**RENAMED, **fields}
+    for database in [Database.from_json(body), DatabasePage.from_json({"items": [body], "next": None}).items[0]]:
+        assert database.previous_name == fields.get("previousName")
+        assert database.conflict_of == fields.get("conflictOf")
+
+
+def test_rejects_database_name_in_conflict_id() -> None:
+    from terrascale.models import Database
+
+    with pytest.raises(ValueError):
+        Database.from_json({**RENAMED, "conflictOf": "orders"})

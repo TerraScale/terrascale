@@ -186,7 +186,7 @@ def get_database(project: str, db: str) -> Call:
 
 
 def rename_database(project: str, database_id: str, new_name: str) -> Call:
-    database_id = validate_id(database_id, "database")
+    database_id = database_selector(database_id)
     return Call("PATCH", ["v1", "projects", project, "databases", database_id],
                 lambda r: models.Database.from_json(r.json()), body={"name": database_name(new_name)})
 
