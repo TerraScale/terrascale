@@ -308,7 +308,8 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         {
             var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
             var passcode = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
-            if (passcode is null || passcode.Consumed || passcode.FailedAttempts >= MaxAttempts || passcode.ExpiresAt <= clock.GetUtcNow()
+            var now = clock.GetUtcNow();
+            if (passcode is null || passcode.Consumed || passcode.FailedAttempts >= MaxAttempts || passcode.ExpiresAt <= now
                 || passcode.InstanceId != instanceId || passcode.Purpose != StoredPurpose(purpose) || !belongs(passcode)
                 || (!passcode.ResetsAuthentication && purpose is not PasscodePurpose.PasswordReset
                     && !await store.AreCredentialsCurrentAsync(instanceId, passcode.IssuanceBindings, cancellationToken).ConfigureAwait(false)))
@@ -319,7 +320,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             var digest = this.Digest(instanceId, passcode.UserId, code);
             var expires = Tokens.FixedTimeEquals(passcode.CodeHash, digest) ? passcode.ExpiresAt
                 : passcode.PreviousCodeHash is { } earlier && Tokens.FixedTimeEquals(earlier, digest) ? passcode.PreviousExpiresAt : null;
-            var matches = expires > clock.GetUtcNow();
+            var matches = expires > now;
             var charged = matches ? passcode with { Consumed = true, PasswordHash = null } : passcode with { FailedAttempts = passcode.FailedAttempts + 1 };
             var binding = matches ? AuthStore.NewCredentialBinding("passcode", AuthStore.NaturalKeyId(instanceId, key, passcode.IssueId.Length > 0 ? passcode.IssueId : passcode.CodeHash)) : null;
             List<StoreOperation> operations = [AuthStore.Replace(AuthStore.PasscodeCollection, instanceId, key,
