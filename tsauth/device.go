@@ -62,8 +62,19 @@ func NewDevice(cfg DeviceConfig) (*Device, error) {
 // Start requests a device authorization for openid, email and
 // offline_access, so Wait's tokens carry a refresh token.
 func (d *Device) Start(ctx context.Context) (*DeviceAuthorization, error) {
-	started := time.Now()
-	body, err := oauthPost(ctx, d.hc, d.issuer+"/oauth/device", url.Values{"client_id": {CLIClientID}, "scope": {"openid email offline_access"}}, CLIClientID, "")
+	var started time.Time
+	var body []byte
+	var err error
+	// A failed request leaves at most an unused code that expires on its own,
+	// so 429, 502, 503, 504 and transport failures are repeated.
+	for attempt := 0; ; attempt++ {
+		started = time.Now()
+		body, err = oauthPost(ctx, d.hc, d.issuer+"/oauth/device", url.Values{"client_id": {CLIClientID}, "scope": {"openid email offline_access"}}, CLIClientID, "")
+		delay, ok := fetchRetryDelay(err, attempt)
+		if !ok || attempt >= maxFetchRetries || ctx.Err() != nil || sleep(ctx, delay) != nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -107,9 +118,10 @@ func (d *Device) Wait(ctx context.Context, a *DeviceAuthorization) (*Tokens, err
 		return err
 	}
 	interval := time.Duration(a.Interval) * time.Second
+	wait, transient := interval, 0
 	form := url.Values{"grant_type": {deviceGrant}, "device_code": {a.DeviceCode}}
 	for {
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -123,11 +135,23 @@ func (d *Device) Wait(ctx context.Context, a *DeviceAuthorization) (*Tokens, err
 		var e *Error
 		switch {
 		case errors.As(err, &e) && e.Code == "authorization_pending":
+			transient = 0
 		case errors.As(err, &e) && e.Code == "slow_down":
+			transient = 0
 			interval += 5 * time.Second
 		default:
-			return t, err
+			// A 429, 502, 503, 504 or lost connection does not end a sign-in the
+			// user may already have approved: polling resumes after the
+			// interval, Retry-After or backoff, until the code expires.
+			delay, ok := fetchRetryDelay(err, transient)
+			if !ok {
+				return t, err
+			}
+			transient++
+			wait = max(interval, delay)
+			continue
 		}
+		wait = interval
 	}
 }
 

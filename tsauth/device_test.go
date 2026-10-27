@@ -96,3 +96,59 @@ func TestDeviceDenialAndForeignVerificationPage(t *testing.T) {
 		t.Fatal("Start accepted a verification page off the issuer")
 	}
 }
+
+func TestDeviceWaitKeepsPollingThroughOutages(t *testing.T) {
+	polls := 0
+	d, _ := newDeviceServer(t, "", func(w http.ResponseWriter, _ url.Values) {
+		switch polls++; polls {
+		case 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, "upstream unavailable")
+		case 2:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate_limited"}`)
+		default:
+			fmt.Fprint(w, `{"access_token":"at1","token_type":"Bearer","expires_in":3600,"refresh_token":"rt1"}`)
+		}
+	})
+	a, err := d.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := d.Wait(t.Context(), a)
+	if err != nil || tokens.AccessToken != "at1" || polls != 3 {
+		t.Fatalf("Wait = %+v, %v after %d polls", tokens, err, polls)
+	}
+}
+
+func TestDeviceStartRepeatsAnOutage(t *testing.T) {
+	starts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if starts++; starts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		fmt.Fprintf(w, `{"device_code":"dc","user_code":"1234-5678","verification_uri":%q,"expires_in":600,"interval":1}`, "http://"+r.Host+"/ui/terrascale/device")
+	}))
+	t.Cleanup(srv.Close)
+	d, err := NewDevice(DeviceConfig{Issuer: srv.URL + "/terrascale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, err := d.Start(t.Context()); err != nil || a.DeviceCode != "dc" || starts != 2 {
+		t.Fatalf("Start = %+v, %v after %d requests", a, err, starts)
+	}
+}
+
+func TestDeviceStartReportsAGatewayStatusWithoutACode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	t.Cleanup(srv.Close)
+	d, err := NewDevice(DeviceConfig{Issuer: srv.URL + "/terrascale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Start(t.Context()); err == nil || err.Error() != "tsauth: token endpoint answered 403 Forbidden" {
+		t.Fatalf("Start = %v", err)
+	}
+}

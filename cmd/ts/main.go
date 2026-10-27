@@ -732,8 +732,13 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 		return c.AccessToken, nil
 	}
 	t, err := d.Refresh(ctx, c.RefreshToken)
-	if err != nil {
+	var refused *tsauth.Error
+	if errors.As(err, &refused) && refused.Code == "invalid_grant" {
 		return "", fmt.Errorf("sign-in expired, run ts auth login: %w", err)
+	}
+	if err != nil {
+		// The sign-in is kept: an outage or lost connection is not an expiry.
+		return "", fmt.Errorf("could not refresh the sign-in, try again: %w", err)
 	}
 	t.RefreshToken = cmp.Or(t.RefreshToken, c.RefreshToken) // ts-auth may keep the old one
 	return t.AccessToken, save(t)
