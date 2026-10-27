@@ -16,7 +16,9 @@ namespace TerraScale.Authentication.Features.Platform;
 public sealed class Closures(
     AuthStore store, PlatformDirectory directory, [FromKeyedServices(App.StorageAuthority)] TerraBaseManagementClient terraBase, TimeProvider clock, ILogger<Closures> logger)
 {
+    // Each deferral is a remote-durable write; a fixed short retry rewrote every pending intent every pass, forever.
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
 
     /// <summary>
     /// Closes a project for <paramref name="userId"/>, who needs its admin role: true once it is removed, false while
@@ -238,13 +240,17 @@ public sealed class Closures(
             .Select(document => document.Document.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
     }
 
+    // 2 s, doubling per earlier attempt, at most a minute.
+    internal static TimeSpan Backoff(int attempts) => attempts >= 5 ? MaxRetry : TimeSpan.FromTicks(Math.Min(Retry.Ticks << attempts, MaxRetry.Ticks));
+
     // Moves a pending intent behind the others; a lost race means another pass already did.
     internal async Task DeferAsync(Versioned<ClosureJob> job, string failure, CancellationToken cancellationToken, bool fenceSeen = false)
     {
+        var attempts = Math.Clamp(job.Value.Attempts, 0, 999_999);
         var next = job.Value with
         {
-            Attempts = Math.Clamp(job.Value.Attempts, 0, 999_999) + 1,
-            NextAttemptAt = clock.GetUtcNow() + Retry,
+            Attempts = attempts + 1,
+            NextAttemptAt = clock.GetUtcNow() + Backoff(attempts),
             FailureCode = failure,
             FenceSeen = job.Value.FenceSeen || fenceSeen,
         };
