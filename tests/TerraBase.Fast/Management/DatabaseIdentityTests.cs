@@ -9,18 +9,16 @@ namespace TerraBase.Fast.Management;
 public sealed class DatabaseIdentityTests
 {
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task Database_ids_and_names_reach_the_same_data_and_preserve_database_restrictions(bool idRoute, bool idRestriction)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Database_ids_and_names_reach_the_same_data_and_preserve_database_restrictions(bool idRoute)
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("original");
         var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = Client(api, database.Project);
-        using var restricted = Client(api, database.Project, idRestriction ? database.Id : database.Name);
+        using var restricted = Client(api, database.Project, database.Id);
         var root = $"/v1/projects/{database.Project}/databases/";
         var target = root + (idRoute ? database.Id : database.Name);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
@@ -49,6 +47,10 @@ public sealed class DatabaseIdentityTests
             await Assert.That(refusedData.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That(refusedData.Headers.Contains("X-TerraBase-Database-Home")).IsFalse();
         }
+        // A name restriction would reach a later database created under that name: such a token is not accepted.
+        using var named = Client(api, database.Project, database.Name);
+        using var namedRead = await named.GetAsync(Uri(target));
+        await Assert.That(namedRead.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         using var foreign = Client(api, EntityIds.New().ToString(), database.Id);
         using var wrongProject = await foreign.GetAsync(Uri(target));
         await Assert.That(wrongProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

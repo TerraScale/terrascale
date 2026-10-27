@@ -1084,7 +1084,7 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, CancellationToken cancellationToken,
         AllowanceCheck? allowance = null)
     {
-        if (ProjectAccess.Current is { DatabaseName: not null } access && access.DatabaseName != name)
+        if (ProjectAccess.Current is { DatabaseName: not null })
         {
             return ManagementErrors.NotFound;
         }

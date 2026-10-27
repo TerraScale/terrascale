@@ -137,7 +137,7 @@ public sealed class RequestLogApiTests
         using var foreign = Project(api, EntityIds.New().ToString(), "databases:read");
         using var wrongProject = await foreign.GetAsync(path);
         await Assert.That(wrongProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        using var restricted = Project(api, database.Project, "databases:read", "another-database");
+        using var restricted = Project(api, database.Project, "databases:read", EntityIds.New().ToString());
         using var wrongDatabase = await restricted.GetAsync(path);
         await Assert.That(wrongDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var noScope = Project(api, database.Project, "documents:read");

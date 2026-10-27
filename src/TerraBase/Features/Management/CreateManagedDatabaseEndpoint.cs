@@ -100,8 +100,8 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
             return await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false);
         }
 
-        var restricted = HttpContext.User.FindFirst("database")?.Value;
-        if (restricted is not null && restricted != name)
+        // A database-restricted token names an existing database's id, so it never creates one.
+        if (HttpContext.User.FindFirst("database") is not null)
         {
             return ErrorResponse.From(new NotFound("the database does not exist", "unknown_database"));
         }
@@ -127,7 +127,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         }
 
         HttpContext.Request.RouteValues["organization"] = organization;
-        var grant = new ProjectAccess(actor, project, organization, restricted, DatabaseId: null);
+        var grant = new ProjectAccess(actor, project, organization, DatabaseName: null, DatabaseId: null);
         HttpContext.Features.Set(grant);
         IResult result = null!;
         await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);

@@ -168,7 +168,7 @@ public sealed class WebhookSecurityTests
         await fixture.Api.VerifyProjectBindingAsync(foreign.Organization, foreign.Project);
         using var otherProject = fixture.ProjectClient(project: foreign.Project);
         await ManagementApi.CreateCollectionAsync(otherProject, foreign, "items", token);
-        using var databaseBound = fixture.ProjectClient(database: sibling.Name);
+        using var databaseBound = fixture.ProjectClient(database: sibling.Id);
         foreach (var client in new[] { otherProject, databaseBound })
         {
             using var list = await client.GetAsync(ManagementApi.Uri(fixture.Path), token);

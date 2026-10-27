@@ -119,13 +119,13 @@ public sealed class PostgresWireTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Dashboard_database_restrictions_can_connect_by_immutable_id(bool idRestriction)
+    public async Task Dashboard_database_restrictions_can_connect_by_immutable_id(bool idSelector)
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        var key = DashboardKey(api, database, "documents:read documents:write", idRestriction ? database.Id : database.Name);
-        await using var source = Source(api, key, database.Id);
+        var key = DashboardKey(api, database, "documents:read documents:write", database.Id);
+        await using var source = Source(api, key, idSelector ? database.Id : database.Name);
         await using var connection = await source.OpenConnectionAsync();
         await ExecuteAsync(connection, People);
         await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", Faker.Name.FullName());
@@ -138,9 +138,9 @@ public sealed class PostgresWireTests
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        var writer = DashboardKey(api, database, "documents:read documents:write", database.Name);
-        var reader = DashboardKey(api, database, "documents:read", database.Name);
-        var elsewhere = DashboardKey(api, database, "documents:read documents:write", "other");
+        var writer = DashboardKey(api, database, "documents:read documents:write", database.Id);
+        var reader = DashboardKey(api, database, "documents:read", database.Id);
+        var elsewhere = DashboardKey(api, database, "documents:read documents:write", EntityIds.New().ToString());
         var unknown = EntityIds.New() + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
 
         await using (var source = Source(api, writer, database.Name))

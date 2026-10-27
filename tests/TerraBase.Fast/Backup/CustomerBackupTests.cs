@@ -85,7 +85,7 @@ public sealed class CustomerBackupTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var writer = ProjectClient(api, database.Project, "databases:read databases:write documents:write");
-        using var reader = ProjectClient(api, database.Project, "databases:read", database.Name);
+        using var reader = ProjectClient(api, database.Project, "databases:read", database.Id);
         await ManagementApi.CreateCollectionAsync(writer, database, "before");
         await ShipAsync(api, time);
         var platformSnapshot = time.GetUtcNow();
@@ -168,7 +168,7 @@ public sealed class CustomerBackupTests
         await Assert.That(earlier.GetProperty("latestSegmentAt").ValueKind).IsEqualTo(JsonValueKind.Null);
         await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = customerLatest, destination = "Customer" }, cancellationToken),
             HttpStatusCode.BadRequest, "invalid_request", "destination must be platform or customer");
-        using var narrowed = ProjectClient(api, database.Project, "databases:read databases:write", "another");
+        using var narrowed = ProjectClient(api, database.Project, "databases:read databases:write", Ulid.NewUlid().ToString());
         using var hiddenWindow = await narrowed.GetAsync(Uri(database.Data + "/point-in-time?destination=customer"), cancellationToken);
         using var hiddenPlan = await narrowed.PostAsJsonAsync(planRoute, new { }, cancellationToken);
         using var hiddenRestore = await narrowed.PostAsJsonAsync(restoreRoute, new { }, cancellationToken);
@@ -257,8 +257,8 @@ public sealed class CustomerBackupTests
             (database.Project, "documents:read documents:write", null, HttpStatusCode.Forbidden),
             (sibling.Project, "databases:read databases:write", null, HttpStatusCode.NotFound),
             (otherTenant.Project, "databases:read databases:write", null, HttpStatusCode.NotFound),
-            (database.Project, "databases:read databases:write", database.Name, HttpStatusCode.NotFound),
-            (database.Project, "databases:read databases:write", "missing", HttpStatusCode.NotFound),
+            (database.Project, "databases:read databases:write", database.Id, HttpStatusCode.NotFound),
+            (database.Project, "databases:read databases:write", Ulid.NewUlid().ToString(), HttpStatusCode.NotFound),
         })
         {
             using var client = ProjectClient(api, project, scope, name);

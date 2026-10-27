@@ -296,7 +296,7 @@ public sealed class UsageAnalyticsTests
         var first = await api.CreateManagedDatabaseAsync("first");
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
         await api.VerifyProjectBindingAsync(first.Organization, first.Project);
-        using var restricted = ProjectClient(api, first.Project, database: "first");
+        using var restricted = ProjectClient(api, first.Project, database: first.Id);
         var visible = await ReadAsync(restricted, ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(visible.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("databaseId").GetString()!)).IsEquivalentTo([first.Id]);
         using var another = await restricted.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}?database={second.Id}"));

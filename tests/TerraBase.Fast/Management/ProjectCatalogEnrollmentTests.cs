@@ -85,7 +85,7 @@ public sealed class ProjectCatalogEnrollmentTests
         using var restricted = api.WithToken(api.Issuer.Mint(actor, token =>
         {
             token.Claims["project_id"] = project;
-            token.Claims["database"] = "first";
+            token.Claims["database"] = EntityIds.New().ToString();
             token.Claims["scope"] = "databases:read databases:write";
         }));
         using var unrestricted = api.WithToken(api.Issuer.Mint(actor, token =>

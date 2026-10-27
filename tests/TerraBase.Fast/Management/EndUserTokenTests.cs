@@ -90,7 +90,7 @@ public sealed class EndUserTokenTests
             token => token.Claims["roles"] = new object[] { "reader", 7 },
             token => token.Claims["roles"] = new[] { "" },
             token => token.Claims["scope"] = "databases:write documents:write",
-            token => token.Claims["database"] = "main",
+            token => token.Claims["database"] = EntityIds.New().ToString(),
             token => token.Claims["platform_role"] = "admin",
             token => token.Claims["is_anonymous"] = true,
             token => token.Claims["is_anonymous"] = "false",

@@ -127,7 +127,7 @@ public sealed class ConditionalBranchTests
         await api.VerifyProjectBindingAsync(source.Organization, source.Project);
         using var client = restriction == "anonymous" ? api.WithToken(null)
             : ProjectClient(api, restriction == "other-project" ? EntityIds.New().ToString() : source.Project,
-                restriction == "other-source" ? "elsewhere" : restriction == "source-only" ? source.Name : null,
+                restriction == "other-source" ? EntityIds.New().ToString() : restriction == "source-only" ? source.Id : null,
                 write: restriction != "read-only");
         using var response = await client.PostAsJsonAsync(Route(source, EntityIds.New().ToString()), new { name = "preview" });
         await Assert.That((int)response.StatusCode).IsEqualTo(status);

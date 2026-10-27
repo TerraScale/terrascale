@@ -91,7 +91,7 @@ public sealed class ExplainSqlApiTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SeedPeopleAsync(api, database);
-        using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Name, subject: EntityIds.New().ToString());
+        using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Id, subject: EntityIds.New().ToString());
         using var anonymous = api.WithToken(null);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read");
         const string Sql = "SELECT name FROM people LIMIT 1";

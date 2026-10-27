@@ -162,7 +162,8 @@ internal sealed class UserAuthenticationHandler(
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
         {
-            if (!EntityIds.IsValid(database) && !Engine.DatabaseName.TryParse(database, out _))
+            // Only the immutable id: a name would reach a later database created under the same name.
+            if (!EntityIds.IsValid(database))
             {
                 return AuthenticateResult.Fail("invalid database claim");
             }
