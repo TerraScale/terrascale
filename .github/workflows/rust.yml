@@ -39,13 +39,32 @@ jobs:
             echo 'rust=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Install pinned Rust toolchain
-        if: steps.changes.outputs.rust == 'true'
         run: rustup show
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: steps.changes.outputs.rust == 'true'
         id: cache
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install checksum-verified cargo-audit
+        run: |
+          archive="$HOME/.cargo/bin/cargo-audit-0.22.2.tgz"
+          mkdir -p "$HOME/.cargo/bin"
+          if [[ ! -f "$archive" ]]; then
+            curl --fail --location --silent --show-error \
+              https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-unknown-linux-musl-v0.22.2.tgz \
+              --output "$archive"
+          fi
+          echo "7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428  $archive" | sha256sum --check
+          tar -xOf "$archive" cargo-audit-x86_64-unknown-linux-musl-v0.22.2/cargo-audit > "$HOME/.cargo/bin/cargo-audit"
+          chmod +x "$HOME/.cargo/bin/cargo-audit"
+      - name: Audit every locked dependency against current RustSec advisories
+        run: |
+          test -s Cargo.lock
+          git ls-files -z -- Cargo.lock '**/Cargo.lock' > "$RUNNER_TEMP/cargo-lockfiles"
+          test -s "$RUNNER_TEMP/cargo-lockfiles"
+          while IFS= read -r -d '' lock; do
+            test -s "$lock"
+            cargo audit --deny warnings --file "$lock"
+          done < "$RUNNER_TEMP/cargo-lockfiles"
       - name: Check formatting
         if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
         run: cargo fmt --all -- --check
@@ -58,6 +77,19 @@ jobs:
       - name: Qualify crates.io package without credentials
         if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
         run: cargo publish --dry-run --locked --all-features --registry crates-io
+      - name: Audit the qualified package lock before publication
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
+        run: |
+          package_lock=$(python3 - <<'PYTHON'
+          import tomllib
+          from pathlib import Path
+
+          package = tomllib.loads(Path("Cargo.toml").read_text())["package"]
+          print(f"target/package/{package['name']}-{package['version']}/Cargo.lock")
+          PYTHON
+          )
+          test -s "$package_lock"
+          cargo audit --deny warnings --file "$package_lock"
       - name: Validate release tag and current main
         if: github.event_name == 'push'
         env:
