@@ -48,7 +48,12 @@ public static class DashboardApplication
             options.UseUtcTimestamp = true;
             options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
         });
+        // A stalled stdout drops log lines instead of blocking every request on the full console queue.
+        builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(options =>
+            options.QueueFullMode = Microsoft.Extensions.Logging.Console.ConsoleLoggerQueueFullMode.DropWrite);
         builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+        // Framework per-request events are redacted to bare event IDs; ServerTiming keeps one line per page.
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
         builder.Services.AddSafeHttpLogging();
         builder.Services.AddSingleton<AssetUrls>();
