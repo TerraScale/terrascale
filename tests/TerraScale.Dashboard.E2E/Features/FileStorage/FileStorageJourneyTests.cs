@@ -20,6 +20,7 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
     {
         TestAuth auth = null!;
         var created = false;
+        var enrolled = false;
         var completed = false;
         var unavailable = false;
         var requests = 0;
@@ -51,6 +52,8 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
                 if (unavailable) return Results.Json(new { error = new { code = "unavailable", message = capability.Url } }, statusCode: 503);
                 if (http.Request.Method == "GET" && path.EndsWith("/buckets", StringComparison.Ordinal))
                 {
+                    // Like TerraBase, a project with no database or bucket yet is not enrolled and has nothing to list.
+                    if (!enrolled) return Results.Json(new { error = new { code = "unknown_database", message = "the database does not exist" } }, statusCode: 404);
                     bucketAfter = http.Request.Query["after"].ToString();
                     return Results.Json(new { items = created && bucketAfter.Length == 0 ? new[] { bucket } : [], next = paginate && bucketAfter.Length == 0 ? Bucket : null });
                 }
@@ -59,7 +62,7 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
                     using var body = await JsonDocument.ParseAsync(http.Request.Body);
                     await Assert.That(body.RootElement.GetProperty("name").GetString()).IsEqualTo("avatars");
                     await Assert.That(body.RootElement.GetProperty("rules").GetProperty("owner").GetString()).IsEqualTo("/userId");
-                    created = true;
+                    created = enrolled = true;
                     return Results.Json(bucket, statusCode: 201);
                 }
                 if (http.Request.Method == "PUT" && path.EndsWith("/rules", StringComparison.Ordinal))

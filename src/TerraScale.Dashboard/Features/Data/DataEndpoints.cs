@@ -177,7 +177,9 @@ public static class DataEndpoints
                     {
                         var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
                         var invalid = diagnostics.Any(item => item.Severity == "error");
+                        // An empty editor shows no analysis, so a submitted check of it answers with the reason.
                         return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection,
+                            formError: form["sql"].ToString().Trim().Length == 0 ? SqlValidation.Error("") : "",
                             sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : Results.Json(diagnostics);
                     }
                     if (action is "sql" or "saved-queries")

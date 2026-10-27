@@ -6,6 +6,7 @@
 @inject AssetUrls Assets
 @if (Model.InternalBill is { } bill) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.InternalBillingView, InternalBillingViewModel>(new(bill, PlanCatalog.Limits(Model.Shell.Context.Organization!)))) }
 <section class="ts-card" id="usage-allowance" aria-labelledby="usage-allowance-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="usage-allowance-title">Plan allowance</h2><p class="ts-card-description">Use of the @Model.PlanName plan this month</p></div></header><div class="ts-card-body">
+@if (Model.WritesPaused.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.WritesPaused</p>@if (Model.Shell.Context.Organization?.CanManage(Model.Shell.Context.UserId) == true) { <a class="ts-link" href="/organization?tab=billing">Upgrade the plan to keep writing now</a> }</div> }
 @if (Model.AllowanceError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@Model.AllowanceError</p></div> }
 <div class="ts-usage-gauges">@foreach (var gauge in Model.Allowances)
 {

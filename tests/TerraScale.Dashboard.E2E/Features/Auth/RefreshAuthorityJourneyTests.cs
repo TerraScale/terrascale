@@ -60,6 +60,26 @@ public sealed class RefreshAuthorityJourneyTests
     }
 
     [Test]
+    public async Task CodeExchangeReadsUserinfoOnceForItsChecks()
+    {
+        using var wire = new Wire();
+        wire.TokenRelease.SetResult();
+        wire.PublicRelease.SetResult();
+        var gateway = new TsAuthGateway(wire, wire, TimeProvider.System);
+        var flow = new OidcFlow("state", "nonce", "verifier", "/", "https://dash.terrascale.tech/login/callback", DateTimeOffset.UtcNow.AddMinutes(10));
+        await Page(async () =>
+        {
+            var session = await gateway.ExchangeAsync("code", flow, CancellationToken.None);
+            await Assert.That(session.UserId).IsEqualTo("user");
+            await Assert.That(wire.Users).IsEqualTo(1);
+        });
+        wire.Fault = "substituted-userinfo";
+        await Page(async () => await Assert.ThrowsAsync<SignInRejectedException>(() => gateway.ExchangeAsync("code", flow, CancellationToken.None)));
+        wire.Fault = "refused-userinfo";
+        await Page(async () => await Assert.ThrowsAsync<SignInRejectedException>(() => gateway.ExchangeAsync("code", flow, CancellationToken.None)));
+    }
+
+    [Test]
     [Arguments("wrong-issuer")]
     [Arguments("untrusted-discovery")]
     [Arguments("wrong-audience")]
@@ -104,7 +124,11 @@ public sealed class RefreshAuthorityJourneyTests
             {
                 Interlocked.Increment(ref Metadata);
                 await PublicRelease.Task.WaitAsync(cancellationToken);
-                body = new { issuer = Fault == "untrusted-discovery" ? "https://other.example/terrascale" : "https://auth.terrascale.tech/terrascale" };
+                body = new
+                {
+                    issuer = Fault == "untrusted-discovery" ? "https://other.example/terrascale" : "https://auth.terrascale.tech/terrascale",
+                    id_token_signing_alg_values_supported = new[] { "ES256" }
+                };
             }
             else if (path.EndsWith("jwks.json", StringComparison.Ordinal))
             {
@@ -124,6 +148,7 @@ public sealed class RefreshAuthorityJourneyTests
                     sub = Fault == "wrong-subject" ? "other" : "user",
                     email = "user@example.test",
                     email_verified = Fault != "unverified-id",
+                    nonce = "nonce",
                     exp = DateTimeOffset.UtcNow.AddMinutes(Fault == "expired-id" ? -1 : 5).ToUnixTimeSeconds()
                 }));
                 var signature = signing.SignData(Encoding.ASCII.GetBytes(unsigned), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);

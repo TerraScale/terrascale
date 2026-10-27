@@ -13,8 +13,13 @@ public sealed class FileStorageService(AccountService accounts, IProjectAccessTo
     public async Task<FileStorageListing> ListAsync(AccountContext context, string? bucket, string? after, string? bucketAfter, CancellationToken token)
     {
         var client = await ProjectAsync(context, false, token);
-        var buckets = await client.ListFileBucketsAsync(bucketAfter, token);
         if (!string.IsNullOrEmpty(bucket)) TerraScaleIds.Validate(bucket);
+        TerraBasePage<TerraBaseFileBucket> buckets;
+        try { buckets = await client.ListFileBucketsAsync(bucketAfter, token); }
+        // TerraBase enrolls a project with its first database or bucket; before that it has nothing to list, and the
+        // page must offer bucket creation (which enrolls the project) instead of an error.
+        catch (TerraBaseNotFoundException error) when (error.ErrorCode == "unknown_database" && bucketAfter is null && string.IsNullOrEmpty(bucket))
+        { return new(new([], null), null, null, null); }
         var selected = string.IsNullOrEmpty(bucket) ? buckets.Items.FirstOrDefault()?.Id : bucket;
         var files = selected is null ? null : await client.ListBucketFilesAsync(selected, after, token);
         return new(buckets, files, selected, bucketAfter);

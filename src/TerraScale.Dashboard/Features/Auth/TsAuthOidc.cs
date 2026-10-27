@@ -122,10 +122,12 @@ public sealed partial class TsAuthGateway
         if (!metadata.IdTokenSigningAlgValuesSupported.Contains("ES256", StringComparer.Ordinal)) throw new SignInRejectedException();
         var keys = await client.Oidc.GetJwksAsync(cancellationToken);
         var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
-        var user = await UserInfoAsync(client, tokens.AccessToken, cancellationToken);
-        if (user.Subject != claims.Subject || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != claims.Email) throw new SignInRejectedException();
         var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, time.GetUtcNow().AddSeconds(tokens.ExpiresIn))
         { IdToken = tokens.IdToken };
+        // The session's own userinfo read, so the activity check below reuses this answer instead of a second
+        // sequential ts-auth round trip on every sign-in.
+        var user = await SessionUserInfoAsync(client, session, cancellationToken);
+        if (user.Subject != claims.Subject || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != claims.Email) throw new SignInRejectedException();
         if (!await IsActiveAsync(session, cancellationToken)) throw new SignInRejectedException();
         return session;
     }
