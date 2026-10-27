@@ -227,7 +227,6 @@ internal static class EmailApi
         Link = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation ? new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/sign-in") : null,
         ExpiresIn = kind switch
         {
-            AuthEmailKind.MagicLink => TimeSpan.FromMinutes(15),
             AuthEmailKind.Invitation => TimeSpan.FromDays(7),
             AuthEmailKind.NewDevice or AuthEmailKind.Lockout => null,
             _ => Passcodes.Lifetime,

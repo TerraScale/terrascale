@@ -116,7 +116,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted sign-in pages share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
+        Description("Same-origin form post. A code works once, for 30 minutes (a resend keeps the code it replaces working until that code expires), and dies after 5 wrong guesses. Hosted sign-in pages share 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
@@ -334,7 +334,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         Post("/ui/{slug}/sign-up/verify");
         Name("ui_sign_up_verify");
         Summary("Verify a sign-up");
-        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -457,7 +457,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Post("/ui/{slug}/reset/complete");
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("Same-origin form post with email, code and password. Limits: 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Description("Same-origin form post with email, code and password. Limits: 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));

@@ -46,7 +46,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     public const int CodePerEmail = Passcodes.MaxAttempts;
 
     /// <summary>The code budget's window; password reset has its own budget.</summary>
-    public static readonly TimeSpan CodeWindow = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan CodeWindow = TimeSpan.FromMinutes(30);
 
     private static readonly TimeSpan IpWindow = TimeSpan.FromMinutes(1);
 

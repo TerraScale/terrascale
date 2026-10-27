@@ -6,7 +6,7 @@ Enter this code to finish signing in to TerraScale as jane@example.com.
 
     123456
 
-This code expires in 10 minutes and works only once.
+This code expires in 30 minutes and works only once.
 
 Didn't try to sign in? Someone may know your password: change it now. Never share this code with anyone.
 

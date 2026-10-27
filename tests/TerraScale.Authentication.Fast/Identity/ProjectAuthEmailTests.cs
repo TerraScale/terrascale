@@ -48,7 +48,7 @@ public sealed partial class ProjectAuthEmailTests(TerraBaseFixture fixture)
         var (recipient, message) = await oidc.Email.NextAsync();
         await Assert.That(recipient).IsEqualTo(address);
         await Assert.That(message.Subject).Contains(name).And.Contains(action switch { "reset" => "password reset code", "sign-up" => "verification code", _ => "sign-in code" });
-        await Assert.That(message.Text).Contains(name).And.Contains("10 minutes").And.Contains(action == "sign-up" ? "Didn't sign up" : "Never share this code");
+        await Assert.That(message.Text).Contains(name).And.Contains("30 minutes").And.Contains(action == "sign-up" ? "Didn't sign up" : "Never share this code");
         await Assert.That(message.Html).Contains(WebUtility.HtmlEncode(name)).And.DoesNotContain("<b>Acme");
         await Assert.That(message.FromName).IsEqualTo("TerraScale");
         await Assert.That(message.Tenant).IsEqualTo(project);

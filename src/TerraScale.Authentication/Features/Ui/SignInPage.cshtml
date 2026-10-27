@@ -17,7 +17,7 @@ case SignInStep.Code:
 }
 else
 {
-<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 30 minutes. If you asked for another code, the one before it still works.</p>
 }
 <p class="sub">If this code recovers access after repeated requests, using it signs out your older sessions.</p>
 break;
@@ -37,14 +37,14 @@ case SignInStep.SignUp:
 <p class="sub">Get started with @Model.Brand in under a minute.</p>
 break;
 case SignInStep.SignUpCode:
-<p class="sub">We emailed a six-digit code to <strong>@Model.Email</strong>. It expires in 10 minutes.</p>
+<p class="sub">We emailed a six-digit code to <strong>@Model.Email</strong>. It expires in 30 minutes. If you asked for another code, the one before it still works.</p>
 <p class="sub">For an existing account, recovery after repeated code requests signs out your older sessions.</p>
 break;
 case SignInStep.Reset:
 <p class="sub">Enter your account email and we will send you a reset code.</p>
 break;
 case SignInStep.ResetCode:
-<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 30 minutes. If you asked for another code, the one before it still works.</p>
 break;
 case SignInStep.ResetDone:
 <p class="sub">You were signed out everywhere. Sign in with your new password.</p>

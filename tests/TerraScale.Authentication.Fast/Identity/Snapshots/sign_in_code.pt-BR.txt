@@ -4,7 +4,7 @@ Digite este código para entrar em TerraScale como alice@example.test.
 
     000000
 
-Este código expira em 10 minutos e só pode ser usado uma vez.
+Este código expira em 30 minutos e só pode ser usado uma vez.
 
 Não tentou entrar? Pode ignorar este e-mail com segurança. Nunca compartilhe este código com ninguém.
 
