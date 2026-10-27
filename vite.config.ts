@@ -1,3 +1,6 @@
+import path from 'node:path'
+import adapter from '@sveltejs/adapter-static'
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte'
 import { sveltekit } from '@sveltejs/kit/vite'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
@@ -10,7 +13,11 @@ const host = process.env.TAILNET_HOST ?? true
 const allowedHosts = ['.ts.net']
 
 export default defineConfig({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [tailwindcss(), sveltekit({
+    adapter: adapter(),
+    preprocess: vitePreprocess(),
+  })],
+  resolve: { alias: { '@': path.resolve('./src') } },
   server: { host, allowedHosts },
   preview: { host, allowedHosts },
 })
