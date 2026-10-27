@@ -7,12 +7,10 @@ fn key_validation_and_debug_never_echo_credentials() {
     assert!(!format!("{builder:?}").contains(&key()));
     let client = builder.build().unwrap();
     assert!(!format!("{client:?}").contains(&key()));
-    let Auth::Key {
-        basic, endpoint, ..
-    } = &client.inner.auth
-    else {
+    let Auth::Key(auth) = &client.inner.auth else {
         unreachable!()
     };
+    let (basic, endpoint) = (&auth.basic, &auth.endpoint);
     assert!(basic.is_sensitive());
     assert_eq!(
         endpoint.as_str(),
@@ -74,7 +72,8 @@ async fn malformed_grants_are_typed_redacted_and_never_reach_the_data_plane() {
             error,
             Error::TokenExchange {
                 status: Some(200),
-                code: "invalid_token_response"
+                code: "invalid_token_response",
+                ..
             }
         ));
         assert!(!error.is_uncertain());
@@ -86,8 +85,8 @@ async fn malformed_grants_are_typed_redacted_and_never_reach_the_data_plane() {
 }
 
 #[tokio::test]
-async fn exchange_refusals_are_not_retried_or_classified_as_uncertain_commits() {
-    for status in [302, 400, 401, 403, 429, 503] {
+async fn exchange_refusals_are_typed_redacted_and_retried_only_when_transient() {
+    for status in [302, 400, 401, 403, 429, 502, 503, 504] {
         let auth = Fixture::new(move |_| {
             (
                 status,
@@ -101,13 +100,16 @@ async fn exchange_refusals_are_not_retried_or_classified_as_uncertain_commits() 
         .await;
         let data = Fixture::new(|_| panic!("data request after refused exchange")).await;
         let mut client = data.client(&auth);
-        Arc::get_mut(&mut client.inner).unwrap().retry = RetryPolicy::default();
+        Arc::get_mut(&mut client.inner).unwrap().retry = RetryPolicy {
+            base_delay: Duration::ZERO,
+            ..RetryPolicy::default()
+        };
         let error = client
             .send(Req::new(Method::POST, vec!["v1", "databases"]))
             .await
             .err()
             .unwrap();
-        assert!(matches!(error, Error::TokenExchange { .. }));
+        assert!(matches!(error, Error::TokenExchange { reason: None, .. }));
         assert_eq!(error.status(), Some(status));
         assert_eq!(
             error.code(),
@@ -122,8 +124,59 @@ async fn exchange_refusals_are_not_retried_or_classified_as_uncertain_commits() 
         assert!(!format!("{error:?} {error}").contains("fixture-sensitive"));
         assert!(!format!("{error:?} {error}").contains(&key()));
         assert!(data.seen.lock().unwrap().is_empty());
-        assert_eq!(auth.seen.lock().unwrap().len(), 1);
+        let transient = matches!(status, 429 | 502 | 503 | 504);
+        assert_eq!(
+            auth.seen.lock().unwrap().len(),
+            if transient { 4 } else { 1 }
+        );
     }
+}
+
+#[tokio::test]
+async fn exchange_recovers_from_a_transient_issuer_refusal_before_a_mutation() {
+    let count = AtomicUsize::new(0);
+    let auth = Fixture::new(move |_| match count.fetch_add(1, Ordering::SeqCst) {
+        0 => (503, "text/html", "<html>busy</html>".into()),
+        1 => (429, "application/json", "{}".into()),
+        _ => ok(grant("access", 900)),
+    })
+    .await;
+    let data = Fixture::new(|_| ok("{}".into())).await;
+    let mut client = data.client(&auth);
+    Arc::get_mut(&mut client.inner).unwrap().retry = RetryPolicy {
+        base_delay: Duration::ZERO,
+        ..RetryPolicy::default()
+    };
+    client
+        .send(Req::new(Method::POST, vec!["v1", "databases"]))
+        .await
+        .unwrap();
+    assert_eq!(auth.seen.lock().unwrap().len(), 3);
+    let seen = data.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].headers[AUTHORIZATION], "Bearer access");
+}
+
+#[tokio::test]
+async fn exchange_refusals_name_the_oauth_error_and_issuer_request_id() {
+    let auth = Fixture::new(|_| {
+        (
+            400,
+            "application/json",
+            json!({"error":"invalid_target","error_description":"fixture-sensitive"}).to_string(),
+        )
+    })
+    .await;
+    let data = Fixture::new(|_| panic!("data request after refused exchange")).await;
+    let error = read(&data.client(&auth)).await.err().unwrap();
+    assert_eq!(error.status(), Some(400));
+    assert_eq!(error.code(), Some("token_exchange_refused"));
+    assert_eq!(
+        error.to_string(),
+        "terrabase: token exchange: token_exchange_refused (HTTP 400): \
+         invalid_target: the API key does not reach this project"
+    );
+    assert!(!format!("{error:?}").contains("fixture-sensitive"));
 }
 
 #[tokio::test]
@@ -142,7 +195,9 @@ async fn exchange_transport_failure_is_typed_and_does_not_send_mutation() {
         error,
         Error::TokenExchange {
             status: None,
-            code: "token_transport_error"
+            code: "token_transport_error",
+            reason: Some("connection failed"),
+            ..
         }
     ));
     assert!(!error.is_uncertain());
@@ -289,7 +344,7 @@ async fn sse_reconnect_acquires_proactively_refreshed_token() {
         .await
         .unwrap();
     feed.next().await.unwrap().unwrap();
-    advance(6).await;
+    advance(8).await;
     feed.next().await.unwrap().unwrap();
     drop(feed);
     assert_eq!(auth.seen.lock().unwrap().len(), 2);

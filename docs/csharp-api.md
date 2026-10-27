@@ -46,8 +46,9 @@ preconditions. These are retained because the current server implements them. It
 `Idempotency-Key`; the SDK rejects keyed project mutations before dispatch. A caller may
 explicitly repeat a PUT with the same key and bytes, but it is a new commit, not a deduplicated
 receipt; concurrent intervening changes can be overwritten. Mutations do not automatically
-replay after transport or 503 failures. The existing `429 rate_limited` retry requires that
-exact code; no permission is inferred from status alone.
+replay after transport or 503 failures. The `429` mutation retry requires the exact code
+`rate_limited` or `tenant_busy` (both refuse admission); no permission is inferred
+from status alone.
 
 Project errors preserve actual HTTP status, exact response bytes and any `X-Request-ID` in
 `Error::Response`. Use `status()`, `code()`, `op()`, `is_not_found()`, `is_uncertain()`,

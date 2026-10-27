@@ -24,12 +24,17 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 << 20;
 
 /// Retry policy for the v1 client.
 ///
-/// * `429 rate_limited` is always retried (the request was not admitted),
-///   after `Retry-After` capped at `max_retry_after`.
-/// * Transport errors and the transient 503s (`capacity`,
+/// * `429 rate_limited` and `429 tenant_busy` are always retried (the request
+///   was not admitted), after `Retry-After` capped at `max_retry_after`. A
+///   `429` without a TerraBase error code is retried only when replay-safe.
+///   Quota refusals such as `429 operation_allowance` are never retried.
+/// * Transport errors, the transient 503s (`capacity`,
 ///   `storage_unavailable`, `dependencies_unavailable`, `commit_uncertain`)
+///   and gateway `502`/`503`/`504` answers without a TerraBase error code
 ///   are retried only when the request is replay-safe: reads, queries and
 ///   other explicitly read-only requests.
+/// * API-key token exchanges retry transport failures, `429` and gateway
+///   `502`/`503`/`504` under the same budget; minting a token has no effect.
 /// * `500 internal_error` is returned without retry.
 /// * `stored_corruption` and every other error are never retried.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -738,7 +743,20 @@ impl Client {
                             || matches!(&err, Error::Response { status, error, .. } if !(400..500).contains(status) && matches!(**error, Error::Transport(_))))
                             && replay_safe
                             || match (err.status(), err.code()) {
-                                (Some(429), Some("rate_limited")) => true,
+                                // The producer sends both codes before admission
+                                // (rate limit and organization QoS budget). Quota
+                                // refusals such as `operation_allowance` stay terminal.
+                                (Some(429), Some("rate_limited" | "tenant_busy")) => true,
+                                // An uncoded (edge) 429 grants no mutation retry.
+                                (Some(429), Some("http_429")) => replay_safe,
+                                // A gateway answer without a TerraBase error code
+                                // never reached a handler that names its outcome.
+                                (Some(status @ 502..=504), Some(code))
+                                    if code.strip_prefix("http_")
+                                        == Some(status.to_string().as_str()) =>
+                                {
+                                    replay_safe
+                                }
                                 (
                                     Some(503),
                                     Some(
@@ -887,7 +905,7 @@ impl Client {
             let token = self
                 .inner
                 .auth
-                .bearer(&self.inner.http, rejected.as_ref())
+                .bearer(&self.inner.http, rejected.as_ref(), &self.inner.retry)
                 .await?;
             let replay = request.try_clone();
             let mut response = request
@@ -982,7 +1000,7 @@ fn describe(e: &reqwest::Error) -> String {
     msg
 }
 
-fn backoff(policy: &RetryPolicy, attempt: u32) -> Duration {
+pub(super) fn backoff(policy: &RetryPolicy, attempt: u32) -> Duration {
     backoff_with(policy, attempt, uuid::Uuid::new_v4().as_u128())
 }
 

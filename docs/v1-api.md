@@ -38,11 +38,12 @@ client.control() -> ControlClient
 ```
 
 TLS 1.3 only; HTTPS only except loopback HTTP; redirects are not followed.
-Retry policy: `429` always (after `Retry-After`, capped); transport errors and
-the transient 503s (`capacity`, `storage_unavailable`,
-`dependencies_unavailable`, `commit_uncertain`) only for reads, queries and
-requests with an `Idempotency-Key`; `500 internal_error` only with a key. Only `429` with code `rate_limited` is
-retried; other 429s surface as `Error::Api`. Oversized responses are never
+Retry policy: `429 rate_limited` and `429 tenant_busy` always (after
+`Retry-After`, capped); transport errors, the transient 503s (`capacity`,
+`storage_unavailable`, `dependencies_unavailable`, `commit_uncertain`) and
+uncoded gateway `502`/`503`/`504`/`429` answers only for reads, queries and
+requests with an `Idempotency-Key`; `500 internal_error` only with a key. Other
+429s, such as the `operation_allowance` quota refusal, surface as `Error::Api`. Oversized responses are never
 retried; for a mutation answered with a non-4xx status they are uncertain
 (`is_uncertain()`), since the write may have applied. `Retry-After` accepts
 delay-seconds and HTTP-dates. Plain-HTTP and loopback base URLs ignore environment proxies.

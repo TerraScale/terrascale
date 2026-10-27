@@ -59,8 +59,10 @@ request ID. Inspect `status()`, `code()`, `op()`, `request_id()`, `raw_body()` a
 Preconditions remain supported because the current producer implements them.
 The SDK has no idempotency-key setters or automatic uncertain mutation replay.
 An explicit repeated PUT is a new commit and can overwrite intervening edits.
-Reads and explicitly read-only operations use bounded retries; only an actual
-`429 rate_limited` response permits a mutation retry after rejected admission.
+Reads and explicitly read-only operations use bounded retries, including gateway
+`502`/`503`/`504` answers without a TerraBase error code; only an actual
+`429 rate_limited` or `429 tenant_busy` response permits a mutation retry after
+rejected admission. `429 operation_allowance` is a quota refusal and is not retried.
 
 ## Validation
 
