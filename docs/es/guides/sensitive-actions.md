@@ -15,7 +15,7 @@ Confirmation applies to one account and one kind of action, expires within five 
 
 The server checks confirmation before creating the credential or starting account deletion, including cancelling subscriptions. A confirmed deletion can continue through its status page if cleanup is still pending. Confirmation is not proof that deletion has finished; see [data deletion](/es/legal/data-deletion).
 
-API and MCP callers receive `403 step_up_required` when fresh confirmation is missing. Use the dashboard to approve the sensitive action. Existing credentials continue to authorize their permitted operations until expiry or revocation; revoking a credential does not require creating another one.
+The auth API returns `403 step_up_required` when fresh confirmation is missing. Dashboard API and MCP credential calls also refuse unattended issuance with instructions to confirm the action. Use the dashboard to approve the sensitive action. Existing credentials continue to authorize their permitted operations until expiry or revocation; revoking a credential does not require creating another one.
 
 API keys and confidential OAuth-client secrets issued after confirmation also depend on the account's authentication state. Signing out everywhere or resetting the password prevents further exchanges with those secrets. Signing out of only the browser that created them preserves their independent access. Previously issued access tokens remain subject to their normal short expiry. Older API-key and OAuth-client secrets issued before this confirmation flow keep working until revoked, expired or rotated.
 
