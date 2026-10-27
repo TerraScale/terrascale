@@ -73,11 +73,135 @@ func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
 	if tok, _ := s.Token(t.Context()); tok != "token-1" || srv.hits.Load() != 1 {
 		t.Fatalf("before refresh: %q, %d requests", tok, srv.hits.Load())
 	}
-	clock = clock.Add(time.Second) // 60 s before expiry
+	clock = clock.Add(time.Second) // 60 s before expiry: refreshed in the background
+	if tok, _ := s.Token(t.Context()); tok != "token-1" {
+		t.Fatalf("during refresh: %q", tok)
+	}
+	waitIdle(t, s)
 	if tok, _ := s.Token(t.Context()); tok != "token-2" || srv.hits.Load() != 2 {
 		t.Fatalf("after refresh: %q, %d requests", tok, srv.hits.Load())
 	}
 }
+
+// waitIdle waits until s has no token request in flight.
+func waitIdle(t *testing.T, s *TokenSource) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		s.mu.Lock()
+		idle := s.flight == nil
+		s.mu.Unlock()
+		if idle {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("token request still in flight")
+		}
+	}
+}
+
+func TestRefreshFailureKeepsTheCachedTokenUntilItIsNearlyExpired(t *testing.T) {
+	var status atomic.Int64
+	status.Store(http.StatusOK)
+	var srv *tokenServer
+	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
+		if code := int(status.Load()); code != http.StatusOK {
+			w.WriteHeader(code)
+			io.WriteString(w, `{"error":"invalid_scope"}`)
+			return
+		}
+		answer(w, fmt.Sprintf("token-%d", srv.hits.Load()), 60)
+	})
+	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	clock := time.Now()
+	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	advance := func(d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
+	if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
+		t.Fatalf("first: %q %v", tok, err)
+	}
+	status.Store(http.StatusBadRequest)
+	advance(30 * time.Second) // refresh starts; the token is valid for 30 s more
+	for range 3 {
+		if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
+			t.Fatalf("while refresh fails: %q %v", tok, err)
+		}
+		waitIdle(t, s)
+	}
+	advance(19 * time.Second) // 11 s left: still handed out
+	if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
+		t.Fatalf("near expiry: %q %v", tok, err)
+	}
+	waitIdle(t, s)
+	advance(time.Second) // 10 s left: callers wait for a new token
+	var e *Error
+	if tok, err := s.Token(t.Context()); !errors.As(err, &e) || e.Status != http.StatusBadRequest {
+		t.Fatalf("stale: %q %v", tok, err)
+	}
+	status.Store(http.StatusOK)
+	if tok, err := s.Token(t.Context()); err != nil || tok == "token-1" {
+		t.Fatalf("recovered: %q %v", tok, err)
+	}
+}
+
+func TestTransientTokenFailuresAreRetried(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
+		var srv *tokenServer
+		srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
+			if srv.hits.Load() <= 2 {
+				w.WriteHeader(status)
+				return
+			}
+			answer(w, "ok", 900)
+		})
+		s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tok, err := s.Token(t.Context()); err != nil || tok != "ok" || srv.hits.Load() != 3 {
+			t.Fatalf("%d: %q %v, %d requests", status, tok, err, srv.hits.Load())
+		}
+	}
+}
+
+func TestTokenRetriesStop(t *testing.T) {
+	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, `{"error":"temporarily_unavailable"}`)
+	})
+	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e *Error
+	if _, err := s.Token(t.Context()); !errors.As(err, &e) || e.Status != http.StatusServiceUnavailable || srv.hits.Load() != 1+maxFetchRetries {
+		t.Fatalf("%v, %d requests", err, srv.hits.Load())
+	}
+}
+
+func TestTransportFailuresAreRetried(t *testing.T) {
+	var calls atomic.Int64
+	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return nil, errors.New("connection reset by peer")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"access_token":"ok","token_type":"Bearer","expires_in":900}`)), Request: r}, nil
+	})}
+	s, err := NewAPIKeySource(APIKeyConfig{Issuer: "https://auth.example/terrascale", Key: testKey, HTTPClient: hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := s.Token(t.Context()); err != nil || tok != "ok" || calls.Load() != 2 {
+		t.Fatalf("%q %v, %d requests", tok, err, calls.Load())
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestTokenExpiredInTransit(t *testing.T) {
 	var mu sync.Mutex
@@ -196,7 +320,7 @@ func TestInvalidClientIsTerminalButTransientErrorsAreNotCached(t *testing.T) {
 		case http.StatusOK:
 			answer(w, "ok", 900)
 		case http.StatusTooManyRequests:
-			w.Header().Set("Retry-After", "7")
+			w.Header().Set("Retry-After", "60") // beyond the request deadline: not retried
 			w.WriteHeader(code)
 			io.WriteString(w, `{"error":"rate_limited"}`)
 		default:
@@ -221,7 +345,7 @@ func TestInvalidClientIsTerminalButTransientErrorsAreNotCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Token(t.Context()); !errors.As(err, &e) || e.Code != "rate_limited" || e.RetryAfter != 7*time.Second {
+	if _, err = s.Token(t.Context()); !errors.As(err, &e) || e.Code != "rate_limited" || e.RetryAfter != 60*time.Second {
 		t.Fatalf("429: %v", err)
 	}
 	status.Store(http.StatusOK)
@@ -375,3 +499,21 @@ func TestRetryAfter(t *testing.T) {
 }
 
 func second[T any](_ T, err error) error { return err }
+
+func TestTokenErrorTextNamesTheRequest(t *testing.T) {
+	srv := newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
+		w.Header().Set("X-Request-ID", "01M5ZQP03SW2B31XBM6Q9CP7MA")
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"error":"invalid_client","error_description":"The API key is invalid."}`)
+	})
+	s, err := NewAPIKeySource(APIKeyConfig{Issuer: srv.URL + "/terrascale", Key: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e *Error
+	_, err = s.Token(t.Context())
+	if !errors.As(err, &e) || e.RequestID != "01M5ZQP03SW2B31XBM6Q9CP7MA" ||
+		err.Error() != "tsauth: token endpoint answered 401 invalid_client: The API key is invalid. [request 01M5ZQP03SW2B31XBM6Q9CP7MA]" {
+		t.Fatalf("%v", err)
+	}
+}

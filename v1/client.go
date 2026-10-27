@@ -317,7 +317,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 		if !readOnly && errors.Is(apiErr, ErrCommitUncertain) {
 			return resp, apiErr
 		}
-		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe); ok && attempt < c.maxRetries {
+		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe, readOnly); ok && attempt < c.maxRetries {
 			if err := waitRetry(ctx, delay, apiErr); err != nil {
 				return nil, err
 			}
@@ -328,12 +328,13 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 }
 
 // retryDelay implements the retry policy for requests that are safe to
-// replay (reads, queries and If-Match writes): 429 and the transient 503s
+// replay (reads, queries and If-Match writes): 429 rate_limited and
+// tenant_busy, and the transient 503s
 // capacity, storage_unavailable, dependencies_unavailable, commit_uncertain,
 // remote_region_unavailable, confirmation_busy and catalog_stale are retried. do excludes uncertain mutation outcomes.
-// stored_corruption and 500 internal_error are never retried.
-func retryDelay(e *APIError, attempt int, replaySafe bool) (time.Duration, bool) {
-	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && e.Code == ErrRateLimited) && !isTransient503(e)) {
+// Reads also retry gateway failures (502 and 504). stored_corruption and 500 internal_error are never retried.
+func retryDelay(e *APIError, attempt int, replaySafe, readOnly bool) (time.Duration, bool) {
+	if !replaySafe || (!(e.Status == http.StatusTooManyRequests && (e.Code == ErrRateLimited || e.Code == ErrTenantBusy)) && !isTransient503(e) && !(readOnly && isGatewayFailure(e))) {
 		return 0, false
 	}
 	if e.retryAfterSet {
@@ -352,6 +353,12 @@ func isTransient503(e *APIError) bool {
 		return true
 	}
 	return false
+}
+
+// isGatewayFailure reports a 502 or 504: the proxy in front of TerraBase
+// failed to obtain an answer.
+func isGatewayFailure(e *APIError) bool {
+	return e.Status == http.StatusBadGateway || e.Status == http.StatusGatewayTimeout
 }
 
 func backoff(attempt int) time.Duration {

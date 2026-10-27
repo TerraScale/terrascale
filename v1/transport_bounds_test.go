@@ -68,7 +68,7 @@ func TestShapeOverloadRetriesHaveFiniteAttemptBudget(t *testing.T) {
 }
 
 func TestQuotaIsNotRetriedAndEarlierCallerDeadlineWins(t *testing.T) {
-	if _, retry := retryDelay(&APIError{Status: 429, Code: ErrQuotaExceeded}, 0, true); retry {
+	if _, retry := retryDelay(&APIError{Status: 429, Code: ErrQuotaExceeded}, 0, true, true); retry {
 		t.Fatal("quota failure retried")
 	}
 	c, err := New(Config{Token: "fixture.jwt.sig", HTTPClient: &http.Client{Transport: boundedTransport(func(r *http.Request) (*http.Response, error) { <-r.Context().Done(); return nil, r.Context().Err() })}})

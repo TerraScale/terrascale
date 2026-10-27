@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -167,9 +168,13 @@ func NewExchangeSource(cfg ExchangeConfig) (*TokenSource, error) {
 	}), nil
 }
 
-// TokenSource caches one access token: Token returns it until 60 s before
-// it expires, then requests a new one. Concurrent callers share one request.
-// It is safe for concurrent use and satisfies v1.TokenSource.
+// TokenSource caches one access token. From 60 s (at most half its
+// lifetime) before expiry it refreshes the token in the background while
+// callers keep the cached token, until reuseMargin (at most a quarter of its
+// lifetime) before expiry; only then do callers wait for a new token.
+// Concurrent callers share one request; a refresh retries 429, 502, 503, 504
+// and transport failures with backoff. It is safe for concurrent use and
+// satisfies v1.TokenSource.
 type TokenSource struct {
 	hc    *http.Client
 	fetch func(context.Context, *http.Client) (*tokenResponse, error)
@@ -178,8 +183,10 @@ type TokenSource struct {
 	mu        sync.Mutex
 	token     string
 	refreshAt time.Time
-	flight    *flight
-	terminal  error
+	// staleAt is when the cached token stops being handed out.
+	staleAt  time.Time
+	flight   *flight
+	terminal error
 }
 
 type flight struct {
@@ -188,7 +195,20 @@ type flight struct {
 	err     error
 	cancel  context.CancelFunc
 	waiters int
+	// background marks a refresh ahead of expiry; departing waiters never
+	// cancel it.
+	background bool
 }
+
+// Token refresh limits. reuseMargin keeps a token valid for a request that
+// starts just before staleAt; fetchTimeout bounds one refresh with retries.
+const (
+	reuseMargin       = 10 * time.Second
+	fetchTimeout      = 30 * time.Second
+	maxFetchRetries   = 3
+	fetchBackoffBase  = 200 * time.Millisecond
+	fetchBackoffLimit = 2 * time.Second
+)
 
 func newSource(hc *http.Client, fetch func(context.Context, *http.Client) (*tokenResponse, error)) *TokenSource {
 	return &TokenSource{hc: noRedirects(hc), fetch: fetch, now: time.Now}
@@ -217,17 +237,17 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 		s.mu.Unlock()
 		return "", err
 	}
-	if s.token != "" && s.now().Before(s.refreshAt) {
+	if now := s.now(); s.token != "" && now.Before(s.staleAt) {
 		token := s.token
+		if !now.Before(s.refreshAt) && s.flight == nil {
+			s.start(ctx, true)
+		}
 		s.mu.Unlock()
 		return token, nil
 	}
 	f := s.flight
 	if f == nil {
-		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		f = &flight{done: make(chan struct{}), cancel: cancel}
-		s.flight = f
-		go s.run(fetchCtx, f)
+		f = s.start(ctx, false)
 	}
 	f.waiters++
 	s.mu.Unlock()
@@ -235,7 +255,7 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		f.waiters--
-		if f.waiters == 0 && s.flight == f {
+		if f.waiters == 0 && s.flight == f && !f.background {
 			s.flight = nil
 			f.cancel()
 		}
@@ -251,12 +271,37 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 	}
 }
 
+// start begins a token request; s.mu must be held. It keeps ctx's values
+// but not its cancellation: other callers may share the request.
+func (s *TokenSource) start(ctx context.Context, background bool) *flight {
+	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+	f := &flight{done: make(chan struct{}), cancel: cancel, background: background}
+	s.flight = f
+	go s.run(fetchCtx, f)
+	return f
+}
+
 func (s *TokenSource) run(ctx context.Context, f *flight) {
 	defer f.cancel()
-	start := s.now()
-	res, err := s.fetch(ctx, s.hc)
-	if err == nil {
-		err = ctx.Err()
+	var start time.Time
+	var res *tokenResponse
+	var err error
+	for attempt := 0; ; attempt++ {
+		start = s.now()
+		res, err = s.fetch(ctx, s.hc)
+		if err == nil {
+			err = ctx.Err()
+		}
+		delay, ok := fetchRetryDelay(err, attempt)
+		if !ok || attempt >= maxFetchRetries || !s.retryable() {
+			break
+		}
+		if deadline, set := ctx.Deadline(); set && delay >= time.Until(deadline) {
+			break
+		}
+		if sleep(ctx, delay) != nil {
+			break
+		}
 	}
 	var lifetime time.Duration
 	if err == nil {
@@ -277,6 +322,7 @@ func (s *TokenSource) run(ctx context.Context, f *flight) {
 	}
 	if err == nil && s.flight == f && ctx.Err() == nil {
 		s.token, s.refreshAt = res.AccessToken, start.Add(lifetime-min(time.Minute, lifetime/2))
+		s.staleAt = start.Add(lifetime - min(reuseMargin, lifetime/4))
 		f.token = res.AccessToken
 	}
 	f.err = err
@@ -284,6 +330,50 @@ func (s *TokenSource) run(ctx context.Context, f *flight) {
 		s.flight = nil
 	}
 	close(f.done)
+}
+
+// retryable reports whether the source may still request: a key refusal
+// recorded by Reject ends the retries.
+func (s *TokenSource) retryable() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.terminal == nil
+}
+
+// fetchRetryDelay returns the wait before repeating a failed token request.
+// Requesting a token has no effect besides issuing it, so 429, 502, 503,
+// 504 and transport failures are repeated; Retry-After is honored, otherwise
+// the wait is exponential with full jitter. Refusals are final.
+func fetchRetryDelay(err error, attempt int) (time.Duration, bool) {
+	var refused *Error
+	var transport *url.Error
+	switch {
+	case err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return 0, false
+	case errors.As(err, &refused):
+		switch refused.Status {
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		default:
+			return 0, false
+		}
+		if refused.RetryAfter > 0 {
+			return refused.RetryAfter, true
+		}
+	case !errors.As(err, &transport):
+		return 0, false
+	}
+	return mrand.N(min(fetchBackoffBase<<attempt, fetchBackoffLimit)) + 1, true
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // Invalidate drops token when a resource server refused it (401), so the
@@ -314,12 +404,17 @@ type Error struct {
 	Description string `json:"error_description"`
 	// RetryAfter is the parsed Retry-After of a 429.
 	RetryAfter time.Duration
+	// RequestID is the response's X-Request-ID, for support requests.
+	RequestID string
 }
 
 func (e *Error) Error() string {
 	msg := fmt.Sprintf("tsauth: token endpoint answered %d %s", e.Status, e.Code)
 	if e.Description != "" {
 		msg += ": " + e.Description
+	}
+	if e.RequestID != "" {
+		msg += " [request " + e.RequestID + "]"
 	}
 	return msg
 }
@@ -420,7 +515,7 @@ func oauthPost(ctx context.Context, hc *http.Client, endpoint string, form url.V
 		return nil, &ResponseContractError{}
 	}
 	if res.StatusCode != http.StatusOK {
-		e := &Error{Status: res.StatusCode}
+		e := &Error{Status: res.StatusCode, RequestID: res.Header.Get("X-Request-ID")}
 		json.Unmarshal(body, e) // a malformed body leaves Code empty
 		e.RetryAfter = retryAfter(res.Header.Get("Retry-After"))
 		return nil, e
