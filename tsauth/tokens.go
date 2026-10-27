@@ -8,6 +8,7 @@
 package tsauth
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -409,7 +410,8 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	msg := fmt.Sprintf("tsauth: token endpoint answered %d %s", e.Status, e.Code)
+	// A gateway's non-OAuth error body has no code; its status text stands in.
+	msg := fmt.Sprintf("tsauth: token endpoint answered %d %s", e.Status, cmp.Or(e.Code, http.StatusText(e.Status)))
 	if e.Description != "" {
 		msg += ": " + e.Description
 	}
