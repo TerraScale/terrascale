@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -33,12 +34,14 @@ class Tenant:
         self.renew_at = 0
         self.receipt = secrets.token_urlsafe(32)
         self.settled = False
+        self.deletion_started = False
 
     def checkpoint(self):
         # Keep recovery material if cleanup fails; successful cleanup removes the complete private directory.
         state = dict(password=self.password, mail_address=self.inbox.address, mail_password=self.inbox.password,
                      mail_token=self.inbox.token, mail_account=self.inbox.account_id, token=self.token,
-                     refresh=self.refresh, key=self.key, project=self.project, deletion_receipt=self.receipt)
+                     refresh=self.refresh, key=self.key, project=self.project, deletion_receipt=self.receipt,
+                     deletion_started=self.deletion_started)
         path = self.directory / "recovery.json"
         with open(path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
             json.dump(state, stream)
@@ -123,10 +126,16 @@ class Tenant:
         return organization
 
     def close(self):
-        if not self.token:
+        if not self.token and not self.deletion_started:
             raise Failure("No user grant for cleanup; private recovery material retained")
-        status, _, _ = self.platform("/account", "DELETE", purpose="delete_account",
-            extra={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
+        if self.deletion_started:
+            status, _, _ = self.http.request(PLATFORM + "/account/deletion",
+                headers={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
+        else:
+            status, _, _ = self.platform("/account", "DELETE", purpose="delete_account",
+                extra={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
+            self.deletion_started = True
+            self.checkpoint()
         deadline = time.monotonic() + 180
         while status == 202 and time.monotonic() < deadline:
             time.sleep(2)
@@ -140,17 +149,26 @@ class Tenant:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plan-command", nargs="+", required=True, help="Operator helper accepting this run's organization ULID")
+    parser.add_argument("--plan-command", help="Quoted argv for an operator helper accepting this run's organization ULID; no shell evaluation")
+    parser.add_argument("--cleanup-directory", type=Path, help="Resume closure using this run's retained private recovery file")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not command:
-        parser.error("a benchmark command is required")
-    directory = tempfile.mkdtemp(prefix="api-overhead-")
+    if not args.cleanup_directory and (not command or not args.plan_command):
+        parser.error("a plan command and benchmark command are required")
+    directory = args.cleanup_directory or tempfile.mkdtemp(prefix="api-overhead-")
     tenant = Tenant(directory)
     try:
+        if args.cleanup_directory:
+            state = json.loads((args.cleanup_directory / "recovery.json").read_text())
+            tenant.password, tenant.token, tenant.refresh = state["password"], state["token"], state["refresh"]
+            tenant.receipt, tenant.deletion_started = state["deletion_receipt"], state.get("deletion_started", False)
+            tenant.key, tenant.project = state["key"], state["project"]
+            tenant.inbox.address, tenant.inbox.password = state["mail_address"], state["mail_password"]
+            tenant.inbox.token, tenant.inbox.account_id = state["mail_token"], state["mail_account"]
+            return
         organization = tenant.create()
-        subprocess.run([*args.plan_command, organization], check=True)
+        subprocess.run([*shlex.split(args.plan_command), organization], check=True)
         credentials = Path(directory) / "benchmark.json"
         with open(credentials, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
             json.dump(dict(api_key=tenant.key, project=tenant.project), stream)
@@ -170,6 +188,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (Failure, subprocess.CalledProcessError):
-        print("API overhead tenant run failed; inspect redacted diagnostics and retained cleanup state.", file=sys.stderr)
+    except (Failure, subprocess.CalledProcessError) as error:
+        print("API overhead tenant run failed: " + (str(error) if isinstance(error, Failure) else "Child command failed") , file=sys.stderr)
         sys.exit(1)
