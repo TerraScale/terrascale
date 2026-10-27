@@ -68,7 +68,7 @@ def report(directory, baseline=None):
     except (OSError, ValueError, KeyError, ZeroDivisionError) as error:
         invalid, data["valid"], data["comparison_error"] = True, False, str(error)
         comparison.clear()
-    (directory / "results.json").write_text(json.dumps(data, indent=2) + "\n")
+    (directory / "results.json").write_text(json.dumps(data, separators=(',', ':')) + "\n")
     lines = ["# TerraScale performance baseline", "", f"Source: `{metadata['sha']}`; host: `{metadata['host']}`.",
              f"Main source: `{metadata['main_sha']}`; CPUs: {metadata['cpus']}; starting load: {metadata['load_before']}.",
              f"Starting CPU pressure: `{metadata['cpu_pressure_before'].splitlines()[0]}`. "
