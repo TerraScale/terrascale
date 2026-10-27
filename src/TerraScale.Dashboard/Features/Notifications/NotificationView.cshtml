@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationPage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
-<main class="ts-page ts-notifications-page"><header class="ts-notifications-header"><div class="ts-stack-sm"><h1>Notifications</h1><p class="ts-meta">Alerts and updates for @(Model.Shell.Context.Organization?.Name ?? "this organization").</p></div><div class="ts-page-actions"><a class="ts-btn ts-btn-secondary" href="/notifications/alerts">Alerts</a>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model)))</div></header>
+<main class="ts-page"><header class="ts-notifications-header"><div class="ts-stack-sm"><h1>Notifications</h1><p class="ts-meta">Alerts and updates for @(Model.Shell.Context.Organization?.Name ?? "this organization").</p></div><div class="ts-page-actions"><a class="ts-btn ts-btn-secondary" href="/notifications/alerts">Alerts</a>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model)))</div></header>
     <section class="ts-card" aria-label="Notification inbox">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationInbox, TerraScale.Dashboard.Features.Notifications.NotificationPage>(Model))</section>
 </main>
 @functions { public ShellModel LayoutModel => Model.Shell; }

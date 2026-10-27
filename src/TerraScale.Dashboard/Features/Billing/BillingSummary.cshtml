@@ -16,7 +16,7 @@
 }
 <div class="ts-stack ts-billing ts-usage">
 <section class="ts-billing ts-stack">
-    <header class="ts-row-header"><h2 class="ts-card-title">Plans and billing</h2></header>
+    <header class="ts-row ts-row-between"><h2 class="ts-card-title">Plans and billing</h2></header>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
     @if (HttpContext!.Request.Query["payment"] == "canceled") { <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Checkout canceled</p><p class="ts-alert-body">Review your current plan below. Choose a plan to try again, or cancel the pending checkout before choosing a different plan.</p></div> }
     @if (HttpContext!.Request.Query["payment"] == "blocked") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Checkout did not open</p><p class="ts-alert-body">Finish or cancel the pending checkout first. If this organization already has a subscription, change its plan below or in Manage payment.</p></div> }

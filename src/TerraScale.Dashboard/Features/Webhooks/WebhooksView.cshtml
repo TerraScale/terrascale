@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Webhooks.WebhooksPage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
-<main class="ts-page ts-db-detail">
+<main class="ts-page">
 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "webhooks", Model.Collection)))
 @if(Model.Created is { } created){
 <section class="ts-card" aria-labelledby="webhook-created-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="webhook-created-title">Webhook created</h2><p class="ts-card-description">Store this signing secret securely now. It cannot be retrieved again. Decode it as base64url bytes to verify signatures.</p></div></header><div class="ts-card-body ts-stack"><p class="ts-break">@created.Url</p><pre class="ts-code" id="webhook-secret" data-on:pagehide__window="el.textContent = ''">@created.Secret</pre><p class="ts-hint">Never log the secret. If it is lost, delete this webhook and create it again.</p><a class="ts-btn ts-btn-primary" href="@DatabaseService.Path(Model.Database.Id,"webhooks",Model.Collection)">Continue to webhooks</a></div></section>

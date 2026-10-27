@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DeclaredSchemaPage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
-<main class="ts-page ts-db-detail">
+<main class="ts-page">
 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "schema", Model.Collection)))
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
 @if(Model.Notice.Length > 0){<p class="ts-alert ts-alert-success" role="status">@Model.Notice</p>}

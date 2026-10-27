@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @using TerraScale.Dashboard.Features.Organizations
-<main id="access-page" class="ts-page ts-org-page ts-access-page">
+<main id="access-page" class="ts-page ts-org-page">
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, OrganizationPage>(Model))
     <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access" @(ExternalLink.Attributes)>Organization roles, invitations and access@(ExternalLink.Hint)</a></p>
     <div class="ts-toolbar ts-access-toolbar">

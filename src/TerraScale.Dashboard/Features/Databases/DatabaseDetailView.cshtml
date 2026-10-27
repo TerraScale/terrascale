@@ -3,7 +3,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Databases
 @inject AssetUrls Assets
-<main class="ts-page ts-db-detail" data-database-id="@Model.Database.Id">
+<main class="ts-page" data-database-id="@Model.Database.Id">
 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, Model.Tab, Serving: Model.Serving)))
 @if(Model.Error.Length > 0 && !Model.OpenBranch && !(Model.OpenDelete && Model.Context.CanManage && Model.Tab == "danger")){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div>}
 @if(Model.Created){<div class="ts-alert ts-db-created ts-alert-@Model.CreatedState.Tone" data-status="@Model.Database.Status"><span class="ts-db-created-mark" aria-hidden="true">@Icons.Render(Model.CreatedState.Tone == "success" ? "Check" : "Database",18)</span><div class="ts-list-main"><p class="ts-alert-title">@Model.CreatedState.Title</p><p class="ts-alert-body">@Model.CreatedState.Body</p></div></div>}

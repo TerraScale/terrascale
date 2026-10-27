@@ -8,6 +8,6 @@
 <ul class="ts-auth-regions">
     @foreach (var code in new[] { "GRU", "FRA", "SJC" })
     {
-        <li class="ts-auth-region" title="@Regions.Name(code)"><img src="@Assets.Url("flags/" + Regions.Country(code) + ".svg")" alt="" /><span class="ts-mono">@code.ToLowerInvariant()</span></li>
+        <li class="ts-auth-region" title="@Regions.Name(code)">@if (Regions.Country(code) is { Length: > 0 } flag) { <img src="@Assets.Url("flags/" + flag + ".svg")" alt="" /> }<span class="ts-mono">@code.ToLowerInvariant()</span></li>
     }
 </ul>

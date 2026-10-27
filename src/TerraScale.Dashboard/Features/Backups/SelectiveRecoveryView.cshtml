@@ -4,7 +4,7 @@
 @using System.Text.Json
 @using TerraScale.Dashboard.Features.Databases
 @using TerraScale.Dashboard.Features.Backups
-<main class="ts-page ts-db-detail">
+<main class="ts-page">
 @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
 <section class="ts-card" aria-labelledby="recovery-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recovery-title">Recover selected records</h2><p class="ts-card-description">Compare retained records with current data, then approve the records to restore into @Model.Database.Name.</p></div></header><div class="ts-card-body ts-stack-lg">
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}

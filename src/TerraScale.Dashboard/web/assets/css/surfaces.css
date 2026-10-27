@@ -33,6 +33,12 @@
   gap: var(--ts-s3);
 }
 
+summary.ts-card-head {
+  display: list-item;
+  list-style-position: inside;
+  cursor: pointer;
+}
+
 .ts-card-heading {
   display: grid;
   flex: 1 1 280px;
@@ -500,6 +506,7 @@
   font-size: var(--ts-fs-sm);
 }
 
+.ts-alert-info { --alert: var(--ts-info); }
 .ts-alert-success { --alert: var(--ts-success); }
 .ts-alert-warning { --alert: var(--ts-warning); }
 .ts-alert-danger { --alert: var(--ts-danger); }
@@ -531,6 +538,7 @@
   white-space: nowrap;
 }
 
+.ts-badge-neutral { --badge: var(--ts-ink-2); }
 .ts-badge-info { --badge: var(--ts-info); }
 .ts-badge-success { --badge: var(--ts-success); }
 .ts-badge-warning { --badge: var(--ts-warning); }
