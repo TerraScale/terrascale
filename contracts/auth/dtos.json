@@ -8,6 +8,21 @@
     "EndUserTokenBody": {"sdk_type": "TerraScaleAuthEndUserToken", "contract": "end-user-tokens.json", "fields": [{"name": "access_token", "type": "string", "nullable": false, "default": null}, {"name": "token_type", "type": "string", "nullable": false, "default": null}, {"name": "expires_in", "type": "long", "nullable": false, "default": null}]},
     "MfaPolicyRequest": {"sdk_type": "TerraScaleAuthPlatformMfaPolicy", "fields": [{"name": "require_mfa", "type": "bool", "nullable": false, "default": null}]},
     "AccountMfaBody": {"sdk_type": "TerraScaleAuthPlatformAccountMfa", "fields": [{"name": "enabled", "type": "bool", "nullable": false, "default": null}, {"name": "recovery_codes_remaining", "type": "int", "nullable": false, "default": null}, {"name": "manage_url", "type": "string", "nullable": false, "default": null}]},
+    "StepUpGrantBody": {"sdk_type": "TerraScaleAuthStepUpGrant", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "operation_grant", "type": "string", "nullable": false, "default": null}]},
+    "StepUpRequest": {"sdk_type": "TerraScaleAuthStepUpRequest", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "purpose", "type": "string", "nullable": false, "default": null},
+      {"name": "audience", "type": "string", "nullable": false, "default": null},
+      {"name": "return_uri", "type": "string", "nullable": false, "default": null}]},
+    "StepUpBody": {"sdk_type": "TerraScaleAuthStepUp", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "proof", "type": "string", "nullable": false, "default": null},
+      {"name": "step_up_url", "type": "string", "nullable": false, "default": null},
+      {"name": "expires_at", "type": "date-time", "nullable": false, "default": null}]},
+    "ConsumeStepUpRequest": {"sdk_type": "TerraScaleAuthStepUpConsume", "provenance": "step-up-provenance.json", "fields": [
+      {"name": "proof", "type": "string", "nullable": false, "default": null},
+      {"name": "purpose", "type": "string", "nullable": false, "default": null},
+      {"name": "audience", "type": "string", "nullable": false, "default": null},
+      {"name": "operation_receipt", "type": "string", "nullable": true, "default": null}]},
     "NameRequest": {
       "sdk_type": "TerraScaleAuthPlatformName",
       "fields": [
@@ -246,7 +261,7 @@
       ]
     },
     "CreateApiKeyRequest": {
-      "sdk_type": "TerraScaleAuthPlatformCreateApiKey",
+      "sdk_type": "TerraScaleAuthPlatformCreateApiKey", "provenance": "step-up-provenance.json",
       "fields": [
         {
           "name": "name",
@@ -292,7 +307,7 @@
       ]
     },
     "ApiKeyBody": {
-      "sdk_type": "TerraScaleAuthPlatformApiKey",
+      "sdk_type": "TerraScaleAuthPlatformApiKey", "provenance": "step-up-provenance.json",
       "fields": [
         {
           "name": "id",

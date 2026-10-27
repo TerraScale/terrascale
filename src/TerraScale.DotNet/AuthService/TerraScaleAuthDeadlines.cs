@@ -25,8 +25,8 @@ public sealed partial class TerraScaleAuthClient
 
     internal Task<TResponse> SendAuthenticatedJsonAsync<TRequest, TResponse>(HttpMethod method, string route, TRequest? body,
         JsonTypeInfo<TRequest> requestType, JsonTypeInfo<TResponse> responseType, AuthenticationHeaderValue authorization,
-        HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken caller) where TRequest : class =>
-        WithDeadlineAsync(token => SendAuthenticatedJsonCoreAsync(method, route, body, requestType, responseType, authorization, expectedStatus, maxRequestBytes, token), caller);
+        HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken caller, string? stepUpProof = null) where TRequest : class =>
+        WithDeadlineAsync(token => SendAuthenticatedJsonCoreAsync(method, route, body, requestType, responseType, authorization, expectedStatus, maxRequestBytes, token, stepUpProof), caller);
 
     internal Task SendAuthenticatedForStatusAsync<TRequest>(HttpMethod method, string route, TRequest? body,
         JsonTypeInfo<TRequest> requestType, AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
@@ -36,8 +36,8 @@ public sealed partial class TerraScaleAuthClient
     internal Task<bool> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken caller) =>
         WithDeadlineAsync(token => SendAuthenticatedForDeletionCoreAsync(route, authorization, token), caller);
 
-    internal Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route, AuthenticationHeaderValue? authorization, string receipt, CancellationToken caller) =>
-        WithDeadlineAsync(token => SendForAccountDeletionCoreAsync(method, route, authorization, receipt, token), caller);
+    internal Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route, AuthenticationHeaderValue? authorization, string receipt, CancellationToken caller, string? deletionAuthorization = null) =>
+        WithDeadlineAsync(token => SendForAccountDeletionCoreAsync(method, route, authorization, receipt, token, deletionAuthorization), caller);
 
     private Task<T> SendAsync<T>(HttpMethod method, string route, Func<HttpContent?>? bodyFactory, JsonTypeInfo<T> responseType,
         RequestAuthentication authentication, CancellationToken caller) =>

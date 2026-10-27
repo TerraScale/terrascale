@@ -10,6 +10,23 @@
     {"operation_id": "set_project_api_key_allowed_cidrs", "method": "PUT", "path": "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}/allowed-cidrs", "request_dto": "AllowedCidrsRequest", "response_dto": "ApiKeyBody", "success_status": 200, "errors": [400, 401, 403, 404, 503], "security": "platform_user_sign_in_bearer", "request_media_type": "application/json", "response_media_type": "application/json", "pagination": null, "retry": "none; no idempotency contract", "sdk_method": "Platform.SetProjectApiKeyAllowedCidrsAsync"},
     {"operation_id": "set_organization_api_key_allowed_cidrs", "method": "PUT", "path": "/v1/terrascale/organizations/{organization}/api-keys/{key}/allowed-cidrs", "request_dto": "AllowedCidrsRequest", "response_dto": "ApiKeyBody", "success_status": 200, "errors": [400, 401, 403, 404, 503], "security": "platform_user_sign_in_bearer", "request_media_type": "application/json", "response_media_type": "application/json", "pagination": null, "retry": "none; no idempotency contract", "sdk_method": "Platform.SetOrganizationApiKeyAllowedCidrsAsync"},
     {
+      "operation_id": "request_step_up", "method": "POST", "path": "/v1/terrascale/step-up",
+      "request_dto": "StepUpRequest", "response_dto": "StepUpBody", "success_status": 201,
+      "errors": [400, 401, 403, 429, 503], "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json", "response_media_type": "application/json",
+      "pagination": null, "retry": "none; no idempotency contract", "sdk_method": "Platform.BeginStepUpAsync",
+      "provenance": "step-up-provenance.json"
+    },
+    {
+      "operation_id": "consume_step_up", "method": "POST", "path": "/v1/terrascale/step-up/consume",
+      "request_dto": "ConsumeStepUpRequest", "response_dto": null, "success_status": 204,
+      "deletion_success_status": 200, "deletion_response_dto": "StepUpGrantBody", "deletion_response_media_type": "application/json",
+      "errors": [400, 401, 403, 503], "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json", "response_media_type": null,
+      "pagination": null, "retry": "none; single-use proof, including lost responses", "sdk_method": "Platform.ConsumeStepUpAsync",
+      "provenance": "step-up-provenance.json"
+    },
+    {
       "operation_id": "create_organization",
       "method": "POST",
       "path": "/v1/terrascale/organizations",
@@ -210,16 +227,19 @@
       "errors": [
         400,
         401,
+        403,
         409,
         503
       ],
       "security": "platform_user_sign_in_bearer",
+      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "delete_account", "audience": "ts-auth", "required": "unless exact receipt plus deletion authorization acknowledged by dashboard consume or first auth deletion with proof", "provenance": "step-up-provenance.json"},
       "request_media_type": null,
       "response_media_type": null,
       "pagination": null,
       "retry": "none; no idempotency contract",
-      "request_headers": [{"name": "X-TerraScale-Deletion-Receipt", "required": false, "encoding": "canonical unpadded base64url of 32 bytes"}],
-      "sdk_method": "Platform.DeleteAccountAsync"
+      "request_headers": [{"name": "X-TerraScale-Deletion-Receipt", "required": false, "encoding": "canonical unpadded base64url of 32 bytes"}, {"name": "X-TerraScale-Deletion-Authorization", "required": "receipt continuation without fresh proof"}],
+      "response_headers": [{"name": "X-TerraScale-Deletion-Authorization", "when": "successful fresh proof consumption with receipt", "sensitive": true}],
+      "sdk_method": "Platform.DeleteAccountWithProofAsync; Platform.DeleteAccountAsync (authorized receipt)"
     },
     {
       "operation_id": "account_deletion_status",
@@ -428,6 +448,7 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
+      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_api_key", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,
@@ -514,6 +535,7 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
+      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "rotate_api_key", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,
@@ -535,6 +557,7 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
+      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "create_api_key", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,
@@ -621,6 +644,7 @@
         503
       ],
       "security": "platform_user_sign_in_bearer",
+      "step_up": {"header": "X-TerraScale-Step-Up-Proof", "purpose": "rotate_api_key", "audience": "ts-auth", "required": true, "provenance": "step-up-provenance.json"},
       "request_media_type": "application/json",
       "response_media_type": "application/json",
       "pagination": null,

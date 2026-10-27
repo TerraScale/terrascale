@@ -260,12 +260,12 @@ public sealed partial class TerraScaleAuthClient
     private async Task<TResponse> SendAuthenticatedJsonCoreAsync<TRequest, TResponse>(
         HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
         JsonTypeInfo<TResponse> responseType, AuthenticationHeaderValue authorization,
-        HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken cancellationToken)
+        HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken cancellationToken, string? stepUpProof = null)
         where TRequest : class
     {
         using var response = await SendRequestAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
-            new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
+            new RequestAuthentication(authorization), cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
         await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
         return await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false);
     }
@@ -297,7 +297,44 @@ public sealed partial class TerraScaleAuthClient
     }
 
     private async Task<bool> SendForAccountDeletionCoreAsync(HttpMethod method, string route,
-        AuthenticationHeaderValue? authorization, string deletionReceipt, CancellationToken cancellationToken)
+        AuthenticationHeaderValue? authorization, string deletionReceipt, CancellationToken cancellationToken, string? deletionAuthorization)
+    {
+        ValidateDeletionReceipt(deletionReceipt);
+
+        using var response = await SendRequestAsync(method, route, null,
+            authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
+            cancellationToken, deletionReceipt, deletionAuthorization: deletionAuthorization).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.Accepted)
+        {
+            return false;
+        }
+
+        await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    internal async Task<TerraScaleAuthAccountDeletion> SendAccountDeletionWithProofAsync(AuthenticationHeaderValue authorization,
+        string stepUpProof, string? deletionReceipt, CancellationToken cancellationToken)
+    {
+        if (deletionReceipt is not null) ValidateDeletionReceipt(deletionReceipt);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RequestDeadline);
+        using var response = await SendRequestAsync(HttpMethod.Delete, "/v1/terrascale/account", null,
+            new RequestAuthentication(authorization), deadline.Token, deletionReceipt, stepUpProof).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.Accepted)
+            await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+        string? grant = null;
+        if (deletionReceipt is not null && response.Headers.TryGetValues("X-TerraScale-Deletion-Authorization", out var values))
+        {
+            var grants = values.ToArray();
+            if (grants.Length != 1 || !TerraScaleAuthPlatformClient.IsCapability(grants[0]))
+                throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an invalid deletion grant.", "invalid_response", null, response);
+            grant = grants[0];
+        }
+        return new TerraScaleAuthAccountDeletion(response.StatusCode == HttpStatusCode.NoContent, grant);
+    }
+
+    private static void ValidateDeletionReceipt(string deletionReceipt)
     {
         ArgumentNullException.ThrowIfNull(deletionReceipt);
         if (deletionReceipt.Length != 43 || deletionReceipt.Any(character =>
@@ -306,17 +343,6 @@ public sealed partial class TerraScaleAuthClient
         {
             throw new ArgumentException("A deletion receipt must be the canonical unpadded base64url encoding of exactly 32 bytes.", nameof(deletionReceipt));
         }
-
-        using var response = await SendRequestAsync(method, route, null,
-            authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
-            cancellationToken, deletionReceipt).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.Accepted)
-        {
-            return false;
-        }
-
-        await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
-        return true;
     }
 
     private static async Task RequireStatusAsync(HttpResponseMessage response, HttpStatusCode expected, CancellationToken cancellationToken)
@@ -412,7 +438,9 @@ public sealed partial class TerraScaleAuthClient
         Func<HttpContent?>? bodyFactory,
         RequestAuthentication authentication,
         CancellationToken cancellationToken,
-        string? deletionReceipt = null)
+        string? deletionReceipt = null,
+        string? stepUpProof = null,
+        string? deletionAuthorization = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
@@ -425,6 +453,10 @@ public sealed partial class TerraScaleAuthClient
         {
             request.Headers.Add("X-TerraScale-Deletion-Receipt", deletionReceipt);
         }
+        if (stepUpProof is not null)
+            request.Headers.Add("X-TerraScale-Step-Up-Proof", stepUpProof);
+        if (deletionAuthorization is not null)
+            request.Headers.Add("X-TerraScale-Deletion-Authorization", deletionAuthorization);
         request.Headers.Accept.Add(AcceptJson);
         if (bodyFactory?.Invoke() is { } content)
         {
