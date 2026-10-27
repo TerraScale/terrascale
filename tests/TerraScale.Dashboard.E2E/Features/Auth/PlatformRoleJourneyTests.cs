@@ -87,8 +87,6 @@ public sealed class PlatformRoleJourneyTests(DashboardRootFixture fixture)
     [Test]
     public async Task ConcurrentNativeOperatorRequestsShareTheSinglePersistedRotation()
     {
-        Skip.When(DateTimeOffset.UtcNow < new DateTimeOffset(2026, 10, 24, 1, 48, 0, TimeSpan.Zero),
-            "Quarantine #112: owner MarioGK; fix auth producer barrier by 2026-10-24T01:48:00Z; requires five dev-host repeats.");
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
