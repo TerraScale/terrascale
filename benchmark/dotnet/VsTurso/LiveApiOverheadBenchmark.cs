@@ -178,7 +178,13 @@ namespace TerraBase.E2E
         }
     }
 
-    internal sealed record LiveCredentials([property: JsonPropertyName("api_key")] string ApiKey, [property: JsonPropertyName("project")] string Project);
+    internal sealed record LiveCredentials([property: JsonPropertyName("api_key")] string ApiKey, [property: JsonPropertyName("project")] string Project)
+    {
+        public override string ToString()
+        {
+            return nameof(LiveCredentials);
+        }
+    }
 
     internal sealed class LiveTokens(TerraScaleAuthOidcClient oidc, LiveCredentials credentials) : IDisposable
     {
@@ -190,6 +196,7 @@ namespace TerraBase.E2E
 
         public async ValueTask<string> GetAsync(CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (Volatile.Read(ref _cached) is { } current && Stopwatch.GetTimestamp() < current.RenewAt)
             {
                 return current.Token;
@@ -202,6 +209,11 @@ namespace TerraBase.E2E
                 {
                     var sent = Stopwatch.GetTimestamp();
                     var grant = await oidc.RequestClientCredentialsTokenAsync(credentials.ApiKey[..26], credentials.ApiKey, project: credentials.Project, cancellationToken: cancellationToken);
+                    if (grant.ExpiresIn <= 0)
+                    {
+                        throw new InvalidOperationException("The token grant has no usable lifetime.");
+                    }
+
                     Interlocked.Increment(ref _exchanges);
                     Volatile.Write(ref _cached, new CachedToken(grant.AccessToken, sent + (long)(grant.ExpiresIn * 0.9 * Stopwatch.Frequency)));
                 }
@@ -219,7 +231,13 @@ namespace TerraBase.E2E
             _gate.Dispose();
         }
 
-        private sealed record CachedToken(string Token, long RenewAt);
+        private sealed record CachedToken(string Token, long RenewAt)
+        {
+            public override string ToString()
+            {
+                return nameof(CachedToken);
+            }
+        }
     }
 
     [JsonSerializable(typeof(LiveCredentials))]
