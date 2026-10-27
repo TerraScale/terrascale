@@ -21,7 +21,8 @@ RENAMED = {"id": DATABASE_ID, "projectId": PROJECT, "name": "orders_new", "regio
 @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 409, 421, 503, 0])
 async def test_rename_contract_and_errors(asynchronous: bool, status: int, selector: str) -> None:
     requests = []
-    code = {400: "invalid_request", 404: "unknown_database", 409: "name_taken", 421: "wrong_region"}.get(status, "storage_unavailable")
+    codes = {400: "invalid_request", 404: "unknown_database", 409: "name_taken", 421: "wrong_region"}
+    code = codes.get(status, "storage_unavailable")
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
