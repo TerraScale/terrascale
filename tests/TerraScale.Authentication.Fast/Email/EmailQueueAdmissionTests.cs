@@ -49,7 +49,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync(tenant, addresses[0])).IsNotNull();
             var passcodes = oidc.Server.App.Services.GetRequiredService<Passcodes>();
             await Assert.That(await passcodes.RequestAsync(tenant, addresses[0],
-                action == "reset" ? PasscodePurpose.PasswordReset : PasscodePurpose.SignIn)).IsNotNull();
+                action == "reset" ? PasscodePurpose.PasswordReset : PasscodePurpose.SignIn, CancellationToken.None)).IsNotNull();
             await Assert.That(await passcodes.RequestSignUpAsync(tenant, addresses[1], "synthetic-hash", "synthetic-pending-token")).IsNotNull();
             var before = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items
                 .OrderBy(item => item.Id).Select(item => (item.Id, item.Version, item.Document.GetRawText())).ToArray();
@@ -122,7 +122,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             }
             var invitation = await pause.HoldNextAsync(() => oidc.Server.App.Services.GetRequiredService<Invitations>()
                 .CreateAsync(user, organization, "cancelled@example.test", "viewer", null, AuthEmails.English, cancellation.Token));
-            using var overloaded = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", Form("overloaded@example.test"));
+            using var overloaded = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", Form(DistinctEmails(oidc, Owner)[0]));
             await Assert.That(overloaded.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             await cancellation.CancelAsync();
             var cancelled = false;
@@ -214,7 +214,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             await Assert.That(attempts.Single(attempt => attempt.Status == 503).Code).IsEqualTo("email_queue_unavailable");
             var listed = await oidc.OkAsync(HttpMethod.Get, path, token);
             var invitations = listed.GetProperty("items").EnumerateArray().ToArray();
-            await Assert.That(invitations.Select(item => item.GetProperty("email").GetString()).ToArray()).IsEquivalentTo([pending, accepted]);
+            await Assert.That(invitations.Select(item => item.GetProperty("email").GetString()!).ToArray()).IsEquivalentTo([pending, accepted]);
             await Assert.That(invitations.Single(item => item.GetProperty("email").GetString() == accepted)
                 .GetProperty("project_id").GetString()).IsEqualTo(project);
 
