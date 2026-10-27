@@ -132,6 +132,22 @@ internal sealed partial class EngineManagementService
             .ConfigureAwait(false);
     }
 
+    // Whether RefreshClosureReceiptAsync would write nothing: this machine's receipt proves the current fence empty, and nothing
+    // is left to erase, revoke, scan or verify. Every closure ever accepted is converged every pass; read under the writer, they
+    // held SYSTEM's writer ~30 times a second on every node (2026-10-27). What lands later is erased by the next pass's write.
+    private async ValueTask<bool> IsClosureSettledAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
+    {
+        var project = record.ProjectId;
+        return await GetAsync(transaction, ProjectClosure.Collection, project, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken)
+                .ConfigureAwait(false) is { } current
+            && await OwnClosureReceiptAsync(transaction, current, cancellationToken).ConfigureAwait(false) is { EvidenceVersion: 2, Empty: true } receipt
+            && receipt.ClosureId == current.ClosureId && receipt.FormatVersion == current.FormatVersion
+            && await ClosureBindingMatchesAsync(transaction, project, current.AuthorityOrganizationId, cancellationToken).ConfigureAwait(false)
+            && await GetAsync(transaction, ProjectClosure.Scans(project), options.MachineId, Id, cancellationToken).ConfigureAwait(false) == "complete"
+            && !await AnyAsync(transaction, ProjectClosure.Purges(project), cancellationToken).ConfigureAwait(false)
+            && await IsProjectEmptyAsync(transaction, project, cancellationToken).ConfigureAwait(false);
+    }
+
     private ValueTask<ProjectClosureReceipt?> OwnClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken) =>
         GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), options.MachineId, TerraBaseJsonContext.Default.ProjectClosureReceipt, cancellationToken);
 
@@ -174,6 +190,12 @@ internal sealed partial class EngineManagementService
                 if (record is not { FormatVersion: 1 or 2 } || record.ProjectId != document.Id)
                 {
                     throw new InvalidOperationException("a project closure record has unsupported identity or format");
+                }
+
+                if (await ReadAsync(transaction => IsClosureSettledAsync(transaction, record, cancellationToken), static _ => false, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    continue;
                 }
 
                 _ = await WriteAsync<Done>(async transaction =>

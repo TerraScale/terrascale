@@ -1,6 +1,8 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Configuration;
@@ -326,6 +328,68 @@ public sealed class ProjectClosureTests
         await ((EngineManagementService)api.Server.Services.GetRequiredService<IManagementService>()).ConvergeAsync(CancellationToken.None);
         using var retained = await api.Client.GetAsync(ManagementApi.Uri(database.Path));
         await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    // Every pass converges every closure ever accepted. Written under SYSTEM's writer, settled ones held it ~30 times a second
+    // on every node (2026-10-27); now they are read, and one that has something to erase again is still written.
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task A_settled_closure_converges_without_the_catalog_writer_until_it_has_something_to_erase(int version)
+    {
+        await using var api = await ManagementApi.StartAsync(services: services => services.Remove(services.Single(descriptor =>
+            descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence))));
+        var (project, organization, closure) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await CloseAsync(api.Server.Client, project, closure, organization, HttpStatusCode.OK, version);
+
+        var meter = api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        var holds = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (instrument.Name == "terrabase.storage.writer_held" && ReferenceEquals(instrument.Meter, meter))
+            {
+                observer.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag is { Key: "at", Value: string at } && at.StartsWith("EngineManagementService.Closure.cs:", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref holds);
+                }
+            }
+        });
+        listener.Start();
+
+        var catalog = (EngineManagementService)api.Server.Services.GetRequiredService<IManagementService>();
+        await catalog.ConvergeAsync(CancellationToken.None);
+        await catalog.ConvergeAsync(CancellationToken.None);
+        await Assert.That(Volatile.Read(ref holds)).IsEqualTo(0);
+        await Assert.That((await ReceiptAsync(api, project))!.Empty).IsTrue();
+
+        // A purge to verify again: the next pass writes, and the receipt no longer proves the project empty.
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            var storage = new TenantContext(organization, PlanTier.Hobby, project, EntityIds.New().ToString());
+            await SystemCatalog.PutAsync(transaction, ProjectClosure.Purges(project), storage.DatabaseId!, storage, TerraBaseJsonContext.Default.TenantContext, CancellationToken.None);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        await catalog.ConvergeAsync(CancellationToken.None);
+        await Assert.That(Volatile.Read(ref holds)).IsGreaterThan(0);
+        await Assert.That((await ReceiptAsync(api, project))!.Empty).IsFalse();
+    }
+
+    private static async Task<ProjectClosureReceipt?> ReceiptAsync(ManagementApi api, string project)
+    {
+        var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None);
+        return await SystemCatalog.GetAsync(transaction, ProjectClosure.Receipts(project), api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId,
+            TerraBaseJsonContext.Default.ProjectClosureReceipt, CancellationToken.None);
     }
 
     private static async Task<JsonElement> CloseAsync(HttpClient client, string project, string closure, string organization, HttpStatusCode expected, int version = 1)
