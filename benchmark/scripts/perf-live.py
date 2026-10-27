@@ -52,7 +52,15 @@ with open(output, "x") as stream:
         for size, count in (("small", 256), ("medium", 4096)):
             table, identifier = "perf_" + size, matrix.ulid()
             live.sql("sjc", "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], live.name)
-            live.table_everywhere(table, live.name)
+            deadline = time.monotonic() + 120
+            while True:
+                try:
+                    live.sql(region, "sql", [f"SELECT value FROM {table}"], live.name)
+                    break
+                except matrix.HttpError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(.1)
             value = "x" * (count - len('{"value":""}'))
             live.write(region, "documents", table, identifier, value, "insert", live.name)
             tables[size] = (table, identifier, value)
@@ -78,7 +86,7 @@ with open(output, "x") as stream:
             response = local.http.getresponse()
             data = json.loads(response.read())
             if response.status != 200 or value not in json.dumps(data):
-                raise RuntimeError("HTTP read failed or value mismatch")
+                raise RuntimeError(f"{endpoint}: HTTP {response.status}, value_match={value in json.dumps(data)}")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
             for repeat in range(1, 4):
@@ -95,6 +103,7 @@ with open(output, "x") as stream:
                                     began = time.perf_counter()
                                     read(endpoint, table, identifier, value)
                                     samples.append((time.perf_counter() - began) * 1000)
+                                    time.sleep(.1)
                                 return samples
                             began = time.perf_counter()
                             samples = sorted(v for future in [pool.submit(worker) for _ in range(concurrency)] for v in future.result())
@@ -102,7 +111,7 @@ with open(output, "x") as stream:
                             live.record(kind="latency", region=region, endpoint=endpoint, repeat=repeat, size=size,
                                         concurrency=concurrency, samples_ms=samples, p50_ms=statistics.median(samples),
                                         p99_ms=samples[math.ceil(len(samples) * .99) - 1],
-                                        ops_per_s=len(samples) / elapsed, rate_window="includes warmup and worker startup")
+                                        ops_per_s=len(samples) / elapsed, rate_window="paced at most 10/s; includes warmup")
         key = pathlib.Path(work, "key")
         key.write_text(live.key)
         for repeat in range(1, 4):

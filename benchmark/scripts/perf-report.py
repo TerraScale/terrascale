@@ -10,7 +10,8 @@ import sys
 def report(directory):
     directory = pathlib.Path(directory)
     metadata = json.loads((directory / "metadata.json").read_text())
-    cells = [json.loads(line) for line in (directory / "local.raw").read_text().splitlines()
+    raw = directory / "local.raw"
+    cells = [json.loads(line) for line in (raw.read_text() if raw.exists() else "").splitlines()
              if line.startswith('{"Lane":')]
     groups = collections.defaultdict(list)
     for cell in cells:

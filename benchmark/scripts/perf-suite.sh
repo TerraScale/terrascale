@@ -15,6 +15,8 @@ data = dict(sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True)
             main_sha=subprocess.check_output(['git', 'rev-parse', 'origin/main'], text=True).strip(),
             host=platform.node(), platform=platform.platform(), cpus=os.cpu_count(),
             at=datetime.datetime.now(datetime.timezone.utc).isoformat(), load_before=os.getloadavg(),
+            dotnet=subprocess.check_output(['dotnet', '--version'], text=True).strip(),
+            cpu_model=next(line.strip() for line in pathlib.Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name')),
             cpu_pressure_before=pathlib.Path('/proc/pressure/cpu').read_text())
 pathlib.Path(sys.argv[1]).write_text(json.dumps(data, indent=2) + '\n')
 PY
@@ -35,7 +37,9 @@ with open(sys.argv[1], 'a') as stream:
 PY
   sleep 5
 done
-wait "$job"
+status=0
+wait "$job" || status=$?
 trap - EXIT
-python3 benchmark/scripts/perf-report.py "$out"
+python3 benchmark/scripts/perf-report.py "$out" || status=1
 cat "$out/summary.md"
+exit "$status"
