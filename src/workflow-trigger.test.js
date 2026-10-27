@@ -7,6 +7,7 @@ import { test } from "vitest";
 
 const ownedCommands = [
   "node scripts/provision-reviewed-npm.js",
+  "npm run check:vulnerabilities",
   "npm ci",
   "npm run typecheck",
   "npm run build",
@@ -37,8 +38,10 @@ test("CI retains the reviewed checks and main skips only an identical proven PR 
     return run !== undefined && ownedCommands.includes(run) ? [run] : [];
   });
   assert.deepEqual(commands, ownedCommands);
-  for (const name of ["Typecheck", "Generate SDK type declarations", "Check C# route drift", "Run SDK tests", "Audit dependencies"])
+  for (const name of ["Typecheck", "Generate SDK type declarations", "Check C# route drift", "Run SDK tests"])
     assert.match(stepNamed(jobDefinition(workflow, "verify"), name).body, /steps\.proof\.outputs\.proven != 'true'/u);
+  // Advisories change without code changes, so the audit runs on every tree, including proven ones.
+  assert.doesNotMatch(stepNamed(jobDefinition(workflow, "verify"), "Audit every committed npm graph").body, /\bif:/u);
   const save = stepNamed(jobDefinition(workflow, "verify"), "Save main npm cache");
   assert.match(save.body, /github\.event_name == 'push'/u);
 });
