@@ -165,6 +165,15 @@ internal static class TursoStatements
 
     public const string RenewIncarnation = "UPDATE commit_offset SET incarnation = $incarnation WHERE id = 1;";
 
+    // The change log's bounds, each read by seeking change_id (the rowid). Turso seeks only a min() or max() that is a query's
+    // whole result: wrapped (coalesce, arithmetic, both in one SELECT) it reads every turso_cdc row. Acks and retention read
+    // these under the writer, so a backlog of a peer silent for hours stalled every write of its database.
+    public const string NewestChange = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc), 0);";
+
+    public const string OldestChange = "SELECT coalesce((SELECT min(change_id) FROM turso_cdc), 0);";
+
+    public const string ChangeRows = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc) - (SELECT min(change_id) FROM turso_cdc) + 1, 0);";
+
     public const string CreateCollection = """
         INSERT INTO collections (name, created_at, entity_id) VALUES ($collection, $created, $entityId)
         ON CONFLICT (name) DO NOTHING;
