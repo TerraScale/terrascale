@@ -139,8 +139,6 @@ public static partial class McpOAuth
         if (request.Page is not null) return request.Page;
         if (request.Error is not null) return request.Error;
         var authorization = request.Authorization!;
-        if (await AccountRequest.RequireAsync(context, context.RequestServices.GetRequiredService<DashboardSessions>(), context.RequestServices.GetRequiredService<AccountService>()) is null)
-            return AccountRequest.LoginRedirect(context);
         // The consent form's redirect chain can end at the client's redirect URI, so the page's form-action allows it.
         context.Items[FormActionKey] = FormActionSource(authorization.RedirectUri);
         return McpConsentView.Create(new(new("Connect an AI client", DocumentModel.NonceFor(context)), authorization.ClientName,

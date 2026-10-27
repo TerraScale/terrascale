@@ -246,11 +246,13 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         using var browser = scenario.CreateClient();
         using var registered = await browser.PostAsJsonAsync("/oauth/register", new { client_name = "Paused callback", redirect_uris = new[] { Callback } });
         var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("client_id").GetString()!;
+        using (var signedIn = await HttpJourney.LoginAsync(browser, scenario.Personas.Seeded.Email, scenario.Personas.Seeded.Password))
+            await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var csrf = await HttpJourney.CsrfAsync(browser, ConsentPath(id));
         var form = QueryHelpers.ParseQuery(new Uri(browser.BaseAddress!, ConsentPath(id)).Query).ToDictionary(pair => pair.Key, pair => pair.Value.ToString());
         form["_csrf"] = csrf;
         form["decision"] = "allow";
-        using var allowed = await HttpJourney.PostFormAsync(browser, "/oauth/authorize", form);
+        using var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", form);
         await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         var stored = (await state.GetAsync(McpOAuth.ClientCollection, id, default))!;
         var created = DateTimeOffset.UtcNow.AddHours(-25);

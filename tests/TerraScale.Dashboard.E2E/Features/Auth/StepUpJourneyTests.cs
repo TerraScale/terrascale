@@ -189,16 +189,13 @@ public sealed class StepUpJourneyTests(DashboardRootFixture fixture)
         var suffix = Guid.NewGuid().ToString("N")[..8];
         scenario.Email = "interrupted-delete-" + suffix + "@example.test";
         await Billing.BillingPlanJourneyTests.SignUpPaidAsync(scenario.Browser, scenario.Email, "E2E-" + suffix, suffix);
-        scenario.Environment.Workspace.BeforeListMembers = async () =>
-        {
-            if ((await scenario.Environment.State.ListAsync("account_deletions", default)).Count > 0)
-                throw new IOException("Synthetic interruption after operation persistence.");
-        };
+        // The operation is persisted before ts-auth is asked to delete; the interruption lands between them.
+        scenario.Environment.Workspace.BeforeDeleteAccount = () => throw new IOException("Synthetic interruption after operation persistence.");
         using var started = await scenario.BeginAsync("/api/v1/dashboard/profile/delete");
         using var approved = await scenario.ApproveAsync(started);
         using var interrupted = await scenario.Browser.GetAsync("/auth/step-up/callback");
         await Assert.That(interrupted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        scenario.Environment.Workspace.BeforeListMembers = null;
+        scenario.Environment.Workspace.BeforeDeleteAccount = null;
         await Assert.That((await scenario.Environment.State.ListAsync("account_deletions", default)).Count).IsEqualTo(1);
         var receipt = scenario.Gateway.LastReceipt;
         await Assert.That(receipt).IsNotNull();
@@ -223,16 +220,13 @@ public sealed class StepUpJourneyTests(DashboardRootFixture fixture)
     public async Task AcceptedDeletionReceiptResumesPendingThenCompletedWithoutRepeatingEffects()
     {
         await using var scenario = await StepUpScenario.StartAsync(fixture.Root);
-        scenario.Environment.Workspace.BeforeListMembers = async () =>
-        {
-            if ((await scenario.Environment.State.ListAsync("account_deletions", default)).Count > 0)
-                throw new IOException("Synthetic interruption after operation persistence.");
-        };
+        // The operation is persisted before ts-auth is asked to delete; the interruption lands between them.
+        scenario.Environment.Workspace.BeforeDeleteAccount = () => throw new IOException("Synthetic interruption after operation persistence.");
         using var started = await scenario.BeginAsync("/api/v1/dashboard/profile/delete");
         using var approved = await scenario.ApproveAsync(started);
         using var interrupted = await scenario.Browser.GetAsync("/auth/step-up/callback");
         await Assert.That(interrupted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        scenario.Environment.Workspace.BeforeListMembers = null;
+        scenario.Environment.Workspace.BeforeDeleteAccount = null;
         scenario.Environment.Workspace.SetDeletionStatus(scenario.Gateway.LastReceipt!, false);
         using var pending = await HttpJourney.PostFormAsync(scenario.Browser, "/api/v1/dashboard/profile/delete/continue", await scenario.FormAsync());
         await Assert.That(pending.Headers.Location!.OriginalString).IsEqualTo("/account-deletion");

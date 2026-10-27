@@ -132,11 +132,13 @@ public sealed class McpRegistrationReclamationJourneyTests(DashboardRootFixture 
         var aged = stored.Document.Deserialize<McpRegistration>()! with { CreatedAt = created, LastActivityAt = created };
         await state.PutAsync(McpOAuth.ClientCollection, id, JsonSerializer.SerializeToElement(aged), TerraBasePrecondition.Matches(stored.Version), default);
         var path = "/oauth/authorize?client_id=" + id + "&response_type=code&code_challenge_method=S256&code_challenge=" + new string('A', 43);
+        using (var signedUp = await HttpJourney.LoginAsync(browser, "race@example.test", "Test-race-password", signUp: true))
+            await Assert.That(signedUp.StatusCode).IsEqualTo(System.Net.HttpStatusCode.SeeOther);
         var csrf = await HttpJourney.CsrfAsync(browser, path);
-        using var allowed = await HttpJourney.PostFormAsync(browser, "/oauth/authorize", new()
+        using var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", new()
         { ["client_id"] = id, ["response_type"] = "code", ["code_challenge_method"] = "S256", ["code_challenge"] = new string('A', 43), ["_csrf"] = csrf, ["decision"] = "allow" });
         var paused = scenario.PauseRegistrationCompletion();
-        var callback = HttpJourney.HostedSignInAsync(browser, allowed, "race@example.test", "Test-race-password", signUp: true);
+        var callback = HttpJourney.HostedSignInAsync(browser, allowed, "race@example.test", "Test-race-password");
         await paused.WaitAsync(TimeSpan.FromSeconds(10));
         var credentials = (await state.ListAsync("auth_credentials", default)).Count;
         var codes = (await state.ListAsync(McpOAuth.CodeCollection, default)).Count;

@@ -364,6 +364,7 @@ sealed class TestState : IDashboardState
 sealed class TestWorkspace : ITsAuthPlatform
 {
     public Func<Task>? BeforeListMembers { get; set; }
+    public Action? BeforeDeleteAccount { get; set; }
     public Func<SessionRecord, string, string, bool>? AuthorizeDeletion { get; set; }
     private int deletionCalls;
     public int DeletionCalls => Volatile.Read(ref deletionCalls);
@@ -684,6 +685,7 @@ sealed class TestWorkspace : ITsAuthPlatform
         deletionReceipts.TryGetValue(receipt, out var completed) ? Task.FromResult(completed) : throw new AccountAccessException("Receipt is unavailable.", 404);
     public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, string authorization, CancellationToken cancellationToken)
     {
+        BeforeDeleteAccount?.Invoke();
         Interlocked.Increment(ref deletionCalls);
         if (AuthorizeDeletion?.Invoke(session, receipt, authorization) != true) throw StepUpFlow.Required();
         deletionReceipts[receipt] = true;
