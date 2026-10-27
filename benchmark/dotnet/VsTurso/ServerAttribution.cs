@@ -31,7 +31,7 @@ namespace TerraBase.E2E
             _listener = new ActivityListener
             {
                 ShouldListenTo = source => source.Name == Hosting,
-                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.PropagationData,
+                Sample = (ref _) => ActivitySamplingResult.PropagationData,
                 ActivityStarted = activity =>
                 {
                     var now = Stopwatch.GetTimestamp();
