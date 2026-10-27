@@ -2,7 +2,11 @@
 use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::{client::Req, ids::check_name, Database, Result, WebhookDelivery};
+use super::{
+    client::Req,
+    ids::{check_database_selector, check_name},
+    Database, Result, WebhookDelivery,
+};
 
 /// Collection changes which invoke a function. The function cannot write the watched collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +112,7 @@ impl Database {
 
     /// Deletes a function and stops its triggers.
     pub async fn delete_function(&self, name: &str) -> Result<()> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         check_name("function", name)?;
         self.client()
             .send_project(Req::new(
@@ -150,7 +154,7 @@ impl Database {
         name: &str,
         body: &impl Serialize,
     ) -> Result<super::client::Resp> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         check_name("function", name)?;
         self.client()
             .send_project(

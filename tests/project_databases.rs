@@ -346,3 +346,45 @@ fn database_conflict_id_rejects_a_name() {
     body["conflictOf"] = json!("orders");
     assert!(serde_json::from_value::<terrascale::v1::ProjectDatabaseInfo>(body).is_err());
 }
+
+#[tokio::test]
+async fn immutable_handles_cover_export_functions_and_hrana_after_rename() {
+    use futures_util::StreamExt;
+    use terrascale::v1::HranaVersion;
+
+    let fixture = Fixture::new(vec![
+        reply(200, ""),
+        reply(200, ""),
+        reply(200, "{}"),
+        reply(204, ""),
+        reply(200, r#"{"baton":null,"base_url":null,"results":[]}"#),
+    ])
+    .await;
+    let db = fixture.client().database(PROJECT);
+    assert!(db.export_database::<Value>(None).await.unwrap().is_empty());
+    let stream = db.stream_export::<Value>(None).await.unwrap();
+    futures_util::pin_mut!(stream);
+    assert!(stream.next().await.is_none());
+    assert_eq!(
+        db.invoke_function::<Value>("audit", &json!({}))
+            .await
+            .unwrap(),
+        json!({})
+    );
+    db.delete_function("audit").await.unwrap();
+    db.libsql_pipeline(HranaVersion::V3, &json!({"requests":[]}))
+        .await
+        .unwrap();
+    let requests = fixture.requests.lock().unwrap();
+    let prefix = format!("/v1/projects/{PROJECT}/databases/{PROJECT}");
+    assert_eq!(requests.len(), 5);
+    for (request, suffix) in requests.iter().zip([
+        "/export",
+        "/export",
+        "/functions/audit/invoke",
+        "/functions/audit",
+        "/libsql/v3/pipeline",
+    ]) {
+        assert_eq!(request.uri, format!("{prefix}{suffix}"));
+    }
+}

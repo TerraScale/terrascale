@@ -2,7 +2,7 @@
 use super::{
     client::{Req, Resp},
     errors::from_project_response,
-    ids::{check_name, valid_entity_id},
+    ids::{check_database_selector, valid_entity_id},
     Database, Error, Result,
 };
 use reqwest::{Method, StatusCode};
@@ -107,7 +107,7 @@ impl Database {
         operation: &str,
         body: &impl Serialize,
     ) -> Result<Resp> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let req = Req::new(
             Method::POST,
             vec![

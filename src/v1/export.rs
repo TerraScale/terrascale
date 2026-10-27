@@ -1,5 +1,9 @@
 //! Complete bounded NDJSON export reads, preserving raw document numbers.
-use super::{client::Req, ids::check_name, Database, DocumentId, Result};
+use super::{
+    client::Req,
+    ids::{check_database_selector, check_name},
+    Database, DocumentId, Result,
+};
 use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::value::RawValue;
@@ -19,7 +23,7 @@ impl Database {
         &self,
         after: Option<(&str, DocumentId)>,
     ) -> Result<Vec<ExportDocument<T>>> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let mut req = Req::new(Method::GET, vec!["v1", "databases", self.name(), "export"]);
         if let Some((collection, id)) = after {
             check_name("collection", collection)?;
