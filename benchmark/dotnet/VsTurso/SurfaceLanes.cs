@@ -21,7 +21,7 @@ namespace TerraBase.E2E
             var engine = WireLanes.Engine(node);
             return Task.FromResult<ITarget>(new PostTarget(
                 node, "/transactions", $"/collections/{node.Collection}/query",
-                (id, json) => json is null ? SurfaceLanes.Query([id]) : SurfaceLanes.Transaction(node.Collection, [id], json), (_, documents) => engine.PreloadAsync(documents)));
+                (id, json) => json is null ? SurfaceLanes.Query([id]) : SurfaceLanes.Transaction(node.Collection, [id], json), (_, documents) => engine.PreloadAsync(documents), expectedItems: 1));
         }
     }
 
@@ -39,7 +39,7 @@ namespace TerraBase.E2E
             return Task.FromResult<ITarget>(new PostTarget(
                 node, "/transactions", $"/collections/{node.Collection}/query",
                 (id, json) => json is null ? SurfaceLanes.Query(SurfaceLanes.Neighbours(id)) : SurfaceLanes.Transaction(node.Collection, SurfaceLanes.Neighbours(id), json),
-                (_, documents) => engine.PreloadAsync(documents)));
+                (_, documents) => engine.PreloadAsync(documents), expectedItems: SurfaceLanes.Batch));
         }
     }
 
@@ -193,7 +193,10 @@ namespace TerraBase.E2E
             await using var command = source.CreateCommand(SurfaceLanes.Upsert);
             command.Parameters.Add(new NpgsqlParameter { Value = id });
             command.Parameters.Add(new NpgsqlParameter { Value = Encoding.UTF8.GetString(json) });
-            await command.ExecuteNonQueryAsync();
+            if (await command.ExecuteNonQueryAsync() != 1)
+            {
+                throw new InvalidOperationException("pg: upsert did not affect exactly one row");
+            }
         }
 
         public async Task GetAsync(string id)
@@ -221,7 +224,7 @@ namespace TerraBase.E2E
     /// Hrana error result is an error, and so is a read that found no row or document.
     /// </summary>
     internal sealed class PostTarget(
-        VsTursoNode node, string writes, string reads, Func<string, byte[]?, byte[]> request, Func<PostTarget, IReadOnlyList<(string Id, byte[] Json)>, Task> preload)
+        VsTursoNode node, string writes, string reads, Func<string, byte[]?, byte[]> request, Func<PostTarget, IReadOnlyList<(string Id, byte[] Json)>, Task> preload, int expectedItems = 0)
         : ITarget
     {
         private static readonly MediaTypeHeaderValue Json = new("application/json");
@@ -258,6 +261,15 @@ namespace TerraBase.E2E
                 || (read && (answer.AsSpan().IndexOf("\"rows\":[]"u8) >= 0 || answer.AsSpan().IndexOf("\"items\":[]"u8) >= 0)))
             {
                 throw new InvalidOperationException($"{route}: answered {(int)response.StatusCode} {Encoding.UTF8.GetString(answer.AsSpan(0, Math.Min(answer.Length, 200)))}");
+            }
+
+            if (read && expectedItems > 0)
+            {
+                using var page = JsonDocument.Parse(answer);
+                if (page.RootElement.GetProperty("items").GetArrayLength() != expectedItems)
+                {
+                    throw new InvalidOperationException($"{route}: expected {expectedItems} documents");
+                }
             }
         }
 
