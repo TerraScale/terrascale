@@ -90,6 +90,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     // A writer held for seconds stalls every write of its database behind it (batch 8, 2026-10-25): how long each holder kept it.
     private static readonly double[] WriterHeldBuckets = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60];
     private readonly Histogram<double> _writerHeld;
+    private readonly Counter<long> _transactions;
     private readonly Histogram<double> _rewriteSteps;
     private readonly Counter<long> _rewriteRefused;
     private readonly ILogger<TursoStorageEngine> _logger;
@@ -488,6 +489,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
             "How long a database's writer was held, by holder kind and call site (bounded sets of names and file:line).",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
+        _transactions = meter.CreateCounter<long>("terrabase.storage.transactions",
+            description: "Storage transactions begun, by kind (read, write) and call site (a bounded set of file:line): which code keeps the I/O threads and writers busy.");
         _rewriteRefused = meter.CreateCounter<long>("terrabase.storage.rewrite_refused", description: "Healthy rewrite refusals by bounded reason.");
         _rewriteSteps = meter.CreateHistogram<double>("terrabase.storage.rewrite_step", "s",
             "Healthy rewrite work by bounded step and database kind.",
@@ -1012,6 +1015,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         Checkpoint = _checkpoint,
                         Ledger = Ledger,
                         WriterHeld = _writerHeld,
+                        Transactions = _transactions,
                         RewriteSteps = _rewriteSteps,
                         CollectionStateWritten = NoteSystemCollectionState,
                     };
@@ -1817,6 +1821,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RequiresRemoteProof = RequiresRemoteProof,
             Ledger = Ledger,
             WriterHeld = _writerHeld,
+            Transactions = _transactions,
             RewriteSteps = _rewriteSteps,
         };
         var published = false;

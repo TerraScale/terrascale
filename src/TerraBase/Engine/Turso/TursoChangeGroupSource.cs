@@ -42,6 +42,12 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
     private readonly ConcurrentDictionary<Ulid, long> _measured = new();
     private static readonly TimeSpan FarBehindEvery = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
+    // A database with no commit and no ack since its last pass, and no batch left over from it, is passed again only this
+    // often: its time-based cuts (24 h, far behind) and its collection horizon move by the minute. Each pass holds the
+    // database's writer, every TailRefresh, for every idle database.
+    private static readonly TimeSpan IdlePass = TimeSpan.FromSeconds(60);
+    // Each database's last pass: the commit count it began at, when, and whether batches were left for the next.
+    private readonly ConcurrentDictionary<Ulid, (long Sequence, long At, bool More)> _passes = new();
 
     // Bounded retention batches one pass deletes after its own (each at most 16,384 rows): 4 million rows, then the next pass.
     private const int MaxTrimBatches = 256;
@@ -523,11 +529,18 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
                         _ = _tail.TryRemove(incarnation, out _);
                         _ = _backlog.TryRemove(incarnation, out _);
                         _ = _measured.TryRemove(incarnation, out _);
+                        _ = _passes.TryRemove(incarnation, out _);
                         lock (_gate)
                         {
                             _ = _quiet.Remove(incarnation);
                         }
 
+                        continue;
+                    }
+
+                    if (_passes.TryGetValue(incarnation, out var last) && !last.More && last.Sequence == store.CommitSequence
+                        && _engine.HostTime.GetElapsedTime(last.At) < IdlePass)
+                    {
                         continue;
                     }
 
@@ -559,6 +572,7 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             return;
         }
 
+        var (sequence, startedAt) = (store.CommitSequence, _engine.HostTime.GetTimestamp());
         long? floor;
         var durability = _durability?.Invoke();
         var placement = store.Tenant is { } placed && durability is { Confirms: true }
@@ -642,6 +656,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             }
         }
 
+        _passes[incarnation] = (sequence, startedAt, more);
+
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
     }
 
@@ -666,6 +682,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             floor = lowest;
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _backlog[incarnation] = left;
+            // The ack may release rows: the next retention pass runs even with no commit since the last.
+            _ = _passes.TryRemove(incarnation, out _);
         }
 
         // After the writer is released: the gauge's read must not hold it.
