@@ -66,7 +66,9 @@ authorization does not revoke the independent credential. During API-key rotatio
 the previous secret retains its own original lineage throughout its grace period.
 Already issued access tokens retain their existing bounded lifetime. Immutable
 credential winner claims remain after expired step-up code material is pruned so
-long-lived descendants can still validate their ancestry.
+long-lived descendants can still validate their ancestry. Secrets stored before
+this lineage existed carry none (no or empty binding lists); they have no
+ancestry to lose and keep exchanging until revoked, expired or rotated.
 
 This is an explicit breaking authorization change. Clients that omit proof
 must obtain it through hosted verification. Existing account-deletion status
