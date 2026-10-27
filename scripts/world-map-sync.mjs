@@ -47,7 +47,7 @@ if (pinMatches.length !== regions.length) {
 }
 
 // dotted-map puts a pin on the grid point nearest the city, which can be a sea point next to the
-// coast (San Jose lands one dot into the Pacific). Snap each pin to the nearest land dot instead,
+// coast (the Bay Area lands one dot into the Pacific). Snap each pin to the nearest land dot instead,
 // preferring the same row, so it sits on the city's dot.
 const landDots = map.getPoints().filter((p) => p.svgOptions?.color !== SENTINEL)
 const placed = regions.map((r, i) => {
