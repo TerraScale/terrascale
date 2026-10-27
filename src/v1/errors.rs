@@ -21,12 +21,17 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[non_exhaustive]
 pub enum Error {
     /// API-key exchange failed before the pending attempt or replay was sent;
-    /// any preceding request was refused with 401. The code
-    /// is SDK-owned; upstream bodies, headers and transport text are omitted.
-    #[error("terrabase: token exchange: {code} (HTTP {status:?})")]
+    /// any preceding request was refused with 401. The code and reason are
+    /// SDK-owned; upstream free text and transport text are omitted.
+    #[error("terrabase: token exchange: {code} ({}){}", fmt_http(*status), fmt_reason(*reason))]
     TokenExchange {
         status: Option<u16>,
         code: &'static str,
+        /// SDK-owned explanation: the issuer's RFC 6749 `error` code with a
+        /// fixed description, or the transport failure class.
+        reason: Option<&'static str>,
+        /// The issuer's correlation id, when it sent one.
+        request_id: Option<String>,
     },
     /// A project API failure with its complete HTTP diagnostics. The inner
     /// error retains the decoded code and typed error, when present.
@@ -164,6 +169,17 @@ impl std::fmt::Display for SqlError {
     }
 }
 
+fn fmt_http(status: Option<u16>) -> String {
+    status.map_or_else(
+        || "no HTTP response".into(),
+        |status| format!("HTTP {status}"),
+    )
+}
+
+fn fmt_reason(reason: Option<&str>) -> String {
+    reason.map(|r| format!(": {r}")).unwrap_or_default()
+}
+
 fn fmt_op(op: Option<usize>) -> String {
     op.map(|op| format!(" (op {op})")).unwrap_or_default()
 }
@@ -286,11 +302,13 @@ impl Error {
         }
     }
 
-    /// Server correlation id from a project API error response.
+    /// Server correlation id from a project API or token exchange error.
     #[must_use]
     pub fn request_id(&self) -> Option<&str> {
         match self {
-            Self::Response { request_id, .. } => request_id.as_deref(),
+            Self::Response { request_id, .. } | Self::TokenExchange { request_id, .. } => {
+                request_id.as_deref()
+            }
             _ => None,
         }
     }

@@ -93,10 +93,10 @@ impl Fixture {
             .retry_policy(RetryPolicy::none())
             .build()
             .unwrap();
-        let Auth::Key { endpoint, .. } = &mut Arc::get_mut(&mut client.inner).unwrap().auth else {
+        let Auth::Key(key) = &mut Arc::get_mut(&mut client.inner).unwrap().auth else {
             unreachable!()
         };
-        *endpoint = format!("{}/terrascale/oauth/token", issuer.url)
+        Arc::get_mut(key).unwrap().endpoint = format!("{}/terrascale/oauth/token", issuer.url)
             .parse()
             .unwrap();
         client
@@ -167,8 +167,92 @@ async fn refreshes_before_expiry_and_at_half_life_for_short_tokens() {
         assert_eq!(auth.seen.lock().unwrap().len(), 1);
         advance(2).await;
         read(&client).await.unwrap();
+        // The renewal runs in the background; the read did not wait for it.
+        wait_for_exchanges(&auth, 2).await;
+        read(&client).await.unwrap();
         assert_eq!(auth.seen.lock().unwrap().len(), 2);
     }
+}
+
+async fn wait_for_exchanges(auth: &Fixture, count: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while auth.seen.lock().unwrap().len() < count {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn renewal_keeps_serving_the_valid_token_and_blocks_only_after_expiry() {
+    let count = AtomicUsize::new(0);
+    let auth = Fixture::new(move |_| {
+        let n = count.fetch_add(1, Ordering::SeqCst);
+        ok(grant(["one", "two", "three"][n.min(2)], 60))
+    })
+    .await;
+    let data = Fixture::new(|_| ok("{}".into())).await;
+    let client = data.client(&auth);
+    read(&client).await.unwrap();
+    // 60 s grant: background renewal from 30 s, blocking refresh from 50 s.
+    advance(31).await;
+    let mut readers = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let client = client.clone();
+        readers.spawn(async move { read(&client).await.unwrap() });
+    }
+    while let Some(result) = readers.join_next().await {
+        result.unwrap();
+    }
+    wait_for_exchanges(&auth, 2).await;
+    read(&client).await.unwrap();
+    {
+        let seen = data.seen.lock().unwrap();
+        assert!(seen[..9]
+            .iter()
+            .all(|r| r.headers[AUTHORIZATION] == "Bearer one"));
+        assert_eq!(seen[9].headers[AUTHORIZATION], "Bearer two");
+    }
+    // Without a successful renewal the token is replaced before it expires.
+    advance(51).await;
+    read(&client).await.unwrap();
+    assert_eq!(auth.seen.lock().unwrap().len(), 3);
+    assert_eq!(
+        data.seen.lock().unwrap()[10].headers[AUTHORIZATION],
+        "Bearer three"
+    );
+}
+
+#[tokio::test]
+async fn failed_background_renewal_keeps_the_token_and_paces_retries() {
+    let count = AtomicUsize::new(0);
+    let auth = Fixture::new(move |_| match count.fetch_add(1, Ordering::SeqCst) {
+        0 => ok(grant("one", 60)),
+        1 => (503, "application/json", "{}".into()),
+        _ => ok(grant("two", 60)),
+    })
+    .await;
+    let data = Fixture::new(|_| ok("{}".into())).await;
+    let client = data.client(&auth);
+    read(&client).await.unwrap();
+    advance(31).await;
+    read(&client).await.unwrap();
+    wait_for_exchanges(&auth, 2).await;
+    // Paused for one second after the failure: no exchange storm.
+    for _ in 0..5 {
+        read(&client).await.unwrap();
+    }
+    assert_eq!(auth.seen.lock().unwrap().len(), 2);
+    advance(2).await;
+    read(&client).await.unwrap();
+    wait_for_exchanges(&auth, 3).await;
+    read(&client).await.unwrap();
+    let seen = data.seen.lock().unwrap();
+    assert!(seen[..8]
+        .iter()
+        .all(|r| r.headers[AUTHORIZATION] == "Bearer one"));
+    assert_eq!(seen[8].headers[AUTHORIZATION], "Bearer two");
 }
 
 #[tokio::test]
