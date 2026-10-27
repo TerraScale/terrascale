@@ -34,7 +34,9 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: cargo
-    directory: /benchmark/clients/rust
+    directories:
+      - /benchmark/clients/rust
+      - /scripts/terrabase/libsql/rust
     schedule:
       interval: weekly
     open-pull-requests-limit: 0

@@ -15,7 +15,7 @@ assert action.is_file(), action
 match = re.search(r"^          filters: \|\n((?:^            .*\n|^\s*\n)+)", workflow.read_text(), re.MULTILINE)
 assert match, "CI filters block was not found"
 filters = textwrap.dedent(match[1])
-areas = ("libs", "auth", "auth-server", "terrabase")
+areas = ("libs", "auth", "auth-server", "terrabase", "rust-proof")
 
 
 def git(directory, *args):
@@ -76,6 +76,8 @@ cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", all_areas),
           ("scripts/ci/path-filter-test.py", "modified", set()),
           ("scripts/ci/cache-policy-test.py", "modified", set()),
           ("scripts/ci/test-area.sh", "modified", {"libs", "terrabase"}),
+          ("scripts/terrabase/libsql/rust/Cargo.lock", "modified", {"terrabase", "rust-proof"}),
+          ("scripts/terrabase/libsql/rust/src/main.rs", "modified", {"terrabase", "rust-proof"}),
           ("README.md", "modified", set()),
           ("docs/auth/mfa.md", "modified", set()),
           ("docs/terrabase/ci.md", "modified", set()),

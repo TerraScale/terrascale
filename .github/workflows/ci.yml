@@ -1,6 +1,6 @@
 name: CI
 
-# One required check: "test". It passes when every Fast area job that ran passed.
+# One required check: "test". It passes when every affected Fast area and Rust proof check passed.
 # - changes: which areas (libs, auth, terrabase) the event touched; libs and shared files touch every area. Pull
 #   requests compare with their base, merge-group checks with the queue base, pushes to main with the previous main.
 #   workflow_dispatch runs every area. Docs-only changes run no area job.
@@ -55,6 +55,7 @@ jobs:
     outputs:
       fast: ${{ steps.areas.outputs.fast }}
       main: ${{ steps.areas.outputs.main }}
+      rust-proof: ${{ github.event_name == 'workflow_dispatch' && !inputs.native_artifacts || steps.filter.outputs.rust-proof == 'true' }}
     steps:
       # Pull requests list files through the API; the checkout also runs cheap checks before any build.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -67,6 +68,10 @@ jobs:
           # Empty on pushes: the action then diffs against the push's `before` commit.
           base: ${{ github.event.merge_group.base_sha }}
           filters: |
+            rust-proof:
+              - .github/workflows/ci.yml
+              - Makefile
+              - scripts/terrabase/libsql/rust/**
             shared: &shared
               - .github/workflows/ci.yml
               - Dockerfile
@@ -156,7 +161,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
-  # Normal runs verify prebuilt release bytes; Rust is confined to explicit maintenance dispatches.
+  # Normal runs verify prebuilt release bytes; native Rust builds stay in explicit maintenance dispatches.
   native:
     needs: changes
     if: needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]'
@@ -611,9 +616,36 @@ jobs:
       issues: write
     steps: *slow-steps
 
+  rust-proof:
+    needs: changes
+    if: needs.changes.outputs.rust-proof == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Restore Rust dependency downloads
+        id: cargo
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-libsql-${{ hashFiles('scripts/terrabase/libsql/rust/Cargo.lock', 'scripts/terrabase/libsql/rust/rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-libsql-
+      - name: Check the locked Rust proof
+        run: make terrabase-libsql-rust-check
+      - name: Cache Rust dependency downloads on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ steps.cargo.outputs.cache-primary-key }}
+
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, native, libs, auth, terrabase]
+    needs: [changes, native, libs, auth, terrabase, rust-proof]
     if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
