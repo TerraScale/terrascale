@@ -563,7 +563,7 @@ button.ts-idp-provider:focus-visible {
   grid-column: 1 / -1;
 }
 
-/* Template fields beside a rendered email; dashboard chrome uses shared tokens. */
+/* Email-preview presentation: surrounding surfaces follow dashboard tokens. */
 .ts-idp-email {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);

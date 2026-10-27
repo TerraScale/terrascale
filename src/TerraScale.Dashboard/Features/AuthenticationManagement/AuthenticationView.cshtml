@@ -32,7 +32,7 @@
 @if (Model.Created is { } created) {
 <section class="ts-alert ts-alert-success" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID</p>@{ CopyValue("auth-created-client-id", created.ClientId, "new client ID"); }@if (created.ClientSecret is { } secret) { <p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>CopyValue("auth-client-secret", secret, "client secret", secret: true); }</section>
 }
-<section class="@(current.Key == "branding" ? "" : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
+<section class="@(current.Key == "branding" ? null : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
 Card("Project authentication", "Point your OpenID Connect library at this issuer; users sign in on the hosted pages.");
 <div class="ts-card-body">@if (settings is null) { Empty("Authentication details unavailable"); } else {

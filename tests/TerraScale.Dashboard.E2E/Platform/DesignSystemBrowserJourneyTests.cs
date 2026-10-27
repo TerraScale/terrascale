@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Playwright;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
@@ -37,7 +38,7 @@ public sealed class DesignSystemBrowserJourneyTests(DashboardRootFixture fixture
         await CaptureAsync(page, "billing-summary");
 
         await NavigateAsync(page, scenario.Origin, "/");
-        var chart = page.Locator(".ts-chart-shell").First;
+        var chart = page.Locator(".ts-chart-shell").Filter(new() { Has = page.Locator(".ts-chart-column") }).First;
         await chart.FocusAsync();
         await page.Keyboard.PressAsync("Tab");
         var point = chart.Locator(".ts-chart-column:focus-visible");
@@ -60,9 +61,15 @@ public sealed class DesignSystemBrowserJourneyTests(DashboardRootFixture fixture
     [Test]
     public async Task SignedInEmptyStorageUsesSharedCardHeader()
     {
+        var populated = false;
+        const string bucketId = "01JA00000000000000000000B1";
+        var rules = new TerraBaseFileRules("/userId", new(true, false, []), new(true, false, []));
+        var bucket = new TerraBaseFileBucket(bucketId, "avatars", "gru", rules);
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
-            Task.FromResult<IResult?>(http.Request.Method == "GET" && http.Request.Path.Value!.EndsWith("/buckets", StringComparison.Ordinal)
-                ? Results.Json(new { items = Array.Empty<object>(), next = (string?)null }) : null));
+            Task.FromResult<IResult?>(http.Request.Method != "GET" || !http.Request.Path.Value!.Contains("/buckets", StringComparison.Ordinal) ? null
+                : http.Request.Path.Value.EndsWith("/buckets", StringComparison.Ordinal)
+                    ? Results.Json(new { items = populated ? new[] { bucket } : [], next = (string?)null })
+                    : Results.Json(new { items = Array.Empty<object>(), next = (string?)null })));
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         await using var context = await RecordingAsync(browser, scenario.Origin);
@@ -72,6 +79,17 @@ public sealed class DesignSystemBrowserJourneyTests(DashboardRootFixture fixture
         await Assert.That(await buckets.Locator(".ts-card-head > .ts-card-title").InnerTextAsync()).IsEqualTo("Buckets");
         await Assert.That(await buckets.Locator(".ts-empty-title").InnerTextAsync()).IsEqualTo("No buckets yet");
         await CaptureAsync(page, "storage-empty");
+        var create = page.Locator("details.ts-card").Filter(new() { HasText = "Create bucket" });
+        await create.Locator("summary.ts-card-head").ClickAsync();
+        await Assert.That(await create.GetAttributeAsync("open")).IsNotNull();
+        await CaptureAsync(page, "storage-create-expanded");
+        populated = true;
+        await NavigateAsync(page, scenario.Origin, "/storage?bucket=" + bucketId);
+        var access = page.Locator("details.ts-card").Filter(new() { HasText = "Bucket access rules" });
+        await access.Locator("summary.ts-card-head").ClickAsync();
+        await Assert.That(await access.GetAttributeAsync("open")).IsNotNull();
+        await Assert.That(await access.GetByRole(AriaRole.Button, new() { Name = "Save rules" }).IsVisibleAsync()).IsTrue();
+        await CaptureAsync(page, "storage-rules-expanded");
     }
 
     private async Task<IBrowserContext> RecordingAsync(IBrowser browser, Uri origin, string email = "user@example.com", string password = "test-password")
@@ -80,7 +98,8 @@ public sealed class DesignSystemBrowserJourneyTests(DashboardRootFixture fixture
         await BrowserAudit.SignInAsync(await login.NewPageAsync(), origin, email: email, password: password);
         var recording = await browser.NewContextAsync(new()
         {
-            IgnoreHTTPSErrors = true, StorageState = await login.StorageStateAsync(),
+            IgnoreHTTPSErrors = true,
+            StorageState = await login.StorageStateAsync(),
             ViewportSize = new() { Width = 1440, Height = 1000 },
             RecordVideoDir = BrowserAudit.Output(fixture.Root, "design-system"),
             RecordVideoSize = new() { Width = 1440, Height = 1000 }
@@ -109,6 +128,7 @@ public sealed class DesignSystemBrowserJourneyTests(DashboardRootFixture fixture
     private Task CaptureAsync(IPage page, string flow) => page.ScreenshotAsync(new()
     {
         Path = Path.Combine(BrowserAudit.Output(fixture.Root, "design-system"), flow + ".png"),
-        FullPage = true, Caret = ScreenshotCaret.Hide
+        FullPage = true,
+        Caret = ScreenshotCaret.Hide
     });
 }

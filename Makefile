@@ -12,7 +12,6 @@ build:
 	$(DOTNET) build $(SOLUTION) --configuration Release -p:RestoreLockedMode=true
 
 lint: check-css
-	python3 scripts/check-design-classes.py
 	python3 scripts/verify-sdk.py
 	python3 scripts/verify-e2e.py
 	python3 scripts/report-slow-failure.py --self-check

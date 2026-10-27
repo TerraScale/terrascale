@@ -33,6 +33,12 @@
   gap: var(--ts-s3);
 }
 
+summary.ts-card-head {
+  display: list-item;
+  list-style-position: inside;
+  cursor: pointer;
+}
+
 .ts-card-heading {
   display: grid;
   flex: 1 1 280px;
