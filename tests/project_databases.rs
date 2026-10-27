@@ -246,8 +246,9 @@ async fn rename_preserves_errors_without_replaying_and_rejects_bad_inputs() {
         (400, "invalid_request"),
         (401, "unauthorized"),
         (403, "forbidden_scope"),
-        (404, "not_found"),
+        (404, "unknown_database"),
         (409, "name_taken"),
+        (409, "platform_placement_locked"),
         (421, "wrong_region"),
         (503, "storage_unavailable"),
     ] {
@@ -269,7 +270,7 @@ async fn rename_preserves_errors_without_replaying_and_rejects_bad_inputs() {
     let fixture = Fixture::new(vec![]).await;
     let client = fixture.client();
     for (id, name) in [
-        ("orders", "orders_new"),
+        ("../escape", "orders_new"),
         (PROJECT, "Bad Name"),
         (PROJECT, ""),
     ] {
@@ -298,4 +299,50 @@ async fn rename_preserves_errors_without_replaying_and_rejects_bad_inputs() {
         .is_err());
     assert!(client.rename_database(PROJECT, PROJECT).await.is_err());
     assert!(fixture.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn current_name_rename_and_conflict_metadata_round_trip() {
+    for fields in [
+        json!({}),
+        json!({"previousName":null,"conflictOf":null}),
+        json!({"previousName":"orders","conflictOf":PROJECT}),
+    ] {
+        let mut body: Value = serde_json::from_str(DATABASE).unwrap();
+        body.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let fixture = Fixture::new(vec![
+            reply(200, &body.to_string()),
+            reply(200, &json!({"items":[body],"next":null}).to_string()),
+        ])
+        .await;
+        let client = fixture.client();
+        let result = client
+            .rename_database("orders", "orders_new")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.previous_name.as_deref(),
+            fields["previousName"].as_str()
+        );
+        assert_eq!(result.conflict_of.as_deref(), fields["conflictOf"].as_str());
+        assert_eq!(client.list_databases(&[]).await.unwrap().items[0], result);
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(
+            requests[0].uri,
+            format!("/v1/projects/{PROJECT}/databases/orders")
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&requests[0].body).unwrap(),
+            json!({"name":"orders_new"})
+        );
+    }
+}
+
+#[test]
+fn database_conflict_id_rejects_a_name() {
+    let mut body: Value = serde_json::from_str(DATABASE).unwrap();
+    body["conflictOf"] = json!("orders");
+    assert!(serde_json::from_value::<terrascale::v1::ProjectDatabaseInfo>(body).is_err());
 }

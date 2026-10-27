@@ -46,6 +46,18 @@ pub(crate) fn entity_id<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<
     }
 }
 
+pub(crate) fn optional_entity_id<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    let id = Option::<String>::deserialize(d)?;
+    if id.as_deref().is_some_and(|value| !valid_entity_id(value)) {
+        return Err(serde::de::Error::custom(
+            "entity ID must be a canonical uppercase ULID",
+        ));
+    }
+    Ok(id)
+}
+
 pub(crate) fn cursor<'de, D: Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Option<String>, D::Error> {

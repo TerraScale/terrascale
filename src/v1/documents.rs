@@ -131,6 +131,16 @@ pub struct ProjectDatabaseInfo {
     pub project_id: String,
     pub name: String,
     pub branched_from: Option<String>,
+    /// Contested name lost to another database during cross-region convergence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_name: Option<String>,
+    /// Immutable ULID of the database that kept the contested name.
+    #[serde(
+        default,
+        deserialize_with = "super::ids::optional_entity_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conflict_of: Option<String>,
     pub created_at: String,
     pub region: String,
     pub home_region: String,
