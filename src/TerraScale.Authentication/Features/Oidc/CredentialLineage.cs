@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using OpenIddict.Abstractions;
 using OpenIddict.Server;
+using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Contracts;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
@@ -19,6 +20,10 @@ internal static class CredentialLineage
     internal const string ConflictNotice = "This credential expired, was already used, or lost a concurrent sign-in or rotation in another region. Sign in again or use the latest credential.";
 
     internal const string ReplayNotice = "This refresh token was already used. This sign-in has ended. Sign in again to continue.";
+
+    /// <summary>The ancestry <see cref="RedeemExactlyOnce"/> resolved for the token request being served, if any.</summary>
+    internal static IReadOnlyList<CredentialBinding> Issued(HttpContext? http) =>
+        http?.Features.Get<OpenIddictServerAspNetCoreFeature>()?.Transaction?.GetProperty<IReadOnlyList<CredentialBinding>>(BindingsProperty) ?? [];
 
     internal static IReadOnlyList<CredentialBinding> Read(ClaimsPrincipal principal) =>
         principal.GetClaim(Claim) is { } json ? JsonSerializer.Deserialize(json, CredentialLineageJson.Default.CredentialBindingArray)
@@ -51,27 +56,6 @@ internal static class CredentialLineage
         // Revoke the grant itself: a concurrent request may still be creating descendants. Fail closed on storage failure.
         await tokens.RevokeByAuthorizationIdAsync(authorizationId, cancellationToken).ConfigureAwait(false);
         return true;
-    }
-}
-
-/// <summary>Binds every stored token entry before the generated credential is returned.</summary>
-public sealed class BindIssuedCredential(IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<GenerateTokenContext>
-{
-    /// <inheritdoc />
-    public async ValueTask HandleAsync(GenerateTokenContext context)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        var bindings = context.Transaction.GetProperty<IReadOnlyList<CredentialBinding>>(CredentialLineage.BindingsProperty) ?? [];
-        if (bindings.Count == 0 || !context.CreateTokenEntry)
-        {
-            return;
-        }
-
-        var id = context.Principal.GetTokenId() ?? throw new InvalidOperationException("A stored credential has no token id.");
-        var token = await tokens.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false) as OidcToken
-            ?? throw new InvalidOperationException("A stored credential has no token entry.");
-        token.Bindings = bindings;
-        await tokens.UpdateAsync(token, context.CancellationToken).ConfigureAwait(false);
     }
 }
 
