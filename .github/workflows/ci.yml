@@ -12,10 +12,10 @@ on:
 permissions:
   contents: read
 
-# A newer run for the same PR or branch, main included, cancels the older one; the newest main commit deploys.
+# Superseded PR checks cancel; main publication and verification finish together.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
