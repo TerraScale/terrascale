@@ -24,34 +24,32 @@
   }))
 </script>
 
-<footer class="ts-footer">
-  <div class="ts-footer__inner">
-    <div class="ts-footer__grid">
-      <div class="ts-footer__brand">
-        <RouteLink href="/" class="ts-footer__logo" aria-label="TerraScale home">
-          <img src="/icon-blue.svg" alt="" width="28" height="28" decoding="async" loading="lazy" />
-          <span class="ts-footer__word">TerraScale</span>
-        </RouteLink>
-        <p class="ts-footer__tagline">
-          {$dict.footer.tagline}
-        </p>
-        <div class="ts-footer__socials">
-          {#each socials as { social, name } (social.key)}
+<footer class="site-footer">
+  <div class="ts-container site-footer__grid">
+    <div class="site-footer__brand">
+      <RouteLink href="/" class="site-footer__logo" aria-label={$dict.chrome.brandHome}>
+        <img src="/icon-blue.svg" alt="" width="835" height="942" decoding="async" loading="lazy" />
+        <span class="site-footer__word">TerraScale</span>
+      </RouteLink>
+      <p class="site-footer__tagline">{$dict.footer.tagline}</p>
+      <ul class="site-footer__socials">
+        {#each socials as { social, name } (social.key)}
+          <li>
             <ExternalLink
               href={social.href}
-              target="_blank"
+              target={social.href.startsWith('mailto:') ? undefined : '_blank'}
               aria-label={name}
-              class="ts-footer__social"
+              class="site-footer__social"
             >
-              <Icon name={social.icon} className="ts-footer__social-icon" />
+              <Icon name={social.icon} className="site-footer__social-icon" />
             </ExternalLink>
-          {/each}
-        </div>
-      </div>
+          </li>
+        {/each}
+      </ul>
     </div>
 
     {#each columns as { column, title, links } (column.key)}
-      <div class="site-footer__column">
+      <nav class="site-footer__column" aria-label={title}>
         <div class="ts-label">{title}</div>
         <ul class="site-footer__list">
           {#each links as { link, name } (link.key)}
@@ -64,95 +62,111 @@
             </li>
           {/each}
         </ul>
-      </div>
+      </nav>
     {/each}
   </div>
 
-  <div class="ts-container site-footer__meta">
-    <span>© {year} TerraScale. {$dict.footer.rightsReserved}</span>
-    <ExternalLink href="https://status.terrascale.tech" target="_blank" class="ts-status-link">
-      <span class="ts-dot ts-dot-live site-footer__dot" aria-hidden="true"></span>
-      {$dict.chrome.status}
-    </ExternalLink>
-    <div class="site-footer__lang">
-      <LanguageSelector variant="inline" />
+  <div class="ts-container">
+    <div class="site-footer__meta">
+      <span>© {year} TerraScale. {$dict.footer.rightsReserved}</span>
+      <ExternalLink href="https://status.terrascale.tech" target="_blank" class="ts-status-link">
+        <span class="ts-dot ts-dot-live site-footer__dot" aria-hidden="true"></span>
+        {$dict.chrome.status}
+      </ExternalLink>
+      <div class="site-footer__lang">
+        <LanguageSelector variant="inline" />
+      </div>
     </div>
   </div>
 </footer>
 
 <style>
-  .ts-footer {
+  .site-footer {
     background: var(--ts-bg-surface);
     border-top: 1px solid var(--ts-divider);
-    padding: 64px 0 24px;
+    color: var(--ts-ink-3);
+    font-size: var(--ts-fs-sm);
   }
 
-  .ts-footer__inner {
-    padding: 0 clamp(16px, 2.5vw, 40px);
-  }
-
-  .ts-footer__grid {
+  .site-footer__grid {
     display: grid;
-    grid-template-columns: 2fr repeat(3, 1fr);
-    gap: 32px;
-    margin-bottom: 48px;
+    grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+    gap: var(--ts-s10) var(--ts-s8);
+    padding-block: var(--ts-s16) var(--ts-s12);
   }
 
-  :global(.ts-footer__logo) {
+  .site-footer__brand {
+    display: grid;
+    gap: var(--ts-s4);
+    align-content: start;
+    justify-items: start;
+  }
+
+  .site-footer :global(.site-footer__logo) {
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 12px;
     color: var(--ts-text);
     text-decoration: none;
   }
 
-  :global(.ts-footer__logo img) {
-    height: 28px;
+  .site-footer :global(.site-footer__logo img) {
     width: auto;
+    height: 28px;
   }
 
-  .ts-footer__word {
-    font-family: var(--ts-font-accent);
-    font-size: 17px;
+  .site-footer__word {
+    font-size: 18px;
     font-weight: 600;
     line-height: 1;
     letter-spacing: -0.02em;
     white-space: nowrap;
   }
 
-  .ts-footer__tagline {
-    font-size: 13px;
-    color: var(--ts-text-muted);
-    line-height: 1.5;
-    max-width: 320px;
-    margin: 0 0 14px;
+  .site-footer__tagline {
+    max-width: 340px;
+    color: var(--ts-ink-2);
+    line-height: var(--ts-lh);
   }
 
   .site-footer__socials {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
-    gap: var(--ts-s1);
-    margin-left: -6px;
+    flex-wrap: wrap;
+    gap: var(--ts-s2);
   }
 
-  :global(.ts-footer__social) {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    border: 1px solid var(--ts-divider);
-    color: var(--ts-text-muted);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
+  .site-footer :global(.site-footer__social) {
+    display: inline-grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--ts-line-strong);
+    border-radius: var(--ts-radius);
+    color: var(--ts-ink-2);
     transition:
-      color 150ms ease,
-      background 150ms ease;
+      color var(--ts-fast) var(--ts-ease),
+      border-color var(--ts-fast) var(--ts-ease),
+      background-color var(--ts-fast) var(--ts-ease);
   }
 
-  :global(.ts-footer__social:hover) {
-    color: var(--ts-text);
-    background: rgba(255, 255, 255, 0.08);
+  .site-footer :global(.site-footer__social:hover) {
+    color: var(--ts-ink);
+    border-color: var(--ts-control-line);
+    background: var(--ts-surface-2);
+  }
+
+  .site-footer :global(.site-footer__social-icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
+  }
+
+  .site-footer__column {
+    display: grid;
+    gap: var(--ts-s4);
+    align-content: start;
   }
 
   .site-footer__list {
@@ -160,62 +174,51 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: var(--ts-s2);
+    gap: var(--ts-s3);
   }
 
   .site-footer :global(.site-footer__link) {
     color: var(--ts-ink-2);
+    line-height: var(--ts-lh);
+    overflow-wrap: anywhere;
+    transition: color var(--ts-fast) var(--ts-ease);
   }
 
-  :global(.ts-footer__link) {
-    font-size: 13px;
-    color: var(--ts-text-muted);
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: color 150ms ease;
-    font-family: var(--ts-font-accent);
+  .site-footer :global(.site-footer__link:hover) {
+    color: var(--ts-ink);
   }
 
-  :global(.ts-footer__link:hover) {
-    color: var(--ts-text);
-  }
-
-  :global(.ts-footer__chevron) {
-    width: 10px;
-    height: 10px;
-    color: var(--ts-text-muted);
-    transition: transform 150ms ease;
-  }
-
-  :global(.ts-footer__link:hover .ts-footer__chevron) {
-    transform: translateX(2px);
-    color: var(--ts-text);
-  }
-
-  .ts-footer__meta {
-    border-top: 1px solid var(--ts-divider);
-    padding-top: 16px;
+  .site-footer__meta {
     display: flex;
     align-items: center;
-    gap: var(--ts-s5);
     flex-wrap: wrap;
-    padding-block: var(--ts-s5);
+    gap: var(--ts-s3) var(--ts-s5);
+    padding-block: var(--ts-s5) var(--ts-s6);
     border-top: 1px solid var(--ts-line);
   }
 
-  .ts-footer__copy {
-    font-size: 13px;
-    color: var(--ts-text-muted);
+  .site-footer__dot {
+    --state: var(--ts-success);
+  }
+
+  .site-footer__lang {
+    margin-left: auto;
   }
 
   @media (max-width: 960px) {
-    .ts-footer__grid {
-      grid-template-columns: 1fr 1fr;
+    .site-footer__grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
-    .ts-footer__brand {
+    .site-footer__brand {
       grid-column: 1 / -1;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .site-footer__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--ts-s8) var(--ts-s6);
+      padding-block: var(--ts-s12) var(--ts-s8);
     }
     .site-footer__lang {
       margin-left: 0;

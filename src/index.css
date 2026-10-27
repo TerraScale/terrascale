@@ -140,6 +140,32 @@ svg {
   border-radius: 4px;
 }
 
+/* Page layout shared by About, Contact and 404: the same gutters as the header and the home and
+   pricing sections, and the same section rhythm (80px, 48px on phones, a hairline between). */
+.ts-container {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: clamp(16px, 2.5vw, 40px);
+}
+
+.ts-section {
+  padding-block: var(--ts-space-20);
+}
+
+main > * + .ts-section {
+  border-top: 1px solid var(--ts-divider);
+}
+
+main > .ts-section:first-child {
+  padding-top: var(--ts-space-16);
+}
+
+@media (max-width: 640px) {
+  .ts-section {
+    padding-block: var(--ts-space-12);
+  }
+}
+
 .pulse-dot {
   animation: ts-pulse-soft 2.2s ease-in-out infinite;
   display: inline-block;
@@ -229,6 +255,23 @@ svg {
   background: var(--ts-bg-card);
 }
 
+/* The base .ts-btn above is unlayered, so it beats the layered design-system variants; restate
+   the large size and the secondary outline here. */
+.ts-btn-lg {
+  height: var(--ts-control-h-lg);
+  padding: 0 var(--ts-s5);
+}
+
+.ts-btn-secondary {
+  border-color: var(--ts-control-line);
+  color: var(--ts-ink);
+}
+
+.ts-btn-secondary:hover {
+  border-color: var(--ts-control-line-hover);
+  background: var(--ts-surface-2);
+}
+
 .ts-btn-compact {
   height: 32px;
   padding: 0 12px;
@@ -311,6 +354,11 @@ svg {
   .pulse-dot {
     animation: none !important;
   }
+}
+
+/* Page ledes wrap without leaving a single word on the last line. */
+.ts-lede {
+  text-wrap: pretty;
 }
 
 /* Two-tone headings: the second phrase takes the direction's heading-muted colour. */

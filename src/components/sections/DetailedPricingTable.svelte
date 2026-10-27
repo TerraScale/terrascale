@@ -135,10 +135,16 @@
     overflow-x: auto;
   }
 
+  /* Fixed layout: the label column keeps its share and every plan gets the same width. */
   .detailed__table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 14px;
+  }
+
+  .detailed__table thead th:first-child {
+    width: 26%;
   }
 
   .detailed__table th,
@@ -237,8 +243,8 @@
 
   .detailed__rules {
     display: grid;
-    gap: var(--ts-space-3);
-    margin: 0;
+    gap: var(--ts-space-5);
+    margin: var(--ts-space-3) 0 0;
     font-size: 14px;
   }
 
@@ -258,7 +264,10 @@
     color: var(--ts-text-muted);
   }
 
+  /* The rate gets its own line above the explanation. */
   .detailed__price {
+    display: block;
+    margin-bottom: var(--ts-space-1);
     font-family: var(--ts-font-mono);
     font-variant-numeric: tabular-nums;
     color: var(--ts-text);
@@ -296,30 +305,35 @@
       font-size: 24px;
     }
 
+    /* Scrolls sideways instead of squeezing six columns into the phone; the row labels stay
+       pinned so every value keeps its label in view. */
     .detailed__table {
-      font-size: 12px;
+      min-width: 760px;
+      font-size: 13px;
+    }
+
+    .detailed__table thead th:first-child {
+      width: 150px;
     }
 
     .detailed__table th,
     .detailed__table td {
-      padding: var(--ts-space-3) var(--ts-space-2);
+      padding: var(--ts-space-3);
+    }
+
+    .detailed__table th:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      padding-left: 0;
+      background: var(--ts-canvas);
       white-space: normal;
+      box-shadow: inset -1px 0 0 var(--ts-divider);
     }
 
-    /* Hyphenate long words instead of splitting them at arbitrary letters. */
-    .detailed__table tbody th,
-    .detailed__table td {
-      white-space: normal;
-      hyphens: auto;
-    }
-
-    .detailed__plan::before {
-      display: none;
-    }
-
-    .detailed__table tbody:first-of-type tr:nth-child(-n + 5) td {
-      white-space: nowrap;
-      overflow-wrap: normal;
+    .detailed__table tr.is-group th {
+      position: static;
+      box-shadow: none;
     }
   }
 </style>

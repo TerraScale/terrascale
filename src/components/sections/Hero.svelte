@@ -22,6 +22,10 @@
     gru: 'São Paulo',
     sjc: 'San Francisco Bay Area',
   }
+  const flagCodes = ['gru', 'sjc', 'fra'] as const
+  type FlagCode = (typeof flagCodes)[number]
+  const flagCode = (id: string) => flagCodes.find((code) => code === id) as FlagCode | undefined
+
   const arcPath = (a: Region, b: Region) => {
     const mx = (a.x + b.x) / 2
     const len = Math.hypot(b.x - a.x, b.y - a.y)
@@ -50,48 +54,14 @@
         }]
       : []
   })
+
+  // The map plane turns around the middle of the region triangle, which sits on the hero's centre line.
+  const pivotX = REGIONS.reduce((sum, r) => sum + r.x, 0) / REGIONS.length / vbW
+  const pivotY = REGIONS.reduce((sum, r) => sum + r.y, 0) / REGIONS.length / vbH
+  const planeStyle = `--pivot-x: ${(pivotX * 100).toFixed(2)}%; --pivot-y: ${(pivotY * 100).toFixed(2)}%`
 </script>
 
 <section class="hero">
-  <div class="hero__stage">
-  <div class="hero__globe" aria-hidden="true">
-    <div class="hero__globe-frame">
-      <div class="hero__globe-map"></div>
-
-      <svg
-        class="hero__globe-lines"
-        viewBox="0 0 {vbW} {vbH}"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        {#each arcs as arc (arc.id)}
-          <g style={arc.style}>
-            <path pathLength="1" d={arc.d} class="hero__line hero__line--halo" />
-            <path pathLength="1" d={arc.d} class="hero__line" />
-            <path pathLength="1" d={arc.d} class="hero__pulse" />
-            <path pathLength="1" d={arc.backD} class="hero__pulse hero__pulse--back" />
-          </g>
-        {/each}
-      </svg>
-
-      {#each REGIONS as r (r.id)}
-        <span
-          class="hero__pin"
-          class:hero__pin--arrival={r.id !== 'gru'}
-          class:hero__pin--label-up={r.id === 'fra'}
-          style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%;"
-          title={regionLabel[r.id] ?? r.city}
-        >
-          <span class="hero__pin-ring"></span>
-          <span class="hero__pin-core"></span>
-          <span class="hero__pin-label">
-            {#if r.id === 'gru' || r.id === 'sjc' || r.id === 'fra'}<RegionFlag code={r.id} />{/if}
-          </span>
-        </span>
-      {/each}
-    </div>
-  </div>
-
   <div class="hero__inner">
     <span class="hero__brand">
       <img
@@ -115,6 +85,50 @@
       {$dict.hero.subtitle}
     </p>
   </div>
+
+  <!-- A dotted world map laid back in perspective under the copy. Each region's flag stands
+       on a pole above its pin, so no copy ever covers a label. -->
+  <div class="hero__world" aria-hidden="true">
+    <div class="hero__plane" style={planeStyle}>
+      <div class="hero__map-fade">
+        <div class="hero__map"></div>
+
+        <svg
+          class="hero__lines"
+          viewBox="0 0 {vbW} {vbH}"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          {#each arcs as arc (arc.id)}
+            <g style={arc.style}>
+              <path pathLength="1" d={arc.d} class="hero__line hero__line--halo" />
+              <path pathLength="1" d={arc.d} class="hero__line" />
+              <path pathLength="1" d={arc.d} class="hero__pulse" />
+              <path pathLength="1" d={arc.backD} class="hero__pulse hero__pulse--back" />
+            </g>
+          {/each}
+        </svg>
+      </div>
+
+      {#each REGIONS as r (r.id)}
+        {@const code = flagCode(r.id)}
+        <span
+          class="hero__pin"
+          class:hero__pin--arrival={r.id !== 'gru'}
+          style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%; --depth: {(pivotY - r.y / vbH).toFixed(3)};"
+          title={regionLabel[r.id] ?? r.city}
+        >
+          <span class="hero__pin-ring"></span>
+          <span class="hero__pin-core"></span>
+          {#if code}
+            <span class="hero__flag">
+              <span class="hero__flag-label"><RegionFlag {code} /></span>
+              <span class="hero__flag-pole"></span>
+            </span>
+          {/if}
+        </span>
+      {/each}
+    </div>
   </div>
 
   <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
@@ -131,68 +145,154 @@
   /* The floating nav overlaps the hero, so the map shows through its frost. The first line of
      content sits as far below the nav as the first section of every other page. */
   .hero {
+    /* One scene at every width: the plane, its perspective and the band it sits in all scale
+       with --plane-w, so the 3D look only changes size. */
+    --plane-w: clamp(640px, 132vw, 2300px);
+    --tilt: 58deg;
+    --perspective: 0.9;
+    /* Fixed headroom above the farthest pin for its flag, so it never reaches the subtitle. */
+    --flag-room: 56px;
     position: relative;
     isolation: isolate;
     overflow: hidden;
     margin-top: -60px;
-    padding: 84px 0 72px;
+    padding: 96px 0 72px;
     display: grid;
     justify-items: center;
-    gap: 32px;
+    gap: 24px;
   }
 
-  /* The map and the copy share one grid cell; the chips sit below the map. */
-  .hero__stage {
-    display: grid;
-    width: 100%;
-  }
-
-  .hero__stage > * {
-    grid-area: 1 / 1;
-  }
-
-  .hero__globe {
-    z-index: -1;
-    display: grid;
-    place-items: center;
-    pointer-events: none;
-    container-type: size;
-  }
-
-  /* The map spans the viewport width (capped), so it is never cropped. */
-  .hero__globe-frame {
+  .hero__inner {
     position: relative;
-    width: min(100% - 32px, 1600px);
-    aspect-ratio: 119 / 60;
+    z-index: 1;
+    width: 100%;
+    padding-inline: clamp(16px, 2.5vw, 40px);
+    display: grid;
+    justify-items: center;
+    gap: 24px;
+    text-align: center;
   }
 
-  /* Dots are a mask, so the direction's line colour paints them. */
-  .hero__dots {
+  .hero__brand {
+    display: flex;
+    align-items: center;
+    gap: clamp(12px, 1.2vw, 18px);
+  }
+
+  .hero__brand-mark {
+    width: auto;
+    height: clamp(52px, 5.4vw, 80px);
+    display: block;
+  }
+
+  .hero__brand-word {
+    font-size: clamp(38px, 4.2vw, 64px);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--ts-text);
+  }
+
+  .hero__headline {
+    font-size: clamp(40px, 6.4vw, 96px);
+    font-weight: 600;
+    line-height: 1.02;
+    margin: 12px 0 0;
+    color: var(--ts-text);
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
+
+  .hero__accent {
+    color: var(--ts-primary);
+  }
+
+  /* The far edge of the map runs under this copy: brighter text plus a soft scrim halo keeps it
+     above WCAG AA over the dots. */
+  .hero__subtitle {
+    font-family: var(--ts-font-accent);
+    font-size: 18px;
+    color: color-mix(in srgb, var(--ts-text) 88%, transparent);
+    line-height: 1.65;
+    max-width: 60ch;
+    margin: 0;
+    font-weight: 450;
+    text-wrap: pretty;
+    text-shadow:
+      0 0 2px var(--ts-bg-base),
+      0 0 8px var(--ts-bg-base),
+      0 0 18px var(--ts-bg-base);
+  }
+
+  /* ---------- 3D map ---------- */
+
+  /* The band the map is seen in. The plane's faded far edge reaches up behind the subtitle; the
+     pins and flags stay inside the band. */
+  .hero__world {
+    position: relative;
+    width: 100%;
+    height: calc(var(--plane-w) * 0.2 + var(--flag-room) + 16px);
+    margin-top: -24px;
+    perspective: calc(var(--plane-w) * var(--perspective));
+    perspective-origin: 50% 30%;
+    pointer-events: none;
+    animation: ts-world-in 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  @keyframes ts-world-in {
+    from { opacity: 0; translate: 0 48px; }
+  }
+
+  /* The pivot (centre of the region triangle) sits on the band's centre, so the pins stay
+     centred while the plane slowly turns like a turntable. */
+  .hero__plane {
+    position: absolute;
+    left: 50%;
+    top: calc(50% + var(--flag-room) / 2 - 8px);
+    width: var(--plane-w);
+    aspect-ratio: 119 / 60;
+    transform-origin: var(--pivot-x) var(--pivot-y);
+    transform-style: preserve-3d;
+    translate: calc(-1 * var(--pivot-x)) calc(-1 * var(--pivot-y));
+    transform: rotateX(var(--tilt)) rotateZ(-3deg);
+    animation: ts-plane-turn 30s ease-in-out infinite alternate;
+  }
+
+  @keyframes ts-plane-turn {
+    to { transform: rotateX(var(--tilt)) rotateZ(3deg); }
+  }
+
+  /* Fades the far edge and the sides into the canvas. Masking flattens, so the pins stay outside. */
+  .hero__map-fade {
+    position: absolute;
+    inset: 0;
+    -webkit-mask: radial-gradient(70% 95% at var(--pivot-x) 78%, #000 42%, transparent 100%);
+    mask: radial-gradient(70% 95% at var(--pivot-x) 78%, #000 42%, transparent 100%);
+  }
+
+  .hero__map,
+  .hero__lines {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
   }
 
-  .hero__globe-map {
-    background: rgb(255 255 255 / 0.16);
+  /* Dots are a mask, so one colour paints the whole map. */
+  .hero__map {
+    background: rgb(255 255 255 / 0.2);
     -webkit-mask: url(/world-map.svg) center / 100% 100% no-repeat;
     mask: url(/world-map.svg) center / 100% 100% no-repeat;
-    animation: ts-map-in 1.2s ease-out both;
   }
 
-  @keyframes ts-map-in {
-    from { opacity: 0; scale: 0.985; }
-  }
-
-  .hero__globe-lines {
+  .hero__lines {
     overflow: visible;
   }
 
   .hero__line {
     fill: none;
-    stroke: var(--ts-primary);
-    stroke-width: 0.22;
+    stroke: var(--ts-primary-light);
+    stroke-width: 0.24;
     stroke-linecap: round;
     stroke-dasharray: 1;
     stroke-dashoffset: 1;
@@ -200,8 +300,9 @@
   }
 
   .hero__line--halo {
-    stroke-width: 0.9;
-    opacity: 0.18;
+    stroke: var(--ts-primary);
+    stroke-width: 1;
+    opacity: 0.22;
   }
 
   @keyframes ts-line-draw {
@@ -212,8 +313,8 @@
      path (1), so only one dash is ever on screen. */
   .hero__pulse {
     fill: none;
-    stroke: var(--ts-primary-light);
-    stroke-width: 0.4;
+    stroke: #fff;
+    stroke-width: 0.45;
     stroke-linecap: round;
     stroke-dasharray: 0.07 2;
     stroke-dashoffset: 0.07;
@@ -231,138 +332,116 @@
     50%, 100% { stroke-dashoffset: -1; opacity: 0; }
   }
 
+  /* A zero-size anchor on the map; the dot and ring lie flat on it, the flag stands up. */
   .hero__pin {
     position: absolute;
-    width: 10px;
-    height: 10px;
-    translate: -50% -50%;
-    border-radius: 50%;
-    background: var(--ts-primary);
-    box-shadow: 0 0 0 3px var(--ts-bg-base), 0 0 16px 2px rgba(var(--ts-primary-rgb), 0.55);
-    pointer-events: none;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
     /* gru pops in as the arcs start, sjc and fra as they land. */
     --pin-delay: 0.3s;
-    animation: ts-pin-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) var(--pin-delay) both;
   }
 
   .hero__pin--arrival {
     --pin-delay: 1.8s;
   }
 
-  @keyframes ts-pin-pop {
-    from { opacity: 0; scale: 0; }
-  }
-
   .hero__pin-core,
   .hero__pin-ring {
     position: absolute;
+    left: 0;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
     border-radius: 50%;
   }
 
   .hero__pin-core {
-    inset: 0;
+    background: var(--ts-primary-light);
+    box-shadow: 0 0 0 4px rgba(var(--ts-primary-rgb), 0.35), 0 0 22px 4px rgba(var(--ts-primary-rgb), 0.6);
+    animation: ts-pin-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) var(--pin-delay) both;
+  }
+
+  @keyframes ts-pin-pop {
+    from { opacity: 0; scale: 0; }
   }
 
   .hero__pin-ring {
-    inset: -6px;
-    border: 1px solid var(--ts-primary);
+    border: 2px solid var(--ts-primary-light);
     opacity: 0;
     animation: ts-pin-ping 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) var(--pin-delay) infinite;
   }
 
   @keyframes ts-pin-ping {
     0% { opacity: 0.9; scale: 0.6; }
-    70%, 100% { opacity: 0; scale: 1.8; }
+    70%, 100% { opacity: 0; scale: 3.2; }
   }
 
-  /* Labels sit left of the pins so gru's clears the hero CTAs. */
-  .hero__pin-label {
+  /* Stands up from the pin to face the viewer. The scale undoes perspective, so far and near
+     labels read at the same size: --depth is the pin's distance from the pivot in plane heights. */
+  .hero__flag {
     position: absolute;
-    right: 16px;
-    top: 50%;
-    translate: 0 -50%;
+    left: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform-origin: 50% 100%;
+    translate: -50% 0;
+    transform:
+      rotateX(calc(-1 * var(--tilt)))
+      scale(calc(1 + var(--depth) * 60 / 119 * sin(var(--tilt)) / var(--perspective)));
+  }
+
+  .hero__flag-label {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 6px;
+    padding: 5px 8px;
     border: 1px solid var(--ts-glass-border);
-    border-radius: 4px;
+    border-radius: var(--ts-radius-md);
     background: var(--ts-bg-card);
+    box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.8);
     line-height: 1;
+    white-space: nowrap;
+    animation: ts-flag-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) calc(var(--pin-delay) + 0.25s) both;
   }
 
-  /* fra sits right behind the headline, so its label goes above the pin. */
-  .hero__pin--label-up .hero__pin-label {
-    right: auto;
-    left: 50%;
-    top: auto;
-    bottom: 26px;
-    translate: -50% 0;
+  .hero__flag-label :global(.region-flag) {
+    gap: 6px;
   }
 
-  .hero__inner {
-    position: relative;
-    z-index: 1;
-    align-self: start;
-    padding-top: clamp(24px, 6vw, 88px);
-    width: 100%;
-    padding-inline: clamp(16px, 2.5vw, 40px);
-    display: grid;
-    justify-items: center;
-    gap: 24px;
-    text-align: center;
+  .hero__flag-label :global(.region-flag svg) {
+    width: 20px;
+    height: 15px;
   }
 
-  .hero__brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .hero__brand-mark {
-    width: 44px;
-    height: 44px;
-    display: block;
-  }
-
-  .hero__brand-word {
-    font-size: 32px;
-    font-weight: 600;
-    line-height: 1;
-    letter-spacing: -0.015em;
+  .hero__flag-label :global(.region-flag > span) {
+    font-size: 13px;
     color: var(--ts-text);
   }
 
-  .hero__headline {
-    font-size: clamp(44px, 6.4vw, 96px);
-    font-weight: 600;
-    line-height: 1;
-    margin: 8px 0 0;
-    color: var(--ts-text);
-    letter-spacing: -0.035em;
+  .hero__flag-pole {
+    width: 1px;
+    height: 24px;
+    background: linear-gradient(rgb(255 255 255 / 0.45), var(--ts-primary-light));
+    transform-origin: 50% 100%;
+    animation: ts-pole-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) var(--pin-delay) both;
   }
 
-  .hero__accent {
-    color: var(--ts-primary);
+  @keyframes ts-flag-in {
+    from { opacity: 0; translate: 0 10px; }
   }
 
-  /* The map and arcs run behind this copy: brighter text plus a soft scrim
-     halo keeps it above WCAG AA over the dots. */
-  .hero__subtitle {
-    font-family: var(--ts-font-accent);
-    font-size: 18px;
-    color: color-mix(in srgb, var(--ts-text) 88%, transparent);
-    line-height: 1.65;
-    max-width: 60ch;
-    margin: 0;
-    font-weight: 450;
-    text-shadow:
-      0 0 2px var(--ts-bg-base),
-      0 0 8px var(--ts-bg-base),
-      0 0 18px var(--ts-bg-base);
+  @keyframes ts-pole-in {
+    from { scale: 1 0; }
   }
+
+  /* ---------- Highlights ---------- */
 
   .hero__highlights {
+    position: relative;
+    z-index: 1;
     list-style: none;
     margin: 0;
     padding: 0 16px;
@@ -386,6 +465,7 @@
     font-size: 13px;
     font-weight: 400;
     color: var(--ts-text-muted);
+    white-space: nowrap;
   }
 
   :global(.hero__highlight-icon) {
@@ -397,23 +477,16 @@
 
   @media (max-width: 640px) {
     .hero {
-      padding: 76px 0 56px;
-      gap: 24px;
+      --plane-w: 170vw;
+      --flag-room: 52px;
+      padding: 84px 0 56px;
+      gap: 20px;
     }
-    /* Edge to edge on phones, behind the brand and headline. */
-    .hero__globe {
-      place-items: start center;
+    .hero__inner {
+      gap: 20px;
     }
-    .hero__globe-frame {
-      width: 100%;
-    }
-    .hero__pin-label { display: none; }
-    .hero__brand-mark {
-      width: 32px;
-      height: 32px;
-    }
-    .hero__brand-word {
-      font-size: 24px;
+    .hero__headline {
+      margin-top: 4px;
     }
     .hero__subtitle {
       font-size: 15px;
@@ -421,19 +494,19 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .hero__world,
+    .hero__plane,
+    .hero__pin-core,
+    .hero__flag-label,
+    .hero__flag-pole {
+      animation: none;
+    }
     .hero__line {
       animation: none;
       stroke-dashoffset: 0;
     }
-    .hero__globe-map,
-    .hero__pin {
-      animation: none;
-    }
-    .hero__pulse {
-      display: none;
-    }
+    .hero__pulse,
     .hero__pin-ring {
-      animation: none !important;
       display: none;
     }
   }

@@ -59,10 +59,12 @@
     border-left: 1px solid var(--ts-divider);
   }
 
-  .triad__item {
+  .triad__card {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: var(--ts-space-3);
+    min-width: 0;
     padding: var(--ts-space-8) var(--ts-space-6);
     border-right: 1px solid var(--ts-divider);
     border-bottom: 1px solid var(--ts-divider);

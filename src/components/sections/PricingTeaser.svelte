@@ -23,6 +23,7 @@
         {$dict.pricingTeaser.eyebrow}
       </span>
       <h2 class="pricing-teaser__title">{$dict.pricingTeaser.title}</h2>
+      <p class="pricing-teaser__status">{$dict.pricing.status}</p>
     </div>
     <RouteLink href="/pricing" class="ts-btn ts-btn-glass">
       {$dict.pricingTeaser.cta}
@@ -30,7 +31,6 @@
     </RouteLink>
   </div>
 
-  <p>{$dict.pricing.status}</p>
   <div class="pricing-teaser__grid">
     {#each plans as plan (plan.slug)}
       <RouteLink
@@ -77,6 +77,14 @@
   .pricing-teaser__intro {
     display: grid;
     gap: var(--ts-space-3);
+    max-width: 760px;
+  }
+
+  .pricing-teaser__status {
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--ts-text-muted);
   }
 
   .pricing-teaser__eyebrow {
@@ -223,7 +231,13 @@
     }
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1100px) {
+    .pricing-teaser__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 600px) {
     .pricing-teaser__grid {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -240,6 +254,10 @@
 
     .pricing-teaser__title {
       font-size: 24px;
+    }
+
+    .pricing-teaser__status {
+      font-size: 15px;
     }
   }
 </style>
