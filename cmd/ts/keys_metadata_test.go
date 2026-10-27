@@ -32,7 +32,7 @@ func TestKeyMetadataPagesAndNullableLastUsed(t *testing.T) {
 				// Unknown secret-bearing fields must never escape the typed SDK boundary.
 				json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": jsonAuthID,
 					"organization_id": jsonAuthID, "project_id": jsonAuthID, "created_by": jsonAuthID,
-					"name": "reports", "database": "orders", "scopes": []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDocumentsRead},
+					"name": "reports", "database": jsonAuthID, "scopes": []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDocumentsRead},
 					"allowed_cidrs": []string{}, "expires_at": nil, "previous_secret_expires_at": nil,
 					"created_at": "2026-10-25T00:00:00Z", "last_used_at": used, "key": "do-not-log-fixture"}}, "next": next})
 			})

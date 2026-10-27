@@ -120,3 +120,27 @@ func TestRenameDatabaseRejectsInvalidInputsBeforeHTTP(t *testing.T) {
 		t.Error("accepted a ULID as a placed database name")
 	}
 }
+
+func TestDatabaseConflictMetadataAndRenameClearing(t *testing.T) {
+	const id, winner = "01ARZ3NDEKTSV4RRFFQ69G5FAW", "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(w, `{"items":[{"id":"`+id+`","projectId":"`+testProject+`","name":"orders-conflict-tail","previousName":"orders","conflictOf":"`+winner+`"}]}`)
+		} else {
+			io.WriteString(w, `{"id":"`+id+`","projectId":"`+testProject+`","name":"orders_new","previousName":null,"conflictOf":null}`)
+		}
+	}))
+	defer server.Close()
+	client, err := tb.New(tb.Config{BaseURL: server.URL, Token: "header.project.signature"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := client.Databases(t.Context(), testProject, tb.PageOptions{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].PreviousName == nil || *page.Items[0].PreviousName != "orders" || page.Items[0].ConflictOf == nil || *page.Items[0].ConflictOf != winner {
+		t.Fatalf("conflict metadata: %+v, %v", page, err)
+	}
+	renamed, err := client.RenameDatabase(t.Context(), testProject, id, "orders_new")
+	if err != nil || renamed.PreviousName != nil || renamed.ConflictOf != nil {
+		t.Fatalf("cleared metadata: %+v, %v", renamed, err)
+	}
+}

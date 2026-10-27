@@ -26,8 +26,10 @@ func (c *Client) Databases(ctx context.Context, project string, opts PageOptions
 
 // RenameDatabase renames the database identified by its immutable ULID, using
 // databases:write. The server preserves its ID, data, keys and placement, returns
-// 400 for an invalid name and 409 for a project-duplicate name. Old name routes
-// return 404; update name-based connection strings. ID-based strings stay valid.
+// 400 for an invalid name and 409 for a locally known duplicate. Only the home
+// region accepts a rename; others return 421 wrong_region. Concurrent claims
+// converge with the smallest ULID keeping the name. After convergence old name
+// routes have no alias; update name-based connection strings. ID-based strings stay valid.
 // Existing name-bound Database handles are not changed. Mutations are not
 // replayed after uncertain failures; read metadata before explicitly retrying.
 func (c *Client) RenameDatabase(ctx context.Context, project, databaseID, name string) (*ManagedDatabase, error) {

@@ -48,7 +48,7 @@ func TestDatabaseRenameCommand(t *testing.T) {
 			}
 			s := &session{tb: client, project: project}
 			var out bytes.Buffer
-			if err := s.dispatch(t.Context(), "db rename", functionFlags{}, "", []string{selector, "orders_new"}, &out); err != nil {
+			if err := s.dispatch(t.Context(), "databases rename", functionFlags{}, "", []string{selector, "orders_new"}, commandInput{}, &out); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{`PATCH ` + base + id + ` {"name":"orders_new"}`}
@@ -110,7 +110,7 @@ func TestDatabaseRenameCommandFailures(t *testing.T) {
 			}
 			s := &session{tb: client, project: project}
 			var out bytes.Buffer
-			err = s.dispatch(t.Context(), "db rename", functionFlags{}, "", []string{tc.selector, tc.newName}, &out)
+			err = s.dispatch(t.Context(), "databases rename", functionFlags{}, "", []string{tc.selector, tc.newName}, commandInput{}, &out)
 			var api *v1.APIError
 			if err == nil || out.Len() != 0 {
 				t.Fatalf("error = %v, output = %q", err, out.String())

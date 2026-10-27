@@ -19,7 +19,7 @@ func TestScopedKeyRequest(t *testing.T) {
 	for _, scope := range []string{"read", "read-write", ""} {
 		t.Run(scope, func(t *testing.T) {
 			t.Parallel()
-			req, err := scopedKeyRequest([]string{"automation", "orders"}, "30d", "203.0.113.0/24,2001:db8::/32", scope)
+			req, err := scopedKeyRequest([]string{"automation", jsonAuthID}, "30d", "203.0.113.0/24,2001:db8::/32", scope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -27,7 +27,7 @@ func TestScopedKeyRequest(t *testing.T) {
 			if scope == "read" {
 				want = []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDocumentsRead}
 			}
-			if !slices.Equal(req.Scopes, want) || req.Name != "automation" || req.Database != "orders" || req.ExpiresAt == nil ||
+			if !slices.Equal(req.Scopes, want) || req.Name != "automation" || req.Database != jsonAuthID || req.ExpiresAt == nil ||
 				!slices.Equal(req.AllowedCIDRs, []string{"203.0.113.0/24", "2001:db8::/32"}) {
 				t.Fatalf("incorrect key restrictions: %+v", req)
 			}
@@ -102,4 +102,13 @@ func managementUser(t *testing.T, handler http.HandlerFunc) *tsauth.User {
 		t.Fatal(err)
 	}
 	return c.WithToken("fixture-sign-in-token")
+}
+
+func TestKeyDatabaseScopeRejectedBeforeLogin(t *testing.T) {
+	t.Setenv("TERRASCALE_API_KEY", "")
+	for _, database := range []string{"orders", "", strings.ToLower(jsonAuthID), "81ARZ3NDEKTSV4RRFFQ69G5FAW"} {
+		if err := run(t.Context(), []string{"keys", "create", "ci", database}, io.Discard); !errors.Is(err, errUsage) {
+			t.Fatalf("invalid scope must fail before login: %v", err)
+		}
+	}
 }

@@ -121,6 +121,10 @@ type ManagedDatabase struct {
 	ID        string `json:"id" ulid:"required"`
 	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
+	// PreviousName is the contested name after a cross-region name conflict.
+	PreviousName *string `json:"previousName,omitempty"`
+	// ConflictOf is the winning database ULID; a successful rename clears both fields.
+	ConflictOf *string `json:"conflictOf,omitempty" ulid:"optional"`
 	// BranchedFrom is the id of the database this one was branched from.
 	BranchedFrom *string   `json:"branchedFrom" ulid:"optional"`
 	CreatedAt    time.Time `json:"createdAt"`

@@ -17,8 +17,9 @@ var commandSyntax = map[string]string{
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
 	"db branch": "db branch <source> <new-database>", "db info": "db info <database>",
-	"db rename":  "db rename <database-name-or-id> <new-name>",
-	"db regions": "db regions <database> <region>...|none", "db changes": "db changes <database> [<collection>...]",
+	"db rename":        "db rename <database> <new-name>",
+	"databases rename": "databases rename <database> <new-name>",
+	"db regions":       "db regions <database> <region>...|none", "db changes": "db changes <database> [<collection>...]",
 	"export": "export <database>", "shell": "shell <database>",
 	"backup list": "backup list <database>", "backup create": "backup create <database>",
 	"backup restore":    "backup restore <database> <backup-id> <new-database>",
@@ -45,7 +46,7 @@ var commandSyntax = map[string]string{
 	"exec": "exec <database> <statement|->", "migrate new": "migrate new <name>",
 	"migrate up": "migrate up <database>", "migrate status": "migrate status <database>",
 	"migrate diff": "migrate diff <database> [<base-database>]", "keys list": "keys list",
-	"keys create": "keys create <name> [<database>]", "keys revoke": "keys revoke <id>", "keys rotate": "keys rotate <id> <grace>",
+	"keys create": "keys create <name> [<database-ULID>]", "keys revoke": "keys revoke <id>", "keys rotate": "keys rotate <id> <grace>",
 	"context show": "context show", "context clear": "context clear", "context set": "context set <org> <project> [<database>]",
 }
 

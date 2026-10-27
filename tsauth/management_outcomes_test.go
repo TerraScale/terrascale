@@ -230,3 +230,36 @@ func TestProjectDeletionResponseCancellation(t *testing.T) {
 		t.Fatalf("outcome=%v err=%v calls=%d closed=%v", got, err, calls, body.closed)
 	}
 }
+
+func TestAPIKeyDatabaseScopeUsesImmutableULID(t *testing.T) {
+	u := managementPeer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var body struct {
+				Database string `json:"database"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Database != managementID {
+				t.Error("key must carry the database ULID")
+			}
+		}
+		key := `{"id":"` + managementID + `","organization_id":"` + managementID + `","created_by":"` + managementID + `","database":"` + managementID + `"}`
+		if r.Method == http.MethodPost {
+			fmt.Fprintf(w, `{"api_key":%s,"key":"test-only"}`, key)
+		} else {
+			fmt.Fprintf(w, `{"items":[%s]}`, key)
+		}
+	})
+	key, err := u.CreateAPIKey(t.Context(), managementID, managementID, tsauth.APIKeyRequest{Name: "test", Database: managementID, Scopes: []string{tsauth.ScopeDocumentsRead}})
+	if err != nil || key.APIKey.Database != managementID {
+		t.Fatalf("create scope: %v", err)
+	}
+	page, err := u.APIKeys(t.Context(), managementID, managementID, tsauth.PageOptions{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Database != managementID {
+		t.Fatalf("list scope: %v", err)
+	}
+	u = managementPeer(t, func(w http.ResponseWriter, r *http.Request) { t.Error("invalid scope reached HTTP") })
+	for _, database := range []string{"orders", "../escape", strings.ToLower(managementID), "81ARZ3NDEKTSV4RRFFQ69G5FAW"} {
+		if _, err := u.CreateAPIKey(t.Context(), managementID, managementID, tsauth.APIKeyRequest{Name: "test", Database: database}); err == nil {
+			t.Error("invalid database scope accepted")
+		}
+	}
+}
