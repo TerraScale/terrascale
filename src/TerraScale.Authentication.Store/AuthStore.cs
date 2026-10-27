@@ -91,6 +91,15 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Hashed, expiring status capabilities bound to an account closure generation.</summary>
     public const string AccountDeletionReceiptCollection = "account_deletion_receipts";
 
+    /// <summary>Purpose-bound reauthentication requests and their single-use proofs.</summary>
+    public const string StepUpProofCollection = "step_up_proofs";
+
+    /// <summary>Exact-operation account deletion continuations authorized before dashboard side effects.</summary>
+    public const string StepUpDeletionGrantCollection = "step_up_deletion_grants";
+
+    /// <summary>Isolated one-attempt email codes and their retained winning redemption lineage.</summary>
+    public const string StepUpPasscodeCollection = "step_up_passcodes";
+
     /// <summary>Authorized closure intents (<see cref="ClosureJob"/>); while one exists it fences access-adding writes to its scope.</summary>
     public const string ClosureJobCollection = "closure_jobs";
 
@@ -125,6 +134,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, DashboardDeletionCursorCollection, ClosureJobCollection, HistoryMarkCollection,
         ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection, AccountDeletionReceiptCollection,
+        StepUpProofCollection, StepUpDeletionGrantCollection, StepUpPasscodeCollection,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
@@ -685,6 +695,36 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Keeps a device approval and its descendants subject to the original device authorization's revocation.</summary>
     public static CredentialBinding AuthorizationBinding(string authorizationId) => new("credential:authorization", authorizationId, authorizationId);
 
+    /// <summary>Orders credential winners with a dependent write on the same regional authority.</summary>
+    public static IReadOnlyList<StoreOperation> CredentialRequirements(string instanceId, IReadOnlyList<CredentialBinding> bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        if (bindings.Count > MaxCredentialBindings)
+        {
+            throw new ArgumentException("Too many credential bindings.", nameof(bindings));
+        }
+
+        List<StoreOperation> operations = [];
+        foreach (var binding in bindings.Distinct())
+        {
+            var (collection, id, field, value) = binding.Kind switch
+            {
+                "credential:user-state" => (UserCollection, NaturalKeyId(instanceId, UserCollection, binding.Key), "/authStamp", binding.OwnerId),
+                "credential:authorization" when binding.OwnerId == binding.Key => (OidcAuthorizationCollection, NaturalKeyId(instanceId, OidcAuthorizationCollection, binding.Key), "/status", "valid"),
+                _ when binding.Kind.StartsWith("credential:", StringComparison.Ordinal) => (UniqueCollection, NaturalKeyId(instanceId, binding.Kind, binding.Key), "/ownerId", binding.OwnerId),
+                _ => throw new ArgumentException("Invalid credential binding.", nameof(bindings)),
+            };
+            var filter = JsonSerializer.SerializeToElement(new JsonObject
+            {
+                ["and"] = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) },
+                    new JsonObject { ["eq"] = new JsonArray(field, value) }),
+            });
+            operations.Add(new StoreOperation(TerraBaseTransactionOperation.Assert(collection, id, filter)));
+        }
+
+        return operations;
+    }
+
     /// <summary>Checks every ancestor against the regional replicated winner; missing claims fail closed.</summary>
     public async Task<bool> AreCredentialsCurrentAsync(string instanceId, IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken = default)
     {
@@ -841,7 +881,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
             ProjectMemberCollection => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
             ApiKeyCollection or ApiKeyUsageCollection or InvitationCollection => [("organization", "organizationId"), ("project", "projectId")],
             AuditEventCollection => [("organization", "organizationId"), ("account", "actor")],
-            SessionCollection or PasscodeCollection or MfaCollection => [("account", "userId")],
+            SessionCollection or PasscodeCollection or MfaCollection or StepUpProofCollection or StepUpDeletionGrantCollection or StepUpPasscodeCollection => [("account", "userId")],
             OidcTokenCollection or OidcAuthorizationCollection => [("account", "subject")],
             UniqueCollection => [("account", "ownerId")],
             ChallengeCollection => [("account", "subjectId")],

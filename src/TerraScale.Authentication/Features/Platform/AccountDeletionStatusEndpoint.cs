@@ -66,7 +66,12 @@ internal static class DeletionReceiptHeader
             return null;
         }
 
-        if (values.Count != 1 || values[0] is not { Length: 43 } value
+        return values.Count == 1 ? Hash(values[0]) : throw new ApiException(400, "invalid_request", "Present one deletion receipt.");
+    }
+
+    internal static string Hash(string? value)
+    {
+        if (value is not { Length: 43 }
             || !value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_')
             || !"AEIMQUYcgkosw048".Contains(value[^1]))
         {

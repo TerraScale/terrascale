@@ -87,6 +87,19 @@ public static partial class OpenApiSetup
                     operation.Security = [Requirement(declared.Scheme, context.Document)];
                 }
 
+                if (operation.OperationId is "delete_account" or "create_organization_api_key" or "create_project_api_key"
+                    or "rotate_organization_api_key" or "rotate_project_api_key" or "create_project_client")
+                {
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "X-TerraScale-Step-Up-Proof",
+                        In = ParameterLocation.Header,
+                        Required = operation.OperationId != "delete_account",
+                        Description = "Fresh approved single-use ts-auth audience proof for this operation's purpose. Account deletion alternatively accepts its exact preauthorized deletion receipt continuation.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 70, MaxLength = 70 },
+                    });
+                }
+
                 if (operation.OperationId is "delete_account" or "account_deletion_status")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter
@@ -97,6 +110,26 @@ public static partial class OpenApiSetup
                         Description = "Status-only capability: 32 random bytes in canonical unpadded base64url. Never put it in a URL or logs.",
                         Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 43, MaxLength = 43, Pattern = "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$" },
                     });
+                }
+
+                if (operation.OperationId == "delete_account")
+                {
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "X-TerraScale-Deletion-Authorization",
+                        In = ParameterLocation.Header,
+                        Required = false,
+                        Description = "Secret acknowledgement returned only after timely proof consumption; required with the exact receipt for continuation. Never put it in a URL or logs.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 43, MaxLength = 43 },
+                    });
+                    foreach (var response in operation.Responses?.Values.OfType<OpenApiResponse>() ?? [])
+                    {
+                        (response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal))["X-TerraScale-Deletion-Authorization"] = new OpenApiHeader
+                        {
+                            Description = "Returned on initial timely proof consumption with a receipt. Persist privately for that exact deletion's retries; absent on continuation.",
+                            Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 43, MaxLength = 43 },
+                        };
+                    }
                 }
 
                 if (operation.OperationId == "account_deletion_status")

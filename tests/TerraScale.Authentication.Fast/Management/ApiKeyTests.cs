@@ -155,10 +155,10 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Keys_stored_without_secret_bindings_exchange_and_rotate_without_a_step_up_proof()
+    public async Task Keys_stored_without_secret_bindings_keep_exchanging_and_rotate_into_a_bound_secret()
     {
-        // #699 refused every key whose record had no sign-in lineage with invalid_client, and demanded a step-up proof to
-        // create or rotate one. Keys written before it carry no binding fields; keys it wrote for such sign-ins carry empty lists.
+        // Keys written before fresh-proof lineage existed carry no binding fields; keys written for sign-ins without lineage
+        // carry empty lists. Both keep exchanging; rotation (with its step-up proof, attached by the harness) binds the new secret.
         await using var oidc = await StartAsync();
         var (_, token) = await oidc.SignInUserAsync("legacy@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
