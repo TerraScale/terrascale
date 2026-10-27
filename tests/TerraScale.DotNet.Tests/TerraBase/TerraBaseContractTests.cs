@@ -134,6 +134,7 @@ public sealed class TerraBaseContractTests
         yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());
         yield return ("project", "getDatabase", client => ProjectClient(client).GetDatabaseAsync("app"));
         yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
+        yield return ("project", "updateDatabase", client => ProjectClient(client).RenameDatabaseAsync(User, "production"));
         yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
         yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
         yield return ("project", "getProjectMetrics", client => ProjectClient(client).GetPrometheusMetricsAsync());
