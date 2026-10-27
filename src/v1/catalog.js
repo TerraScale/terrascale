@@ -14,6 +14,8 @@ import { isJsonObject, stringifyExactJson } from "./json.js";
  * @property {string} id Canonical database ULID.
  * @property {string} projectId Canonical owning-project ULID.
  * @property {string} name Database name used in data routes.
+ * @property {string | null | undefined} [previousName] Name lost in a cross-region conflict.
+ * @property {string | null | undefined} [conflictOf] ULID of the database that kept that name.
  * @property {string | null} branchedFrom Source database ULID, or null.
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region Serving region.
@@ -75,6 +77,8 @@ function database(value) {
     createdAt, region: region(raw.region), homeRegion: region(raw.homeRegion),
     replicaRegions: Object.freeze(array(raw.replicaRegions, "database replicaRegions").map(region)),
     allRegions: raw.allRegions,
+    ...(raw.previousName === undefined ? {} : { previousName: raw.previousName === null ? null : requireName("database", raw.previousName) }),
+    ...(raw.conflictOf === undefined ? {} : { conflictOf: raw.conflictOf === null ? null : requireId(raw.conflictOf, "Conflict database ID") }),
   });
 }
 
@@ -139,12 +143,12 @@ export class V1Databases {
   }
 
   /**
-   * Prepared for the pending rename API; availability remains held. See docs/database-rename.md.
-   * Rename by immutable ULID with databases:write; returns the existing database.
+   * Rename by immutable ULID or current name with databases:write. See docs/database-rename.md.
+   * Returns the database metadata committed by its home region.
    * ID, data, keys and placement stay unchanged. Invalid names return 400 (or a
-   * local TypeError); project-duplicate names return 409. Old name routes return
-   * 404. Update name-based connection strings and handles; ID-based strings stay
-   * valid. Reconcile uncertain failures before explicitly retrying.
+   * local TypeError); known same-region duplicates return 409. After convergence,
+   * the old name has no alias and may be claimed by another database. Update
+   * name-based connection strings and handles; ID-based strings stay valid. Reconcile uncertain failures before explicitly retrying.
    * @param {string} databaseId
    * @param {string} name
    * @param {V1RequestOptions} [options]
@@ -152,7 +156,7 @@ export class V1Databases {
    */
   async rename(databaseId, name, options = {}) {
     mutationOptions(options);
-    const response = await this.#transport.call("updateDatabase", { database: requireId(databaseId, "Database ID") }, {
+    const response = await this.#transport.call("updateDatabase", { database: requireDatabaseSelector(databaseId) }, {
       body: stringifyExactJson({ name: requireName("database", name) }, "database rename"), signal: options.signal,
     });
     return database(response.value);

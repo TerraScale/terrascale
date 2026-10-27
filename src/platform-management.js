@@ -30,7 +30,8 @@ import { platformIdentityRoutes } from "./platform-management-routes.js";
 /** @typedef {Exclude<IdentityOrganizationRole, "owner">} IdentityProjectRole */
 /** @typedef {"documents:read" | "documents:write" | "databases:read" | "databases:write"} IdentityKeyScope */
 /** @typedef {{readonly name: string; readonly scopes: readonly IdentityKeyScope[]; readonly expires_at?: string | null; readonly allowed_cidrs?: readonly string[] | null}} IdentityOrganizationKeyRequest */
-/** @typedef {IdentityOrganizationKeyRequest & {readonly database?: string | null}} IdentityProjectKeyRequest */
+/** Database restrictions use immutable database ULIDs, never names.
+ * @typedef {IdentityOrganizationKeyRequest & {readonly database?: string | null}} IdentityProjectKeyRequest */
 /** @typedef {{readonly previous_secret_ttl?: number | null}} IdentityRotateKeyRequest */
 /** @typedef {{readonly allowed_cidrs: readonly string[]}} IdentityAllowedCidrsRequest */
 /** @typedef {{readonly email: string; readonly role: IdentityOrganizationRole; readonly project_id?: string | null}} IdentityInvitationRequest */
@@ -82,7 +83,7 @@ function newKey(request, projectKey) {
   if (!Array.isArray(request.scopes) || request.scopes.length === 0 || new Set(request.scopes).size !== request.scopes.length)
     throw new TypeError("scopes must be a non-empty set of TerraBase scopes.");
   request.scopes.forEach(scope);
-  if (request.database !== undefined && request.database !== null) requireName("database", request.database);
+  if (request.database !== undefined && request.database !== null) requireId(request.database, "Database ID");
   if (request.expires_at !== undefined && request.expires_at !== null) {
     instant(request.expires_at);
     if (Date.parse(request.expires_at) <= Date.now()) throw new TypeError("expires_at must be in the future.");

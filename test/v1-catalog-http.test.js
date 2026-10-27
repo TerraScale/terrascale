@@ -81,19 +81,19 @@ describe("public database catalog HTTP contracts", () => {
   });
 
   // HTTP fixtures verify the SDK contract, not server-side rename invariants.
-  test("renames by immutable ID and preserves returned identity and placement", async () => {
+  test.each([id, "app"])("renames selector %s and preserves returned identity and placement", async selector => {
     const renamed = { ...database, name: "app_new" };
     const { transport, databases, requests } = await fixture((request, response) => json(response,
       request.url.pathname.endsWith("/documents/by-key")
         ? { id, version: "tbv1-00000000000000000000000000000000", state: "value", document: { kept: true } } : renamed));
-    expect(await databases.rename(id, "app_new")).toEqual(renamed);
+    expect(await databases.rename(selector, "app_new")).toEqual(renamed);
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ method: "PATCH", body: '{"name":"app_new"}' });
-    expect(requests[0]?.url.pathname).toBe(`${prefix}/${id}`);
+    expect(requests[0]?.url.pathname).toBe(`${prefix}/${selector}`);
     expect(requests[0]?.headers.authorization).toBe(`Bearer ${token}`);
     expect(requests[0]?.headers["content-type"]).toBe("application/json");
     expect(requests[0]?.headers["idempotency-key"]).toBeUndefined();
-    for (const [databaseId, name] of /** @type {const} */ ([["app", "app_new"], [id, "Bad Name"], [id, ""]]))
+    for (const [databaseId, name] of /** @type {const} */ ([["../escape", "app_new"], [id, "Bad Name"], [id, ""]]))
       await expect(databases.rename(databaseId, name)).rejects.toThrow(TypeError);
     await expect(databases.rename(id, "app_new", /** @type {any} */ ({ idempotencyKey: "unsupported" }))).rejects.toThrow(/Idempotency-Key/u);
     const reason = new Error("cancel rename");
@@ -113,8 +113,8 @@ describe("public database catalog HTTP contracts", () => {
     expect(requests).toHaveLength(3);
   });
 
-  test.each([[400, "invalid_request"], [401, "unauthorized"], [403, "forbidden_scope"], [404, "not_found"],
-    [409, "name_taken"], [421, "wrong_region"], [503, "storage_unavailable"]])("preserves rename error %i without replaying", async (status, code) => {
+  test.each([[400, "invalid_request"], [401, "unauthorized"], [403, "forbidden_scope"], [404, "unknown_database"],
+    [409, "platform_placement_locked"], [409, "name_taken"], [421, "wrong_region"], [503, "storage_unavailable"]])("preserves rename error %i without replaying", async (status, code) => {
     const { databases, requests } = await fixture((_request, response) =>
       json(response, { error: { code, message: "Refused" } }, status));
     await expect(databases.rename(id, "app_new")).rejects.toMatchObject({ status, code });
@@ -269,4 +269,22 @@ describe("declared collection schema HTTP contracts", () => {
     });
     expect(requests).toHaveLength(1);
   });
+});
+
+// Conflict metadata must survive catalog list/get and clear on a successful rename.
+test.each([{}, { previousName: null, conflictOf: null }, { previousName: "app", conflictOf: project }])(
+  "decodes optional database conflict metadata %j", async fields => {
+    const value = { ...database, ...fields };
+    const cleared = { ...database, previousName: null, conflictOf: null };
+    const { databases } = await fixture((request, response) => json(response, request.method === "PATCH" ? cleared :
+      request.url.pathname === prefix ? { items: [value], next: null } : value));
+    expect(await databases.get(id)).toEqual(value);
+    expect((await databases.list()).items).toEqual([value]);
+    expect(await databases.rename(id, "app")).toEqual(cleared);
+  },
+);
+
+test.each([{ previousName: 123 }, { conflictOf: "app" }])("rejects malformed conflict metadata %j", async fields => {
+  const { databases } = await fixture((_request, response) => json(response, { ...database, ...fields }));
+  await expect(databases.get(id)).rejects.toThrow(TypeError);
 });
