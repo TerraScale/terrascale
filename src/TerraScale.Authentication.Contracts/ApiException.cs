@@ -26,11 +26,11 @@ public sealed class ApiException(int status, string code, string message, Except
         new(500, "internal_error", "An unexpected error occurred.");
 
     /// <summary>
-    /// The storage authority could not complete the request. The <paramref name="cause"/> reaches
-    /// server logs (as types and frames only), never the client.
+    /// The storage authority could not complete the request; the caller may retry after two seconds. The
+    /// <paramref name="cause"/> reaches server logs (as types and frames only), never the client.
     /// </summary>
     public static ApiException Unavailable(Exception? cause = null) =>
-        new(503, "temporarily_unavailable", "The storage engine is unavailable; retry shortly.", cause);
+        new(503, "temporarily_unavailable", "The storage engine is unavailable; retry shortly.", cause) { RetryAfter = TimeSpan.FromSeconds(2) };
 
     /// <summary>The serializable response body for this error.</summary>
     public ErrorBody ToBody() => new(new ErrorDetail(this.Code, this.Message));
