@@ -78,21 +78,27 @@ maximum production throughput. Native clients traverse the local TLS edge; HTTP 
 the local authenticated client listener. Replication uses `xregion-probe`, 60 probes per
 direction/repeat in all six directions, with the existing RTT/2 correction and 200 ms p99 target.
 
-Three SJC read repeats completed, followed by successful tenant cleanup. That attempt's
-replication binary was x86_64 on ARM64 and did not start; it is excluded from qualification.
-The static ARM64 probe is now checked before tenant creation. SJC and FRA have since
-completed all three repeats, including both inbound replication directions on each host,
-with zero missing probes and successful project deletion in all regions.
+All three serving hosts completed three read repeats and both inbound replication
+directions. Aggregation validates 5,400 read samples, 1,080 replication probes,
+zero missing probes, unchanged equal regional revisions, and cleanup in all regions.
+The initial SJC attempt used an x86_64 probe on ARM64 and is excluded from qualification;
+the replacement probe is checked before tenant creation.
 
 | Direction | Probes | p50 ms | Pooled p99 ms | Target p99 <200 ms |
 | --- | ---: | ---: | ---: | --- |
+| fra → gru | 180 | 217.108 | 1,480.450 | not met |
 | fra → sjc | 180 | 127.515 | 345.612 | not met |
-| gru → sjc | 180 | 240.135 | 2,431.839 | not met |
 | gru → fra | 180 | 202.543 | 1,107.936 | not met |
+| gru → sjc | 180 | 240.135 | 2,431.839 | not met |
 | sjc → fra | 180 | 131.725 | 1,443.139 | not met |
+| sjc → gru | 180 | 212.437 | 798.640 | not met |
 
-GRU endpoint latency and its two inbound directions are running after the parent supplied
-a working trusted SSH entry; the peers file confirms this is the serving GRU node.
+[All regional endpoint tables](perf-baseline-20261027/live-summary.md) and
+[validated machine evidence](perf-baseline-20261027/live-results.json) retain
+all samples, per-repeat tails, load, revision and cleanup receipts. GRU initial
+CPU PSI some avg10 was 52.25%; these are observed production conditions, not an
+idle-production guarantee. Trusted SSH and the peers file confirmed the replaced
+GRU node before measurement.
 No repeat/stress runs or workflow changes were added to GitHub CI.
 The superseded short-window local calibration and the SJC x86 probe attempt are retained
 under `perf-baseline-20261027/diagnostics/` and excluded from qualification.
