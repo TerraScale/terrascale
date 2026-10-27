@@ -29,6 +29,9 @@ func tailChangesFrom(ctx context.Context, db *v1.Database, cursor string, collec
 	if len(collections) > 64 {
 		return fmt.Errorf("db changes accepts at most 64 collection filters: %w", errUsage)
 	}
+	if cursor == "empty" {
+		cursor = "" // The server starts at retained history when no cursor is sent.
+	}
 	beginJSONStream(out)
 	for event, err := range db.Changes(ctx, v1.ChangesOptions{Cursor: cursor, Collections: collections}) {
 		if errors.Is(err, context.Canceled) && !jsonMode(out) {

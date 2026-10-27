@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"terrascale.tech/sdk/tsauth"
@@ -22,6 +23,9 @@ func selectOrganization(ctx context.Context, u *tsauth.User, selector string) (*
 		if selector == "" || item.Name == selector {
 			matches = append(matches, item)
 		}
+	}
+	if len(matches) == 0 && selector != "" {
+		return nil, fmt.Errorf("no organization %q: run ts orgs", selector)
 	}
 	if len(matches) != 1 {
 		return nil, errors.New("organization must match exactly once: run ts orgs and select an ID")
@@ -57,8 +61,14 @@ func selectProject(ctx context.Context, u *tsauth.User, org, selector string) (*
 	if exact != nil {
 		return exact, nil
 	}
+	if len(matches) == 0 && org != "" {
+		return nil, fmt.Errorf("no project %q in organization %q: run ts projects", selector, org)
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no project %q: run ts projects", selector)
+	}
 	if len(matches) != 1 {
-		return nil, errors.New("project must match exactly once: run ts projects and select an ID, optionally with -org")
+		return nil, errors.New("project name matches several projects: run ts projects and select an ID, optionally with -org")
 	}
 	return &matches[0], nil
 }

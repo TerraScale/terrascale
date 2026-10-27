@@ -24,6 +24,7 @@ import (
 type functionFlags struct {
 	name, collection, events, cron, data string
 	limit                                int
+	limitSet                             bool
 }
 
 // parse returns the operands left after the command's flags.
@@ -51,8 +52,12 @@ func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
 		}
 		operands, args = append(operands, args[0]), args[1:]
 	}
-	if f.events != "" && f.collection == "" || f.limit < 0 || f.limit > 100 {
-		return nil, errUsage
+	fs.Visit(func(fl *flag.Flag) { f.limitSet = f.limitSet || fl.Name == "limit" })
+	if f.events != "" && f.collection == "" {
+		return nil, fmt.Errorf("-events needs -trigger-collection: %w", errUsage)
+	}
+	if f.limitSet && (f.limit < 1 || f.limit > 100) {
+		return nil, &cliError{code: "invalid_arguments", message: "-limit must be from 1 to 100", err: errUsage}
 	}
 	return operands, nil
 }

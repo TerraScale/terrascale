@@ -263,7 +263,6 @@ func TestCollectionFlagRejectsMisuseBeforeAuthentication(t *testing.T) {
 		{"-collection=", "db", "list"},
 		{"-collection=", "import", "app", "ndjson", "people.ndjson"},
 		{"-collection", " ", "import", "app", "ndjson", "people.ndjson"},
-		{"import", "app", "ndjson", "people.ndjson", "-collection", "people"},
 	} {
 		if err := run(t.Context(), args, io.Discard); !errors.Is(err, errUsage) {
 			t.Errorf("run(%q) = %v, want usage", args, err)

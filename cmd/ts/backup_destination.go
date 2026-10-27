@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
 	v1 "terrascale.tech/sdk/v1"
 )
@@ -50,6 +51,10 @@ func backupDestination(ctx context.Context, tb *v1.Client, project, operation st
 	switch operation {
 	case "get":
 		result, err := tb.BackupDestination(ctx, project)
+		if errors.Is(err, v1.ErrNotFound) {
+			return &cliError{code: "not_found", status: http.StatusNotFound,
+				message: "no backup destination is set for this project; ts backup destination set configures one"}
+		}
 		if err != nil {
 			return destinationError(err)
 		}

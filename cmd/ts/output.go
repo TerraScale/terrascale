@@ -76,6 +76,27 @@ func finishJSONStream(out io.Writer) error {
 	}{"complete"})
 }
 
+// cliError is a failure the CLI words itself. Its code and message are fixed
+// text without operands or remote content, so JSON errors print them as is.
+type cliError struct {
+	code, message string
+	status        int
+	err           error
+}
+
+func (e *cliError) Error() string {
+	if e.err == nil || errors.Is(e.err, errUsage) {
+		return e.message
+	}
+	return e.message + ": " + e.err.Error()
+}
+
+func (e *cliError) Unwrap() error { return e.err }
+
+func consentRequired(message string) error {
+	return &cliError{code: "consent_required", message: message}
+}
+
 type jsonFailure struct{ error }
 
 func (e *jsonFailure) Unwrap() error { return e.error }
@@ -138,9 +159,12 @@ func emitJSONError(out io.Writer, err error) error {
 	var api *v1.APIError
 	var auth *tsauth.APIError
 	var token *tsauth.Error
+	var local *cliError
 	switch {
 	case errors.Is(err, context.Canceled):
 		detail.Code, detail.Message = "interrupted", "Command interrupted; output is incomplete."
+	case errors.As(err, &local):
+		detail.Code, detail.Message, detail.Status = local.code, local.message, local.status
 	case errors.Is(err, errUsage):
 		detail.Code, detail.Message = "invalid_arguments", errUsage.Error()
 	case errors.As(err, &api):
@@ -150,7 +174,7 @@ func emitJSONError(out io.Writer, err error) error {
 	case errors.As(err, &token):
 		detail.Code, detail.Status = token.Code, token.Status
 	}
-	if detail.Status != 0 {
+	if detail.Status != 0 && local == nil {
 		detail.Message = http.StatusText(detail.Status)
 	}
 	if safeIdentifier(detail.Code) == "" {

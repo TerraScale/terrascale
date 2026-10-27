@@ -19,7 +19,7 @@ func confirmDelete(database, project string, yes bool, in io.Reader, out io.Writ
 		return nil
 	}
 	if !tty {
-		return errors.New("database deletion requires a terminal: pass -yes before db delete to explicitly consent")
+		return consentRequired("database deletion requires a terminal: pass -yes to explicitly consent")
 	}
 	if project == "" {
 		project = "automatic selection (the only accessible project)"
@@ -71,7 +71,7 @@ func confirmNamedOperation(target, message, command string, yes bool, in io.Read
 		return nil
 	}
 	if !tty {
-		return fmt.Errorf("confirmation requires a terminal: pass -yes before %s to explicitly consent", command)
+		return consentRequired("confirmation requires a terminal: pass -yes to explicitly consent to " + command)
 	}
 	if _, err := fmt.Fprintf(out, "%s\nType %q to confirm: ", message, target); err != nil {
 		return err
