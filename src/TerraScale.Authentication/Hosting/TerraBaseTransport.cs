@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -86,17 +87,20 @@ public static class TerraBaseTransport
             : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
 
     // Credentials, sessions and revocations must survive the loss of one region: every write waits for another region's durable
-    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header. Rate-limit buckets are the
+    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header. Rate-limit buckets are an
     // exception: losing one with its region only reopens that window, while waiting for a remote ack on every attempt put a
-    // cross-region round trip (and its conflict retries) on every token request (docs/auth/rate-limit-durability.md).
+    // cross-region round trip (and its conflict retries) on every token request (docs/auth/rate-limit-durability.md). The
+    // readiness probe's synthetic document is the other: readiness proves this region's storage, and waiting for another
+    // region's ack made /readyz fail whenever replication was slow (docs/auth/readiness-local-durability.md).
     private sealed class RemoteDurableHandler : DelegatingHandler
     {
-        private static readonly string RateLimits = $"/collections/{AttemptLimiter.Collection}/";
+        private static readonly string[] LocalCollections = [$"/collections/{AttemptLimiter.Collection}/", $"/collections/{AuthStore.HealthCollection}/"];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             request.Headers.Remove(DurabilityHeader);
-            if (request.RequestUri?.AbsolutePath.Contains(RateLimits, StringComparison.Ordinal) != true)
+            var path = request.RequestUri?.AbsolutePath;
+            if (path is null || !LocalCollections.Any(collection => path.Contains(collection, StringComparison.Ordinal)))
             {
                 request.Headers.Add(DurabilityHeader, "remote_durable");
             }

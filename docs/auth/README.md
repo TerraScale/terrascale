@@ -398,8 +398,8 @@ lost machine); regional fallback clients retain that lifetime. Unknown `region` 
 ## The global auth dataset
 
 Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `ts-auth` on every
-start, and ts-auth stores everything there through TerraBase's internal listener (every write `remote_durable` except rate-limit buckets, see
-[rate-limit-durability.md](rate-limit-durability.md))
+start, and ts-auth stores everything there through TerraBase's internal listener (every write `remote_durable` except rate-limit buckets and the readiness probe, see
+[rate-limit-durability.md](rate-limit-durability.md) and [readiness-local-durability.md](readiness-local-durability.md))
 (every write and every read but discovery's and the JWKS's at gru's (port 8081 on gru's NetBird address), failing closed when it does not answer; discovery and the JWKS at its own region's; the shared peer credential from `TERRABASE_PEER_SECRET`; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates
 `AuthStore.RequiredCollections`, seeds the TerraScale owner and both projects, and provisions the first encrypted
 signing key when absent (all idempotent), retrying after five seconds and backing off

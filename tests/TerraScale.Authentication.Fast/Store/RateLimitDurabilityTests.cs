@@ -11,11 +11,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
+using TerraScale.Authentication.Store;
 
 namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
-/// Rate-limit buckets are written local_durable; every other write still waits for another region's durable acknowledgement.
+/// Rate-limit buckets and the readiness probe's document are written local_durable; every other write still waits for another region's durable acknowledgement.
 /// </summary>
 public sealed class RateLimitDurabilityTests
 {
@@ -43,6 +44,32 @@ public sealed class RateLimitDurabilityTests
         await Assert.That(recorder.Durability($"PUT {AttemptLimiter.Collection}")).IsEqualTo("");
         await Assert.That(recorder.Durability($"DELETE {AttemptLimiter.Collection}")).IsEqualTo("");
         await Assert.That(recorder.Durability("PUT users")).IsEqualTo("remote_durable");
+    }
+
+    // gru, 2026-10-27: the probe's remote_durable create and delete waited for another region's ack behind a 714k-row CDC
+    // backlog; past the 8 s probe deadline /readyz answered 503 while this region's storage was serving.
+    [Test]
+    public async Task Readiness_probe_writes_skip_the_remote_ack()
+    {
+        await using var recorder = await DurabilityRecorder.StartAsync();
+        using var client = new HttpClient(TerraBaseTransport.CreateHandler([], NullLogger.Instance))
+        {
+            BaseAddress = recorder.Address,
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+
+        var probe = $"{Database}/{AuthStore.HealthCollection}/documents/by-key?id=01M5X2000000000000000000AC";
+        var session = $"{Database}/{AuthStore.SessionCollection}/documents/by-key?id=01M5X2000000000000000000AD";
+        using (await client.PutAsync(probe, new StringContent("{}")))
+        using (await client.DeleteAsync(probe))
+        using (await client.PutAsync(session, new StringContent("{}")))
+        {
+        }
+
+        await Assert.That(recorder.Durability($"PUT {AuthStore.HealthCollection}")).IsEqualTo("");
+        await Assert.That(recorder.Durability($"DELETE {AuthStore.HealthCollection}")).IsEqualTo("");
+        await Assert.That(recorder.Durability($"PUT {AuthStore.SessionCollection}")).IsEqualTo("remote_durable");
     }
 
     private sealed class DurabilityRecorder : IAsyncDisposable
