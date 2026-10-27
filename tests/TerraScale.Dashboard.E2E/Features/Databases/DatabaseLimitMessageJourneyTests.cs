@@ -33,7 +33,9 @@ public sealed class DatabaseLimitMessageJourneyTests(DashboardRootFixture fixtur
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
         {
             ["_csrf"] = await HttpJourney.CsrfAsync(client, "/databases"),
-            ["name"] = "limit-refusal", ["region"] = "GRU", ["allRegions"] = "true"
+            ["name"] = "limit-refusal",
+            ["region"] = "GRU",
+            ["allRegions"] = "true"
         });
         await Assert.That(refusals).IsGreaterThan(0);
         await Assert.That((int)response.StatusCode).IsEqualTo(status);
