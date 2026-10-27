@@ -36,7 +36,19 @@ public sealed class CollectionLifecycleJourneyTests(DashboardRootFixture fixture
             fields.Append(("_csrf", csrf)).Append(("databaseId", id)).ToDictionary(field => field.Item1, field => field.Item2);
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", Fields(("name", "items"))))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(await client.GetStringAsync($"/databases/{id}/sql")).DoesNotContain("SELECT * FROM items");
+        var opened = await client.GetStringAsync($"/databases/{id}/sql");
+        await Assert.That(opened).DoesNotContain("SELECT * FROM items");
+        await Assert.That(opened).DoesNotContain("SQL must not be empty.").Because("A freshly opened editor is not an error.");
+        using (var emptyCheck = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql/check", Fields(("sql", " "))))
+            await Assert.That(await emptyCheck.Content.ReadAsStringAsync()).Contains("SQL must not be empty.");
+        using (var emptyPage = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql/check") { Content = new FormUrlEncodedContent(Fields(("sql", " "))) })
+        {
+            emptyPage.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            emptyPage.Headers.Accept.ParseAdd("text/html");
+            using var checkedPage = await client.SendAsync(emptyPage);
+            await Assert.That(checkedPage.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(await checkedPage.Content.ReadAsStringAsync()).Contains("SQL must not be empty.").Because("A submitted check of an empty editor says why.");
+        }
         using (var duplicate = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", Fields(("name", "items"))))
         {
             await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
