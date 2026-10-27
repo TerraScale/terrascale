@@ -11,6 +11,8 @@ internal sealed record OrphanDatabaseFile(TenantContext Database, DateTimeOffset
 
 internal sealed partial class EngineManagementService
 {
+    private static readonly TimeSpan OrphanGrace = TimeSpan.FromHours(24);
+    private const int MaxOrphanDeletions = 16;
     private int _fileAudit;
     private DateTimeOffset _nextFileAudit;
     private string OrphanFiles => $"orphan_database_files/{options.MachineId}";
@@ -98,6 +100,7 @@ internal sealed partial class EngineManagementService
                     logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
                 }
             }
+            var expired = new List<OrphanDatabaseFile>();
             if (complete && catalogGate.Value.IsOpen)
             {
                 string? after = null;
@@ -128,6 +131,11 @@ internal sealed partial class EngineManagementService
                         }
                         count += record.Files;
                         bytes += record.Bytes;
+                        if (record.FirstSeen + OrphanGrace <= time.GetUtcNow() && expired.Count < MaxOrphanDeletions)
+                        {
+                            expired.Add(record);
+                            continue;
+                        }
                         logger.ZLogWarning($"Preserved database without a catalog registration: {record.Database.DatabaseId:@Database}, {record.Bytes:@Bytes} bytes in {record.Files:@Files} files, first seen {record.FirstSeen:@FirstSeen}");
                     }
                     if (!page.HasMore)
@@ -135,6 +143,22 @@ internal sealed partial class EngineManagementService
                         break;
                     }
                     after = page.Documents[^1].Id;
+                }
+            }
+            if (complete && version == CatalogVersion)
+            {
+                foreach (var record in expired)
+                {
+                    if (await DeleteOrphanAsync(record, cancellationToken).ConfigureAwait(false))
+                    {
+                        count -= record.Files;
+                        bytes -= record.Bytes;
+                        logger.ZLogWarning($"Deleted database without a catalog registration: {record.Database.DatabaseId:@Database}, {record.Bytes:@Bytes} bytes in {record.Files:@Files} files, first seen {record.FirstSeen:@FirstSeen}");
+                    }
+                    else
+                    {
+                        logger.ZLogWarning($"Preserved database without a catalog registration: {record.Database.DatabaseId:@Database}, {record.Bytes:@Bytes} bytes in {record.Files:@Files} files, first seen {record.FirstSeen:@FirstSeen}");
+                    }
                 }
             }
             if (!complete)
@@ -157,6 +181,38 @@ internal sealed partial class EngineManagementService
             _nextFileAudit = time.GetUtcNow() + TimeSpan.FromMinutes(15);
             Volatile.Write(ref _fileAudit, 0);
         }
+    }
+
+    // An orphan unregistered for the whole grace period is deleted like an abandoned creation: a cleanup intent, recorded
+    // under the engine's lifecycle reservation only while the file is still unowned and unchanged since this pass, then
+    // the engine's close-then-delete path. A registration that arrives meanwhile keeps the files.
+    private async ValueTask<bool> DeleteOrphanAsync(OrphanDatabaseFile record, CancellationToken cancellationToken)
+    {
+        var database = record.Database;
+        if (await orphanFiles.IsBusyAsync(database, cancellationToken).ConfigureAwait(false) != false)
+        {
+            return false;
+        }
+        var reserved = await engine.RecordDatabaseDeleteIntentAsync(database, token => WriteAsync<bool>(async transaction =>
+        {
+            var id = OrphanId(database);
+            if (!catalogGate.Value.IsOpen || await OwnedFileAsync(transaction, database, token).ConfigureAwait(false)
+                || await GetAsync(transaction, OrphanFiles, id, TerraBaseJsonContext.Default.OrphanDatabaseFile, token).ConfigureAwait(false) != record)
+            {
+                return false;
+            }
+            await PutAsync(transaction, PendingDatabaseCleanup, database.DatabaseId!, database, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(OrphanFiles, id, token).ConfigureAwait(false);
+            return true;
+        }, static _ => false, token), cancellationToken).ConfigureAwait(false);
+        if (!reserved)
+        {
+            return false;
+        }
+        checkpoint("audit.delete", database);
+        _ = await FinishDatabaseCleanupAsync(database, cancellationToken, abandonedCreation: true).ConfigureAwait(false);
+        // Deleted only when the intent cleared without a registration; anything else keeps the files for the next pass.
+        return !await ReadAsync<bool>(transaction => OwnedFileAsync(transaction, database, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<bool> OwnedFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>
