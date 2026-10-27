@@ -8,9 +8,10 @@ on:
     paths-ignore: ["**/*.md", "docs/**", "benchmark/**"]
   workflow_dispatch:
 
-# Every publish runs to completion in its own group.
+# Serialize main publishes and releases. Keep the active deployment intact;
+# GitHub retains only the newest pending run when main advances again.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -148,5 +149,5 @@ jobs:
           gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
           curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
           chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
-          "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service "$SERVICE" \
-            --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          bash scripts/ci/release-result.sh "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" \
+            release app --service "$SERVICE" --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json"

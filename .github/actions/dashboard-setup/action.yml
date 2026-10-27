@@ -25,6 +25,8 @@ runs:
           ${{ runner.temp }}/nuget
           ~/.npm
         key: dashboard-deps-${{ runner.os }}-${{ hashFiles('global.json', '**/packages.lock.json', 'src/TerraScale.Dashboard/web/package-lock.json') }}
+        # Locked restore still verifies the graph; reuse unchanged packages after lock updates.
+        restore-keys: dashboard-deps-${{ runner.os }}-
     - shell: bash
       working-directory: src/TerraScale.Dashboard/web
       run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline

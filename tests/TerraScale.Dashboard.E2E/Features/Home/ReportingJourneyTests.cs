@@ -203,7 +203,8 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             using var foreign = await client.GetAsync(path);
             await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
-        using var invalidRegion = await client.GetAsync("/analytics?region=not-a-project-region");
+        // Valid region identities can be outside current placement (historical or newly admitted regions).
+        using var invalidRegion = await client.GetAsync("/analytics?region=invalid_region");
         await Assert.That(invalidRegion.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         using var legacyBilling = await client.GetAsync("/usage?tab=billing&status=paid");
         await Assert.That(legacyBilling.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
