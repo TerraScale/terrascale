@@ -11,6 +11,47 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects;
 public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
+    public async Task InvalidAccountNameKeepsTheSubmittedDraft()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client, returnTo: "/onboarding");
+        var name = new string('N', 129) + " <draft>";
+        using var invalid = await PostStepAsync(client, new() { ["step"] = "account-information", ["displayName"] = name });
+        await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(invalid.Headers.Location).IsNull();
+        var page = await invalid.Content.ReadAsStringAsync();
+        await Assert.That(page).Contains("Use a name with 128 characters or fewer.");
+        await Assert.That(page).Contains("value=\"" + WebUtility.HtmlEncode(name) + "\"");
+        await Assert.That(page).Contains("name=\"_csrf\"");
+        await SaveStepAsync(client, new() { ["step"] = "account-information", ["displayName"] = "Corrected draft" });
+    }
+
+    [Test]
+    public async Task InvalidPaymentAndProjectInputsKeepTheirSelections()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client, returnTo: "/onboarding");
+        await SaveStepAsync(client, new() { ["step"] = "account-information", ["displayName"] = "Draft account" });
+        using (var invalid = await PostStepAsync(client, new() { ["step"] = "payment-method", ["plan"] = "starter", ["interval"] = "invalid" }))
+        {
+            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            var page = await invalid.Content.ReadAsStringAsync();
+            await Assert.That(page).Contains("Choose an available plan and billing interval.");
+            await Assert.That(page).Contains("value=\"starter\" checked=\"checked\"");
+        }
+        await SaveStepAsync(client, new() { ["step"] = "payment-method", ["bypass"] = "1" });
+        var name = new string('P', 101);
+        using var rejected = await PostStepAsync(client, new() { ["step"] = "project", ["name"] = name, ["region"] = "SJC" });
+        await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        var draft = await rejected.Content.ReadAsStringAsync();
+        await Assert.That(draft).Contains("value=\"" + name + "\"");
+        await Assert.That(draft).Contains("value=\"SJC\" selected=\"selected\"");
+        await Assert.That(draft).Contains("Use a project name with 100 characters or fewer.");
+    }
+
+    [Test]
     public async Task SidebarCreateProjectLinkRendersTheRequestedDialog()
     {
         using var client = fixture.CreateClient();
@@ -88,8 +129,8 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         await Assert.That(remoteName).IsEqualTo(originalName)
             .Because($"Onboarding must reject a nondefault selection before provider mutation; HTTP {(int)response.StatusCode}, remote name '{remoteName}', dashboard name '{localName}'");
         await Assert.That(localName).IsEqualTo(originalName);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await Assert.That(response.Headers.Location?.OriginalString).Contains("/onboarding?error=");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("value=\"Must not rename the default\"");
         await Assert.That((await JsonAsync(client, "/api/v1/auth/me")).GetProperty("onboardingCompleted").GetBoolean()).IsFalse();
     }
 
@@ -149,8 +190,11 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         await Assert.That(await resumed.GetStringAsync("/onboarding?payment=canceled")).Contains("Payment setup canceled");
         await SaveStepAsync(resumed, new() { ["step"] = "payment-method", ["bypass"] = "1" });
         using var invalid = await PostStepAsync(first, new() { ["step"] = "project", ["name"] = "Audit project", ["region"] = "ZZZ" });
-        await Assert.That(invalid.Headers.Location?.OriginalString).Contains("/onboarding?error=");
-        await Assert.That(await resumed.GetStringAsync(invalid.Headers.Location)).Contains("Choose a supported project region.");
+        await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        var draft = await invalid.Content.ReadAsStringAsync();
+        await Assert.That(draft).Contains("Choose a supported project region.");
+        await Assert.That(draft).Contains("value=\"Audit project\"");
+        await Assert.That(draft).Contains("value=\"ZZZ\" selected");
         await SaveStepAsync(resumed, new() { ["step"] = "project", ["name"] = "Audit project", ["region"] = "GRU" });
         var done = await JsonAsync(first, "/api/v1/auth/me");
         await Assert.That(done.GetProperty("onboardingCompleted").GetBoolean()).IsTrue();

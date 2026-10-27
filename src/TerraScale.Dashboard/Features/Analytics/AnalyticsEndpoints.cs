@@ -21,8 +21,16 @@ public static class AnalyticsEndpoints
                     http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString());
                 return AnalyticsView.Create(await analytics.LoadAsync(ShellModel.For(http, context, "Analytics"), selection, http.RequestAborted));
             }
-            catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
+            catch (AccountAccessException error)
+            {
+                var view = AnalyticsNotice.Create(new(ShellModel.For(http, context, "Analytics"),
+                    error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : "")));
+                view.StatusCode = error.StatusCode;
+                return view;
+            }
         });
         return endpoints;
     }
 }
+
+public sealed record AnalyticsNoticeModel(ShellModel Shell, string Message);

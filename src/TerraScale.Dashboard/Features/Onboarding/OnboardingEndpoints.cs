@@ -16,9 +16,12 @@ public static class OnboardingEndpoints
     }
 
     private static async Task<IResult> GetAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
+        => await RenderAsync(context, sessions, accounts, service, backend);
+
+    private static async Task<IResult> RenderAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend, IFormCollection? draft = null, string error = "", int status = 200)
     {
         var plans = await service.PlansAsync(context.RequestAborted);
-        var requested = context.Request.Query["plan"].ToString();
+        var requested = draft?["plan"].ToString() ?? context.Request.Query["plan"].ToString();
         var returnTo = context.Request.Query["returnTo"].ToString();
         if (returnTo.Length == 0) returnTo = context.Request.Query["return"].ToString();
         var session = await sessions.ReadAsync(context);
@@ -39,11 +42,13 @@ public static class OnboardingEndpoints
         }
         page = page with
         {
-            DisplayName = account.Name,
+            DisplayName = draft?["displayName"].ToString() ?? account.Name,
             Email = account.Email,
             Step = account.OnboardingStep,
             PaymentCanceled = payment == "canceled",
-            Error = context.Request.Query["error"].ToString(),
+            Error = error.Length > 0 ? error : context.Request.Query["error"].ToString(),
+            ProjectName = draft?["name"].ToString() ?? "Personal",
+            Region = draft?["region"].ToString() ?? "",
             Plan = OfferedPlan(plans, requested).Length == 0 ? plans.FirstOrDefault()?.Key ?? "" : requested,
             Document = new("Activate your TerraScale account", DocumentModel.NonceFor(context))
         };
@@ -55,10 +60,12 @@ public static class OnboardingEndpoints
             try { page = page with { Regions = (await backend.RegionsAsync(context.RequestAborted)).Where(region => region.Healthy).Select(region => region.Code).ToArray() }; }
             catch (HttpRequestException) { page = page with { Regions = [] }; }
         }
-        return OnboardingView.Create(page);
+        var view = OnboardingView.Create(page);
+        view.StatusCode = status;
+        return view;
     }
 
-    private static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, OnboardingService service)
+    private static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
     {
         if (!context.Request.HasFormContentType) return Results.BadRequest();
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
@@ -68,15 +75,9 @@ public static class OnboardingEndpoints
         try { return HttpRedirects.SeeOther(await service.SaveAsync(session, form, context.RequestAborted)); }
         catch (OnboardingValidationException error)
         {
-            var target = "/onboarding?error=" + Uri.EscapeDataString(error.Message);
-            if (form["step"] == "payment-method")
-            {
-                var plans = await service.PlansAsync(context.RequestAborted);
-                if (OfferedPlan(plans, form["plan"]) is { Length: > 0 } plan) target += "&plan=" + Uri.EscapeDataString(plan);
-            }
-            return HttpRedirects.SeeOther(target);
+            return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, 422);
         }
-        catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
+        catch (AccountAccessException error) { return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, error.StatusCode); }
     }
 
     private static OnboardingPage Page(HttpContext context) => new(new("Create account", DocumentModel.NonceFor(context)), Csrf.Token(context));
