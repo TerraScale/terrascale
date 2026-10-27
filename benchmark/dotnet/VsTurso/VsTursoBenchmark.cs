@@ -258,13 +258,15 @@ namespace TerraBase.E2E
 
             var ops = all.Length;
             return new Cell(
-                string.Empty, 0, body.Size, workload, concurrency, Math.Round(ops / duration.TotalSeconds), Math.Round(Micros(0.50), 1), Math.Round(Micros(0.99), 1),
-                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors);
+                string.Empty, 0, body.Size, workload, concurrency, Math.Round(ops / duration.TotalSeconds, 3), Math.Round(Micros(0.50), 1), Math.Round(Micros(0.99), 1),
+                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors, ops, duration.TotalSeconds);
         }
 
         private static string Summary(List<Cell> cells)
         {
             var text = new StringBuilder();
+            text.AppendLine("SQL lanes perform point SELECTs through the current full-table projection. api-query writes one-put transactions; api-batch reads/writes 16 documents per request. Other point lanes handle one document. These are different API paths, not equivalent storage work.");
+            text.AppendLine();
             text.AppendLine("| Size | Workload | Conc | Lane | ops/s median (min–max) | vs baseline | p50 µs | p99 µs | CPU µs/op | alloc B/op | errors |");
             text.AppendLine("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
             foreach (var group in cells.GroupBy(cell => (cell.Size, cell.Workload, cell.Concurrency, cell.Lane)))
@@ -274,7 +276,7 @@ namespace TerraBase.E2E
                 const string against = "turso";
                 var baseline = cells.Where(cell => cell.Lane == against && cell.Size == group.Key.Size && cell.Workload == group.Key.Workload && cell.Concurrency == group.Key.Concurrency)
                     .Select(cell => cell.OpsPerSecond).ToList();
-                var versus = baseline.Count == 0 || group.Key.Lane == against ? "" : $"{(ops / Median(baseline) - 1) * 100:+0.0;-0.0} % vs {against}";
+                var versus = baseline.Count == 0 || group.Key.Lane == against || group.Key.Lane == "api-batch" ? "" : $"{(ops / Median(baseline) - 1) * 100:+0.0;-0.0} % vs {against}";
                 text.AppendLine(CultureInfo.InvariantCulture, $"| {group.Key.Size} | {group.Key.Workload} | {group.Key.Concurrency} | {group.Key.Lane} | {ops:N0} ({runs.Min(run => run.OpsPerSecond):N0}–{runs.Max(run => run.OpsPerSecond):N0}) | {versus} | {Median(runs.Select(run => run.P50Micros)):0.0} | {Median(runs.Select(run => run.P99Micros)):0.0} | {Median(runs.Select(run => run.CpuMicrosPerOp)):0.0} | {Median(runs.Select(run => (double)run.AllocatedBytesPerOp)):N0} | {runs.Sum(run => run.Errors)} |");
             }
 
@@ -289,7 +291,7 @@ namespace TerraBase.E2E
 
         internal sealed record Cell(
             string Lane, int Repeat, string Size, string Workload, int Concurrency, double OpsPerSecond, double P50Micros, double P99Micros,
-            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors);
+            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, int Samples, double Seconds);
 
         /// <summary>JSON documents of one size: a fixed shape with a 13-digit counter, so no write repeats the stored body.</summary>
         private sealed class Bodies
