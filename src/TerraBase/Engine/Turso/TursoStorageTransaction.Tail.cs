@@ -51,7 +51,7 @@ internal sealed partial class TursoStorageTransaction
             SELECT change_id FROM turso_cdc
             WHERE change_id <= $below AND change_type = 2 AND change_id < coalesce((
                 SELECT change_id FROM turso_cdc WHERE change_id > $below OR change_time > $now - 86400 ORDER BY change_id LIMIT 1),
-                (SELECT max(change_id) + 1 FROM turso_cdc))
+                (SELECT max(change_id) FROM turso_cdc) + 1)
             ORDER BY change_id DESC LIMIT 1) END, 0));
         """;
 
@@ -330,7 +330,7 @@ internal sealed partial class TursoStorageTransaction
             }
 
             var newest = Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
-                : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long id ? id : 0;
+                : Command(TursoStatements.NewestChange).ExecuteScalar() is long id ? id : 0;
             return acked <= newest ? new SourceCursor(incarnation, acked) { Stable = stable } : (SourceCursor?)null;
         }, cancellationToken);
 
@@ -365,7 +365,7 @@ internal sealed partial class TursoStorageTransaction
     /// <summary>The newest change id, or 0: where a refilled peer's stream goes on.</summary>
     internal ValueTask<long> GetHeadAsync(CancellationToken cancellationToken) =>
         RunAsync(() => Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
-            : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0, cancellationToken);
+            : Command(TursoStatements.NewestChange).ExecuteScalar() is long head ? head : 0, cancellationToken);
 
     internal ValueTask<long> GetRetainedAfterAsync(long? through, long head, CancellationToken cancellationToken) =>
         RunAsync(() =>
@@ -433,7 +433,7 @@ internal sealed partial class TursoStorageTransaction
                 return (0L, (long?)null, new List<(long From, long To)>(), 0L, false);
             }
 
-            var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
+            var newest = Command(TursoStatements.NewestChange).ExecuteScalar() is long head ? head : 0;
             // An ack of another incarnation counts as 0 and never rises: it names rows of another file's change log.
             List<(long Node, long Acked, bool Current)> peers = [];
             var incarnation = Command(TursoStatements.Incarnation).ExecuteScalar() as string ?? throw new InvalidDataException("database incarnation is missing");
@@ -491,10 +491,10 @@ internal sealed partial class TursoStorageTransaction
 
             var more = Trim(session.Connection, transaction, RetentionBelow(backupAnchor, newest), now.ToUnixTimeSeconds(),
                 Member.GoneBefore(now.ToUnixTimeMilliseconds()));
-            var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
+            var left = Command(TursoStatements.ChangeRows).ExecuteScalar() is long rows ? rows : 0;
             var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
-            var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
+            var oldestKept = Command(TursoStatements.OldestChange).ExecuteScalar() is long first ? first : 0;
             return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept, more);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -514,10 +514,10 @@ internal sealed partial class TursoStorageTransaction
                 return (0L, false);
             }
 
-            var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
+            var newest = Command(TursoStatements.NewestChange).ExecuteScalar() is long head ? head : 0;
             var more = Trim(session.Connection, transaction, RetentionBelow(backupAnchor, newest), now.ToUnixTimeSeconds(),
                 Member.GoneBefore(now.ToUnixTimeMilliseconds()));
-            var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
+            var left = Command(TursoStatements.ChangeRows).ExecuteScalar() is long rows ? rows : 0;
             return (left, more);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -555,7 +555,7 @@ internal sealed partial class TursoStorageTransaction
                 return (IReadOnlySet<long>)far;
             }
 
-            var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
+            var newest = Command(TursoStatements.NewestChange).ExecuteScalar() is long head ? head : 0;
             var incarnation = Command(TursoStatements.Incarnation).ExecuteScalar() as string ?? throw new InvalidDataException("database incarnation is missing");
             List<(long Node, long Acked)> peers = [];
             var peerRows = Command("SELECT node, CASE WHEN incarnation = $incarnation THEN acked ELSE 0 END FROM _tb_peers WHERE seen > 0;");
@@ -614,7 +614,7 @@ internal sealed partial class TursoStorageTransaction
             // Recheck a zero registration under the writer: a real ACK may have committed after GetAckedAsync read.
             var update = Command("""
                 UPDATE _tb_peers SET acked = CASE WHEN incarnation <> $incarnation THEN $acked
-                    WHEN $acked = 0 AND acked > (SELECT coalesce(max(change_id), 0) FROM turso_cdc) THEN 0
+                    WHEN $acked = 0 AND acked > coalesce((SELECT max(change_id) FROM turso_cdc), 0) THEN 0
                     ELSE max(acked, $acked) END,
                     stable = CASE WHEN incarnation <> $incarnation THEN $stable ELSE max(stable, $stable) END, seen = $seen, incarnation = $incarnation
                 WHERE node = $node;
@@ -646,8 +646,8 @@ internal sealed partial class TursoStorageTransaction
             var hold = !store.RequiresRemoteProof || store.IsSystem ? null : ShapeFrontierHold(session.Connection, transaction, now.ToUnixTimeSeconds());
             _ = Trim(session.Connection, transaction, Math.Min(backupAnchor ?? long.MaxValue, hold ?? long.MaxValue),
                 now.ToUnixTimeSeconds(), Member.GoneBefore(now.ToUnixTimeMilliseconds()));
-            // change_id is turso_cdc's rowid alias: both ends are seeks, and deleted ids never come back between them.
-            var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
+            // change_id is turso_cdc's rowid alias: both ends are seeks (ChangeRows), and deleted ids never come back between them.
+            var left = Command(TursoStatements.ChangeRows).ExecuteScalar() is long rows ? rows : 0;
             var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return (left, floor.ExecuteScalar() is long acked ? acked : (long?)null);

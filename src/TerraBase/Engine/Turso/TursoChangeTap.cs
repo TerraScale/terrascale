@@ -496,7 +496,7 @@ internal sealed class TursoChangeTap : IWalTap
     {
         using (var newest = connection.CreateCommand())
         {
-            newest.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
+            newest.CommandText = TursoStatements.NewestChange;
             _anchor = (long)newest.ExecuteScalar()!;
             if (publish)
             {

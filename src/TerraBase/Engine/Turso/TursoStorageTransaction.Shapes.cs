@@ -499,7 +499,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             return;
         }
         CountRead("shape");
-        var head = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long last ? last : 0;
+        var head = Command(TursoStatements.NewestChange).ExecuteScalar() is long last ? last : 0;
         for (var after = 0L; after < head;)
         {
             cancellationToken.ThrowIfCancellationRequested();
