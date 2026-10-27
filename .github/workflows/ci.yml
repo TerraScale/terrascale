@@ -349,6 +349,8 @@ jobs:
       packages: write
       # ts-orch accepts this job's OIDC token to release the image it just published.
       id-token: write
+      # A failed release dispatches a fresh main run (a newer signed run) so the latest main still ends up live.
+      actions: write
     steps:
       - *checkout
       - *checkout-ts-dotnet
@@ -405,10 +407,14 @@ jobs:
           IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
         run: |
           { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on
-      # failure. Both services release; the production-<area> concurrency group keeps one release of each in flight.
+      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure. Both
+      # services release; the production-<area> concurrency group keeps one release of each in flight.
+      # Releases converge on the latest main. A run superseded by a newer signed run has nothing left to do. Any other
+      # failure of a push run's release (bake, rollback, a rerun's rebuilt digest under its already-approved run id)
+      # dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
+      # dispatch again.
       - name: Release to every region
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
@@ -425,8 +431,24 @@ jobs:
           gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
           curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
           chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          set +e
           "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service "$SERVICE" \
-            --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json" | tee -a "$GITHUB_STEP_SUMMARY"
+            --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" "${RUNNER_TEMP}/release.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          [ "$status" -eq 0 ] && exit 0
+          # Regions not yet on ts-orch #194 answer an older run with "deployment is stale"; a first attempt never
+          # changes its own approved run, so there it can only mean superseded.
+          if grep -q 'superseded by a newer signed run' "${RUNNER_TEMP}/release.log" ||
+            { [ "$GITHUB_RUN_ATTEMPT" = 1 ] && grep -q 'deployment is stale' "${RUNNER_TEMP}/release.log"; }; then
+            echo "Superseded: a newer main run released ${SERVICE}." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
+            echo "Release failed; dispatched a fresh main run to release the latest main." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
   # Slow is independent of required Fast: relevant PRs and newest main, never merge groups.
   slow-auth:
