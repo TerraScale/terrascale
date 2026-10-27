@@ -12,11 +12,12 @@ internal sealed record LocalReplica(ReplicaId Id, MemberClock Clock)
 
     /// <summary>
     /// The Unix ms before which a peer last heard from counts as gone (24 h, section 11), or <see cref="long.MinValue"/> while
-    /// this process has been up less than that: a machine back after a long absence heard from nobody, and that says nothing
-    /// about its peers.
+    /// this process has been up less than that and has not yet heard every listed machine: a machine back after a long absence
+    /// heard from nobody, and that says nothing about its peers. Once it hears every listed machine it is not absent, so a
+    /// restart (every deploy) does not restart the 24 h.
     /// </summary>
     public long GoneBefore(long nowMilliseconds) =>
-        nowMilliseconds - StartedMilliseconds >= Day ? nowMilliseconds - Day : long.MinValue;
+        nowMilliseconds - StartedMilliseconds >= Day || Presence.Current() is not null ? nowMilliseconds - Day : long.MinValue;
 
     public PeerPresence Presence { get; } = new();
 

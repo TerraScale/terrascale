@@ -599,7 +599,8 @@ internal sealed partial class TursoStorageTransaction
     /// null, with nothing written, when the file is no longer <paramref name="incarnation"/>.
     /// </summary>
     internal async ValueTask<(long Left, long? Floor)?> RecordAckedAsync(
-        ReplicaId peer, Ulid incarnation, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+        ReplicaId peer, Ulid incarnation, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now,
+        IReadOnlyList<ReplicaId>? members, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken, rewriteRefreshOnly: true).ConfigureAwait(false);
         return await RunAsync(() =>
@@ -641,6 +642,20 @@ internal sealed partial class TursoStorageTransaction
             retire.Parameters.AddWithValue("$machine", unchecked((long)(peer.Value & ~(ulong)ushort.MaxValue)));
             retire.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
             retire.ExecuteNonQuery();
+
+            // Nor do identities no listed machine has any more (`members`, PeerPresence.Current: every listed machine's current
+            // identity, this peer's included). Kept, one held every row it had not acked for 24 h, and a restart within those
+            // 24 h made it hold them 24 h more. Retired the same way; a live peer's next ack revives its row.
+            if (members is not null && members.Contains(peer))
+            {
+                var departed = Command($"UPDATE _tb_peers SET acked = 0, stable = 0, seen = 0, incarnation = '' WHERE seen > 0 AND node NOT IN ({string.Join(", ", members.Select((_, i) => $"$member{i}"))});");
+                for (var i = 0; i < members.Count; i++)
+                {
+                    departed.Parameters.AddWithValue($"$member{i}", unchecked((long)members[i].Value));
+                }
+
+                departed.ExecuteNonQuery();
+            }
 
             // Nor the rows the shape frontier has not walked yet, for a bounded time: this ack's proof comes after it (FR-25).
             var hold = !store.RequiresRemoteProof || store.IsSystem ? null : ShapeFrontierHold(session.Connection, transaction, now.ToUnixTimeSeconds());

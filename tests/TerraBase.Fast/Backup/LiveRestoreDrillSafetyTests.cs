@@ -38,8 +38,8 @@ public sealed class LiveRestoreDrillSafetyTests
             {
                 await report.RecordStableAsync(peer, new Hlc(3), DateTimeOffset.UtcNow, token);
                 await report.RecordStableAsync(new ReplicaId(2UL << 16), new Hlc(4), DateTimeOffset.UtcNow, token);
-                _ = await report.RecordAckedAsync(peer, store.Incarnation, 7, new Hlc(5), store.BackupAnchor, DateTimeOffset.UtcNow, token);
-                _ = await report.RecordAckedAsync(new ReplicaId(3UL << 16), store.Incarnation, 8, new Hlc(6), store.BackupAnchor, DateTimeOffset.UtcNow, token);
+                _ = await report.RecordAckedAsync(peer, store.Incarnation, 7, new Hlc(5), store.BackupAnchor, DateTimeOffset.UtcNow, members: null, token);
+                _ = await report.RecordAckedAsync(new ReplicaId(3UL << 16), store.Incarnation, 8, new Hlc(6), store.BackupAnchor, DateTimeOffset.UtcNow, members: null, token);
                 _ = await report.CommitAsync(token);
             }
 
