@@ -49,6 +49,7 @@ for path in sorted(directory.glob("*/live.jsonl")):
 
 regions = set(next(iter(metadata.values()))["revisions"]) if metadata else set()
 valid &= bool(regions) and set(metadata) == regions and all(set(row["revisions"]) == regions for row in metadata.values())
+valid &= len({value for row in metadata.values() for value in row["revisions"].values()}) == 1
 expected = {(region, endpoint, size) for region in regions
             for endpoint in ("documents", "sql", "postgres", "hrana", "wire") for size in ("small", "medium")}
 directions = {f"{source}->{target}" for source in regions for target in regions if source != target}

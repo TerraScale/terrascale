@@ -62,7 +62,15 @@ class Live(matrix.Matrix):
                 if len(body["items"]) > 1:
                     raise RuntimeError("unexpected recovery database count; review required")
                 if body["items"]:
+                    if not body["items"][0]["name"].startswith("rt6-"):
+                        raise RuntimeError("recovery database is not this benchmark's tenant")
                     self.database = body["items"][0]["id"]
+                receipt = pathlib.Path(output)
+                if receipt.exists():
+                    for line in receipt.read_text().splitlines():
+                        row = json.loads(line)
+                        if row.get("kind") == "database":
+                            self.key_id = row.get("key_id")
             self.teardown()
 
 
