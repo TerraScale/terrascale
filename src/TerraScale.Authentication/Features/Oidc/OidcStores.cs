@@ -425,6 +425,12 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
     {
         ArgumentNullException.ThrowIfNull(token);
         (token.Id, token.InstanceId) = (AuthStore.NewId(), this.Tenant);
+        // Every entry is bound when it is created, in the same remote-durable write, before its credential is returned.
+        if (CredentialLineage.Issued(http.HttpContext) is { Count: > 0 } bindings)
+        {
+            token.Bindings = bindings;
+        }
+
         if (token.ReferenceId is { } reference)
         {
             token.Version = await store.CreateClaimedAsync(Collection, this.Tenant, token.Id, Serialize(token), ReferenceKind, reference, cancellationToken).ConfigureAwait(false)
