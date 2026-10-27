@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using TerraScale.DotNet;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Http;
 
@@ -66,9 +67,10 @@ public sealed class ServerTiming
 
     private static bool PublishesPlan(HttpRequestMessage request)
     {
-        if (request.Method != HttpMethod.Put || Upstream(request.RequestUri) != "state") return false;
-        return request.RequestUri!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is
-            ["admin", "organizations" or "projects", var id, "plan"] && TerraScaleIds.IsValid(id);
+        if (request.Method != HttpMethod.Put || Upstream(request.RequestUri) != "state" ||
+            !request.Options.TryGetValue(TerraBasePlanSync.Publication, out _)) return false;
+        return request.RequestUri!.AbsolutePath.Split('/') is
+            ["", "admin", "organizations" or "projects", var id, "plan"] && TerraScaleIds.IsValid(id);
     }
 
     // Upstream names by host: ts-auth, TerraBase's public API, the dashboard's own state database, Stripe.

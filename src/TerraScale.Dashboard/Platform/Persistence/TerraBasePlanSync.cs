@@ -11,10 +11,12 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 // TerraBase enforces each organization's monthly operation and database allowances from the plan the platform publishes
 // for its storage organization, whose id is the ts-auth organization id (PUT /admin/organizations/{organization}/plan on
 // its private listener). The dashboard owns plans, so it publishes every organization's entitled plan: on each dashboard
-// selected workspace view and billing change, and from PlanReconciler every 30 seconds, so a wipe, a missed write or an enrollment after
+// view and billing change, and from PlanReconciler every 30 seconds, so a wipe, a missed write or an enrollment after
 // the last change converges within a minute. TerraBase keeps a paid plan published before the first database.
 public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment environment, TimeProvider time, ILogger<TerraBasePlanSync> logger)
 {
+    // Request metadata identifies this publisher's storage-only writes; it is never an incoming header or setting.
+    internal static readonly HttpRequestOptionsKey<PlanBody> Publication = new("TerraScale.StoragePlanPublication");
     // Views skip a publish this recent; the reconciler always publishes.
     private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
     private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
@@ -75,13 +77,15 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
 
     private async Task<HttpResponseMessage> PutAsync(string path, string plan, CancellationToken cancellationToken)
     {
+        var publication = new PlanBody(plan);
         // The private listener speaks only HTTP/2 without TLS, so the request needs prior knowledge, as the SDK sends it.
         using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(origin, path))
         {
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            Content = JsonContent.Create(new PlanBody(plan), PlanSyncJson.Default.PlanBody),
+            Content = JsonContent.Create(publication, PlanSyncJson.Default.PlanBody),
         };
+        request.Options.Set(Publication, publication);
         return await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
     }
 }

@@ -192,8 +192,6 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         async Task HydrateSelectedAsync(OrganizationRecord org)
         {
             if (!org.MfaRequired && org.ContainsMember(session.UserId)) ApplyAccess(org, session, prefetched.TryGetValue(org.Id, out var access) ? access : await FetchAccessAsync(session, org.Id, cancellationToken));
-            // A project-only scope or a missing previous selection discovers its selected workspace after the org wave.
-            if (org.Id != accessFor && org.ContainsMember(session.UserId)) await plans.PublishAsync(org, cancellationToken);
         }
         var loaded = await Task.WhenAll(lives.Where(live => TerraScaleIds.IsValid(live.Id) && (live.Role is null or "owner" or "admin" or "member" or "viewer")).Select(async live =>
         {
@@ -228,8 +226,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                     Projects = org.Projects.ToDictionary(item => item.Key, item => CollaboratorProject(item.Value))
                 };
             }
-            // Billing writes and the reconciler publish every organization; a view needs only its selected workspace.
-            if (live.Id == accessFor) await plans.PublishAsync(org, cancellationToken);
+            await plans.PublishAsync(org, cancellationToken);
             if (platformOrg)
             {
                 try { await PlatformDatabases.HydrateAsync(org, http.CreateClient("platform"), session, cancellationToken); }
