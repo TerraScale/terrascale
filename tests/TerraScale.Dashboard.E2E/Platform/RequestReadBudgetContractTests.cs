@@ -10,6 +10,55 @@ namespace TerraScale.Dashboard.E2E.Platform;
 public sealed class RequestReadBudgetContractTests
 {
     [Test]
+    [Arguments("organizations")]
+    [Arguments("projects")]
+    public async Task PublishingStorageAllowancesDoesNotDiscardFreshAccountAuthority(string resource)
+    {
+        using var wire = new Wire();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Mutating = () => finished.Task;
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, async () =>
+        {
+            var loaded = ServerTiming.Now();
+            var reads = 0;
+            Task<int> Read() => ServerTiming.ReadAsync("membership", () => Task.FromResult(++reads));
+            await Read();
+            using var client = wire.CreateClient("plan");
+            var publishing = client.PutAsync($"http://127.0.0.1:8081/admin/{resource}/01JA0000000000000000000001/plan", null);
+            await Assert.That(loaded?.Current).IsTrue();
+            await Read();
+            finished.SetResult();
+            using var response = await publishing;
+            await Assert.That(loaded?.Current).IsTrue();
+            await Read();
+            await Assert.That(reads).IsEqualTo(1);
+            using var mutation = await client.PostAsync("https://auth.terrascale.tech/v1/membership", null);
+            await Assert.That(loaded?.Current).IsFalse();
+            await Read();
+            await Assert.That(reads).IsEqualTo(2);
+        }, NullLogger.Instance);
+    }
+
+    [Test]
+    [Arguments("PUT", "https://auth.terrascale.tech/admin/organizations/01JA0000000000000000000001/plan")]
+    [Arguments("PUT", "https://api.terrascale.tech/admin/organizations/01JA0000000000000000000001/plan")]
+    [Arguments("POST", "http://127.0.0.1:8081/admin/organizations/01JA0000000000000000000001/plan")]
+    [Arguments("PUT", "http://127.0.0.1:8081/admin/organizations/01JA0000000000000000000001/plan/extra")]
+    [Arguments("PUT", "http://127.0.0.1:8081/admin/organizations/invalid/plan")]
+    public async Task PlanPathLookalikesStillInvalidateAccountAuthority(string method, string url)
+    {
+        using var wire = new Wire();
+        await ServerTiming.MiddlewareAsync(new DefaultHttpContext { Request = { Method = "GET" } }, async () =>
+        {
+            var loaded = ServerTiming.Now();
+            using var client = wire.CreateClient("mutation");
+            using var request = new HttpRequestMessage(new HttpMethod(method), url);
+            using var response = await client.SendAsync(request);
+            await Assert.That(loaded?.Current).IsFalse();
+        }, NullLogger.Instance);
+    }
+
+    [Test]
     public async Task ReadsDuringAWriteCannotBecomeFreshContextsOrCachedPostWriteReads()
     {
         using var wire = new Wire();
@@ -150,7 +199,7 @@ public sealed class RequestReadBudgetContractTests
         public HttpClient CreateClient(string name) => new(new ServerTiming.Handler { InnerHandler = this }, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.Method == HttpMethod.Post && Mutating is { } mutate) await mutate();
+            if ((request.Method == HttpMethod.Post || request.Method == HttpMethod.Put) && Mutating is { } mutate) await mutate();
             var catalog = request.RequestUri!.AbsolutePath == "/v1/regions";
             if (catalog) { Catalogs++; await Release.Task.WaitAsync(cancellationToken); }
             else if (request.Method == HttpMethod.Get) Listings++;

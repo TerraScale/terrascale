@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 // TerraBase enforces each organization's monthly operation and database allowances from the plan the platform publishes
 // for its storage organization, whose id is the ts-auth organization id (PUT /admin/organizations/{organization}/plan on
 // its private listener). The dashboard owns plans, so it publishes every organization's entitled plan: on each dashboard
-// view and billing change, and from PlanReconciler every 30 seconds, so a wipe, a missed write or an enrollment after
+// selected workspace view and billing change, and from PlanReconciler every 30 seconds, so a wipe, a missed write or an enrollment after
 // the last change converges within a minute. TerraBase keeps a paid plan published before the first database.
 public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment environment, TimeProvider time, ILogger<TerraBasePlanSync> logger)
 {
