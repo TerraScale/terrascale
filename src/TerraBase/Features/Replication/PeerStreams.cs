@@ -34,8 +34,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
-    // Timers count coarse clock ticks and may fire a few milliseconds before a deadline: an item due within the slack is due,
-    // or the loop wakes before it, finds nothing due and spins until it is.
+    // Timers count coarse clock ticks and may fire a few milliseconds before a deadline: an item (and the retry or frontier
+    // it waits for) due within the slack is due, or the loop wakes before it, finds nothing due and spins until it is.
     private static readonly TimeSpan TimerSlack = TimeSpan.FromMilliseconds(15);
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
@@ -736,7 +736,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         for (var index = 0; index < (maintenance ? 1 : count); index++)
         {
             await drain().ConfigureAwait(false);
-            if (!work.Take(maintenance, _time.GetTimestamp() + (long)(TimerSlack.TotalSeconds * _time.TimestampFrequency), out var database))
+            if (!work.Take(maintenance, _time.GetTimestamp() + Ticks(TimerSlack), out var database))
             {
                 break;
             }
@@ -779,7 +779,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
             }
 
-            if (_time.GetTimestamp() < cursor.RetryAt)
+            if (_time.GetTimestamp() + Ticks(TimerSlack) < cursor.RetryAt)
             {
                 work.Later(database, cursor.RetryAt);
                 continue;
@@ -966,7 +966,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     continue;
                 }
 
-                if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
+                if (_time.GetElapsedTime(cursor.FrontierAt) + TimerSlack >= FrontierEvery || cursor.FrontierAt == 0)
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value, Expect = cursor.Stable.Value } }, cancellationToken)
                         .ConfigureAwait(false);
@@ -1306,6 +1306,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         link.Placements[database] = (placed, _time.GetTimestamp());
         return placed;
     }
+
+    private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * _time.TimestampFrequency);
 
     // Half to all of the delay, so retries of many databases or links spread out.
     private static TimeSpan Jittered(TimeSpan delay) => delay * (RandomNumberGenerator.GetInt32(500, 1001) / 1000.0);

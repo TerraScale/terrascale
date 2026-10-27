@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Background work of an idle local three-region cell: sender passes, storage I/O calls, reads and writer holds per second
-# on every node, with no client traffic, after extra databases exist: some placed in every region, some in gru only.
+# on every node, with no client traffic, after extra databases exist: some placed in every region, some in gru and sjc only.
 # Nodes come from tests/TerraBase.E2E/BenchmarkClusterHost.cs. Run from the repository root after
 # `make terrabase-build CONFIGURATION=Release`:
-#   benchmark/scripts/xregion/local-idle.sh <out-dir> [placed databases=20] [gru-only databases=20] [window seconds=30]
+#   benchmark/scripts/xregion/local-idle.sh <out-dir> [placed databases=20] [gru+sjc databases=20] [window seconds=30]
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 out=${1:?usage: local-idle.sh <out-dir> [placed] [single] [window]}

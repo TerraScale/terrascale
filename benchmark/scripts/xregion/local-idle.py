@@ -2,7 +2,7 @@
 """Helper of local-idle.sh.
 
   local-idle.py provision <targets> <placed> <single>   creates <placed> databases in every region (home gru) and
-                                                        <single> databases in gru only, through the project token
+                                                        <single> databases in gru and sjc only, through the project token
   local-idle.py rates <out> <window>                    per-node rates between metrics-a-* and metrics-b-*, as Markdown
 """
 import json
@@ -21,7 +21,7 @@ def provision(path, placed, single):
         targets = json.load(stream)
     gru = targets["regions"]["gru"]
     for index in range(placed + single):
-        body = {"name": f"idle-{index}", "homeRegion": "gru", "replicaRegions": ["sjc", "fra"] if index < placed else []}
+        body = {"name": f"idle-{index}", "homeRegion": "gru", "replicaRegions": ["sjc", "fra"] if index < placed else ["sjc"]}
         request = urllib.request.Request(gru["url"].rstrip("/") + f"/v1/projects/{targets['project']}/databases",
                                          data=json.dumps(body).encode(), method="POST",
                                          headers={"Authorization": "Bearer " + gru["token"], "Content-Type": "application/json"})
