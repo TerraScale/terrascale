@@ -39,7 +39,7 @@ internal sealed partial class TursoStorageTransaction(
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     // Serializes calls and disposal, so two workers never use the same connection concurrently.
-    private readonly QosContext.ResultMemory? _stateReadMemory =
+    private QosContext.ResultMemory? _stateReadMemory =
         store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -1842,6 +1842,21 @@ internal sealed partial class TursoStorageTransaction(
             throw;
         }
     }
+
+    // A snapshot replay writes each page's states before it reads the next page, so it keeps no earlier read: their
+    // admission ends with the page. Held to the commit, a 386 MB SYSTEM file's reads (16x their bytes) outgrew the
+    // process budget after 108-158 s of writer hold, and every retry failed the same way (sjc, 2026-10-28).
+    internal ValueTask<bool> ReleaseStateReadsAsync(CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            if (_stateReadMemory is { } held && store.SchemaMemory is { } memory)
+            {
+                held.Dispose();
+                _stateReadMemory = new QosContext.ResultMemory(memory);
+            }
+
+            return true;
+        }, cancellationToken);
 
     // retry: journal reads use the session's cancellable busy handling (TursoSession.ExecuteAsync).
     private ValueTask<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken, bool mutation = false, bool retry = false) =>

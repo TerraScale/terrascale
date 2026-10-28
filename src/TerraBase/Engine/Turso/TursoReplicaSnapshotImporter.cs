@@ -235,6 +235,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
 
             _ = await sink.RepairPageAsync(transaction, database, page.States, baseline: true, cancellationToken).ConfigureAwait(false);
             engine.Checkpoint("replication.snapshot.page", database);
+            _ = await transaction.ReleaseStateReadsAsync(cancellationToken).ConfigureAwait(false);
             if (page.States.Count > 0)
             {
                 var last = page.States[^1];
