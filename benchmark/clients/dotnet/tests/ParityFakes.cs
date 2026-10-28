@@ -119,6 +119,7 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
             if (modes.Contains("create-block")) await Task.Delay(Timeout.Infinite, cancellationToken);
             if (modes.Contains("create-transport")) throw new HttpRequestException("synthetic lost connection");
             if (modes.Contains("create-refused")) return FakeReads.Reply(HttpStatusCode.Forbidden, """{"error":{"code":"forbidden","message":"control"}}""");
+            if (modes.Contains("create-timeout")) return FakeReads.Reply(HttpStatusCode.RequestTimeout, """{"error":{"code":"request_timeout","message":"control"}}""");
             return FakeReads.Reply(HttpStatusCode.Created, """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"x","branchedFrom":null,"createdAt":"2026-10-28T00:00:00+00:00","region":"fra","homeRegion":"fra","replicaRegions":[],"allRegions":true}""");
         }
         if (request.Method == HttpMethod.Post)

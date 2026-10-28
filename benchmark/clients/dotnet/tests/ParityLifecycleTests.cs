@@ -11,6 +11,8 @@ public sealed class ParityLifecycleTests
 {
     [Test]
     [Arguments("create-transport", "delete-404", "uncertain", "absent", true, "setup:transport")]
+    [Arguments("create-timeout", "delete-404", "uncertain", "absent", true, "setup:408")]
+    [Arguments("create-timeout", "ok", "uncertain", "logical_accepted", false, "setup:408")]
     [Arguments("create-refused", "delete-404", "refused", "absent", false, "setup:403")]
     [Arguments("ok", "delete-500", "created", "failed", true, null)]
     public async Task CleanupReportsDeletionAndReconciliationForEveryCreateOutcome(string create, string delete, string state, string deletion, bool reconcile, string? reason)

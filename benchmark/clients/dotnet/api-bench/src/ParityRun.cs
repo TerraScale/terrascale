@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -175,7 +176,7 @@ internal static class ParityRun
             {
                 await setup.Project(project).CreateDatabaseAsync(database, allRegions: true, cancellationToken: deadline.Token);
             }
-            catch (TerraBaseException refused) when (refused.StatusCode is { } status && (int)status < 500)
+            catch (TerraBaseException refused) when (refused.StatusCode is { } status && (int)status < 500 && status != HttpStatusCode.RequestTimeout)
             {
                 create.Value = "refused";
                 throw;
