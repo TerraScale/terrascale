@@ -26,7 +26,25 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
         string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key);
 
-    public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+    // Ordinary tokens encode on the stack; a longer one (or one that expands) takes the allocating path. Same bytes either way.
+    private const int StackBytes = 1024;
+
+    public static string KeyOf(string token)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
+        Span<byte> utf8 = stackalloc byte[StackBytes];
+        if (Encoding.UTF8.TryGetBytes(token, utf8, out var written))
+        {
+            SHA256.HashData(utf8[..written], hash);
+        }
+        else
+        {
+            SHA256.HashData(Encoding.UTF8.GetBytes(token), hash);
+        }
+
+        return Convert.ToBase64String(hash);
+    }
 
     public bool TryGet(string key, IReadOnlyList<SecurityKey> keys, out Accepted accepted)
     {

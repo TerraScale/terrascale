@@ -37,6 +37,44 @@ public sealed class UserAuthTests
     }
 
     [Test]
+    public async Task Concurrent_users_with_ordinary_and_multi_kib_tokens_each_act_only_as_their_own_sub_on_cached_requests()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        // An unchecked claim pads some tokens from a few hundred characters to several KiB.
+        var users = Enumerable.Range(0, 6).Select(_ => EntityIds.New().ToString()).ToArray();
+        var tokens = users.Select((user, index) => api.Issuer.Mint(user, token => token.Claims["note"] = Faker.Random.AlphaNumeric(index % 3 * 1500))).ToArray();
+        var clients = tokens.Select(api.WithToken).ToArray();
+        try
+        {
+            // First requests validate concurrently; the later rounds all answer from accepted tokens.
+            var created = await Task.WhenAll(clients.Select(async client =>
+            {
+                using var response = await client.PostAsJsonAsync(Uri(Organizations), new { name = Faker.Company.CompanyName() });
+                return (response.StatusCode, Body: await response.Content.ReadFromJsonAsync<JsonElement>());
+            }));
+            var listed = await Task.WhenAll(Enumerable.Range(0, 4).SelectMany(_ => clients.Select(async (client, index) =>
+                (index, Items: (await client.GetFromJsonAsync<JsonElement>(Uri(Organizations))).GetProperty("items")
+                    .EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray()))));
+
+            await Assert.That(tokens.Min(token => token.Length)).IsLessThan(1024);
+            await Assert.That(tokens.Max(token => token.Length)).IsGreaterThan(4096);
+            await Assert.That(created.Select(result => result.StatusCode)).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Created));
+            await Assert.That(created.Select(result => result.Body.GetProperty("createdBy").GetString())).IsEquivalentTo(users, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+            foreach (var (index, items) in listed)
+            {
+                await Assert.That(items).IsEquivalentTo([created[index].Body.GetProperty("id").GetString()]);
+            }
+        }
+        finally
+        {
+            foreach (var client in clients)
+            {
+                client.Dispose();
+            }
+        }
+    }
+
+    [Test]
     public async Task Tokens_outside_their_lifetime_or_for_another_issuer_or_audience_are_rejected()
     {
         await using var api = await ManagementApi.StartAsync();
