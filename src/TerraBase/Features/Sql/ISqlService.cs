@@ -130,6 +130,13 @@ internal interface ISqlSession : IAsyncDisposable
     ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken);
 
     /// <summary>
+    /// <see cref="ExecuteAsync(SqlCommand, CancellationToken)"/> asking <paramref name="admit"/> whether the transport can
+    /// return a result before it takes effect: before a write commits, before a transaction logs a statement and before a
+    /// control acts (with an empty result). A refusal undoes the statement and is returned in place of its result.
+    /// </summary>
+    ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Runs every statement of <paramref name="sql"/> in order without arguments, stopping at the first error; returns
     /// the last result (Hrana <c>sequence</c>). Added by SQ1-e; existing members are unchanged.
     /// </summary>
@@ -147,7 +154,7 @@ internal interface ISqlSession : IAsyncDisposable
 
     /// <summary>
     /// Ends the current request: releases the storage transaction it held. An open SQL transaction survives in the
-    /// session's replay log; the next <see cref="ExecuteAsync"/> resumes it.
+    /// session's replay log; the next <see cref="ExecuteAsync(SqlCommand, CancellationToken)"/> resumes it.
     /// </summary>
     ValueTask EndRequestAsync();
 }
