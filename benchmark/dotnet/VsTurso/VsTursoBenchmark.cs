@@ -216,7 +216,7 @@ namespace TerraBase.E2E
 
         private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration, ServerAttribution? attribution)
         {
-            var warmup = TimeSpan.FromSeconds(1);
+            var warmup = TimeSpan.FromSeconds(10);
             var start = Stopwatch.GetTimestamp();
             var measureFrom = start + (long)(warmup.TotalSeconds * Stopwatch.Frequency);
             var end = measureFrom + (long)(duration.TotalSeconds * Stopwatch.Frequency);
