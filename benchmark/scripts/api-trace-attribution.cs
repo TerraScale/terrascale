@@ -51,8 +51,13 @@ namespace TraceAttribution
             var foreign = 0L;
             var unresolved = 0L;
             var instrumented = 0.0;
-            double first = double.MaxValue, last = 0, suspended = 0, contentionNs = 0;
+            double first = double.MaxValue, last = 0, contentionNs = 0, promoted0 = 0;
             var suspendAt = -1.0;
+            var suspendForGc = false;
+            var gcPauses = new List<double>();
+            var gcSuspending = new List<double>();
+            var otherPauses = new List<double>();
+            var otherSuspending = new List<double>();
             var gcs = new long[3];
             foreach (var item in trace.Events)
             {
@@ -68,12 +73,22 @@ namespace TraceAttribution
                 {
                     if (name == "GC/SuspendEEStart")
                     {
+                        // Reasons 1 (GC) and 6 (GC preparation) belong to collections; the sample profiler's own suspensions do not.
                         suspendAt = item.TimeStampRelativeMSec;
+                        suspendForGc = Convert.ToInt32(item.PayloadByName("Reason"), CultureInfo.InvariantCulture) is 1 or 6;
+                    }
+                    else if (name == "GC/SuspendEEStop" && suspendAt >= 0)
+                    {
+                        (suspendForGc ? gcSuspending : otherSuspending).Add(item.TimeStampRelativeMSec - suspendAt);
                     }
                     else if (name == "GC/RestartEEStop" && suspendAt >= 0)
                     {
-                        suspended += item.TimeStampRelativeMSec - suspendAt;
+                        (suspendForGc ? gcPauses : otherPauses).Add(item.TimeStampRelativeMSec - suspendAt);
                         suspendAt = -1;
+                    }
+                    else if (name == "GC/HeapStats")
+                    {
+                        promoted0 += Convert.ToDouble(item.PayloadByName("TotalPromotedSize0"), CultureInfo.InvariantCulture);
                     }
                     else if (name == "GC/Start")
                     {
@@ -94,7 +109,9 @@ namespace TraceAttribution
                     }
                 }
 
-                if (name == "EventCounters" && item.PayloadByName("Payload") is IDictionary<string, object> payload
+                // EventCounters nest their fields in a Payload member of the Payload value.
+                if (name == "EventCounters" && item.PayloadByName("Payload") is IDictionary<string, object> outer
+                    && (outer.TryGetValue("Payload", out var inner) ? inner : outer) is IDictionary<string, object> payload
                     && payload.TryGetValue("Name", out var counter) && counter is string key)
                 {
                     var value = payload.TryGetValue("Increment", out var increment) ? increment : payload.TryGetValue("Mean", out var mean) ? mean : null;
@@ -134,6 +151,7 @@ namespace TraceAttribution
                 byThread.Add(threads.GetValueOrDefault(item.ThreadID, "(unnamed)") + " | " + sample.Role, weight, managed);
                 Of(entries, sample.Role).Add(sample.Entry, weight, managed);
                 Of(owners, sample.Role).Add(sample.Owner, weight, managed);
+                Of(owners, sample.Role + " | leaf").Add(sample.Owner + " | " + sample.Leaf, weight, managed);
                 Of(leaves, sample.Role).Add(sample.Leaf, weight, managed);
                 Of(modules, sample.Role).Add(sample.LeafModule, weight, managed);
                 foreach (var frame in sample.Inclusive)
@@ -164,7 +182,11 @@ namespace TraceAttribution
             Console.WriteLine(FormattableString.Invariant(
                 $"# requests/s={rate:F0} requests~{requests:F0} weight={roles.Total:F0} samples/thread-s={perSecond:F1} unresolved_stacks={unresolved}"));
             Console.WriteLine(FormattableString.Invariant(
-                $"# gc0/1/2={gcs[0]}/{gcs[1]}/{gcs[2]} suspended_ms={suspended:F1} contention_ms={contentionNs / 1e6:F2} instrumented_share={instrumented / roles.Total:P2}"));
+                $"# gc0/1/2={gcs[0]}/{gcs[1]}/{gcs[2]} promoted0_avg_B={promoted0 / Math.Max(1, gcs.Sum()):F0} contention_ms={contentionNs / 1e6:F2} instrumented_share={instrumented / roles.Total:P2}"));
+            Console.WriteLine(Pauses("gc_pause", gcPauses, span));
+            Console.WriteLine(Pauses("gc_suspending", gcSuspending, span));
+            Console.WriteLine(Pauses("other_pause", otherPauses, span));
+            Console.WriteLine(Pauses("other_suspending", otherSuspending, span));
             foreach (var (counter, series) in counters.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
                 Console.WriteLine(FormattableString.Invariant($"# counter {counter} mean={series.Average(point => point.Value):F2} n={series.Count}"));
@@ -179,6 +201,7 @@ namespace TraceAttribution
                 var depth = role is "server" ? 40 : 12;
                 Print($"{role}: entry (root-most frame of the role)", entries[role], total, depth, unit, per);
                 Print($"{role}: owner (deepest application frame)", owners[role], total, depth, unit, per);
+            Print($"{role}: owner | leaf", owners[role + " | leaf"], total, depth, unit, per);
                 Print($"{role}: leaf method", leaves[role], total, depth, unit, per);
                 Print($"{role}: leaf module", modules[role], total, 15, unit, per);
                 if (role is "server" or "client")
@@ -217,7 +240,20 @@ namespace TraceAttribution
                 : (series[^1].Value - series[0].Value) / ((series[^1].Time - series[0].Time) / 1000);
         }
 
-        private static Attributed Classify(TraceLog trace, Dictionary<CallStackIndex, Attributed> cache, TraceEvent item)
+        /// <summary>Count, total and quantiles of suspension intervals in milliseconds, and their share of the span.</summary>
+    private static string Pauses(string name, List<double> pauses, double span)
+    {
+        pauses.Sort();
+        double At(double quantile)
+        {
+            return pauses.Count == 0 ? 0 : pauses[Math.Min(pauses.Count - 1, (int)(quantile * pauses.Count))];
+        }
+
+        return FormattableString.Invariant(
+            $"# {name} n={pauses.Count} total_ms={pauses.Sum():F1} share={pauses.Sum() / 1000 / span:P2} p50_ms={At(0.5):F3} p99_ms={At(0.99):F3} max_ms={At(1):F3}");
+    }
+
+    private static Attributed Classify(TraceLog trace, Dictionary<CallStackIndex, Attributed> cache, TraceEvent item)
         {
             var index = item.CallStackIndex();
             if (cache.TryGetValue(index, out var known))
