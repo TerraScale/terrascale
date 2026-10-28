@@ -100,11 +100,11 @@ Beta retains `benchmark/bench/go-parity-live-20261028-a/` beneath the managed
 `fix-api-go-parity-30f1346c96979846f2b60dd2b44190e683e10e0cd3bcca07a2ab959d3dd19af9`
 checkout. It holds every raw row, run log, host/CPU samples, source identity, binary
 hash and the executed runner. Temporary analysis copies are `/tmp/perf-api-go-live-a`.
-The exact runner is archived at `benchmark/scripts/go-parity-live-20261028.sh`;
-its fixed output path refuses an existing directory. It stages the tenant helper
-from immutable commit `3b00282251210b85acd998cbe74c7ef6927f18f0` and uses the retained
-CPU observer from the earlier HTTPS control. Run via `TS_HEAVY_HOST=beta ts-heavy-any
-nice -n 19 bash benchmark/scripts/go-parity-live-20261028.sh --repo terrascale
---branch fix/api-go-parity` after staging this archived script on that source.
-The original synthetic account is reconciled; any new run must use a fresh tenant
-and output directory, and must diagnose the empty HTTP/2 window before comparison.
+The historical runner is archived at `benchmark/scripts/go-parity-live-20261028.sh`;
+it is not the current launcher. It references the original helper branch/commit and
+retained CPU observer, and lacks the now-required admitted `TS_PEERS_FILE` preflight.
+Do not replay it while run b's synthetic account and inbox remain unreconciled.
+After reconciliation, qualify every prerequisite before creating a fresh tenant,
+use a fresh output directory, and use the merged runner's complete tail/drain window.
+The original empty-window cells remain rejected; they are not fixed by changing
+the implementation after the run, and do not qualify an SDK comparison.
