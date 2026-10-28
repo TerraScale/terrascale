@@ -150,7 +150,7 @@ export const ptBr: Messages = {
     ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
-    perks: ['Free sem cartão', 'Starter anual; Pro e Team mensais'],
+    perks: ['Free sem cartão', 'Planos pagos mensais ou anuais'],
   },
 
   pricingTeaser: {
@@ -167,21 +167,27 @@ export const ptBr: Messages = {
     badge: 'Mais popular',
     suffixMonthly: '/mês',
     suffixAnnual: '/ano',
+    intervals: {
+      label: 'Intervalo de cobrança',
+      month: 'Mensal',
+      year: 'Anual',
+      saving: '{months} meses grátis',
+    },
     plans: {
       free: {
         description: 'Crie e avalie sem cartão de pagamento',
         cta: 'Começar com Free',
       },
       starter: {
-        description: 'Assinatura exclusivamente anual para projetos pequenos',
+        description: 'Assinatura para projetos pequenos',
         cta: 'Escolher Starter',
       },
       pro: {
-        description: 'Assinatura mensal para projetos em crescimento',
+        description: 'Assinatura para projetos em crescimento',
         cta: 'Escolher Pro',
       },
       team: {
-        description: 'Assinatura mensal para equipes',
+        description: 'Assinatura para equipes',
         cta: 'Escolher Team',
       },
       enterprise: {
@@ -292,7 +298,7 @@ export const ptBr: Messages = {
         },
         {
           q: 'Como as assinaturas são cobradas?',
-          a: 'Free não exige cartão. Starter é cobrado somente por ano; seu valor mensal é um equivalente, não uma contratação mensal. Pro e Team são mensais. Não há testes gratuitos nem descontos anuais para Pro ou Team.',
+          a: 'Free não exige cartão. Starter, Pro e Team são cobrados por mês ou por ano; um ano custa dez mensalidades, então a cobrança anual economiza dois meses. Não há testes gratuitos.',
         },
         {
           q: 'Posso exportar meus dados?',
@@ -317,8 +323,9 @@ export const ptBr: Messages = {
     status: 'Planos pagos estão disponíveis pelo checkout. Unidades de operação acima da franquia são adicionadas à próxima fatura; excedentes de armazenamento e saída para clientes ainda não são cobrados.',
     cadence: {
       free: 'Sem cartão de pagamento',
-      year: 'Somente {annual}/ano · equivalente a {monthly}/mês',
+      year: 'Cobrança anual · equivalente a {monthly}/mês · {months} meses grátis',
       month: 'Cobrança mensal',
+      both: '{monthly}/mês ou {annual}/ano',
       contact: 'Suporte + uso · fale com vendas',
     },
     suffixUsage: '/mês + uso',

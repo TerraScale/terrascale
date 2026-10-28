@@ -148,7 +148,7 @@ export const en = {
     ctaPrimary: 'Register for Public Alpha',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
-    perks: ['Free without a card', 'Starter yearly; Pro and Team monthly'],
+    perks: ['Free without a card', 'Paid plans monthly or yearly'],
   },
 
   pricingTeaser: {
@@ -165,21 +165,27 @@ export const en = {
     badge: 'Most Popular',
     suffixMonthly: '/month',
     suffixAnnual: '/year',
+    intervals: {
+      label: 'Billing interval',
+      month: 'Monthly',
+      year: 'Yearly',
+      saving: '{months} months free',
+    },
     plans: {
       free: {
         description: 'Build and evaluate without a payment card',
         cta: 'Start Free',
       },
       starter: {
-        description: 'Annual-only subscription for small projects',
+        description: 'Subscription for small projects',
         cta: 'Choose Starter',
       },
       pro: {
-        description: 'Monthly subscription for growing projects',
+        description: 'Subscription for growing projects',
         cta: 'Choose Pro',
       },
       team: {
-        description: 'Monthly subscription for teams',
+        description: 'Subscription for teams',
         cta: 'Choose Team',
       },
       enterprise: {
@@ -290,7 +296,7 @@ export const en = {
         },
         {
           q: 'How are subscriptions billed?',
-          a: 'Free requires no card. Starter is billed yearly only; its monthly amount is an equivalent, not a monthly purchase. Pro and Team are monthly. No trials or annual Pro/Team discounts are offered.',
+          a: 'Free requires no card. Starter, Pro, and Team are billed monthly or yearly; a year costs ten monthly payments, so yearly billing saves two months. No trials are offered.',
         },
         {
           q: 'Can I export my data and leave anytime?',
@@ -315,8 +321,9 @@ export const en = {
     status: 'Paid plans are available through checkout. Operation units over the allowance are added to the next invoice; storage and client egress overages are not billed yet.',
     cadence: {
       free: 'No card required',
-      year: 'Billed {annual}/year only · {monthly}/month equivalent',
+      year: 'Billed yearly · {monthly}/month equivalent · {months} months free',
       month: 'Billed monthly',
+      both: '{monthly}/month or {annual}/year',
       contact: 'Support + usage · contact sales',
     },
     suffixUsage: '/month + usage',

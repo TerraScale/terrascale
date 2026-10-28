@@ -1,4 +1,5 @@
 import type { AppIconName } from '@/lib/icons'
+import type { BillingInterval } from '@/lib/pricing'
 import pricingJson from '../../static/pricing.json'
 import regionsJson from '../../static/regions.json'
 
@@ -78,7 +79,7 @@ export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
   available: plan.available,
   price: plan.priceMonthlyUsd,
   annualPrice: plan.priceAnnualUsd,
-  billingInterval: plan.billingInterval as 'free' | 'year' | 'month' | 'contact',
+  billingIntervals: plan.billingIntervals as BillingInterval[],
   limits: plan.limits as PlanLimits,
   entitlements: plan.entitlements as PlanEntitlements,
 }))

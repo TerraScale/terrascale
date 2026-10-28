@@ -1,7 +1,10 @@
 {
-  "$comment": "Canonical TerraScale plan catalog. Subscription prices, allowances and overage rates approved 2026-10-23.",
-  "version": 1,
+  "$comment": "Canonical TerraScale plan catalog. Subscription prices, allowances and overage rates approved 2026-10-23; monthly and yearly billing for every paid plan approved 2026-10-28.",
+  "version": 2,
   "currency": "USD",
+  "subscriptions": {
+    "definition": "Starter, Pro and Team are each billed monthly at priceMonthlyUsd or yearly at priceAnnualUsd; a year costs ten monthly payments (two months free). billingIntervals lists the intervals a plan is sold at through checkout. Operation-unit overage is invoiced every month on both intervals."
+  },
   "metering": {
     "operationUnit": {
       "name": "Operation unit",
@@ -43,7 +46,7 @@
       "available": true,
       "priceMonthlyUsd": 0,
       "priceAnnualUsd": 0,
-      "billingInterval": "free",
+      "billingIntervals": [],
       "trialDays": null,
       "limits": {
         "projects": 1,
@@ -69,9 +72,9 @@
       "id": "starter",
       "name": "Starter",
       "available": true,
-      "priceMonthlyUsd": 2.5,
+      "priceMonthlyUsd": 3,
       "priceAnnualUsd": 30,
-      "billingInterval": "year",
+      "billingIntervals": ["month", "year"],
       "trialDays": null,
       "limits": {
         "projects": 5,
@@ -91,16 +94,15 @@
         "backupRetentionDays": 3,
         "regionsPerDatabase": 3,
         "support": "2 business days"
-      },
-      "billing": "Billed yearly at $30; $2.50 per month equivalent."
+      }
     },
     {
       "id": "pro",
       "name": "Pro",
       "available": true,
       "priceMonthlyUsd": 20,
-      "priceAnnualUsd": null,
-      "billingInterval": "month",
+      "priceAnnualUsd": 200,
+      "billingIntervals": ["month", "year"],
       "trialDays": null,
       "limits": {
         "projects": 25,
@@ -127,8 +129,8 @@
       "name": "Team",
       "available": true,
       "priceMonthlyUsd": 50,
-      "priceAnnualUsd": null,
-      "billingInterval": "month",
+      "priceAnnualUsd": 500,
+      "billingIntervals": ["month", "year"],
       "trialDays": null,
       "limits": {
         "projects": 100,
@@ -156,7 +158,7 @@
       "available": false,
       "priceMonthlyUsd": 999,
       "priceAnnualUsd": null,
-      "billingInterval": "contact",
+      "billingIntervals": [],
       "trialDays": null,
       "limits": {
         "projects": null,

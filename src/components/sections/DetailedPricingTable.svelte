@@ -4,7 +4,7 @@
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
   import { pricingCatalog, publicAlphaCatalog } from '@/lib/site'
-  import { formatEntitlementRows, formatPlanBilling } from '@/lib/pricing'
+  import { formatEntitlementRows, formatPlanCadences } from '@/lib/pricing'
 
   const comparePlans = publicAlphaCatalog
   const rates = pricingCatalog.metering.overageRates
@@ -24,7 +24,7 @@
     { label: compare.storage, cells: comparePlans.map((plan) => storage(plan.limits.storageGb)) },
     { label: compare.operationUnits, cells: comparePlans.map((plan) => count(plan.limits.operationUnitsPerMonth)) },
     { label: compare.egress, cells: comparePlans.map((plan) => storage(plan.limits.egressGbPerMonth)) },
-    { label: compare.billing, cells: comparePlans.map((plan) => formatPlanBilling(plan, $dict.pricing, localeMeta($locale).bcp47).cadence) },
+    { label: compare.billing, cells: comparePlans.map((plan) => formatPlanCadences(plan, $dict.pricing, localeMeta($locale).bcp47)) },
   ]
   $: entitlementRows = formatEntitlementRows(comparePlans, compare, localeMeta($locale).bcp47)
   $: rules = $dict.pricing.detailed.rows.map((row, i) => ({

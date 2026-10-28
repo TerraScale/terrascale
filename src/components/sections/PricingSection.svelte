@@ -4,10 +4,15 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
-  import { formatPlanBilling, formatPlanLimits } from '@/lib/pricing'
+  import { annualSavingMonths, formatPlanBilling, formatPlanLimits, type BillingInterval } from '@/lib/pricing'
   import { publicAlphaCatalog, registrationUrl } from '@/lib/site'
 
   export let headingLevel: 1 | 2 = 2
+
+  // Monthly is the default; yearly costs ten monthly payments and carries over to checkout.
+  let interval: BillingInterval = 'month'
+  const intervals: BillingInterval[] = ['month', 'year']
+  const savingMonths = annualSavingMonths(publicAlphaCatalog)
 
   $: headingTag = headingLevel === 1 ? 'h1' : 'h2'
   $: planTag = headingLevel === 1 ? 'h2' : 'h3'
@@ -17,11 +22,12 @@
     const limitLines = formatPlanLimits(meta.limits, $dict.pricing.limits, localeMeta($locale).bcp47)
     return {
       ...meta,
-      billing: formatPlanBilling(meta, $dict.pricing, localeMeta($locale).bcp47),
+      billing: formatPlanBilling(meta, interval, $dict.pricing, localeMeta($locale).bcp47),
       description: copy.description,
       features: 'features' in copy ? [...limitLines, ...copy.features] : limitLines,
       cta: copy.cta,
-      href: meta.slug === 'enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.slug}`,
+      href: meta.slug === 'enterprise' ? '/contact'
+        : `${registrationUrl}?plan=${meta.slug}${interval === 'year' && meta.billingIntervals.includes('year') ? '&interval=annual' : ''}`,
     }
   })
 </script>
@@ -35,6 +41,16 @@
       </svelte:element>
       <p class="pricing-section__subtitle">{$dict.pricing.subtitle}</p>
       <p class="pricing-section__subtitle">{$dict.pricing.status}</p>
+    </div>
+    <div class="ts-segmented pricing-section__interval" role="group" aria-label={$dict.pricing.intervals.label}>
+      {#each intervals as option (option)}
+        <button type="button" aria-pressed={interval === option} on:click={() => (interval = option)}>
+          {$dict.pricing.intervals[option]}
+          {#if option === 'year' && savingMonths}
+            <span class="pricing-section__saving">{$dict.pricing.intervals.saving.replace('{months}', String(savingMonths))}</span>
+          {/if}
+        </button>
+      {/each}
     </div>
   </div>
 
@@ -125,6 +141,15 @@
     line-height: 1.1;
     letter-spacing: -0.035em;
     color: var(--ts-text);
+  }
+
+  .pricing-section__interval {
+    height: 36px;
+  }
+
+  .pricing-section__saving {
+    color: var(--ts-success);
+    font-size: 12px;
   }
 
   .pricing-section__subtitle {
