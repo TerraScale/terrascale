@@ -25,6 +25,6 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - One fixed global API and auth origin, with no regional discovery or failover.
 - Production service credentials arrive from OCI Vault in gru via instance principal. Nobody copies secrets by hand. Customer credentials authorize access.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 
 This section is the operating contract, not evidence that every runtime flow has shipped. See [README.md](README.md) for current SDK and qualification gaps. Existing production switches are inventoried for their owning implementation threads. Documentation changes must not invent APIs or bypass authorization, tenant scope, registered callbacks, payment consent, or safety guards.
