@@ -90,9 +90,10 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         ManagedDatabase remote;
         var recovered = false;
         try { remote = await backend.CreateAsync(scope, name, placement, allRegions, cancellationToken); }
-        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
+        catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
         {
-            // A prior provision whose dashboard commit failed is recovered by name.
+            // A prior provision whose dashboard commit failed is recovered by name. Other conflicts (database_limit, a
+            // plan allowance held in an unreachable region) reach the caller with TerraBase's own code and message.
             remote = (await backend.ListAsync(scope, placement[0], cancellationToken)).FirstOrDefault(database => database.Name == name)
                 ?? throw new AccountAccessException("A database with this name already exists.", 409);
             recovered = true;
