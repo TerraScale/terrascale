@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"os"
+	"os/signal"
 	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	sdk "terrascale.tech/sdk"
@@ -113,7 +115,9 @@ func runParity(args []string) (failure error) {
 	}
 	defer log.Close()
 	encode := json.NewEncoder(log)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	signals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signals, 30*time.Minute)
 	defer cancel()
 	discovery, err := sdk.NewClient(sdk.Config{})
 	if err != nil {
@@ -220,6 +224,7 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 						base.CloseIdleConnections()
 						return errors.New("parity token refresh failed")
 					}
+					var operationFailures atomic.Int64
 					op := func(call context.Context, _, _ int) string {
 						var value *v1.Document
 						var err error
@@ -232,7 +237,7 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 								token, tokenErr := source.Token(call)
 								if tokenErr != nil {
 									if call.Err() == nil {
-										observed.bad.Add(1)
+										operationFailures.Add(1)
 									}
 									return status(tokenErr)
 								}
@@ -258,7 +263,7 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 							err = document.check(value)
 						}
 						if err != nil && call.Err() == nil {
-							observed.bad.Add(1)
+							operationFailures.Add(1)
 						}
 						return status(err)
 					}
@@ -277,23 +282,25 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 						return errors.New("parity replica readiness failed")
 					}
 					beforeBad := observed.bad.Load()
+					beforeFailures := operationFailures.Load()
 					step := apibench.Step{Type: "step", Scenario: "doc.get", Transport: lane, PayloadBytes: size, Mode: "closed", Concurrency: concurrency, WarmupS: 2, StepS: 5, AbortErrorRate: .01}
 					result := apibench.RunStep(ctx, step, op, meter)
 					row := struct {
 						apibench.Result
-						Region      string `json:"region"`
-						Repeat      int    `json:"repeat"`
-						Connections int64  `json:"connections"`
-						Attempts    int64  `json:"attempts"`
-						BadAttempts int64  `json:"bad_attempts"`
-						H1          int64  `json:"h1"`
-						H2          int64  `json:"h2"`
-					}{result, region, repeat, observed.connections.Load(), observed.attempts.Load(), observed.bad.Load() - beforeBad, observed.h1.Load(), observed.h2.Load()}
+						Region            string `json:"region"`
+						Repeat            int    `json:"repeat"`
+						Connections       int64  `json:"connections"`
+						Attempts          int64  `json:"attempts"`
+						BadAttempts       int64  `json:"bad_attempts"`
+						OperationFailures int64  `json:"operation_failures"`
+						H1                int64  `json:"h1"`
+						H2                int64  `json:"h2"`
+					}{result, region, repeat, observed.connections.Load(), observed.attempts.Load(), observed.bad.Load() - beforeBad, operationFailures.Load() - beforeFailures, observed.h1.Load(), observed.h2.Load()}
 					base.CloseIdleConnections()
 					if err := encode.Encode(row); err != nil {
 						return err
 					}
-					if result.OK == 0 || result.Errors != 0 || row.BadAttempts != 0 || ctx.Err() != nil {
+					if result.OK == 0 || result.Errors != 0 || row.BadAttempts != 0 || row.OperationFailures != 0 || ctx.Err() != nil {
 						return errors.New("parity rejected errored or empty cell; evidence retained")
 					}
 				}
