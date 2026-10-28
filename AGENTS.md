@@ -90,6 +90,7 @@ It cannot use raw `fetch`, a generic SDK request, direct TerraBase, TBEP, Dashbo
 
 - Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]`, and no similar generated-by notices.
 - When the human asks for a commit, commit and push exactly as asked. Do not run tests, checks, or builds first.
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
 
 ## Zero configuration (user decision 2026-10-09, do not revert)
 
