@@ -98,6 +98,39 @@ public sealed class ShapeMirrorTests
     }
 
     [Test]
+    public async Task A_stalled_upload_is_tried_again_and_its_object_is_listed()
+    {
+        await using var harness = await Harness.StartAsync();
+        // The first upload hangs until its attempt's deadline, as a bucket that never answered (#838); the next one lands.
+        var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.S3.BeforePut = async (key, cancellationToken) =>
+        {
+            if (key.StartsWith("v1/shapes/", StringComparison.Ordinal) && stalled.TrySetResult())
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+        };
+        var start = await harness.Db.HeadAsync();
+        _ = await harness.CommitLargeAsync();
+        var chunk = await harness.SealAsync(start);
+
+        await Assert.That(harness.Queue(chunk)).IsTrue();
+        await stalled.Task.WaitAsync(TimeSpan.FromSeconds(30), harness.Cancellation);
+        harness.Time.Advance(TimeSpan.FromSeconds(30));
+        // The pause before the next attempt starts once the stalled one has unwound.
+        await TerraBaseTestServer.EventuallyAsync(_ =>
+        {
+            harness.Time.Advance(ShapeMirror.RetryDelay);
+            return Task.FromResult(harness.PendingMirrorCompletions > 0);
+        });
+        await harness.MirroredAsync(1);
+
+        var entry = (await harness.ManifestAsync(start)).Objects.Single();
+        await Assert.That(harness.Puts.Values.Sum()).IsEqualTo(2).Because("one stalled attempt, then the one that stored the object");
+        await Assert.That(harness.S3.Objects.ContainsKey(entry.Object)).IsTrue();
+    }
+
+    [Test]
     public async Task The_manifest_chains_at_most_eight_objects_and_verifies_each_stored_object()
     {
         await using var harness = await Harness.StartAsync();
