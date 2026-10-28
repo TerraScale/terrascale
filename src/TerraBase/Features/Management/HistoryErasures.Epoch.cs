@@ -14,6 +14,8 @@ internal sealed partial class HistoryErasures
     // stalled erasures pulled back to back and held it about 60% of the time (gru, 2026-10-28), so creates timed out.
     private readonly Dictionary<string, (DateTimeOffset Next, TimeSpan Delay)> _peerPulls = [with(StringComparer.Ordinal)];
 
+    private const int PullCostFactor = 12;
+
     private static ulong Cut(IEnumerable<OriginCut> cuts, ulong replica) =>
         cuts.Where(cut => cut.Replica == replica).Select(cut => cut.Stamp).DefaultIfEmpty().Max();
 
@@ -79,6 +81,7 @@ internal sealed partial class HistoryErasures
         var evidence = RecoveryEvidence(own, receipts.Single(receipt => receipt.MachineId == peer.Name), origins);
         var progressed = false;
         var completed = false;
+        var started = time.GetTimestamp();
         try
         {
             var snapshots = services.GetRequiredService<ReplicaSnapshots>();
@@ -103,10 +106,13 @@ internal sealed partial class HistoryErasures
             {
                 // A pull that moved this erasure on may move others too: their next pass looks without pulling. A failed
                 // pull backs off like a no-progress one: an import refused late had still held SYSTEM's writer (sjc,
-                // 2026-10-28: 108-158 s every 5 minutes, each attempt ending in the same memory refusal).
+                // 2026-10-28: 108-158 s every 5 minutes, each attempt ending in the same memory refusal). The wait is
+                // also at least PullCostFactor times the pull's own time, so one peer's pulls hold SYSTEM's writer at most
+                // about 1/13 of the time: a replay that ran into its 300 s deadline on a CPU-capped node waits an hour.
+                var cost = TimeSpan.FromTicks(Math.Min(time.GetElapsedTime(started).Ticks * PullCostFactor, MaxBackoff.Ticks));
                 var wait = progressed ? TimeSpan.Zero
-                    : _peerPulls.TryGetValue(peer.Name, out var last) && last.Delay > TimeSpan.Zero
-                        ? TimeSpan.FromTicks(Math.Min(last.Delay.Ticks * 2, MaxBackoff.Ticks)) : TimeSpan.FromMinutes(1);
+                    : TimeSpan.FromTicks(Math.Max(cost.Ticks, _peerPulls.TryGetValue(peer.Name, out var last) && last.Delay > TimeSpan.Zero
+                        ? Math.Min(last.Delay.Ticks * 2, MaxBackoff.Ticks) : TimeSpan.FromMinutes(1).Ticks));
                 _peerPulls[peer.Name] = (time.GetUtcNow() + wait, wait);
 
                 if (progressed)

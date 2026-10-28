@@ -417,6 +417,67 @@ public sealed class HistoryErasureTests
         }
     }
 
+    // A pull that failed after 10 minutes waits at least 12 times that before the next one from the same witness: the
+    // 1-minute doubling alone let a SYSTEM import that ran into its 300 s replay deadline hold the writer again within
+    // minutes (sjc, 2026-10-28, on a CPU-capped node).
+    [Test]
+    public async Task A_slow_failed_pull_waits_in_proportion_to_its_cost_before_the_witness_is_pulled_again()
+    {
+        var clock = new TerraBase.Fast.Replication.PeerStreamTests.ShiftedTime();
+        var snapshots = 0;
+        await using var cluster = await StartAsync(clock, (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                var source = services.Last(service => service.ServiceType == typeof(IReplicaSnapshotSource));
+                services.AddSingleton<IReplicaSnapshotSource>(provider => new BlockedSnapshots(
+                    (IReplicaSnapshotSource)source.ImplementationFactory!(provider), static () => false, () =>
+                    {
+                        _ = Interlocked.Increment(ref snapshots);
+                        clock.AdvanceTimestamp(TimeSpan.FromMinutes(10));
+                    }));
+            }
+        }, ["gru", "sjc"]);
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (fence, erasure) = (Id(), Id());
+        var requested = DateTimeOffset.UtcNow;
+        await PutAsync(gru, Jobs, fence, """{"scope":"account"}""");
+        await RequestDocumentAsync(gru, erasure, fence);
+        await RequestAsync(gru, erasure, requested);
+        await Assert.That(await UntilAsync(gru, async () =>
+        {
+            await RunAsync(gru);
+            await RunAsync(sjc);
+            return await ReceiptsAsync(gru, erasure);
+        }, 2)).IsTrue();
+
+        // gru held an older epoch, and sjc's receipt reports more of it than gru's files: only a pull from sjc can help.
+        var (_, receipts) = await Service(gru).StatusAsync((await RecordAsync(gru, erasure))!, CancellationToken.None);
+        var own = receipts.Single(receipt => receipt.MachineId == gru.Name);
+        var witness = receipts.Single(receipt => receipt.MachineId == sjc.Name);
+        var old = ReplicaId.Of(gru.Node.Region, gru.Node.Member ^ 1U, 0).Value;
+        var system = await Engine(gru).OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await system.BeginDurableTransactionAsync(CancellationToken.None))
+        {
+            await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(erasure), gru.Name,
+                own with { PreviousReplicas = [old], PreviousAuth = [], PreviousSystem = [], RecutReplicas = [.. receipts.Select(receipt => receipt.Replica).Order()] },
+                Hosting.TerraBaseJsonContext.Default.HistoryErasureReceipt, CancellationToken.None);
+            await SystemCatalog.PutAsync(transaction, HistoryErasure.Receipts(erasure), sjc.Name,
+                witness with { SystemApplied = [.. witness.SystemApplied, new(old, 1_000)] },
+                Hosting.TerraBaseJsonContext.Default.HistoryErasureReceipt, CancellationToken.None);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        await RunAsync(gru);
+        await Assert.That(Volatile.Read(ref snapshots)).IsEqualTo(1).Because("the witness is ahead, so gru pulls once");
+
+        // Past the 1-minute floor and well inside the hour the 10-minute pull earned: no second pull.
+        clock.Offset = TimeSpan.FromMinutes(5);
+        await RunAsync(gru);
+        await RunAsync(gru);
+        await Assert.That(Volatile.Read(ref snapshots)).IsEqualTo(1);
+    }
+
     private static async Task RecoveryCursorAsync(ReplicaMachine machine, string erasure, string after)
     {
         var system = await Engine(machine).OpenSystemDatabaseAsync(CancellationToken.None);
@@ -533,10 +594,13 @@ public sealed class HistoryErasureTests
         return line is null ? double.NaN : double.Parse(line.Split(' ')[^1], System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private static async Task<ReplicaCluster> StartAsync(Action<string, IServiceCollection>? configure = null, params string[] regions)
+    private static Task<ReplicaCluster> StartAsync(Action<string, IServiceCollection>? configure = null, params string[] regions) =>
+        StartAsync(clock: null, configure, regions);
+
+    private static async Task<ReplicaCluster> StartAsync(TerraBase.Fast.Replication.PeerStreamTests.ShiftedTime? clock, Action<string, IServiceCollection>? configure, string[] regions)
     {
         // Only the test runs erasure passes.
-        var cluster = await ReplicaCluster.StartAsync(cdc: true, clock: null, configure: (region, services) =>
+        var cluster = await ReplicaCluster.StartAsync(cdc: true, clock: clock, configure: (region, services) =>
         {
             WithoutPasses(services);
             configure?.Invoke(region, services);
