@@ -22,6 +22,6 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - Every region always serves. It starts serving as soon as its machines boot, with no per-region enable step.
 - Production secrets live in the platform secret store and are never copied by hand. Vendor-issued keys (such as Stripe and Cloudflare) are set the same way.
 - Each value has one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names get a narrow allowance, with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names get a narrow allowance, with a one-line reason.
 
 Publish this contract without private topology, credentials or internal implementation details. Production publication credentials come from the platform secret store, never this repo.
