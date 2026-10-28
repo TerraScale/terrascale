@@ -45,6 +45,7 @@ public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, l
 /// <summary>What every database of a project uses, summed.</summary>
 /// <param name="ProjectId">The project.</param>
 /// <param name="Databases">Databases in the project.</param>
+/// <param name="Collections">Collections in every database of the project.</param>
 /// <param name="StorageBytes">Bytes on disk.</param>
 /// <param name="LogicalBytes">JSON bytes of the live documents.</param>
 /// <param name="Documents">Documents stored.</param>
@@ -55,7 +56,7 @@ public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, l
 /// <param name="Items">Usage of each database, in creation order.</param>
 /// <param name="Month">Billed operation units this UTC month.</param>
 public sealed record ProjectUsage(
-    string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Documents, long Reads, long Writes, UsagePeriod Period,
+    string ProjectId, long Databases, long Collections, long StorageBytes, long LogicalBytes, long Documents, long Reads, long Writes, UsagePeriod Period,
     IReadOnlyList<UsagePoint> Series, IReadOnlyList<DatabaseUsage> Items, UsageMonth Month)
 {
     /// <summary>Logical file bytes and pending reservations, counted once across regions.</summary>

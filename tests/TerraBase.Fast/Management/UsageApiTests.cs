@@ -571,6 +571,9 @@ public sealed class UsageApiTests
         await Assert.That(items.Select(item => item.GetProperty("databaseId").GetString()!).ToList()).IsEquivalentTo([first.Id, second.Id]);
         await Assert.That(items[0].GetProperty("databaseId").GetString()).IsEqualTo(first.Id);
         await Assert.That(root.GetProperty("documents").GetInt64()).IsEqualTo(5);
+        // Collections sum every database's: one in each.
+        await Assert.That(root.GetProperty("collections").GetInt64()).IsEqualTo(2);
+        await Assert.That(root.GetProperty("collections").GetInt64()).IsEqualTo(items.Sum(item => item.GetProperty("collections").GetInt64()));
         await Assert.That(root.GetProperty("writes").GetInt64()).IsEqualTo(5);
         await Assert.That(root.GetProperty("reads").GetInt64()).IsEqualTo(1);
         await Assert.That(root.GetProperty("storageBytes").GetInt64()).IsEqualTo(items.Sum(item => item.GetProperty("storageBytes").GetInt64()));

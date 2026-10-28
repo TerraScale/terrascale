@@ -169,7 +169,7 @@ internal static class ApiExamples
         "getCollectionSchema" => """{"collection":"people","documents":1,"sampledDocuments":1,"fields":[{"path":"name","present":1,"types":{"string":1}}],"uniqueConstraints":[]}""",
         "declareCollectionSchema" => """{"constraints":[{"name":"field_82244417f956ac7c","fields":["email"],"normalization":"lowercase"},{"name":"tenant_handle","fields":["tenant","handle"],"normalization":"none"}]}""",
         "getDatabaseUsage" => Usage.Replace("PERIOD", Period, StringComparison.Ordinal).Replace("SERIES", Series, StringComparison.Ordinal),
-        "getProjectUsage" => "{\"projectId\":\"01ARZ3NDEKTSV4RRFFQ69G5FA2\",\"databases\":0,\"storageBytes\":0,\"logicalBytes\":0,\"documents\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
+        "getProjectUsage" => "{\"projectId\":\"01ARZ3NDEKTSV4RRFFQ69G5FA2\",\"databases\":0,\"collections\":0,\"storageBytes\":0,\"logicalBytes\":0,\"documents\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
         "createCollection" or "getCollection" or "dropCollection" => Collection,
         "createCollectionWebhook" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","url":"https://receiver.example/events","createdAt":"2026-10-07T12:00:00Z","status":"active","secret":"<creation-only base64url key>"}""",
         "deployFunction" or "getFunction" => Function,
