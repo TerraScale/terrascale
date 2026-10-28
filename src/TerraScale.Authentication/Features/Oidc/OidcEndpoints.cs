@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
@@ -134,6 +135,9 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/authorize";
 
+    /// <summary>The resumed request's parameter: only a session created after these Unix milliseconds satisfies it.</summary>
+    public const string LoginAfter = "ts_login_after";
+
     /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
@@ -143,7 +147,7 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
     protected void Describe()
     {
         Summary("Authorization endpoint");
-        Description("GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. Authorization code flow (response_type=code) with PKCE code_challenge_method=S256 required. Without a live tsauth_session cookie the browser is redirected to /ui/{slug}/sign-in and returns here by GET with the same parameters. prompt=none answers login_required without a session; prompt=login, consent and select_account are not supported and answer login_required, consent_required and account_selection_required. Errors after client and redirect validation are redirected to the client. The response is a 302 to the client, or with response_mode=form_post a 200 page that posts the result to it."
+        Description("GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. Authorization code flow (response_type=code) with PKCE code_challenge_method=S256 required. Without a live tsauth_session cookie the browser is redirected to /ui/{slug}/sign-in and returns here by GET with the same parameters. prompt=none answers login_required without a session or with one older than max_age. prompt=login, or a live session older than max_age, sends the browser to a deliberate sign-in: the resumed request drops login from prompt and carries ts_login_after (Unix milliseconds), which only a session created after that time satisfies in place of max_age, so it cannot be met by an older session. prompt=consent and select_account are not supported or advertised and answer invalid_request; prompt and ts_login_after may appear only once. Errors after client and redirect validation are redirected to the client. The response is a 302 to the client, or with response_mode=form_post a 200 page that posts the result to it."
             + " A project's configured session lifetime applies from the original authentication, including after rotation; the next session check persists any reduction, so a later increase cannot revive that session. A nonempty project redirect allowlist additionally requires an exact redirect_uri match; a disallowed URI receives no redirect, including error and form_post responses. An empty list keeps each client's registered URI validation."
             + " Sessions of active MFA users must come from a sign-in that proved the second factor; corrupt or unavailable factor state fails closed with temporarily_unavailable.");
         Tags("OAuth");
@@ -168,12 +172,14 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
             return OidcResults.DisallowedRedirect();
         }
 
-        foreach (var (prompt, error) in new[] { (PromptValues.Login, Errors.LoginRequired), (PromptValues.Consent, Errors.ConsentRequired), (PromptValues.SelectAccount, Errors.AccountSelectionRequired) })
+        var parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
+            ? (await this.HttpContext.Request.ReadFormAsync(cancellationToken)).ToList()
+            : this.HttpContext.Request.Query.ToList();
+        var marker = parameters.FirstOrDefault(parameter => parameter.Key == LoginAfter).Value;
+        long? loginAfter = long.TryParse(marker, NumberStyles.None, CultureInfo.InvariantCulture, out var milliseconds) ? milliseconds : null;
+        if (parameters.Any(parameter => parameter.Key is Parameters.Prompt or LoginAfter && parameter.Value.Count > 1) || marker.Count > 0 && loginAfter is null)
         {
-            if (request.HasPromptValue(prompt))
-            {
-                return OidcResults.Forbid(error, $"prompt={prompt} is not supported.");
-            }
+            return OidcResults.Forbid(Errors.InvalidRequest, $"prompt and {LoginAfter} may appear only once, and {LoginAfter} must be Unix milliseconds.");
         }
 
         var cookie = Tenancy.SessionCookie(tenant);
@@ -192,21 +198,37 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
             return OidcResults.Forbid(Errors.TemporarilyUnavailable, ApiException.Unavailable().Message);
         }
 
+        var now = clock.GetUtcNow();
         var authenticatedAt = live?.Session.CreatedAt;
-        if (live is not { } signedIn || request.MaxAge is { } maxAge && authenticatedAt!.Value.AddSeconds(maxAge) < clock.GetUtcNow())
+        // A resumed request's marker replaces max_age: the sign-in it asked for is recent enough, even for max_age=0.
+        var stale = authenticatedAt is { } created && (loginAfter is { } after
+            ? created.ToUnixTimeMilliseconds() <= after
+            : request.MaxAge is { } maxAge && created.AddSeconds(maxAge) < now);
+        var reauthenticate = request.HasPromptValue(PromptValues.Login);
+        if (live is not { } signedIn || stale || reauthenticate)
         {
-            if (request.HasPromptValue(PromptValues.None) || live is not null)
+            if (request.HasPromptValue(PromptValues.None))
             {
-                return OidcResults.Forbid(Errors.LoginRequired, CredentialLineage.ConflictNotice);
+                return OidcResults.Forbid(Errors.LoginRequired, live is null ? CredentialLineage.ConflictNotice : "The session is older than max_age allows.");
             }
 
-            // OpenIddict accepted the request's form or query; sign-in resumes it as a GET with the same parameters.
-            var parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
-                ? QueryString.Create(await this.HttpContext.Request.ReadFormAsync(cancellationToken))
-                : this.HttpContext.Request.QueryString;
-            var resume = $"/{tenant}/oauth/authorize{parameters}";
-            var notice = this.HttpContext.Request.Cookies.ContainsKey(cookie) ? "&notice=credential_changed" : string.Empty;
-            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(resume)}{notice}");
+            // Sign-in resumes the request as a GET without prompt=login; ts_login_after keeps the demand for a sign-in made
+            // after this request, and the sign-in page never skips its form for such a request.
+            var prompt = string.Join(' ', request.GetPromptValues().Remove(PromptValues.Login));
+            var resume = parameters.Where(parameter => parameter.Key is not (Parameters.Prompt or LoginAfter)).ToList();
+            if (prompt.Length > 0)
+            {
+                resume.Add(new(Parameters.Prompt, prompt));
+            }
+
+            if ((loginAfter ?? (stale || reauthenticate ? now.ToUnixTimeMilliseconds() : null)) is { } required)
+            {
+                resume.Add(new(LoginAfter, required.ToString(CultureInfo.InvariantCulture)));
+            }
+
+            var next = $"/{tenant}/oauth/authorize{QueryString.Create(resume)}";
+            var notice = live is null && this.HttpContext.Request.Cookies.ContainsKey(cookie) ? "&notice=credential_changed" : string.Empty;
+            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}");
         }
 
         return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId));

@@ -206,8 +206,7 @@ of them.
 Client credentials are served for configured service clients only.
 
 Not implemented: introspection, guest
-accounts, CORS, forced reauthentication for `prompt=login` or
-`max_age`, per-instance issuers, token and authorization
+accounts, CORS, per-instance issuers, token and authorization
 pruning. TS-704 adds peer-IP admission limits on every token request. After sign-out everywhere or logout,
 access tokens already issued stay valid until they expire (at most 1 hour).
 The [port guide](csharp-port.md#openid-connect-ts-491) has the details.

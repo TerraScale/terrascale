@@ -1,4 +1,9 @@
+using System.Globalization;
 using System.Net;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.JsonWebTokens;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Tests;
 
@@ -50,7 +55,7 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Prompts_that_need_an_interactive_sign_in_answer_login_required()
+    public async Task Prompt_none_answers_login_required_and_unsupported_prompts_are_refused()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         await oidc.CreateUserAsync();
@@ -62,12 +67,66 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(OidcHarness.Query(none.Headers.Location!)["error"]).IsEqualTo("login_required");
         await Assert.That(OidcHarness.Query(none.Headers.Location!)["state"]).IsEqualTo("state-1");
 
+        // Discovery advertises only the prompts that work; the others, a repeated prompt and a malformed marker are refused.
+        var discovery = JsonSerializer.Deserialize<JsonElement>(await oidc.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/openid-configuration"));
+        await Assert.That(string.Join(' ', discovery.GetProperty("prompt_values_supported").EnumerateArray().Select(value => value.GetString()).Order()))
+            .IsEqualTo("login none");
         var session = await oidc.SignInAsync("alice@example.test");
-        using var login = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, extra: "&prompt=login"), session);
+        // OpenIddict refuses a prompt value it does not support before it resolves the redirect URI, on the hosted error page.
+        foreach (var extra in new[] { "&prompt=consent", "&prompt=select_account" })
+        {
+            using var refused = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, extra: extra), session);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(refused.Headers.Location).IsNull();
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("<p class=\"hint\">Error code: invalid_request</p>");
+        }
+
+        // A repeated prompt could hide login from the checks, so it and a repeated or malformed marker are refused.
+        foreach (var extra in new[] { "&prompt=login&prompt=none", "&prompt=none&prompt=login", "&ts_login_after=soon", "&ts_login_after=1&ts_login_after=2" })
+        {
+            using var refused = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, extra: extra), session);
+            await Assert.That(OidcHarness.Query(refused.Headers.Location!)["error"]).IsEqualTo("invalid_request");
+            await Assert.That(OidcHarness.Query(refused.Headers.Location!).ContainsKey("code")).IsFalse();
+        }
+    }
+
+    [Test]
+    [Arguments("&prompt=login")]
+    [Arguments("&max_age=0")]
+    public async Task Prompt_login_and_max_age_need_one_deliberate_sign_in_after_the_request(string extra)
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var user = await oidc.CreateUserAsync();
+        var (verifier, challenge) = OidcHarness.Pkce();
+        var session = await oidc.SignInAsync("alice@example.test");
+
+        // A live session is not enough: the browser goes to sign-in, with a resume that keeps the demand but not prompt=login.
+        using var login = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, extra: extra), session);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-        await Assert.That(login.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
-        await Assert.That(OidcHarness.Query(login.Headers.Location!)["error"]).IsEqualTo("login_required");
-        await Assert.That(OidcHarness.Query(login.Headers.Location!).ContainsKey("code")).IsFalse();
+        var signIn = login.Headers.Location!.OriginalString;
+        await Assert.That(signIn).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
+        await Assert.That(signIn).DoesNotContain("notice=");
+        var next = Uri.UnescapeDataString(signIn[$"/ui/{OidcIssuer.Slug}/sign-in?next=".Length..]);
+        await Assert.That(next).DoesNotContain("prompt=");
+        await Assert.That(next).Contains("ts_login_after=");
+
+        // The old session neither skips the sign-in form nor satisfies the resumed request, so returning without signing in loops back to the form.
+        using var page = await oidc.AuthorizeAsync(signIn, session);
+        await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var replay = await oidc.AuthorizeAsync(next, session);
+        await Assert.That(replay.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
+
+        // One new sign-in completes it, and the code's tokens carry the new authentication time.
+        var fresh = await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user);
+        using var resumed = await oidc.AuthorizeAsync(next, fresh.Token);
+        await Assert.That(resumed.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
+        await Assert.That(OidcHarness.Query(resumed.Headers.Location!)["state"]).IsEqualTo("state-1");
+        using var redeemed = await oidc.RedeemCodeAsync(OidcHarness.Query(resumed.Headers.Location!)["code"]!, verifier);
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var after = long.Parse(OidcHarness.Query(new Uri(OidcHarness.PublicOrigin + next))["ts_login_after"]!, CultureInfo.InvariantCulture);
+        var idToken = (await OidcHarness.JsonAsync(redeemed)).GetProperty("id_token").GetString()!;
+        var authTime = new JsonWebToken(idToken).GetPayloadValue<long>("auth_time");
+        await Assert.That(authTime).IsGreaterThanOrEqualTo(after / 1000);
     }
 
     [Test]

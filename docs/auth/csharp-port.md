@@ -266,14 +266,15 @@ validates the request first and answers protocol errors itself.
   revoked; an identity token is rejected.
 - `authorize` signs in the user of a live `tsauth_session` cookie. Without one
   it redirects to the hosted sign-in page with the request in `next`.
-  `prompt=none` without a session, and a `max_age` the session has exceeded,
-  answer `login_required`. `prompt=login`, `consent` and `select_account`
-  answer `login_required`, `consent_required` and `account_selection_required`.
+  `prompt=none` without a session, or with one older than `max_age`, answers
+  `login_required`. `prompt=login`, and a `max_age` the session has exceeded,
+  force one new hosted sign-in (see the [README](README.md)). `consent` and
+  `select_account` are not advertised and answer `invalid_request`.
 - `logout` is RP-initiated logout: it revokes the hosted session, clears the
   cookie, then returns to a registered `post_logout_redirect_uri` or shows a
   signed-out page.
 
-Not implemented: introspection, device authorization, forced reauthentication for `max_age`, and the
+Not implemented: introspection, device authorization, and the
 OpenIddict validation stack. No ts-auth API other than `userinfo` accepts
 access tokens, and the server stack validates those.
 
