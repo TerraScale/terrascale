@@ -374,21 +374,16 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("get", HttpStatusCode.ServiceUnavailable)]
-    [Arguments("create", HttpStatusCode.ServiceUnavailable)]
-    [Arguments("replace", HttpStatusCode.OK)]
-    public async Task Storage_failures_refuse_attempts_with_503(string failing, HttpStatusCode first)
+    [Arguments("get", "True,True,True,False,False")]
+    [Arguments("create", "True,True,True,False,False")]
+    [Arguments("replace", "True,True,True,True,False")]
+    public async Task Storage_outages_fall_back_to_this_replicas_memory_and_keep_the_limit(string failing, string expected)
     {
         await using var server = await StartAsync(await SharedStateTarget.CreateAsync(fixture), new ManualClock(Start), inner => new FailingDocumentStore(inner, failing));
 
-        // The first attempt creates the bucket; the second replaces it.
-        using var creating = await server.Client.PostAsync("/__test/attempts/ins_a/sign-in/user_1", null);
-        using var replacing = await server.Client.PostAsync("/__test/attempts/ins_a/sign-in/user_1", null);
-        var body = await replacing.Content.ReadFromJsonAsync<JsonElement>();
-
-        await Assert.That(creating.StatusCode).IsEqualTo(first);
-        await Assert.That(replacing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+        // A timed-out storage call runs the same budget on this replica's memory: sign-in stays up, brute force stays
+        // limited. With only replacements failing, the first attempt is stored and memory then counts afresh.
+        await Assert.That(string.Join(",", await AttemptsAsync(server, "ins_a", "sign-in", "user_1", Maximum + 2))).IsEqualTo(expected);
     }
 
     [Test]
@@ -481,15 +476,11 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Unreachable_storage_refuses_attempts_with_503()
+    public async Task Unreachable_storage_falls_back_to_this_replicas_memory_and_keeps_the_limit()
     {
         await using var server = await StartAsync(target: null, new ManualClock(Start));
 
-        using var response = await server.Client.PostAsync("/__test/attempts/ins_a/sign-in/user_1", null);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+        await Assert.That(string.Join(",", await AttemptsAsync(server, "ins_a", "sign-in", "user_1", Maximum + 1))).IsEqualTo("True,True,True,False");
     }
 
     /// <summary>
