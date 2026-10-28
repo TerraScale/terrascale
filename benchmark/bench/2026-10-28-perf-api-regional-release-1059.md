@@ -24,8 +24,8 @@ single running TerraBase container, kept its existing peer credential on-host,
 and queried that container's own admitted address on the internal health
 listener. Only allowlisted health fields returned. The SSH alias is recorded
 separately from the service's reported machine; this is no claim about all host
-aliases or all cluster members. No tenant, mutation, private recovery material,
-new secret retrieval or benchmark was used. Nothing ran on beta.
+aliases or all cluster members. No tenant, mutation, private recovery material
+or benchmark was used. Nothing ran on beta.
 
 The exact executed probe is archived at
 `benchmark/scripts/api-regional-release-1059-20261028.py`. It has a fixed,
