@@ -12,7 +12,8 @@ namespace TerraBase.Features.Sql;
 /// match nothing. Each comparison is resolved in its own SELECT's scope (aliases, joins, derived tables, CTEs, outer
 /// queries for correlated subqueries) and coerced locally: a literal is rewritten in place, a parameter occurrence gets
 /// its own converted copy as one more bound parameter, so <c>n = :x AND s = :x</c> compares <c>n</c> with the integer
-/// and <c>s</c> with the text. A column whose affinity cannot be told (ambiguous name, expression, VALUES) keeps the
+/// and <c>s</c> with the text. The copy is made whatever the value, so the rewritten text does not depend on the
+/// arguments (SqlReadCache keeps it); a copy that converts nothing compares as the parameter would. A column whose affinity cannot be told (ambiguous name, expression, VALUES) keeps the
 /// constant as it is.
 /// </summary>
 internal static class SqlCoerce
@@ -23,11 +24,14 @@ internal static class SqlCoerce
     private static readonly PropertyInfo Left = typeof(Expression.BinaryOp).GetProperty(nameof(Expression.BinaryOp.Left))!;
     private static readonly PropertyInfo Right = typeof(Expression.BinaryOp).GetProperty(nameof(Expression.BinaryOp.Right))!;
 
-    /// <summary>Rewrites <paramref name="query"/>'s comparisons; parameter copies are appended to <paramref name="parameters"/>.</summary>
-    public static void Apply(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables, List<object?> parameters)
+    /// <summary>
+    /// Rewrites <paramref name="query"/>'s comparisons, the statement having <paramref name="count"/> parameters; each
+    /// parameter copy is appended to <paramref name="extras"/> and named after the parameters and extras before it.
+    /// </summary>
+    public static void Apply(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables, int count, List<SqlExtraParameter> extras)
     {
         var top = new Scope(null, [], [with(StringComparer.OrdinalIgnoreCase)], tables);
-        var walker = new Walker(parameters, parameters.Count);
+        var walker = new Walker(extras, count);
         foreach (var cte in query.With?.CteTables ?? [])
         {
             // A CTE sees the CTEs before it (WITH RECURSIVE is refused by validation).
@@ -244,7 +248,7 @@ internal static class SqlCoerce
     }
 
     // Visits every node with the scope of the SELECT it is in, coercing the constants of each comparison with a column.
-    private sealed class Walker(List<object?> parameters, int count)
+    private sealed class Walker(List<SqlExtraParameter> extras, int count)
     {
         private readonly HashSet<object> seen = [with(ReferenceEqualityComparer.Instance)];
 
@@ -328,15 +332,10 @@ internal static class SqlCoerce
                 // Each occurrence gets its own copy: the same parameter may meet columns of other affinities.
                 case Expression.LiteralValue { Value: Value.Placeholder { Value: ['$', 'p', .. var digits] } }
                     when int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number >= 1 && number <= count:
-                    var value = Bound(known, parameters[number - 1]);
-                    if (!Equals(value, parameters[number - 1]))
-                    {
-                        parameters.Add(value);
-                        var placeholder = new Expression.LiteralValue(new Value.Placeholder("$p" + parameters.Count.ToString(CultureInfo.InvariantCulture)));
-                        seen.Add(placeholder);
-                        set(placeholder);
-                    }
-
+                    extras.Add(new SqlExtraParameter(number, known));
+                    var placeholder = new Expression.LiteralValue(new Value.Placeholder("$p" + (count + extras.Count).ToString(CultureInfo.InvariantCulture)));
+                    seen.Add(placeholder);
+                    set(placeholder);
                     break;
                 case Expression.LiteralValue { Value: Value.SingleQuotedString or Value.Number } literal when Literal(literal) is { } text:
                     var replaced = Constant(SqlWrite.Apply(known, text));
