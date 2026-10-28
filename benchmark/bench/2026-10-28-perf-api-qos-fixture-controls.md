@@ -59,6 +59,17 @@ file is byte-identical. Publication was rebased onto main
 and auth-timing changes. No new local suite result is claimed for that base.
 CI Release, formatting and required checks remain the merge gate.
 
+CI [run 40693733388](https://github.com/TerraScale/terrascale/actions/runs/40693733388)
+passed required `test` for publication head `cdcc6cf3eab1b42f18d39d618fff8bee8d249568`:
+Release Fast 3,162/3,162, driver 44/44, E2E checks 67/67 and 16/16, all with zero skips.
+Non-blocking Slow had 89 passed, one failed and one skipped; the sealed-shape failure
+is retained in [#838](https://github.com/TerraScale/terrascale/issues/838).
+Before merge, main advanced to `6fcb4a7a4d4f59e4191c750314312c2b13d3394e` (#832).
+Publication was rebased again; the test still matches the qualified source byte for
+byte, but that new base requires its own CI result. No post-rebase passing result is
+claimed. The retained prior Fast log is `/tmp/perf-api-qos-fast-40693733388.log`, SHA-256
+`b73b73d260d3b34bc6f42e7209cfed3071cf2d6296670f55cfe570dc98aa9ac5`.
+
 | Retained delta log | SHA-256 |
 |---|---|
 | `/tmp/qos-quiet-4310e92.log` (build failure) | `cc75be6b0b6f94b8d7656aacdcea900c975e87b82e38b5fb59f4205762f40e55` |
