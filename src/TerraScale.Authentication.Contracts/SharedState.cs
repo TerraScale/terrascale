@@ -32,8 +32,8 @@ public sealed record SigningKey(
     [property: JsonPropertyName("publicMetadataMac"), JsonRequired] string PublicMetadataMac);
 
 /// <summary>An attempt counter, cooldown or lockout notice claim shared by every replica (collection <c>rate_limits</c>).</summary>
-/// <param name="Window">Fixed window number (Unix seconds divided by length), last admission's Unix milliseconds for a cooldown purpose, or the latest claimed lockout deadline's Unix seconds for a notice purpose.</param>
-/// <param name="Used">Attempts admitted in that window; one for a notice claim.</param>
+/// <param name="Window">Fixed window number (Unix seconds divided by length), last admission's Unix milliseconds for a cooldown purpose, the latest claimed lockout deadline's Unix seconds for a notice purpose, or the writer's clock in Unix milliseconds for a token bucket.</param>
+/// <param name="Used">Attempts admitted in that window; one for a notice claim; the outstanding debt in milliseconds at that write for a token bucket.</param>
 public sealed record AttemptBucket(
     [property: JsonPropertyName("window"), JsonRequired] long Window,
     [property: JsonPropertyName("used"), JsonRequired] int Used);

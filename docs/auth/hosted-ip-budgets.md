@@ -16,7 +16,9 @@ configured proxies are trusted, as before.
 ## Token buckets
 
 The IP budgets are token buckets (GCRA) stored in `rate_limits`, one component per region and summed on read like the
-fixed windows:
+fixed windows. Each component holds its region's debt and the writer's clock at the write. A reader drains it only by
+the time it has itself seen pass since then, so a replica whose clock is behind never inflates the debt; one ahead may
+admit up to its skew early, never lock anyone out:
 
 | Budget | Burst | Refill | Purpose |
 |---|---|---|---|

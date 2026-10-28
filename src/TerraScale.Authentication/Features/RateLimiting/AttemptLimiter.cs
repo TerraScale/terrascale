@@ -30,7 +30,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     // that keeps rejecting writes (or a stampede beyond it) reaches the ceiling and fails closed.
     private const int MaxRounds = 64;
 
-    // Milliseconds a token bucket's stored payoff time may lead this replica's clock before it counts as corrupt.
+    // Milliseconds a token bucket's stored write time may lead this replica's clock before it counts as corrupt.
     private const long MaxClockSkew = 24 * 60 * 60 * 1000;
 
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
@@ -95,11 +95,13 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
 
     /// <summary>
     /// Admits one request from a token bucket holding <paramref name="burst"/> tokens that regains one token per
-    /// <paramref name="interval"/> (GCRA). Each region stores the instant its own admissions are paid off; a request is
-    /// admitted while the summed outstanding debt leaves room for one more interval. Refused requests change nothing, so
-    /// retrying while limited never extends the wait. Returns <see langword="null"/> when admitted, otherwise the delay
-    /// after which the debt has drained enough (an upper bound, rounded up to whole seconds, at least one). Uses its
-    /// own purposes, never shared with fixed windows or cooldowns; attacker-chosen subjects must be folded.
+    /// <paramref name="interval"/>. Each region stores its own outstanding debt (one interval per admission) and when
+    /// it wrote it, by its own clock; a reader drains that debt only by the time it has itself seen elapse since then,
+    /// so a replica whose clock is behind never inflates another region's debt. A request is admitted while the summed
+    /// debt leaves room for one more interval. Refused requests change nothing, so retrying while limited never extends
+    /// the wait. Returns <see langword="null"/> when admitted, otherwise the delay after which the debt has drained
+    /// enough (an upper bound, rounded up to whole seconds, at least one). Uses its own purposes, never shared with
+    /// fixed windows or cooldowns; attacker-chosen subjects must be folded.
     /// </summary>
     public async Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
     {
@@ -110,25 +112,30 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         var step = (long)interval.TotalMilliseconds;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(step, nameof(interval));
         var capacity = checked(burst * step);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(capacity, int.MaxValue, nameof(burst));
         var keys = Regions.Select(component => this.BucketKey(purpose, component + ":" + subject)).ToArray();
         for (var attempt = 0; attempt < Math.Min(burst + 2L, MaxRounds); attempt++)
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
             var components = await Task.WhenAll(keys.Select(component => this.store.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
-            if (components.Any(component => component is not null && (component.Document is not { Window: >= 0, Used: 0 }
-                || component.Document.Window > now + capacity + MaxClockSkew)))
+            // Window: the writer's clock at the write, in Unix milliseconds. Used: its debt then, in milliseconds.
+            if (components.Any(component => component is not null && (component.Document is not { Window: >= 0, Used: >= 0 }
+                || component.Document.Used > capacity || component.Document.Window > now + MaxClockSkew)))
             {
-                throw ApiException.Unavailable(new InvalidDataException("A stored token bucket holds an invalid payoff time."));
+                throw ApiException.Unavailable(new InvalidDataException("A stored token bucket holds an invalid write time or debt."));
             }
 
-            var debt = components.Sum(component => component is null ? 0 : Math.Max(0L, component.Document.Window - now));
+            var debts = components.Select(component => component is null ? 0
+                : Math.Max(0L, component.Document.Used - Math.Max(0L, now - component.Document.Window))).ToArray();
+            var debt = debts.Sum();
             if (debt + step > capacity)
             {
                 return TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((debt + step - capacity) / 1000.0)));
             }
 
             var current = components[this.regionIndex];
-            var bucket = new AttemptBucket(Math.Max(current?.Document.Window ?? 0, now) + step, 0);
+            // Stamped with this replica's clock: a faster reader drains it early (admitting up to the skew), never locks out.
+            var bucket = new AttemptBucket(now, (int)(debts[this.regionIndex] + step));
             if (current is null
                 ? await this.store.TryCreateAsync(Collection, instanceId, keys[this.regionIndex], bucket, cancellationToken)
                 : await this.store.TryReplaceAsync(Collection, instanceId, keys[this.regionIndex], bucket, current.Version, cancellationToken))
