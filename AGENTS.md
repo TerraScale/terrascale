@@ -10,6 +10,13 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - Prefix every local build, test, lint, benchmark, dev server and watcher with `nice -n 19`, e.g. `nice -n 19 npm run build`.
 - In CI (`CI=true`), use full priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts or Containerfiles.
 
+## Pull requests
+
+- Every PR that changes what a reader sees (pages, navigation, styles, components, generated pricing/limits pages) MUST embed before/after screenshots of each changed page in the PR body: desktop and mobile, each in light and dark mode, with descriptive alt text. For shared UI changes, capture every affected page.
+- Capture the real built site, using `nice -n 19 npm run build` and `nice -n 19 npm run preview`, or the deployed Workers preview. Capture the base revision before editing and the PR revision after; label the page, revision, viewport and theme.
+- Upload PNGs with `node scripts/upload-pr-images.mjs <PR-number> <file.png> [more.png ...]`; paste its Markdown into the PR body. It commits only images to the dedicated orphan `pr-assets` branch and prints public raw URLs. Never commit screenshots to main or the PR branch. Use distinct filenames for each page/revision/viewport/theme.
+- Text-only, CI and repository-file PRs without a rendered change say `No visual change` in the PR body.
+
 ## Cloudflare: `cf` CLI
 
 - Use the `cf` CLI (npm package `cf`, v1.0.0-beta.10) for DNS, zones, origin CA and client certificates, SSL/TLS, cache, rules, analytics and API tokens. Workers deploys keep using `wrangler`.
