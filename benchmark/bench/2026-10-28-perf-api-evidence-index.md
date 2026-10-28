@@ -13,6 +13,7 @@ and includes instrumentation; process CPU/allocations also include client/backgr
 | .NET SDK transport | c=16 SDK changed from H1/16 connections to H2/one connection; quiet SDK/raw-H2 p50 ratios 0.980 at c1 and 0.967 at c16 | [HTTPS control](2026-10-28-perf-api-https-merged.md); anonymous JWKS, overlapping latency ranges, no consistent speedup |
 | Claims candidate | Rejected: lower allocation but medium c1 p50/CPU regression | [All 32 cells](2026-10-28-perf-api-claims.md), 24 eligible; unapplied patch only |
 | Token-hash candidate | Rejected: lower allocation but mixed/regressing latency | [All 56 cells](2026-10-28-perf-api-token-hash.md), 24 eligible; unapplied patch only |
+| CPU investigation | 87,022 owned-process CPU events with stacks; usage accounting ranks prominently among selected frames | [Diagnostic ranking](2026-10-28-perf-api-cpu-ranking.md); one perturbed capture, no latency or method-self-CPU claim |
 | Regional Go attempt | Rejected: empty H2 window; no SDK matrix completed | [Live rejection and cleanup history](2026-10-28-perf-api-go-live-rejected.md) |
 | Node/Python/Rust runners | Offline controls qualified; no accepted authenticated regional parity result | [Node](2026-10-28-perf-api-node-window.md), [Python](2026-10-28-perf-api-python-lifecycle.md), [Rust](2026-10-28-rust-api-parity-output.md); Rust SDK transport observations remain null |
 
