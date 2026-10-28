@@ -1022,10 +1022,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		fmt.Fprintf(out, "Created %s (%s)\n", args[0], m.ID)
 		return nil
 	case "db delete":
-		// TerraBase deletes only unreplicated databases, and new ones replicate.
-		if _, err := db.SetRegions(ctx, []string{}); err != nil {
-			return err
-		}
+		// DELETE purges every replica; clearing placement first would stop writes if DELETE then failed.
 		if err := db.Delete(ctx); err != nil {
 			return err
 		}
