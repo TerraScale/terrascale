@@ -60,20 +60,6 @@ class IndexRequest:
 
 
 @dataclass(frozen=True)
-class AutoIndexPolicy:
-    """Published collection resource state, not an SDK feature configuration."""
-
-    collection: str
-    enabled: bool
-
-    @classmethod
-    def from_json(cls, b: dict[str, Any]) -> AutoIndexPolicy:
-        if not isinstance(b["enabled"], bool):
-            raise ValueError("expected a policy boolean")
-        return cls(_text(b["collection"]), b["enabled"])
-
-
-@dataclass(frozen=True)
 class IndexRecommendation:
     id: str
     collection: str
@@ -112,12 +98,6 @@ class _Indexes(_Requests):
             raise ValueError("index deletion must have an empty response")
         return self._call("DELETE", ["indexes", name(index, "index")], unexpected_body, statuses=(204,))
 
-    def _policy(self, method: str, collection: str, enabled: bool | None = None) -> Call:
-        if method == "PUT" and not isinstance(enabled, bool):
-            raise ValueError("the published policy requires a boolean")
-        return self._call(method, ["auto-index", name(collection, "collection")], AutoIndexPolicy.from_json,
-                          body=None if method == "GET" else {"enabled": enabled})
-
     def _recommendations(self) -> Call:
         return self._call("GET", ["index-recommendations"],
                           lambda b: [IndexRecommendation.from_json(x) for x in _array(b["items"])])
@@ -143,12 +123,6 @@ class DatabaseIndexes(_Indexes):
     def drop_index(self, index: str) -> None:
         _send(self._client, self._drop(index))
 
-    def get_auto_index_policy(self, collection: str) -> AutoIndexPolicy:
-        return _send(self._client, self._policy("GET", collection))
-
-    def set_auto_index_policy(self, collection: str, enabled: bool) -> AutoIndexPolicy:
-        return _send(self._client, self._policy("PUT", collection, enabled))
-
     def list_index_recommendations(self) -> list[IndexRecommendation]:
         return _send(self._client, self._recommendations())
 
@@ -171,12 +145,6 @@ class AsyncDatabaseIndexes(_Indexes):
 
     async def drop_index(self, index: str) -> None:
         await _asend(self._client, self._drop(index))
-
-    async def get_auto_index_policy(self, collection: str) -> AutoIndexPolicy:
-        return await _asend(self._client, self._policy("GET", collection))
-
-    async def set_auto_index_policy(self, collection: str, enabled: bool) -> AutoIndexPolicy:
-        return await _asend(self._client, self._policy("PUT", collection, enabled))
 
     async def list_index_recommendations(self) -> list[IndexRecommendation]:
         return await _asend(self._client, self._recommendations())
