@@ -139,7 +139,7 @@ func runParity(args []string) (failure error) {
 	}
 	catalog, err := discovery.ListRegions(ctx)
 	if err != nil {
-		return errors.New("parity serving-region discovery failed")
+		return fmt.Errorf("parity serving-region discovery failed: %s", status(err))
 	}
 	for _, required := range []string{"gru", "sjc", "fra"} {
 		if !slices.Contains(catalog.Regions, required) {
@@ -175,10 +175,10 @@ func runParity(args []string) (failure error) {
 		}
 	}()
 	if _, err := database.CreateIn(ctx, v1.Placement{HomeRegion: catalog.Regions[0], AllRegions: true}); err != nil {
-		return errors.New("parity database create failed")
+		return fmt.Errorf("parity database create failed: %s", status(err))
 	}
 	if _, err := database.CreateCollection(ctx, "bench"); err != nil {
-		return errors.New("parity collection create failed")
+		return fmt.Errorf("parity collection create failed: %s", status(err))
 	}
 	documents := make(map[int]parityDocument)
 	for _, size := range []int{256, 4096} {
@@ -186,7 +186,7 @@ func runParity(args []string) (failure error) {
 		id := v1.NewID()
 		written, err := database.Collection("bench").Put(ctx, id, body)
 		if err != nil {
-			return errors.New("parity seed write failed")
+			return fmt.Errorf("parity seed write failed: %s", status(err))
 		}
 		documents[size] = parityDocument{id: id, version: written.Version, body: body}
 	}
@@ -236,7 +236,7 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 					_, err = source.Token(ctx)
 					if err != nil {
 						base.CloseIdleConnections()
-						return errors.New("parity token refresh failed")
+						return fmt.Errorf("parity token refresh failed: %s", status(err))
 					}
 					var operationFailures, maxOperationUS atomic.Int64
 					op := func(call context.Context, _, _ int) string {
