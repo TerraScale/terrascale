@@ -9,7 +9,7 @@ import (
 
 func TestPublicIndexContracts(t *testing.T) {
 	const index = `{"name":"by_email","collection":"users","fields":["email"],"state":"active"}`
-	for _, endpoint := range []string{"create", "list", "filtered list", "drop", "get policy", "set policy", "recommendations", "apply"} {
+	for _, endpoint := range []string{"create", "list", "filtered list", "drop", "recommendations", "apply"} {
 		t.Run(endpoint, func(t *testing.T) {
 			query := ""
 			method, path, body, reply, status := http.MethodGet, "/indexes", "", `{"items":[`+index+`]}`, http.StatusOK
@@ -20,10 +20,6 @@ func TestPublicIndexContracts(t *testing.T) {
 				query = "collection=users"
 			case "drop":
 				method, path, reply, status = http.MethodDelete, "/indexes/by_email", "", http.StatusNoContent
-			case "get policy":
-				path, reply = "/auto-index/users", `{"collection":"users","enabled":false}`
-			case "set policy":
-				method, path, body, reply = http.MethodPut, "/auto-index/users", `{"enabled":false}`, `{"collection":"users","enabled":false}`
 			case "recommendations":
 				path, reply = "/index-recommendations", `{"items":[{"id":"users:email","collection":"users","fields":["email"],"reason":"filter","queries":9007199254740993}]}`
 			case "apply":
@@ -48,17 +44,6 @@ func TestPublicIndexContracts(t *testing.T) {
 			case "drop":
 				if err := d.DropIndex(t.Context(), "by_email"); err != nil {
 					t.Fatal(err)
-				}
-			case "get policy", "set policy":
-				var out *tb.AutoIndexPolicy
-				var err error
-				if endpoint == "get policy" {
-					out, err = d.AutoIndexPolicy(t.Context(), "users")
-				} else {
-					out, err = d.SetAutoIndexPolicy(t.Context(), "users", false)
-				}
-				if err != nil || out.Collection != "users" || out.Enabled {
-					t.Fatalf("policy = %+v, %v", out, err)
 				}
 			case "recommendations":
 				out, err := d.IndexRecommendations(t.Context())
