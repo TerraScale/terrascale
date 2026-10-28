@@ -100,7 +100,7 @@ CI is the gate: no local test/check run is required before pushing or opening a 
 ## Pull Requests
 
 - Open a PR into **`main`** when the work is ready for review. Keep it focused, with a concise change summary and the validation performed.
-- Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding whichever account authored the PR.
+- Request reviews from **`mariogk`**, excluding whichever account authored the PR.
 - Never merge while required checks are pending or failing.
 - Visual changes: attach several before/after screenshots of the affected layouts and states (mobile and desktop when both apply). Capture them from the real implementation, never mockups. Upload them as PR attachments; do not commit images just for PR documentation.
 - Before finishing, verify the target branch, title, reviewers, attachments, and current checks. Send the PR URL with the checks that passed and any unresolved blockers.
@@ -111,6 +111,6 @@ CI is the gate: no local test/check run is required before pushing or opening a 
 - Every region always serves. A region starts serving as soon as its machines boot, with no per-region enable step.
 - Production secrets live in the platform secret store and are never copied by hand. Vendor-issued keys (such as Stripe and Cloudflare) are set the same way.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores, and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration, and ts-reviewer requests changes. Only unavoidable third-party names get a narrow allowance, with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names get a narrow allowance, with a one-line reason.
 
 This is the operating contract, not evidence that every runtime flow has shipped; see [README.md](README.md) for SDK and qualification gaps. It requires automatic public endpoint discovery; production publication and Cloudflare credentials come from the platform secret store. Existing production switches are inventoried for their owning implementation work. Documentation must not invent APIs or bypass authorization, tenant scope, registered callbacks, payment consent, or safety guards.
