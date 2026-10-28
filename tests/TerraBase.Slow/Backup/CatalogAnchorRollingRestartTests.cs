@@ -144,9 +144,9 @@ public sealed class CatalogAnchorRollingRestartTests
                 TestContext.Current!.OutputWriter.WriteLine($"WriterHold region={meters[hold.Meter]} released={hold.Released:HH:mm:ss.fff} holder={hold.Holder} at={hold.At} seconds={hold.Seconds:F3}");
             }
 
-            foreach (var anchor in anchors.Where(anchor => !anchor.Held || anchor.Took >= Within))
+            foreach (var (region, started, took, held) in anchors.Where(anchor => !anchor.Held || anchor.Took >= Within))
             {
-                TestContext.Current!.OutputWriter.WriteLine($"LateAnchor region={anchor.Region} started={anchor.Started:HH:mm:ss.fff} seconds={anchor.Took.TotalSeconds:F3} held={anchor.Held}");
+                TestContext.Current!.OutputWriter.WriteLine($"LateAnchor region={region} started={started:HH:mm:ss.fff} seconds={took.TotalSeconds:F3} held={held}");
             }
         }
 
