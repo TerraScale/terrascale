@@ -89,7 +89,8 @@ Artifacts remain in `go-parity-live-20261028-b/` beside run a; analysis copies a
 Initial account cleanup timed out. One resumed cleanup hit a transport failure.
 The authoritative receipt then returned 202 and the private recovery file retained
 continuation authorization. A subsequent authorized continuation returned 202;
-its bounded status polling is still running. Account/inbox cleanup is incomplete.
+its bounded status polling also timed out. Retries stopped, and the private recovery
+material and synthetic inbox remain retained. Account/inbox cleanup is incomplete.
 
 ## Artifacts and reproduction
 
