@@ -43,6 +43,8 @@ namespace TraceAttribution
             var modules = new Dictionary<string, Tally>(StringComparer.Ordinal);
             var inclusive = new Dictionary<string, Tally>(StringComparer.Ordinal);
             var types = new Tally();
+            var sizes = new Tally();
+            var ticks = new Tally();
             var contention = new Tally();
             var exceptions = new Tally();
             var counters = new Dictionary<string, List<(double Time, double Value)>>(StringComparer.Ordinal);
@@ -51,7 +53,7 @@ namespace TraceAttribution
             var foreign = 0L;
             var unresolved = 0L;
             var instrumented = 0.0;
-            double first = double.MaxValue, last = 0, contentionNs = 0, promoted0 = 0;
+            double first = double.MaxValue, last = 0, contentionNs = 0, promoted0 = 0, gen1 = 0, gen2 = 0;
             var suspendAt = -1.0;
             var suspendForGc = false;
             var gcPauses = new List<double>();
@@ -89,6 +91,8 @@ namespace TraceAttribution
                     else if (name == "GC/HeapStats")
                     {
                         promoted0 += Convert.ToDouble(item.PayloadByName("TotalPromotedSize0"), CultureInfo.InvariantCulture);
+                        gen1 += Convert.ToDouble(item.PayloadByName("GenerationSize1"), CultureInfo.InvariantCulture);
+                        gen2 += Convert.ToDouble(item.PayloadByName("GenerationSize2"), CultureInfo.InvariantCulture);
                     }
                     else if (name == "GC/Start")
                     {
@@ -151,6 +155,7 @@ namespace TraceAttribution
                 Of(entries, sample.Role).Add(sample.Entry, weight, managed);
                 Of(owners, sample.Role).Add(sample.Owner, weight, managed);
                 Of(owners, sample.Role + " | leaf").Add(sample.Owner + " | " + sample.Leaf, weight, managed);
+                Of(owners, sample.Role + " | caller").Add(sample.Owner + " <- " + sample.Caller, weight, managed);
                 Of(leaves, sample.Role).Add(sample.Leaf, weight, managed);
                 Of(modules, sample.Role).Add(sample.LeafModule, weight, managed);
                 foreach (var frame in sample.Inclusive)
@@ -160,7 +165,10 @@ namespace TraceAttribution
 
                 if (!cpu)
                 {
-                    types.Add(sample.Role + " | " + (item.PayloadByName("TypeName") as string ?? "?"), weight, true);
+                    var type = sample.Role + " | " + (item.PayloadByName("TypeName") as string ?? "?");
+                    types.Add(type, weight, true);
+                    sizes.Add(type, Convert.ToDouble(item.PayloadByName("ObjectSize"), CultureInfo.InvariantCulture), true);
+                    ticks.Add(type, 1, true);
                 }
             }
 
@@ -181,7 +189,7 @@ namespace TraceAttribution
             Console.WriteLine(FormattableString.Invariant(
                 $"# requests/s={rate:F0} requests~{requests:F0} weight={roles.Total:F0} samples/thread-s={perSecond:F1} unresolved_stacks={unresolved}"));
             Console.WriteLine(FormattableString.Invariant(
-                $"# gc0/1/2={gcs[0]}/{gcs[1]}/{gcs[2]} promoted0_avg_B={promoted0 / Math.Max(1, gcs.Sum()):F0} contention_ms={contentionNs / 1e6:F2} instrumented_share={instrumented / roles.Total:P2}"));
+                $"# gc0/1/2={gcs[0]}/{gcs[1]}/{gcs[2]} promoted0_avg_B={promoted0 / Math.Max(1, gcs.Sum()):F0} gen1_avg_B={gen1 / Math.Max(1, gcs.Sum()):F0} gen2_avg_B={gen2 / Math.Max(1, gcs.Sum()):F0} contention_ms={contentionNs / 1e6:F2} instrumented_share={instrumented / roles.Total:P2}"));
             Console.WriteLine(Pauses("gc_pause", gcPauses, span));
             Console.WriteLine(Pauses("gc_suspending", gcSuspending, span));
             Console.WriteLine(Pauses("other_pause", otherPauses, span));
@@ -201,6 +209,7 @@ namespace TraceAttribution
                 Print($"{role}: entry (root-most frame of the role)", entries[role], total, depth, unit, per);
                 Print($"{role}: owner (deepest application frame)", owners[role], total, depth, unit, per);
                 Print($"{role}: owner | leaf", owners[role + " | leaf"], total, depth, unit, per);
+                Print($"{role}: owner <- calling application frame", owners[role + " | caller"], total, depth, unit, per);
                 Print($"{role}: leaf method", leaves[role], total, depth, unit, per);
                 Print($"{role}: leaf module", modules[role], total, 15, unit, per);
                 if (role is "server" or "client")
@@ -212,6 +221,13 @@ namespace TraceAttribution
             if (!cpu)
             {
                 Print("Role | allocated type", types, roles.Total, 40, unit, per);
+                Console.WriteLine();
+                Console.WriteLine("## Mean sampled object size of the top types (B)");
+                Console.WriteLine();
+                foreach (var (type, _, _) in types.Top(40))
+                {
+                    Console.WriteLine(FormattableString.Invariant($"| {type} | {sizes.Weight(type) / ticks.Weight(type):F0} |"));
+                }
             }
 
             Print("Contention start: role | owner (count)", contention, contention.Total, 15, 1, "count");
@@ -281,10 +297,12 @@ namespace TraceAttribution
             var app = frames.FindIndex(frame => IsApplication(frame.Module, frame.Name));
             var framework = frames.FindIndex(frame => IsServer(frame.Module, frame.Name) || IsClient(frame.Module, frame.Name));
             var owner = app >= 0 ? Short(frames[app].Name) : framework >= 0 ? "[framework] " + Short(frames[framework].Name) : "(BCL/runtime only)";
+            var above = app >= 0 ? frames.FindIndex(app + 1, frame => IsApplication(frame.Module, frame.Name) && Short(frame.Name) != owner) : -1;
+            var caller = above >= 0 ? Short(frames[above].Name) : "(none)";
             var leaf = frames.Count == 0 ? "(no managed frames)" : Short(frames[0].Name);
             string[] inclusive = [.. frames.Select(frame => Short(frame.Name)).Distinct(StringComparer.Ordinal)];
             var attributed = new Attributed(
-                role, entry, owner, leaf, frames.Count == 0 ? "(none)" : frames[0].Module, inclusive,
+                role, entry, owner, caller, leaf, frames.Count == 0 ? "(none)" : frames[0].Module, inclusive,
                 frames.Exists(frame => IsInstrumentation(frame.Name)), frames.Exists(frame => frame.Name.Length == 0));
             cache[index] = attributed;
             return attributed;
@@ -389,7 +407,7 @@ namespace TraceAttribution
     }
 
     /// <summary>One stack's classification, cached by its call-stack index.</summary>
-    internal sealed record Attributed(string Role, string Entry, string Owner, string Leaf, string LeafModule, IReadOnlyList<string> Inclusive, bool Instrumented, bool Unresolved);
+    internal sealed record Attributed(string Role, string Entry, string Owner, string Caller, string Leaf, string LeafModule, IReadOnlyList<string> Inclusive, bool Instrumented, bool Unresolved);
 
     /// <summary>Weights per key, with the managed (running managed code) part of each.</summary>
     internal sealed class Tally
