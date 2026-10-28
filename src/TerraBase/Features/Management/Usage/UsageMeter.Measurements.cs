@@ -85,15 +85,29 @@ internal sealed partial class UsageMeter
             "OPTIONS" => "options",
             _ => "other",
         };
+        BufferRequest(database, Dimension("requests", kind), status >= 400 ? 1 : 0, LatencyIndex(elapsed),
+            Dimension("client_bytes", "received"), received, Dimension("client_bytes", "sent"), sent);
+        stats.Request(database, elapsed, status >= 400);
+    }
+
+    public void RecordStatement(TenantContext database, string protocol, bool failed, TimeSpan elapsed)
+    {
+        RequestLogOperations.Current.Value?.Statement(database, failed);
+        if (Dimension("statements", protocol) is { } dimension)
+        {
+            Buffer(database, null, dimension, 1, failed ? 1 : 0, LatencyIndex(elapsed));
+        }
+    }
+
+    private static int LatencyIndex(TimeSpan elapsed)
+    {
         var index = 0;
         while (index < UsageReading.LatencyBounds.Count - 1 && elapsed.TotalMilliseconds > UsageReading.LatencyBounds[index])
         {
             index++;
         }
 
-        BufferRequest(database, Dimension("requests", kind), status >= 400 ? 1 : 0, index,
-            Dimension("client_bytes", "received"), received, Dimension("client_bytes", "sent"), sent);
-        stats.Request(database, elapsed, status >= 400);
+        return index;
     }
 
     public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null)
@@ -228,6 +242,7 @@ internal sealed partial class UsageMeter
         {
             "ops" => dimension.PeerRegion == "" && dimension.Kind is "read" or "put" or "patch" or "delete",
             "requests" => dimension.PeerRegion == "" && dimension.Kind is "get" or "post" or "put" or "patch" or "delete" or "head" or "options" or "other",
+            "statements" => dimension.PeerRegion == "" && dimension.Kind is "postgres" or "hrana",
             "client_bytes" => dimension.PeerRegion == "" && dimension.Kind is "sent" or "received",
             "storage_bytes" => dimension.PeerRegion == "" && dimension.Kind == "sample",
             "replication_bytes" => ValidRegion(dimension.PeerRegion) && dimension.Kind is "delta:sent" or "delta:received"
