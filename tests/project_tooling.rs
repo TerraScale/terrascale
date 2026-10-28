@@ -27,8 +27,6 @@ async fn schema_and_index_routes_preserve_every_producer_field() {
         reply(200, &index_list),
         reply(201, INDEX),
         reply(204, ""),
-        reply(200, r#"{"collection":"items","enabled":true}"#),
-        reply(200, r#"{"collection":"items","enabled":false}"#),
         reply(200, RECOMMENDATIONS),
         reply(201, &applied),
         reply(200, DECLARED),
@@ -66,16 +64,6 @@ async fn schema_and_index_routes_preserve_every_producer_field() {
     );
     db.drop_index("items_score").await.unwrap();
     assert_eq!(
-        db.get_auto_index_policy::<Value>("items").await.unwrap(),
-        json!({"collection":"items","enabled":true})
-    );
-    assert_eq!(
-        db.set_auto_index_policy::<Value>("items", &json!({"enabled":false}))
-            .await
-            .unwrap(),
-        json!({"collection":"items","enabled":false})
-    );
-    assert_eq!(
         db.list_index_recommendations::<Value>().await.unwrap(),
         decoded(RECOMMENDATIONS)
     );
@@ -111,14 +99,12 @@ async fn schema_and_index_routes_preserve_every_producer_field() {
         (3, "GET", "indexes?collection=items"),
         (4, "POST", "indexes"),
         (5, "DELETE", "indexes/items_score"),
-        (6, "GET", "auto-index/items"),
-        (7, "PUT", "auto-index/items"),
-        (8, "GET", "index-recommendations"),
-        (9, "POST", "index-recommendations/items:score/apply"),
-        (10, "GET", "collections/items/schema"),
-        (11, "PUT", "collections/items/schema"),
-        (12, "DELETE", "collections/items/schema"),
-        (13, "POST", "index-recommendations/items:score/apply"),
+        (6, "GET", "index-recommendations"),
+        (7, "POST", "index-recommendations/items:score/apply"),
+        (8, "GET", "collections/items/schema"),
+        (9, "PUT", "collections/items/schema"),
+        (10, "DELETE", "collections/items/schema"),
+        (11, "POST", "index-recommendations/items:score/apply"),
     ] {
         assert_eq!(requests[i].method, method);
         assert_eq!(
@@ -131,8 +117,7 @@ async fn schema_and_index_routes_preserve_every_producer_field() {
     for (i, body) in [
         (2, request),
         (4, index_request),
-        (7, json!({"enabled":false})),
-        (11, json!({"type":"object"})),
+        (9, json!({"type":"object"})),
     ] {
         assert_eq!(
             serde_json::from_slice::<Value>(&requests[i].body).unwrap(),
