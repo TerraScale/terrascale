@@ -127,6 +127,7 @@ internal static class TerraScaleAuthErrors
         "email_domain_mismatch",
         "email_not_verified",
         "email_taken",
+        "email_change_denied",
         "event_in_progress",
         "expired_token",
         "factor_changed",

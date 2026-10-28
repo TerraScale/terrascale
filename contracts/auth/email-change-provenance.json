@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "pull_request": "https://github.com/TerraScale/terrascale/pull/822",
+  "producer_revision": "f04271af89cbfdca25ba05bcf670bd17629cc0a3",
+  "qualification": "Pending producer; HTTP fakes only. Producer merge, package release and live qualification remain separate gates.",
+  "sources_sha256": {
+    "docs/auth/email-change.md": "3ca323b47fa2391ce9882deec7b803191f7fb8b431945ee391220fae373f2a1a",
+    "docs/auth/email-change.openapi.yaml": "af6280df914e72afb2773034c7925ea76a73a9af8169bf4ec46914985eff27e1",
+    "docs/auth/step-up-proof.md": "4dc7c0c00b2eabfa6761fd87366894854adcee5c711304444d6a26d9b734cbcf"
+  }
+}
