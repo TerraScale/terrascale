@@ -24,6 +24,8 @@ public sealed class TokenWriteBudgetTests(TerraBaseFixture fixture)
         await Assert.That(refreshed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         // Redemption, then the access, refresh (create and reference payload) and identity token entries.
         await Assert.That(writes.Count).IsEqualTo(5);
+        // OpenIddict looks the client up six to eight times per request; storage serves it once.
+        await Assert.That(writes.ClientReads).IsLessThanOrEqualTo(1);
 
         var issued = (await oidc.Database.ListDocumentsAsync("oidc_tokens", limit: 1000)).Items.Select(item => item.Document)
             .Where(token => token.GetProperty("status").GetString() == "valid").ToList();
@@ -39,14 +41,26 @@ public sealed class TokenWriteBudgetTests(TerraBaseFixture fixture)
     private sealed class CountingWrites : DelegatingHandler
     {
         private int count;
+        private int clientReads;
 
         public int Count => Volatile.Read(ref this.count);
 
-        public void Reset() => Volatile.Write(ref this.count, 0);
+        public int ClientReads => Volatile.Read(ref this.clientReads);
+
+        public void Reset()
+        {
+            Volatile.Write(ref this.count, 0);
+            Volatile.Write(ref this.clientReads, 0);
+        }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Get && path.Contains("/collections/oidc_applications/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref this.clientReads);
+            }
+
             if (request.Method != HttpMethod.Get && !path.EndsWith("/query", StringComparison.Ordinal)
                 && (path.Contains("/collections/oidc_", StringComparison.Ordinal)
                     || (path.EndsWith("/transactions", StringComparison.Ordinal) && request.Content is not null

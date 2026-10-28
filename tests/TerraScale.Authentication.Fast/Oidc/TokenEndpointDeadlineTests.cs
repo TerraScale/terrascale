@@ -53,6 +53,47 @@ public sealed class TokenEndpointDeadlineTests(TerraBaseFixture fixture)
         }
     }
 
+    [Test]
+    public async Task A_hosted_page_waiting_on_stalled_storage_answers_503_at_the_deadline()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var stall = new StalledStorage { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var http = new HttpClient(stall);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
+
+        stall.Armed = true;
+        var stalled = oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in", new() { ["email"] = "stalled@example.test" });
+        await stall.Held.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(stalled.IsCompleted).IsFalse();
+        clock.Advance(TokenEndpointDeadline.Deadline);
+        using var unavailable = await stalled.WaitAsync(TimeSpan.FromSeconds(5));
+        stall.Armed = false;
+        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(unavailable.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(2));
+        await Assert.That(await OidcHarness.EnvelopeCodeAsync(unavailable)).IsEqualTo("temporarily_unavailable");
+    }
+
+    // Holds rate-limit calls (the sign-in POST's first storage work; background workers never make them) while armed,
+    // until their caller gives up.
+    private sealed class StalledStorage : DelegatingHandler
+    {
+        public volatile bool Armed;
+
+        public TaskCompletionSource Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (!this.Armed || !request.RequestUri!.AbsolutePath.Contains("/collections/rate_limits/", StringComparison.Ordinal))
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            this.Held.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("An infinite delay ended without cancellation.");
+        }
+    }
+
     // Holds the next refresh-token redemption until its caller gives up, then sends it once the test releases it: a write
     // TerraBase received before the deadline and applied after it.
     private sealed class StalledRedemption : DelegatingHandler

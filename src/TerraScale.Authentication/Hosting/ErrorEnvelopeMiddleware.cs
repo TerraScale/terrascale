@@ -1,4 +1,5 @@
 using System.Globalization;
+using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
@@ -37,6 +38,13 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
         {
             // A conditional write lost to a concurrent change, or a retried write found its own earlier commit
             // (QA round 4: the token endpoint answered 500 and the dashboard sign-in bounced to sign-in).
+            var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
+            Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
+            await WriteAsync(context, error);
+        }
+        catch (OpenIddictExceptions.ConcurrencyException conflict) when (!context.Response.HasStarted)
+        {
+            // A store's conditional write lost inside an OpenIddict flow: the same race as above, never a 500.
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);

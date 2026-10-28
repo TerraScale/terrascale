@@ -6,7 +6,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 namespace TerraScale.Authentication.Features.Oidc;
 
 /// <summary>
-/// Bounds every token POST, the platform's and each project tenant's, to <see cref="Deadline"/>. The request's
+/// Bounds every token POST, the platform's and each project tenant's, and every hosted <c>/ui</c> request to <see cref="Deadline"/>. The request's
 /// <see cref="HttpContext.RequestAborted"/> is cancelled then; the rate limiter, OpenIddict's handlers, the stores and the
 /// ts-dotnet client all observe it, so stalled storage answers 503 temporarily_unavailable with Retry-After instead of
 /// holding the caller. A write the deadline abandoned may still commit afterwards. That cannot rotate twice:
@@ -15,7 +15,7 @@ namespace TerraScale.Authentication.Features.Oidc;
 /// </summary>
 public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clock, ILogger<TokenEndpointDeadline> logger)
 {
-    /// <summary>How long a token request may wait on storage.</summary>
+    /// <summary>How long a token or hosted-page request may wait on storage.</summary>
     public static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     private const string TokenPath = "/" + OidcIssuer.Slug + "/oauth/token";
@@ -25,10 +25,14 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
     {
         ArgumentNullException.ThrowIfNull(context);
         // OpenIddict treats casing and a single trailing slash as equivalent endpoint paths.
-        if (!HttpMethods.IsPost(context.Request.Method)
-            || !(context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
+        var token = HttpMethods.IsPost(context.Request.Method)
+            && (context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
-                || TokenRateLimitMiddleware.IsProjectTokenPath(context.Request.Path)))
+                || TokenRateLimitMiddleware.IsProjectTokenPath(context.Request.Path));
+        // Hosted pages (sign-in, sign-up, reset, device, step-up) wait on storage the same way; without a deadline a
+        // stalled TerraBase held the browser for the client's 30 s request timeout per call.
+        var hosted = !token && context.Request.Path.StartsWithSegments("/ui", StringComparison.OrdinalIgnoreCase);
+        if (!token && !hosted)
         {
             await next(context);
             return;
@@ -56,13 +60,22 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
             context.RequestAborted = aborted;
         }
 
-        logger.ZLogWarning($"Token request {context.TraceIdentifier:@RequestId} for tenant {context.Request.Path.Value!.Split('/')[1]:@Tenant} did not complete within {Deadline.TotalSeconds:@Seconds} seconds; answered 503");
+        var segments = context.Request.Path.Value!.Split('/');
+        var tenant = segments.Length > (token ? 1 : 2) ? segments[token ? 1 : 2] : string.Empty;
+        logger.ZLogWarning($"{(token ? "Token" : "Hosted page"):@Kind} request {context.TraceIdentifier:@RequestId} for {tenant:@Tenant} did not complete within {Deadline.TotalSeconds:@Seconds} seconds; answered 503");
         context.Response.Clear();
         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.RetryAfter = "2";
-        await context.Response.WriteAsJsonAsync(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request did not complete in time; retry it."),
-            OidcJson.Default.OAuthErrorBody, cancellationToken: aborted);
+        if (token)
+        {
+            await context.Response.WriteAsJsonAsync(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request did not complete in time; retry it."),
+                OidcJson.Default.OAuthErrorBody, cancellationToken: aborted);
+        }
+        else
+        {
+            await context.Response.WriteAsJsonAsync(ApiException.Unavailable().ToBody(), cancellationToken: aborted);
+        }
 
         // A started response cannot become a 503; the error envelope aborts the connection instead.
         bool Expired() => deadline.IsCancellationRequested && !aborted.IsCancellationRequested && !context.Response.HasStarted;
