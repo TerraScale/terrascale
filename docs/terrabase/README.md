@@ -163,6 +163,7 @@ Import NDJSON (an export, or mongoexport-style documents) through the import pip
 Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
 SQL indexes and batch-write costs: [indexes](sql/indexes.md).
 SQL point reads and writes by a TEXT primary key, served by the id index: [key point reads](sql/key-point-reads.md).
+Repeated SQL reads reuse their parse and compilation: [read cache](sql/read-cache.md).
 The read-only SQLite catalog (sqlite_master, catalog pragmas): [catalog](sql/catalog.md).
 
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything

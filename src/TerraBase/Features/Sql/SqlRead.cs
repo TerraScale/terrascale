@@ -17,7 +17,29 @@ internal sealed record ReadSql(Query Query, IReadOnlyList<string> Tables) : Pars
 
     /// <summary>Catalog relations it reads (<see cref="SqlCatalog.Relations"/>), defined as CTEs when it runs.</summary>
     public IReadOnlyList<string> Catalog { get; init; } = [];
+
+    /// <summary>Whether it holds a subquery anywhere: in FROM, or an expression's (<c>EXISTS</c>, <c>IN (…)</c>, scalar).</summary>
+    public bool HasSubquery { get; init; }
+
+    /// <summary>
+    /// The client text this tree was parsed from when <see cref="SqlReadCache"/> shares it between requests. Compiling rewrites
+    /// a tree in place, so a shared read is never compiled itself: its executor compiles its own parse of this text.
+    /// </summary>
+    public string? Shared { get; init; }
 }
+
+/// <summary>What <see cref="SqlRead.Compile"/> derives from a read and its tables' definitions: its program without arguments.</summary>
+/// <param name="Tables">The program's tables.</param>
+/// <param name="Ctes">The statement's own common table expressions, or null.</param>
+/// <param name="Statement">The statement the engine runs.</param>
+/// <param name="Extras">The parameters bound after the statement's own, in order.</param>
+internal sealed record SqlReadTemplate(IReadOnlyList<SqlProgramTable> Tables, string? Ctes, string Statement, IReadOnlyList<SqlExtraParameter> Extras);
+
+/// <summary>
+/// A parameter a program binds after the statement's own: <paramref name="Literal"/> (a point read's key written as a
+/// literal), or the statement's parameter <paramref name="Source"/> (1-based) converted by <paramref name="Affinity"/>.
+/// </summary>
+internal readonly record struct SqlExtraParameter(int Source, SqlAffinity Affinity, string? Literal = null);
 
 /// <summary>Parameter numbering, read validation and the engine program of a read.</summary>
 internal static class SqlRead
@@ -171,6 +193,7 @@ internal static class SqlRead
         return new ReadSql(query, [.. tables.Where(table => !SqlCatalog.Relations.ContainsKey(table))])
         {
             Catalog = [.. tables.Where(SqlCatalog.Relations.ContainsKey)],
+            HasSubquery = validator.Subqueries,
         };
     }
 
@@ -284,30 +307,46 @@ internal static class SqlRead
         }
     }
 
-    /// <summary>
-    /// The engine program for <paramref name="read"/> over <paramref name="tables"/>; when <paramref name="describe"/>, a
-    /// program that returns its columns and no rows.
-    /// </summary>
-    public static SqlProgram Program(
-        ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe, string? keyed = null)
+    /// <summary>The program of <paramref name="template"/> with <paramref name="parameters"/> converted and bound.</summary>
+    public static SqlProgram Bind(SqlReadTemplate template, IReadOnlyList<object?> parameters)
     {
-        var key = KeyParameter(read, tables, parameters.Count, out var keyLiteral);
-        SqlGuard.Apply(read.Query, tables);
         var bound = parameters.ToList();
+        foreach (var extra in template.Extras)
+        {
+            bound.Add(extra.Literal ?? SqlCoerce.Bound(extra.Affinity, parameters[extra.Source - 1]));
+        }
+
+        return new SqlProgram(template.Tables, template.Ctes, template.Statement, bound, MaxRows, MaxBytes);
+    }
+
+    /// <summary>
+    /// The engine program of <paramref name="read"/> over <paramref name="tables"/> before its <paramref name="count"/>
+    /// arguments are bound (<see cref="Bind"/>); when <paramref name="describe"/>, one that returns its columns and no rows.
+    /// Rewrites the read's tree in place (the row guard, bounded concatenation, coerced constants), so never a shared one.
+    /// Its text does not depend on the arguments: what depends on them is an extra parameter, computed when bound.
+    /// </summary>
+    public static SqlReadTemplate Compile(ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, int count, bool describe, string? keyed)
+    {
+        if (read.Shared is not null)
+        {
+            throw new InvalidOperationException("a shared read is compiled from its own parse");
+        }
+
+        var key = KeyParameter(read, tables, count, out var keyLiteral);
+        SqlGuard.Apply(read.Query, tables);
+        var extras = new List<SqlExtraParameter>();
         if (keyLiteral is not null)
         {
-            bound.Add(keyLiteral);
+            extras.Add(new SqlExtraParameter(0, SqlAffinity.Text, keyLiteral));
         }
-
-        // The key filter compares the TEXT document id, so a key parameter gets its own text copy.
-        if (key is { } number && number <= parameters.Count && SqlCoerce.Bound(SqlAffinity.Text, parameters[number - 1]) is var text && !Equals(text, parameters[number - 1]))
+        else if (key is { } number)
         {
-            bound.Add(text);
-            key = bound.Count;
+            // The key filter compares the TEXT document id, so a key parameter gets its own text copy.
+            extras.Add(new SqlExtraParameter(number, SqlAffinity.Text));
+            key = count + extras.Count;
         }
 
-        SqlCoerce.Apply(read.Query, tables, bound);
-        parameters = bound;
+        SqlCoerce.Apply(read.Query, tables, count, extras);
 
         // Defense in depth: the text the engine runs must parse back to the same statement.
         var full = read.Query.ToSql();
@@ -324,11 +363,11 @@ internal static class SqlRead
         }
 
         var statement = (read.Query with { With = null }).ToSql();
-        return new SqlProgram(
+        return new SqlReadTemplate(
             [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed, TextKey(tables[name]), key))],
             read.Query.With is { } with ? string.Join(", ", with.CteTables.Select(cte => cte.ToSql())) : null,
             describe ? $"SELECT * FROM ({statement}) LIMIT 0" : statement,
-            parameters, MaxRows, MaxBytes);
+            extras);
     }
 
     // A single TEXT primary key is the document id verbatim.
@@ -344,19 +383,12 @@ internal static class SqlRead
     private static int? KeyParameter(ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, int count, out string? literal)
     {
         literal = null;
-        if (read.Query.With is not null || read.Catalog.Count > 0 || read.Tables is not [var only] || TextKey(tables[only]) is not { } key
+        if (read.Query.With is not null || read.Catalog.Count > 0 || read.HasSubquery || read.Tables is not [var only] || TextKey(tables[only]) is not { } key
             || read.Query.Body is not SetExpression.SelectExpression
             {
                 Select: { From: [{ Relation: TableFactor.Table { Name.Values: [var name] } table, Joins: null or [] }], Selection: { } where },
             }
             || !name.Value.Equals(only, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        var subqueries = new Subqueries();
-        ((IElement)read.Query).Visit(subqueries);
-        if (subqueries.Found)
         {
             return null;
         }
@@ -408,22 +440,6 @@ internal static class SqlRead
         }
     }
 
-    // Whether a statement holds a subquery anywhere, in FROM or in an expression.
-    private sealed class Subqueries : Visitor
-    {
-        public bool Found { get; private set; }
-
-        public override ControlFlow PreVisitTableFactor(TableFactor relation)
-        {
-            Found |= relation is not TableFactor.Table;
-            return ControlFlow.Continue;
-        }
-
-        public override ControlFlow PreVisitExpression(Expression expression)
-        {
-            Found |= expression is Expression.Subquery or Expression.Exists or Expression.InSubquery;
-            return ControlFlow.Continue;
-        }
     }
 
     /// <summary>
@@ -501,6 +517,8 @@ internal static class SqlRead
     {
         public List<string> Tables { get; } = [];
 
+        public bool Subqueries { get; private set; }
+
         public override ControlFlow PreVisitTableFactor(TableFactor relation)
         {
             switch (relation)
@@ -519,6 +537,7 @@ internal static class SqlRead
                 // The visitor does not enter a FROM subquery: its tables, functions and literals are validated here, or
                 // the statement would read the database file's own tables.
                 case TableFactor.Derived { SubQuery: var subquery }:
+                    Subqueries = true;
                     ((IElement)subquery).Visit(this);
                     break;
                 case TableFactor.NestedJoin:
@@ -532,6 +551,7 @@ internal static class SqlRead
 
         public override ControlFlow PreVisitExpression(Expression expression)
         {
+            Subqueries |= expression is Expression.Subquery or Expression.Exists or Expression.InSubquery;
             switch (expression)
             {
                 case Expression.Function { Name.Values: [var name] } when Functions.Contains(name.Value.ToLowerInvariant()):
