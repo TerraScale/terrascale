@@ -820,7 +820,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     // What a later attempt can outlast: a bucket that timed out, throttled or failed itself, a broken connection, or the
     // attempt's own deadline. Refusals (403, an object that cannot be adopted) and invalid metadata are final.
     private static bool Transient(Exception error) => error is IOException or HttpRequestException or OperationCanceledException or StorageBusyException
-        || error is AmazonServiceException { StatusCode: HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError };
+        or AmazonServiceException { StatusCode: HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError };
 
     private static bool RemoteFailure(Exception error) => error is IOException or InvalidDataException or HttpRequestException or AmazonServiceException or OperationCanceledException or StorageBusyException;
     private static string Number(long value) => value.ToString(CultureInfo.InvariantCulture);
