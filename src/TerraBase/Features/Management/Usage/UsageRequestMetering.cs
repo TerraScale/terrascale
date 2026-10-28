@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO.Pipelines;
+using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -35,13 +37,18 @@ public static class UsageRequestMetering
             }
 
             var input = context.Request.Body;
-            var output = context.Response.Body;
+            var output = context.Features.GetRequiredFeature<IHttpResponseBodyFeature>();
             using var transfer = new Transfer(context, meter, time, logs);
             var previousOperations = RequestLogOperations.Current.Value;
             var operations = new RequestLogOperations();
             RequestLogOperations.Current.Value = operations;
-            context.Request.Body = transfer.Received;
-            context.Response.Body = transfer.Sent;
+            // A request that cannot have a body receives none; the response keeps the server's own pipe (no stream copy).
+            if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody != false)
+            {
+                context.Request.Body = transfer.Received;
+            }
+
+            context.Features.Set<IHttpResponseBodyFeature>(new CountingResponseBody(output, transfer.Sent));
             var started = Stopwatch.GetTimestamp();
             var failed = false;
             try
@@ -56,7 +63,7 @@ public static class UsageRequestMetering
             finally
             {
                 context.Request.Body = input;
-                context.Response.Body = output;
+                context.Features.Set(output);
                 try { transfer.Complete(failed ? 500 : context.Response.StatusCode, Stopwatch.GetElapsedTime(started), operations); }
                 finally { RequestLogOperations.Current.Value = previousOperations; }
             }
@@ -84,13 +91,13 @@ public static class UsageRequestMetering
         {
             (_context, _meter, _time, _logs) = (context, meter, time, logs);
             Received = new CountingStream(context.Request.Body, count => Moved(count, 0));
-            Sent = new CountingStream(context.Response.Body, count => Moved(0, count));
+            Sent = count => Moved(0, count);
             _tracked = meter.TrackActive(Report);
         }
 
         public CountingStream Received { get; }
 
-        public CountingStream Sent { get; }
+        public Action<int> Sent { get; }
 
         public void Complete(int status, TimeSpan elapsed, RequestLogOperations operations)
         {
@@ -114,7 +121,6 @@ public static class UsageRequestMetering
         {
             _tracked.Dispose();
             Received.Dispose();
-            Sent.Dispose();
         }
 
         // On the request's own I/O, where its features may be read.
@@ -178,6 +184,65 @@ public static class UsageRequestMetering
                 (_database, _resolved) = (database, true);
             }
         }
+    }
+
+    // The server's response body, counting what is handed to it through its pipe, its stream or a file. Writers keep the
+    // server's own pipe: replacing Response.Body would put a copying StreamPipeWriter in front of every JSON response.
+    private sealed class CountingResponseBody(IHttpResponseBodyFeature inner, Action<int> counted) : IHttpResponseBodyFeature
+    {
+        private CountingPipeWriter? _writer;
+        private CountingStream? _stream;
+
+        // One instance each, so a middleware that swaps Response.Body and puts this stream back restores this feature.
+        public PipeWriter Writer => _writer ??= new CountingPipeWriter(inner.Writer, counted);
+
+        public Stream Stream => _stream ??= new CountingStream(inner.Stream, counted);
+
+        public void DisableBuffering() => inner.DisableBuffering();
+
+        public Task StartAsync(CancellationToken cancellationToken = default) => inner.StartAsync(cancellationToken);
+
+        // As StreamResponseBodyFeature does: the file goes through the counted stream.
+        public async Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default)
+        {
+            await inner.StartAsync(cancellationToken).ConfigureAwait(false);
+            await SendFileFallback.SendFileAsync(Stream, path, offset, count, cancellationToken).ConfigureAwait(false);
+        }
+
+        public Task CompleteAsync() => inner.CompleteAsync();
+    }
+
+    // Counts bytes when they are committed to the server's pipe; owns no buffer.
+    private sealed class CountingPipeWriter(PipeWriter inner, Action<int> counted) : PipeWriter
+    {
+        public override bool CanGetUnflushedBytes => inner.CanGetUnflushedBytes;
+
+        public override long UnflushedBytes => inner.UnflushedBytes;
+
+        public override void Advance(int bytes)
+        {
+            inner.Advance(bytes);
+            counted(bytes);
+        }
+
+        public override Memory<byte> GetMemory(int sizeHint = 0) => inner.GetMemory(sizeHint);
+
+        public override Span<byte> GetSpan(int sizeHint = 0) => inner.GetSpan(sizeHint);
+
+        public override async ValueTask<FlushResult> WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default)
+        {
+            var result = await inner.WriteAsync(source, cancellationToken).ConfigureAwait(false);
+            counted(source.Length);
+            return result;
+        }
+
+        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default) => inner.FlushAsync(cancellationToken);
+
+        public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
+        public override void Complete(Exception? exception = null) => inner.Complete(exception);
+
+        public override ValueTask CompleteAsync(Exception? exception = null) => inner.CompleteAsync(exception);
     }
 
     // The wrapper owns no buffer and never closes the server's streams.
