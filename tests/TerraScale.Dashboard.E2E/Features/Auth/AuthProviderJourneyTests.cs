@@ -185,6 +185,32 @@ public sealed class AuthProviderJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RotatedGrantSurvivesATransientStateWriteFailure(bool committedBeforeFailure)
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        using var first = scenario.CreateClient();
+        await Control(controls, new { command = "short-grants" });
+        using var signedIn = await HttpJourney.LoginAsync(first, returnTo: "/api/v1/auth/me");
+        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "The browser obtains a short-lived signed provider grant");
+        await Control(controls, new { command = "advance", seconds = 2 });
+        await Control(controls, new { command = "pause-refresh" });
+        var request = first.GetAsync("/api/v1/auth/me");
+        await WaitForRefresh(controls);
+        // The lease is already written; the next session write is the one that saves the rotated grant.
+        await Control(controls, new { command = "internal-fail-put-once", collection = "sessions", after = committedBeforeFailure, status = 503 });
+        await Control(controls, new { command = "release-refresh" });
+        using (var refreshed = await request)
+            Check(refreshed.StatusCode == HttpStatusCode.OK, "A transient state failure after ts-auth rotated the grant does not end the session");
+        using (var next = await first.GetAsync("/api/v1/auth/me"))
+            Check(next.StatusCode == HttpStatusCode.OK, "The saved rotated grant keeps serving");
+        Check((await Observations(controls)).GetProperty("refreshes").GetInt32() == 1, "The rotated secret is saved, never replayed");
+        CheckProtocol(await Observations(controls));
+    }
+
+    [Test]
     public async Task LostRefreshResponseIsNeverReplayedByAnotherReplica()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);

@@ -30,6 +30,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
     private string failCollection = "";
     private bool failAfter;
     private int failRemaining;
+    private int failStatus;
     private int injectedFailures;
     private TaskCompletionSource? usageGate;
     private int pausedUsage;
@@ -83,6 +84,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
         if (collection == failCollection && Interlocked.Decrement(ref failRemaining) >= 0)
         {
             Interlocked.Increment(ref injectedFailures);
+            if (failStatus != 0) throw new HttpRequestException("Injected test-only storage unavailability.", null, (System.Net.HttpStatusCode)failStatus);
             throw new IOException("Injected test-only internal billing storage interruption.");
         }
     }
@@ -129,6 +131,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
                 failCollection = command.GetProperty("collection").GetString()!;
                 if (!Allowed(failCollection)) return Results.BadRequest();
                 failAfter = command.TryGetProperty("after", out var after) && after.GetBoolean();
+                failStatus = command.TryGetProperty("status", out var status) ? status.GetInt32() : 0;
                 failRemaining = 1;
                 break;
             case "internal-clear-faults":
@@ -148,7 +151,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
         pauseRemaining = 0;
     }
 
-    private static bool Allowed(string collection) => collection is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts";
+    private static bool Allowed(string collection) => collection is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts" or "sessions";
 
     // Gives the signed-in account's active project one saved database, so reporting reads have something to report.
     private async Task<IResult> AddDatabaseAsync(string name, CancellationToken cancellationToken)

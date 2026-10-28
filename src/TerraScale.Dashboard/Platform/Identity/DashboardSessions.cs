@@ -226,6 +226,13 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                     if (refused is not null) await RemoveAsync(collection, refused, "refresh rejected by ts-auth", rotating);
                     return null;
                 }
+                catch (Exception error) when (error is not (SignInRejectedException or RefreshNotStartedException))
+                {
+                    // The lease stays until it expires; the next request after that replays the refresh once.
+                    logger.LogWarning("Refresh of a stored ts-auth grant in {Collection} failed ({ErrorType}, status {Status}, code {ErrorCode})", collection,
+                        error.GetType().Name, (error as HttpRequestException)?.StatusCode, (error as TerraScale.DotNet.TerraScaleAuthException)?.ErrorCode ?? "none");
+                    throw;
+                }
                 catch (RefreshNotStartedException)
                 {
                     // ts-auth never read the secret, so the session keeps it and
@@ -247,18 +254,37 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||
                     forceRefresh && refreshed.AccessToken == accessOnEntry)
                     throw new IOException("Refreshed session identity is invalid.");
-                var latest = await state.GetAsync(collection, id, rotating);
-                if (latest is null) return null; // A concurrent logout wins.
-                if (latest.State != "value") throw new IOException("Dashboard session has a causal conflict.");
-                var current = Open(latest.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
-                if (current.RefreshLease != lease.RefreshLease) throw new IOException("Session refresh ownership changed.");
                 refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null };
-                try
+                // ts-auth has rotated the secret, so losing this write would end the grant for good (the old secret is
+                // never replayed). Retry transient state failures; a write whose answer was lost is recognized on re-read.
+                for (var attempt = 0; ; attempt++)
                 {
-                    await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(refreshed, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(latest.Version), rotating);
+                    try
+                    {
+                        var latest = await state.GetAsync(collection, id, rotating);
+                        if (latest is null) return null; // A concurrent logout wins.
+                        if (latest.State != "value") throw new IOException("Dashboard session has a causal conflict.");
+                        var current = Open(latest.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
+                        if (attempt > 0 && current.AccessToken == refreshed.AccessToken && current.RefreshLease.Length == 0) break;
+                        if (current.RefreshLease != lease.RefreshLease) throw new IOException("Session refresh ownership changed.");
+                        try
+                        {
+                            await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(refreshed, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(latest.Version), rotating);
+                        }
+                        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
+                        {
+                            if (attempt is 0 or >= 5) return null;
+                            continue; // An earlier uncertain write may have landed; the re-read decides.
+                        }
+                        break;
+                    }
+                    catch (Exception error) when (attempt < 5 && (error is TimeoutException or HttpRequestException { StatusCode: null or >= System.Net.HttpStatusCode.InternalServerError or System.Net.HttpStatusCode.TooManyRequests } ||
+                                                                  error is OperationCanceledException && !rotating.IsCancellationRequested))
+                    {
+                        logger.LogWarning("Saving a refreshed ts-auth grant in {Collection} failed ({ErrorType}); retrying", collection, error.GetType().Name);
+                        await Task.Delay(TimeSpan.FromMilliseconds(500 << attempt), rotating);
+                    }
                 }
-                catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
-                { return null; }
                 record = refreshed;
             }
             var active = auth.IsActiveAsync(record, cancellationToken);
