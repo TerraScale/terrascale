@@ -915,13 +915,19 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
         await CheckAsync(login.StatusCode == HttpStatusCode.SeeOther, "The operator browser obtains a real signed first-party native session");
         var cookie = login.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("ts-dashboard-session=", StringComparison.Ordinal)).Split(';')[0];
-        var csrf = await HttpJourney.CsrfAsync(browser, "/profile");
+        // A cookie-less client receives its own CSRF nonce cookie, bound to this session.
+        using var probe = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, UseCookies = false })
+        { BaseAddress = browser.BaseAddress };
+        probe.DefaultRequestHeaders.Add("Cookie", cookie);
+        using var page = await probe.GetAsync("/profile");
+        var nonce = page.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("__Host-ts-dashboard-csrf=", StringComparison.Ordinal)).Split(';')[0];
+        var csrf = WebUtility.HtmlDecode(Regex.Match(await page.Content.ReadAsStringAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value);
         using var response = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-seed", count = organizations, paymentMethodValidated });
         await CheckAsync(response.IsSuccessStatusCode, "The external producer prepares the pre-existing canonical service organization");
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var targets = json.RootElement.GetProperty("targets").EnumerateArray().ToArray();
         return new(targets[0].GetProperty("organizationId").GetString()!, targets[0].GetProperty("projects").EnumerateArray().Select(row => row.GetProperty("id").GetString()!).ToArray(),
-            cookie + "; ts-dashboard-csrf=" + csrf, targets.Select(row => row.GetProperty("organizationId").GetString()!).ToArray(), month);
+            cookie + "; " + nonce, targets.Select(row => row.GetProperty("organizationId").GetString()!).ToArray(), month);
     }
 
     private static HttpClient CookieClient(AuthProviderScenario scenario, string cookie, bool replica = false)

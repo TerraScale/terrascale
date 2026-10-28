@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Profile;
 public static partial class AccountDeletion
 {
     private const string Operations = "account_deletions";
-    private const string Cookie = "ts-dashboard-deletion";
+    internal const string Cookie = "ts-dashboard-deletion";
     private sealed record Operation(SessionRecord Session, string[] Organizations, string Receipt, string Authorization, DateTimeOffset ExpiresAt)
     {
         public override string ToString() => "Authorized deletion [REDACTED]";
