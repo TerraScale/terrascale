@@ -59,7 +59,7 @@ public sealed class UserAuthTests
             await Assert.That(tokens.Min(token => token.Length)).IsLessThan(1024);
             await Assert.That(tokens.Max(token => token.Length)).IsGreaterThan(4096);
             await Assert.That(created.Select(result => result.StatusCode)).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Created));
-            await Assert.That(created.Select(result => result.Body.GetProperty("createdBy").GetString())).IsEquivalentTo(users, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+            await Assert.That(created.Select(result => result.Body.GetProperty("createdBy").GetString()!)).IsEquivalentTo(users, TUnit.Assertions.Enums.CollectionOrdering.Matching);
             foreach (var (index, items) in listed)
             {
                 await Assert.That(items).IsEquivalentTo([created[index].Body.GetProperty("id").GetString()]);
