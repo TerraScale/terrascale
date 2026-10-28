@@ -478,7 +478,7 @@ public sealed class OnceBoundEndpoint : Endpoint<string>
     }
 }
 
-/// <summary>Regressions for the second ts-reviewer pass on PR #8: converters, body shapes and custom binders.</summary>
+/// <summary>Regressions from review of PR #8 (second pass): converters, body shapes and custom binders.</summary>
 public sealed class ConverterBindingTests
 {
     [Test]
@@ -662,7 +662,7 @@ public sealed class MoneyEndpoint : Endpoint<MoneyQuery, string>
 [JsonSerializable(typeof(MoneyQuery))]
 internal sealed partial class MoneyJsonContext : JsonSerializerContext;
 
-/// <summary>Regressions for the third ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (third pass).</summary>
 public sealed class ThirdPassBindingTests
 {
     [Test]
@@ -800,7 +800,7 @@ public sealed class CaseEndpoint : Endpoint<CaseQuery, CaseQuery>
     public override ValueTask<CaseQuery> HandleAsync(CaseQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
 }
 
-/// <summary>Regressions for the fourth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (fourth pass).</summary>
 public sealed class FourthPassBindingTests
 {
     [Test]
@@ -898,7 +898,7 @@ public sealed class StrictNumbersEndpoint : Endpoint<StrictNumbersQuery, StrictN
         ValueTask.FromResult(request);
 }
 
-/// <summary>Regressions for the fifth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (fifth pass).</summary>
 public sealed class FifthPassBindingTests
 {
     [Test]
@@ -1008,7 +1008,7 @@ public sealed class NullableStructEndpoint : Endpoint<NullableStructQuery, Nulla
         ValueTask.FromResult(request);
 }
 
-/// <summary>Regressions for the sixth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (sixth pass).</summary>
 public sealed class SixthPassBindingTests
 {
     [Test]
@@ -1110,7 +1110,7 @@ public sealed class SixthEchoEndpoint : Endpoint<FilteredQuery, FilteredQuery>
     public override ValueTask<FilteredQuery> HandleAsync(FilteredQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
 }
 
-/// <summary>Regressions for the seventh ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (seventh pass).</summary>
 public sealed class SeventhPassBindingTests
 {
     [Test]
@@ -1193,7 +1193,7 @@ public sealed class ColorsEndpoint : Endpoint<ColorsQuery, ColorsQuery>
     public override ValueTask<ColorsQuery> HandleAsync(ColorsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request);
 }
 
-/// <summary>Regressions for the eighth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (eighth pass).</summary>
 public sealed class EighthPassBindingTests
 {
     [Test]
@@ -1290,7 +1290,7 @@ public sealed class PopulateEndpoint : Endpoint<PopulateQuery, string>
         ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Tags)}:{request.Id}");
 }
 
-/// <summary>Regressions for the ninth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (ninth pass).</summary>
 public sealed class NinthPassBindingTests
 {
     [Test]
@@ -1369,7 +1369,7 @@ public sealed class ValidatedQueryEndpoint : Endpoint<ValidatedQuery, string>
     public override ValueTask<string> HandleAsync(ValidatedQuery request, CancellationToken cancellationToken) => ValueTask.FromResult(request.Name);
 }
 
-/// <summary>Regressions for the tenth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (tenth pass).</summary>
 public sealed class TenthPassBindingTests
 {
     [Test]
@@ -1515,7 +1515,7 @@ public sealed class DataBodyEndpoint : Endpoint<DataBody, string>
         ValueTask.FromResult($"{request.Page}:{string.Join(',', request.Data!.Select(pair => $"{pair.Key}={pair.Value}"))}");
 }
 
-/// <summary>Regressions for the eleventh ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (eleventh pass).</summary>
 public sealed class EleventhPassBindingTests
 {
     [Test]
@@ -1595,7 +1595,7 @@ public sealed class EleventhPassBindingTests
     private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
 }
 
-/// <summary>Regressions for the twelfth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (twelfth pass).</summary>
 public sealed class TwelfthPassBindingTests
 {
     [Test]
@@ -1698,7 +1698,7 @@ public sealed class ReadOnlyIdsEndpoint : Endpoint<ReadOnlyIdsQuery, string>
     public override ValueTask<string> HandleAsync(ReadOnlyIdsQuery request, CancellationToken cancellationToken) => ValueTask.FromResult("read-only");
 }
 
-/// <summary>Regressions for the thirteenth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (thirteenth pass).</summary>
 public sealed class ThirteenthPassBindingTests
 {
     [Test]
@@ -1761,7 +1761,7 @@ public sealed class SetsEndpoint : Endpoint<SetsQuery, string>
         ValueTask.FromResult($"{string.Join(',', request.Ids.Order())}|{string.Join(',', request.Labels.Order())}");
 }
 
-/// <summary>Regressions for the fourteenth ts-reviewer pass on PR #8.</summary>
+/// <summary>Regressions from review of PR #8 (fourteenth pass).</summary>
 public sealed class FourteenthPassBindingTests
 {
     // Mirrors what System.Text.Json actually populates for a getter-only member under Populate
