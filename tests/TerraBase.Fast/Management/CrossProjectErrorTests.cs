@@ -125,7 +125,7 @@ public sealed class CrossProjectErrorTests
     // TerraBase nests {"error":{"code","message"}}; libSQL answers {"error","message","code"} at the top level.
     private static (string? Code, string? Message) Error(string body)
     {
-        var json = JsonDocument.Parse(body).RootElement;
+        var json = JsonElement.Parse(body);
         var error = json.TryGetProperty("error", out var nested) && nested.ValueKind == JsonValueKind.Object ? nested : json;
         return (error.TryGetProperty("code", out var code) ? code.GetString() : null, error.TryGetProperty("message", out var message) ? message.GetString() : null);
     }
