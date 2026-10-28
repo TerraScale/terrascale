@@ -1,0 +1,72 @@
+diff --git a/benchmark/dotnet/VsTurso/run-server-overhead.sh b/benchmark/dotnet/VsTurso/run-server-overhead.sh
+index 5f6cff20a..b32bbe250 100755
+--- a/benchmark/dotnet/VsTurso/run-server-overhead.sh
++++ b/benchmark/dotnet/VsTurso/run-server-overhead.sh
+@@ -24 +24 @@ build() {
+-  dotnet build tests/TerraBase.E2E --configuration Release -p:TsDotnetRoot="$sdk" || return $?
++  dotnet build tests/TerraBase.E2E --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:TsDotnetRoot="$sdk" || return $?
+diff --git a/src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs b/src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs
+index a5c89bd67..05ef5f47a 100644
+--- a/src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs
++++ b/src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs
+@@ -234 +234,8 @@ internal sealed class UserAuthenticationHandler(
+-        var principal = new ClaimsPrincipal(new ClaimsIdentity(accepted.Claims.Select(claim => new Claim(claim.Type, claim.Value)), SchemeName));
++        var identity = new ClaimsIdentity(SchemeName);
++        for (var i = 0; i < accepted.Claims.Count; i++)
++        {
++            var claim = accepted.Claims[i];
++            identity.AddClaim(new Claim(claim.Type, claim.Value, ClaimValueTypes.String,
++                ClaimsIdentity.DefaultIssuer, ClaimsIdentity.DefaultIssuer, identity));
++        }
++        var principal = new ClaimsPrincipal(identity);
+diff --git a/tests/TerraBase.Fast/Management/UserAuthTests.cs b/tests/TerraBase.Fast/Management/UserAuthTests.cs
+index 6bc3299e0..6fdf3a435 100644
+--- a/tests/TerraBase.Fast/Management/UserAuthTests.cs
++++ b/tests/TerraBase.Fast/Management/UserAuthTests.cs
+@@ -0,0 +1 @@
++using System.Collections.Concurrent;
+@@ -1,0 +3 @@ using System.Net;
++using System.Security.Claims;
+@@ -3,0 +6 @@ using Bogus;
++using Microsoft.AspNetCore.Authentication;
+@@ -38,0 +42,40 @@ public sealed class UserAuthTests
++    [Test]
++    public async Task Cached_tokens_materialize_owned_claims_without_sharing_request_mutations()
++    {
++        var user = EntityIds.New().ToString();
++        var observer = new MutatingClaims(user);
++        await using var api = await ManagementApi.StartAsync(services: services =>
++            services.AddSingleton<IClaimsTransformation>(observer));
++        using var client = api.WithToken(api.Issuer.Mint(user));
++
++        await Assert.That(await StatusAsync(client)).IsEqualTo(HttpStatusCode.OK);
++        var cached = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => StatusAsync(client)));
++
++        await Assert.That(cached).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.OK));
++        await Assert.That(observer.Valid.Count).IsEqualTo(17);
++        await Assert.That(observer.Valid).All().Satisfy(valid => valid.IsTrue());
++    }
++
++    private sealed class MutatingClaims(string user) : IClaimsTransformation
++    {
++        public ConcurrentQueue<bool> Valid { get; } = new();
++
++        public Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
++        {
++            if (principal.Identity is ClaimsIdentity identity && identity.FindFirst(ClaimTypes.NameIdentifier)?.Value == user)
++            {
++                var claims = identity.Claims.ToArray();
++                Valid.Enqueue(identity.AuthenticationType == UserAuthenticationHandler.SchemeName
++                    && identity.NameClaimType == ClaimTypes.Name && identity.RoleClaimType == ClaimTypes.Role
++                    && !identity.HasClaim("request-probe", "mutated")
++                    && claims.All(claim => ReferenceEquals(claim.Subject, identity)
++                        && claim.ValueType == ClaimValueTypes.String && claim.Issuer == ClaimsIdentity.DefaultIssuer
++                        && claim.OriginalIssuer == ClaimsIdentity.DefaultIssuer && !claim.Properties.ContainsKey("request-probe")));
++                claims[0].Properties["request-probe"] = "mutated";
++                identity.AddClaim(new Claim("request-probe", "mutated"));
++            }
++
++            return Task.FromResult(principal);
++        }
++    }
++
