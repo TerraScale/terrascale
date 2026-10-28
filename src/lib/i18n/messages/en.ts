@@ -77,45 +77,126 @@ export const en = {
     headlineLead: 'Typed document database,',
     headlineAccent: 'replicated across regions.',
     subtitle:
-      'A typed document database with asynchronous replication across São Paulo, the San Francisco Bay Area, and Frankfurt. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
-    ctaPrelaunch: 'Public Alpha',
+      'Pick the regions your data lives in. The global endpoint serves each request from the nearest healthy one, and writes replicate asynchronously to the rest.',
+    cta: 'Start free',
+    ctaNote: 'Free plan without a card. Public Alpha has no uptime percentage or SLA.',
     highlightsAria: 'Key capabilities',
     highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs', 'AI agents ready'],
   },
 
   features: {
     eyebrow: 'Platform',
-    titleLead: 'Public Alpha,',
-    titleAccent: 'with explicit boundaries',
+    titleLead: 'What Public Alpha covers,',
+    titleAccent: 'and where it stops.',
     subtitle:
       'The launch contract covers document data, three serving regions, typed clients, and customer-visible health without an uptime commitment.',
     items: [
       {
         title: 'Data',
+        headline: 'Query JSON documents with filters or SQL',
         text: 'Databases hold collections of JSON documents, each with an optional schema. Query with JSON filters or read-only SQL: SELECT, WHERE, ORDER BY, and up to 1,000 rows per statement.',
         bullets: ['Collections', 'JSON filters', 'Read-only SQL'],
       },
       {
         title: 'Regions',
+        headline: 'Keep each database in the regions you pick',
         text: 'São Paulo, the San Francisco Bay Area, and Frankfurt serve today. Each database lives in a home region and replicates in full to the other regions you select.',
         bullets: ['gru', 'sjc', 'fra'],
       },
       {
         title: 'Routing',
+        headline: 'Serve reads from the nearest healthy region',
         text: 'The global endpoint answers from the nearest healthy region that holds your database. Strict regional endpoints never serve from a region you did not select.',
         bullets: ['Global endpoint', 'Strict regional endpoints'],
       },
       {
         title: 'Health',
+        headline: 'See replication health as measured values',
         text: 'Replication is asynchronous. Lag, convergence, conflicts, and API latency are published as separate measured values with their observation time. There is no bounded-lag promise, uptime percentage, or SLA.',
         bullets: ['Asynchronous replication', 'Observation time', 'No SLA'],
       },
       {
         title: 'Security',
+        headline: 'Encrypted in transit and at rest',
         text: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization. Customer content stays in the regions you select.',
         bullets: ['TLS 1.2+', 'Encryption at rest', 'Per-request authorization'],
       },
     ],
+  },
+
+  howItWorks: {
+    eyebrow: 'How it works',
+    titleLead: 'From sign up to global reads',
+    titleAccent: 'in three steps.',
+    subtitle: 'Each database has one home region plus the replica regions you select. Customer content stays in those regions.',
+    steps: [
+      {
+        title: 'Create a database',
+        text: 'Register without a card, create a project, and add a database. Choose its home region: São Paulo, the San Francisco Bay Area, or Frankfurt.',
+      },
+      {
+        title: 'Select replica regions',
+        text: 'Add the other regions that should hold a full copy. A write confirms local acceptance, then replicates asynchronously to every region you selected.',
+      },
+      {
+        title: 'Read and write',
+        text: 'Use the global endpoint for the nearest healthy selected region, or a strict regional endpoint that never serves from another region. Call it from the C# or TypeScript SDK, the HTTP API, or an MCP client.',
+        tags: ['Global endpoint', 'Strict regional endpoint'],
+      },
+    ],
+  },
+
+  tagline: {
+    lines: ['Your data stays in the regions you choose.', 'Reads come from the nearest healthy one.'],
+  },
+
+  homeFaq: {
+    eyebrow: 'FAQ',
+    titleLead: 'Questions before',
+    titleAccent: 'you start.',
+    subtitle: 'Short answers about regions, replication, and what Public Alpha covers.',
+    items: [
+      {
+        q: 'What is TerraScale?',
+        a: 'A typed document database. Databases hold collections of JSON documents, each with an optional schema. You query them with JSON filters or with SQL that only reads: SELECT, WHERE, ORDER BY, and up to 1,000 rows per statement.',
+      },
+      {
+        q: 'Which regions serve today?',
+        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Each database lives in a home region and replicates in full to the other regions you select.',
+      },
+      {
+        q: 'How does replication work?',
+        a: 'Replication is asynchronous. A successful write confirms local acceptance, and the other selected regions receive it later. Lag, convergence, conflicts, and API latency are published as separate measured values with their observation time.',
+      },
+      {
+        q: 'What is the difference between the global and regional endpoints?',
+        a: 'The global endpoint answers from the nearest healthy region that holds your database. A strict regional endpoint never serves from a region you did not select.',
+      },
+      {
+        q: 'Is there an uptime commitment?',
+        a: 'Not yet. Public Alpha has no uptime percentage, bounded lag promise, or SLA. Current availability is published on the status page.',
+      },
+      {
+        q: 'Which languages and tools can I use?',
+        a: 'Typed C# and TypeScript SDKs call the same public HTTP API the dashboard uses. You can also use the CLI, or connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token.',
+      },
+      {
+        q: 'How is my data protected?',
+        a: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization. Customer content stays in the regions you select.',
+      },
+      {
+        q: 'What does it cost to start?',
+        a: 'Free requires no card. Starter, Pro, and Team are billed monthly or yearly. Operation units over a paid allowance go on the next invoice; storage and client egress overages are not billed yet.',
+      },
+      {
+        q: 'Can I export my data and leave?',
+        a: 'Yes. Export through the dashboard or API at any time. There is no exit fee for leaving TerraScale.',
+      },
+    ],
+    footerTitle: 'Still have questions?',
+    footerText: 'Contact us about regions, plans, or Enterprise terms.',
+    contactSales: 'Contact us',
+    readDocs: 'Read documentation',
   },
 
   code: {
@@ -148,7 +229,7 @@ export const en = {
     ctaPrimary: 'Register for Public Alpha',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
-    perks: ['Free without a card', 'Paid plans monthly or yearly'],
+    perks: ['Free without a card', 'Paid plans monthly or yearly', 'Export your data anytime'],
   },
 
   pricingTeaser: {

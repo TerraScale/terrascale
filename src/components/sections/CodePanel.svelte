@@ -2,6 +2,7 @@
   import Icon from '@/components/Icon.svelte'
   import { tokenize, CODE_SAMPLES, LANG_META, type Lang } from '@/lib/highlight'
   import { dict } from '@/lib/i18n'
+  import { reveal } from '@/lib/reveal'
 
   let lang: Lang = 'csharp'
   let copied = false
@@ -30,7 +31,7 @@
   }
 </script>
 
-<section class="code">
+<section class="code" use:reveal>
   <div class="code__inner">
     <div class="code__grid">
       <div class="code__copy">

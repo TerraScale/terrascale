@@ -2,6 +2,7 @@
   import Icon from '@/components/Icon.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict, locale } from '@/lib/i18n'
+  import { reveal } from '@/lib/reveal'
   import { localeMeta } from '@/lib/i18n/locales'
   import { formatPlanBilling, formatPlanCadences, formatPlanLimits } from '@/lib/pricing'
   import { publicAlphaCatalog } from '@/lib/site'
@@ -16,7 +17,7 @@
     }))
 </script>
 
-<section class="pricing-teaser" id="pricing">
+<section class="pricing-teaser" id="pricing" use:reveal>
   <div class="pricing-teaser__head">
     <div class="pricing-teaser__intro">
       <span class="ts-eyebrow pricing-teaser__eyebrow">
@@ -61,9 +62,6 @@
   .pricing-teaser {
     padding: var(--ts-space-20) clamp(16px, 2.5vw, 40px);
     border-top: 1px solid var(--ts-divider);
-    background:
-      radial-gradient(50% 60% at 50% 80%, rgba(var(--ts-primary-rgb), 0.12), transparent 70%),
-      radial-gradient(35% 50% at 10% 90%, rgba(var(--ts-secondary-rgb), 0.07), transparent 70%);
   }
 
   .pricing-teaser__head {
@@ -122,15 +120,12 @@
     padding: var(--ts-space-6);
     border: 1px solid var(--ts-divider);
     border-radius: var(--ts-radius-lg);
-    background:
-      radial-gradient(120% 70% at 0% 0%, rgba(var(--plan-accent-rgb), 0.14), transparent 60%),
-      var(--ts-bg-surface);
-    box-shadow: inset 0 2px 0 rgba(var(--plan-accent-rgb), 0.85);
+    background: var(--ts-bg-surface);
     color: var(--ts-text);
     text-decoration: none;
     transition:
-      transform var(--ts-transition-normal),
-      border-color var(--ts-transition-normal);
+      transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 300ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   :global(.pricing-teaser__plan:hover) {
@@ -162,7 +157,6 @@
   :global(.pricing-teaser__plan.is-popular) {
     border-color: transparent;
     background:
-      radial-gradient(120% 70% at 50% 0%, rgba(var(--ts-primary-rgb), 0.28), transparent 65%) padding-box,
       linear-gradient(var(--ts-bg-surface), var(--ts-bg-surface)) padding-box,
       linear-gradient(140deg, var(--ts-primary-light), var(--ts-secondary) 45%, var(--ts-tertiary)) border-box;
     box-shadow:

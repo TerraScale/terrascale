@@ -79,45 +79,126 @@ export const ptBr: Messages = {
     headlineLead: 'Banco de dados de documentos tipado,',
     headlineAccent: 'replicado entre regiões.',
     subtitle:
-      'Um banco de documentos tipado com replicação assíncrona em São Paulo, San Francisco Bay Area e Frankfurt. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
-    ctaPrelaunch: 'Public Alpha',
+      'Escolha as regiões onde seus dados vivem. O endpoint global atende cada requisição pela mais próxima e saudável, e as gravações são replicadas de forma assíncrona para as demais.',
+    cta: 'Comece grátis',
+    ctaNote: 'Plano Free sem cartão. O Public Alpha não tem percentual de disponibilidade nem SLA.',
     highlightsAria: 'Principais recursos',
     highlights: ['Roteamento por região selecionada', 'Replicação assíncrona', 'SDKs tipados', 'Pronto para agentes de IA'],
   },
 
   features: {
     eyebrow: 'Plataforma',
-    titleLead: 'Public Alpha,',
-    titleAccent: 'com limites explícitos',
+    titleLead: 'O que o Public Alpha cobre,',
+    titleAccent: 'e onde ele para.',
     subtitle:
       'O contrato de lançamento cobre documentos, três regiões ativas, clientes tipados e saúde visível sem compromisso de disponibilidade.',
     items: [
       {
         title: 'Dados',
+        headline: 'Consulte documentos JSON com filtros ou SQL',
         text: 'Bancos de dados guardam coleções de documentos JSON, cada uma com um esquema opcional. Consulte com filtros JSON ou SQL somente leitura: SELECT, WHERE, ORDER BY e até 1.000 linhas por instrução.',
         bullets: ['Coleções', 'Filtros JSON', 'SQL somente leitura'],
       },
       {
         title: 'Regiões',
+        headline: 'Mantenha cada banco nas regiões que você escolher',
         text: 'São Paulo, San Francisco Bay Area e Frankfurt já atendem tráfego. Cada banco vive em uma região principal e é replicado por completo nas outras regiões que você selecionar.',
         bullets: ['gru', 'sjc', 'fra'],
       },
       {
         title: 'Roteamento',
+        headline: 'Atenda leituras pela região saudável mais próxima',
         text: 'O endpoint global responde da região saudável mais próxima que tem o seu banco. Endpoints regionais estritos nunca atendem de uma região que você não selecionou.',
         bullets: ['Endpoint global', 'Endpoints regionais estritos'],
       },
       {
         title: 'Saúde',
+        headline: 'Veja a saúde da replicação como valores medidos',
         text: 'A replicação é assíncrona. Atraso, convergência, conflitos e latência da API são publicados como valores medidos separados, com o horário da observação. Não há promessa de atraso limitado, porcentagem de disponibilidade nem SLA.',
         bullets: ['Replicação assíncrona', 'Horário da observação', 'Sem SLA'],
       },
       {
         title: 'Segurança',
+        headline: 'Criptografia em trânsito e em repouso',
         text: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização. O conteúdo do cliente permanece nas regiões que você selecionar.',
         bullets: ['TLS 1.2+', 'Criptografia em repouso', 'Autorização por requisição'],
       },
     ],
+  },
+
+  howItWorks: {
+    eyebrow: 'Como funciona',
+    titleLead: 'Do cadastro a leituras globais',
+    titleAccent: 'em três passos.',
+    subtitle: 'Cada banco tem uma região principal mais as regiões de réplica que você selecionar. O conteúdo do cliente permanece nessas regiões.',
+    steps: [
+      {
+        title: 'Crie um banco de dados',
+        text: 'Cadastre-se sem cartão, crie um projeto e adicione um banco. Escolha a região principal: São Paulo, San Francisco Bay Area ou Frankfurt.',
+      },
+      {
+        title: 'Selecione regiões de réplica',
+        text: 'Adicione as outras regiões que devem guardar uma cópia completa. Uma gravação confirma o aceite local e depois é replicada de forma assíncrona para cada região selecionada.',
+      },
+      {
+        title: 'Leia e grave',
+        text: 'Use o endpoint global para a região selecionada saudável mais próxima, ou um endpoint regional estrito que nunca atende de outra região. Chame pelo SDK de C# ou TypeScript, pela API HTTP ou por um cliente MCP.',
+        tags: ['Endpoint global', 'Endpoint regional estrito'],
+      },
+    ],
+  },
+
+  tagline: {
+    lines: ['Seus dados ficam nas regiões que você escolhe.', 'As leituras vêm da mais próxima e saudável.'],
+  },
+
+  homeFaq: {
+    eyebrow: 'FAQ',
+    titleLead: 'Perguntas antes',
+    titleAccent: 'de começar.',
+    subtitle: 'Respostas curtas sobre regiões, replicação e o que o Public Alpha cobre.',
+    items: [
+      {
+        q: 'O que é a TerraScale?',
+        a: 'Um banco de dados de documentos tipado. Bancos guardam coleções de documentos JSON, cada uma com um esquema opcional. Você consulta com filtros JSON ou com SQL somente leitura: SELECT, WHERE, ORDER BY e até 1.000 linhas por instrução.',
+      },
+      {
+        q: 'Quais regiões atendem hoje?',
+        a: 'São Paulo (gru), San Francisco Bay Area (sjc) e Frankfurt (fra). Cada banco vive em uma região principal e é replicado por completo nas outras regiões que você selecionar.',
+      },
+      {
+        q: 'Como funciona a replicação?',
+        a: 'A replicação é assíncrona. Uma gravação bem sucedida confirma o aceite local, e as outras regiões selecionadas a recebem depois. Atraso, convergência, conflitos e latência da API são publicados como valores medidos separados, com o horário da observação.',
+      },
+      {
+        q: 'Qual a diferença entre o endpoint global e os regionais?',
+        a: 'O endpoint global responde da região saudável mais próxima que tem o seu banco. Um endpoint regional estrito nunca atende de uma região que você não selecionou.',
+      },
+      {
+        q: 'Existe compromisso de disponibilidade?',
+        a: 'Ainda não. O Public Alpha não tem percentual de disponibilidade, promessa de atraso limitado nem SLA. A disponibilidade atual é publicada na página de status.',
+      },
+      {
+        q: 'Quais linguagens e ferramentas posso usar?',
+        a: 'SDKs tipados em C# e TypeScript chamam a mesma API HTTP pública usada pelo painel. Você também pode usar a CLI, ou conectar o Claude Code, o Cursor ou qualquer cliente MCP ao servidor MCP da TerraScale com um token de acesso pessoal.',
+      },
+      {
+        q: 'Como meus dados são protegidos?',
+        a: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização. O conteúdo do cliente permanece nas regiões que você selecionar.',
+      },
+      {
+        q: 'Quanto custa para começar?',
+        a: 'Free não exige cartão. Starter, Pro e Team são cobrados mensal ou anualmente. Unidades de operação acima de uma franquia paga vão para a próxima fatura; excedentes de armazenamento e saída para clientes ainda não são cobrados.',
+      },
+      {
+        q: 'Posso exportar meus dados e sair?',
+        a: 'Sim. Exporte pelo painel ou pela API a qualquer momento. Não há taxa de saída para deixar a TerraScale.',
+      },
+    ],
+    footerTitle: 'Ainda tem dúvidas?',
+    footerText: 'Fale conosco sobre regiões, planos ou condições Enterprise.',
+    contactSales: 'Fale conosco',
+    readDocs: 'Ler a documentação',
   },
 
   code: {
@@ -150,7 +231,7 @@ export const ptBr: Messages = {
     ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
-    perks: ['Free sem cartão', 'Planos pagos mensais ou anuais'],
+    perks: ['Free sem cartão', 'Planos pagos mensais ou anuais', 'Exporte seus dados quando quiser'],
   },
 
   pricingTeaser: {

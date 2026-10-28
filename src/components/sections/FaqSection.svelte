@@ -3,10 +3,15 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
+  import { reveal } from '@/lib/reveal'
   import { publicAlphaCatalog } from '@/lib/site'
 
+  // The home page asks about the product, the pricing page about plans; both share one layout.
+  export let source: 'home' | 'pricing' = 'pricing'
+
   const enterprisePriceUsd = String(publicAlphaCatalog.find((plan) => plan.slug === 'enterprise')?.price)
-  $: faqs = $dict.pricing.faq.items.map((item) => ({
+  $: copy = source === 'home' ? $dict.homeFaq : $dict.pricing.faq
+  $: faqs = copy.items.map((item) => ({
     ...item,
     a: item.a.replace('{enterprisePriceUsd}', enterprisePriceUsd),
   }))
@@ -18,21 +23,21 @@
   }
 </script>
 
-<section class="faq">
+<section class="faq" use:reveal>
   <div class="faq__head">
-    <span class="ts-eyebrow">{$dict.pricing.faq.eyebrow}</span>
-    <h2 class="faq__title">{$dict.pricing.faq.titleLead} {$dict.pricing.faq.titleAccent}</h2>
-    <p class="faq__subtitle">{$dict.pricing.faq.subtitle}</p>
-    <h3 class="faq__footer-title">{$dict.pricing.faq.footerTitle}</h3>
-    <p class="faq__footer-text">{$dict.pricing.faq.footerText}</p>
+    <span class="ts-eyebrow">{copy.eyebrow}</span>
+    <h2 class="faq__title">{copy.titleLead} {copy.titleAccent}</h2>
+    <p class="faq__subtitle">{copy.subtitle}</p>
+    <h3 class="faq__footer-title">{copy.footerTitle}</h3>
+    <p class="faq__footer-text">{copy.footerText}</p>
     <div class="faq__actions">
       <RouteLink href="/contact" class="ts-btn ts-btn-glass">
         <Icon name="messageSquare" className="faq__action-icon" />
-        {$dict.pricing.faq.contactSales}
+        {copy.contactSales}
       </RouteLink>
       <ExternalLink href="https://docs.terrascale.tech" target="_blank" class="ts-btn ts-btn-glass">
         <Icon name="bookOpen" className="faq__action-icon" />
-        {$dict.pricing.faq.readDocs}
+        {copy.readDocs}
       </ExternalLink>
     </div>
   </div>

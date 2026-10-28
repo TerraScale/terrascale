@@ -177,27 +177,18 @@ main > .ts-section:first-child {
   50%      { opacity: 0.45; }
 }
 
+/* Applied by the reveal action (src/lib/reveal.ts): rise 32px and fade in once, on the base curve. */
 .ts-reveal {
   opacity: 0;
+  transform: translate3d(0, 32px, 0);
   transition:
-    opacity var(--ts-reveal-duration, 720ms) cubic-bezier(.22, 1, .36, 1),
-    transform var(--ts-reveal-duration, 720ms) cubic-bezier(.22, 1, .36, 1),
-    filter var(--ts-reveal-duration, 720ms) cubic-bezier(.22, 1, .36, 1);
-  transition-delay: var(--ts-reveal-delay, 0s);
-  will-change: opacity, transform, filter;
-  filter: blur(4px);
+    opacity 720ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 720ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-
-.ts-reveal-up    { transform: translate3d(0,  22px, 0); }
-.ts-reveal-down  { transform: translate3d(0, -22px, 0); }
-.ts-reveal-left  { transform: translate3d( 22px, 0, 0); }
-.ts-reveal-right { transform: translate3d(-22px, 0, 0); }
-.ts-reveal-none  { transform: none; }
 
 .ts-reveal.is-visible {
   opacity: 1;
-  transform: translate3d(0, 0, 0);
-  filter: none;
+  transform: none;
 }
 
 .ts-text-gradient {
