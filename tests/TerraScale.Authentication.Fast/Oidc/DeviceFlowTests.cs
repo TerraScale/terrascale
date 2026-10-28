@@ -26,7 +26,7 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         var userCode = device.GetProperty("user_code").GetString()!;
         await Assert.That(device.GetProperty("verification_uri_complete").GetString()).IsEqualTo($"{OidcHarness.PublicOrigin}{Page}?user_code={userCode}");
         await Assert.That(device.GetProperty("interval").GetInt64()).IsEqualTo(5);
-        await Assert.That(device.GetProperty("expires_in").GetInt64()).IsBetween(590, 600);
+        await Assert.That(device.GetProperty("expires_in").GetInt64()).IsBetween(1790, 1800);
         var deviceCode = device.GetProperty("device_code").GetString()!;
 
         // Pending until approved; polling again within the interval is told to slow down.
@@ -100,7 +100,7 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         await Assert.That(await PollAsync(oidc, denied.GetProperty("device_code").GetString()!)).IsEqualTo("access_denied");
 
         var expired = await AuthorizeDeviceAsync(oidc);
-        clock.Advance(TimeSpan.FromMinutes(11));
+        clock.Advance(DeviceFlow.Lifetime + TimeSpan.FromMinutes(1));
         await Assert.That(await PollAsync(oidc, expired.GetProperty("device_code").GetString()!)).IsEqualTo("expired_token");
         using var late = await DecideAsync(oidc, session, expired.GetProperty("user_code").GetString()!, "approve");
         await Assert.That(late.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

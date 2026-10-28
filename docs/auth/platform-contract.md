@@ -496,7 +496,7 @@ page (HA1, 2026-10-22), like every other TerraScale sign-in:
    answer is RFC 8628's `{device_code, user_code, verification_uri,
    verification_uri_complete, expires_in, interval}`; `verification_uri` is
    `{issuer origin}/ui/terrascale/device` and `verification_uri_complete` adds
-   `?user_code=`. Codes live 10 minutes; `interval` is 5 seconds.
+   `?user_code=`. Codes live 30 minutes; `interval` is 5 seconds.
 2. The page asks a browser without a session to sign in first and returns with
    the code. It shows the code, the client and the signed-in account; opening
    it never approves. The user approves or denies with an explicit,

@@ -6,9 +6,9 @@ using ZLogger;
 namespace TerraScale.Authentication.Hosting;
 
 /// <summary>
-/// Turns <see cref="ApiException"/> into its JSON envelope, storage that TerraBase reports unavailable into the
-/// retryable 503 envelope, and any other unhandled exception into the generic 500 envelope, so internal details never
-/// reach the client.
+/// Turns <see cref="ApiException"/> into its JSON envelope, storage that TerraBase reports unavailable or that does not
+/// answer in time into the retryable 503 envelope, and any other unhandled exception into the generic 500 envelope, so
+/// internal details never reach the client.
 /// </summary>
 public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorEnvelopeMiddleware> logger)
 {
@@ -47,6 +47,12 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             var error = ApiException.Unavailable(unavailable);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
+        }
+        catch (TimeoutException timeout) when (!context.Response.HasStarted)
+        {
+            // ts-dotnet gave up waiting for TerraBase: the storage is slow, not the request wrong.
+            Diagnose(context, timeout, () => logger.ZLogError(timeout, $"Storage did not answer in time"));
+            await WriteAsync(context, ApiException.Unavailable(timeout));
         }
         catch (Exception exception) when (!context.Response.HasStarted)
         {
