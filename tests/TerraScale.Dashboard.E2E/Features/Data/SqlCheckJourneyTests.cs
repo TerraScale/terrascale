@@ -81,7 +81,9 @@ public sealed class SqlCheckJourneyTests(DashboardRootFixture fixture)
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql")
         { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = "INSERT INTO audit VALUES (1) RETURNING *" }) };
         request.Headers.Accept.ParseAdd("text/html");
-        using var response = await client.SendAsync(request);
+        using var posted = await client.SendAsync(request);
+        await Assert.That(posted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using var response = await client.GetAsync(posted.Headers.Location);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var html = await response.Content.ReadAsStringAsync();
         var payload = Regex.Match(html, "<script[^>]*data-sql-result-data[^>]*>(.*?)</script>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
@@ -120,7 +122,8 @@ public sealed class SqlCheckJourneyTests(DashboardRootFixture fixture)
         await Assert.That(read.Body.GetProperty("rows")[0][1].GetString()).IsEqualTo("Ada");
         var missing = await RunAsync("SELECT * FROM nope");
         await Assert.That(missing.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(missing.Body.GetProperty("detail").GetString()).IsEqualTo("no such table: nope");
+        await Assert.That(missing.Body.GetProperty("detail").GetString()).IsEqualTo("no such table: nope (SQLITE_ERROR)");
+        await Assert.That(missing.Body.GetProperty("sqliteCode").GetString()).IsEqualTo("SQLITE_ERROR");
         var write = await RunAsync("CREATE TABLE things (id TEXT PRIMARY KEY)");
         await Assert.That(write.Status).IsEqualTo(HttpStatusCode.OK).Because("A member with write access runs DDL with a documents:write grant.");
         await Assert.That(write.Body.GetProperty("rowsAffected").GetInt64()).IsEqualTo(1);
