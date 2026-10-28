@@ -166,8 +166,15 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             }
             catch (Exception failure) when (failure is not OutOfMemoryException)
             {
-                // Storage unavailable (as during bootstrap): the next pass retries, and no row is lost.
-                logger.ZLogWarning(failure, $"Authentication email outbox pass failed; retrying");
+                // Storage unavailable (as during bootstrap): the next pass retries, and no row is lost. A failing log provider must not stop the worker.
+                try
+                {
+                    logger.ZLogWarning(failure, $"Authentication email outbox pass failed; retrying");
+                }
+                catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                {
+                    _ = logFailure;
+                }
             }
 
             if (drained)
