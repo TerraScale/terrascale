@@ -218,16 +218,17 @@ pressure signals. E1 and E1-gru reproduce the current defect and cannot substitu
 - Verify that a proposed gen0 override takes effect on the pinned runtime before registering an arm. Under quota, use
   operations per CPU-second as the primary efficiency measure. The deployed saturated workload remains unidentified.
 
-**Acceptance for calling an arm "worth a code proposal":** every one of these must hold in E1 *and* E1-gru against
-interleaved A0.
+**Historical E1 screening criteria (diagnostic only):** every one of these would need to hold in E1 *and* E1-gru against
+interleaved A0. Passing this screen cannot support a production code proposal while visibility remains defective.
 1. Overhead p99 improves with non-overlapping ranges across repeats, and p50 does not regress beyond A0's range.
 2. ops per CPU-s does not regress by more than 2%.
 3. `memory.peak` stays at or below A0 + 256 MiB and below 75% of `memory.max` (3 GiB), with native memory included.
 4. Threads stay at or below A0 + 8 and well below 256.
 5. Zero errors or increments in the memory-event counters, and the engine-p50 control holds.
 
-A pass would show only that the arm deserves a reviewed proposal, not that it attained the <10% server-over-engine target.
-The discovery issue and its corrected envelope must be resolved before using this matrix for a production decision.
+A pass would support further diagnostic work, not establish the <10% server-over-engine target.
+The discovery issue and its corrected E2 envelope must be resolved, with E2 arms and acceptance criteria declared before
+timing, before any production proposal. This historical E1 matrix does not qualify that corrected envelope.
 The target remains unmet in the current evidence; any future attainment needs a separate result against the same denominator.
 
 ## Findings and objections
@@ -251,8 +252,10 @@ The target remains unmet in the current evidence; any future attainment needs a 
 Source review of ts-orchestrator `d0ba23b40874f916ca21e7bc6e2b9553ae10a2a1`
 identifies the generic container option list in `internal/swarmruntime/controller.go` as the relevant boundary.
 It uses containerd v2.4.2 defaults, which omit both a cgroup mount and a private cgroup namespace. A proposed fix needs
-both: a read-only mount without a private namespace would expose the host cgroup tree. This has not been implemented or
-qualified here; source inspection does not prove the deployed runc version's behavior.
+both: a read-only mount without a private namespace would expose the host cgroup tree. The separate draft
+[ts-orchestrator PR #207](https://github.com/TerraScale/ts-orchestrator/pull/207), at
+`0346e0c3f7ea0ecad491009a4fd7022bc4a5b94b`, proposes both and extends the existing real-containerd mount test.
+No runtime qualification or rollout result is claimed here; source inspection does not prove the deployed runc version's behavior.
 
 The generic path serves more products than TerraBase. Making limits visible would change runtime CPU discovery and
 potentially GC limits across those products. On TerraBase, default worker and pool counts, usage stripes, cache size and
