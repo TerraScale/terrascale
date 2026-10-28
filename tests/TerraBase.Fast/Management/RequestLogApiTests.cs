@@ -190,6 +190,64 @@ public sealed class RequestLogApiTests
         finally { Directory.Delete(directory, recursive: true); }
     }
 
+    [Test]
+    public async Task Cursor_reads_list_settled_requests_oldest_first_and_report_gaps()
+    {
+        var time = new FakeTimeProvider();
+        await using var api = await ManagementApi.StartAsync(time: time);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var start = Ulid.NewUlid(time.GetUtcNow(), new byte[10]).ToString();
+        async Task RequestAsync(int count)
+        {
+            using var data = await api.CreateClientAsync(database.Organization, "documents:read");
+            for (var i = 0; i < count; i++)
+            {
+                time.Advance(TimeSpan.FromMilliseconds(20));
+                using var response = await data.GetAsync(ManagementApi.Uri(database.Data + "/collections"));
+                response.EnsureSuccessStatusCode();
+            }
+        }
+
+        await RequestAsync(3);
+        using (var project = Project(api, database.Project, "databases:read"))
+        {
+            // Unsettled requests stay unread; the cursor does not pass them.
+            var early = await ReadAsync(project, database, "?after=" + start);
+            await Assert.That(early.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+            await Assert.That(early.GetProperty("nextCursor").GetString()).IsEqualTo(start);
+        }
+        time.Advance(TimeSpan.FromSeconds(31));
+        using (var project = Project(api, database.Project, "databases:read"))
+        {
+            var page = await ReadAsync(project, database, "?after=" + start);
+            var ids = page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToArray();
+            await Assert.That(ids.Length).IsEqualTo(3);
+            await Assert.That(ids).IsOrderedBy(id => id, StringComparer.Ordinal);
+            await Assert.That(page.GetProperty("gap").GetBoolean()).IsFalse();
+            var next = page.GetProperty("nextCursor").GetString()!;
+            await Assert.That(string.CompareOrdinal(next, ids[^1])).IsGreaterThan(0);
+            await Assert.That((await ReadAsync(project, database, "?after=" + next)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
+
+            // Overflowing the retained window past the cursor is reported, not silently skipped.
+            await RequestAsync(110);
+            time.Advance(TimeSpan.FromSeconds(31));
+            var overflow = await ReadAsync(project, database, "?after=" + next);
+            await Assert.That(overflow.GetProperty("items").GetArrayLength()).IsEqualTo(100);
+            await Assert.That(overflow.GetProperty("gap").GetBoolean()).IsTrue();
+            var caughtUp = await ReadAsync(project, database, "?after=" + overflow.GetProperty("nextCursor").GetString());
+            await Assert.That(caughtUp.GetProperty("gap").GetBoolean()).IsFalse();
+
+            using var invalid = await project.GetAsync(ManagementApi.Uri(database.Data + "/logs?after=not-a-ulid"));
+            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
+        time.Advance(TimeSpan.FromHours(25));
+        using (var project = Project(api, database.Project, "databases:read"))
+        {
+            await Assert.That((await ReadAsync(project, database, "?after=" + start)).GetProperty("gap").GetBoolean()).IsTrue();
+        }
+    }
+
     private static HttpClient Project(ManagementApi api, string project, string scope, string? database = null) =>
         api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {

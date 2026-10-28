@@ -23,8 +23,13 @@ public sealed record DatabaseRequestLog(
     long Statements = 0,
     long StatementErrors = 0);
 
-/// <summary>The newest recorded requests, bounded to 100 entries and 24 hours. Recording is best effort.</summary>
-public sealed record DatabaseRequestLogs(string DatabaseId, IReadOnlyList<DatabaseRequestLog> Items, bool Truncated, bool RecordingLimited);
+/// <summary>
+/// The newest recorded requests, bounded to 100 entries and 24 hours. Recording is best effort. A cursor read lists settled
+/// requests after the cursor oldest first, returns the next cursor, and sets <see cref="Gap"/> when requests after the cursor
+/// may have left the retained window unread.
+/// </summary>
+public sealed record DatabaseRequestLogs(string DatabaseId, IReadOnlyList<DatabaseRequestLog> Items, bool Truncated, bool RecordingLimited,
+    string? NextCursor = null, bool Gap = false);
 
 /// <summary>A response whose memory admission lasts through serialization.</summary>
 public sealed class RequestLogRead(DatabaseRequestLogs body, IDisposable reservation) : IResult, IDisposable
@@ -50,8 +55,8 @@ public interface IRequestLogs
     void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null,
         long statements = 0, long statementErrors = 0);
 
-    /// <summary>Reads recent observations, with an optional HTTP status class (2 through 5).</summary>
-    ValueTask<RequestLogReadResult> ReadAsync(TenantContext database, int? statusClass, CancellationToken cancellationToken);
+    /// <summary>Reads recent observations, with an optional HTTP status class (2 through 5) and an optional cursor (a ULID).</summary>
+    ValueTask<RequestLogReadResult> ReadAsync(TenantContext database, int? statusClass, string? after, CancellationToken cancellationToken);
 
     /// <summary>Persists pending observations; retrying the same ULIDs is idempotent.</summary>
     ValueTask FlushAsync(CancellationToken cancellationToken);

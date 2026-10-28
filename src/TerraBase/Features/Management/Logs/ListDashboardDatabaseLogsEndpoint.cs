@@ -19,12 +19,14 @@ internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects
         Get("/v1/usage/projects/{project}/databases/{databaseId}/logs");
         Name("listDashboardDatabaseLogs");
         Summary("Lists a database's recent requests for the dashboard");
-        Description("The listDatabaseLogs response, unfiltered: newest 100 recorded requests within 24 hours. databaseId is the catalog id; the organization comes from the catalog.");
+        Description("The listDatabaseLogs response, unfiltered: newest 100 recorded requests within 24 hours. databaseId is the catalog id; the organization comes from the catalog. " +
+            ListDatabaseLogsEndpoint.CursorDescription);
         Tags("Usage");
         Produces<DatabaseRequestLogs>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Metadata(ListDatabaseLogsEndpoint.CursorParameter());
         AllowAnonymous();
     }
 
@@ -35,6 +37,11 @@ internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects
         if (error is not null)
         {
             return error;
+        }
+
+        if (!ListDatabaseLogsEndpoint.TryCursor(HttpContext, out var after))
+        {
+            return ErrorResponse.From(new Validation("after must be one canonical uppercase ULID", "invalid_cursor"));
         }
 
         var database = HttpContext.Request.RouteValues["databaseId"] as string;
@@ -48,7 +55,7 @@ internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects
             static unavailable => unavailable, cancellationToken).ConfigureAwait(false);
         return tenant switch
         {
-            TenantContext found => await logs.ReadAsync(found, statusClass: null, cancellationToken).ConfigureAwait(false) switch
+            TenantContext found => await logs.ReadAsync(found, statusClass: null, after, cancellationToken).ConfigureAwait(false) switch
             {
                 RequestLogRead read => Retain(read),
                 Unavailable unavailable => ErrorResponse.From(unavailable),

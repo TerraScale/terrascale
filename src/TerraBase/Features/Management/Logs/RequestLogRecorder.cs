@@ -26,6 +26,8 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         + 2L * FlushPageBytes + MaxSaved * 128L + Kept * MaxRecordBytes + 128 * 1024;
     private const long ReadBytes = 4 * 1024 * 1024;
     private const string Format = "alpha";
+    // Remote observations reach the catalog after a flush tick plus replication; cursor reads only cover requests this old.
+    private static readonly TimeSpan Settle = TimeSpan.FromSeconds(30);
     private readonly Lock _gate = new();
     private readonly SemaphoreSlim _io = new(1, 1);
     private readonly Dictionary<DatabaseOwner, List<Entry>> _pending = [];
@@ -68,7 +70,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    public async ValueTask<RequestLogReadResult> ReadAsync(TenantContext database, int? statusClass, CancellationToken cancellationToken)
+    public async ValueTask<RequestLogReadResult> ReadAsync(TenantContext database, int? statusClass, string? after, CancellationToken cancellationToken)
     {
         await _io.WaitAsync(cancellationToken).ConfigureAwait(false);
         IMemoryReservation? reserved = null;
@@ -85,8 +87,9 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                 DatabaseRequestLog[] pending;
                 lock (_gate) { pending = _pending.TryGetValue(DatabaseOwner.Of(database), out var entries) ? [.. entries.Select(entry => entry.Log)] : []; }
                 var recent = Recent(saved.Concat(pending)).ToArray();
-                var items = recent.Take(Kept).Where(log => statusClass is null || log.Status / 100 == statusClass).ToArray();
-                return new RequestLogRead(new(database.DatabaseId!, items, recent.Length >= Kept, RecordingLimited), admission);
+                var window = recent.Take(Kept).Where(log => statusClass is null || log.Status / 100 == statusClass).ToArray();
+                var body = new DatabaseRequestLogs(database.DatabaseId!, window, recent.Length >= Kept, RecordingLimited);
+                return new RequestLogRead(after is null ? body : Page(body, recent, after), admission);
             }, static error => error, cancellationToken).ConfigureAwait(false);
             if (result is RequestLogRead) { reserved = null; }
             return result;
@@ -131,6 +134,22 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             }
         }
         finally { _io.Release(); }
+    }
+
+    // Every retained request between the cursor and the settled boundary is returned, so the boundary is the next cursor.
+    private DatabaseRequestLogs Page(DatabaseRequestLogs body, DatabaseRequestLog[] recent, string after)
+    {
+        var now = time.GetUtcNow();
+        var settled = Ulid.NewUlid(now - Settle, stackalloc byte[10]).ToString();
+        var items = body.Items.Where(log => string.CompareOrdinal(log.Id, after) > 0 && string.CompareOrdinal(log.Id, settled) < 0)
+            .OrderBy(log => log.Id, StringComparer.Ordinal).ToArray();
+        var evicted = body.Truncated && string.CompareOrdinal(recent[Kept - 1].Id, after) > 0;
+        return body with
+        {
+            Items = items,
+            NextCursor = string.CompareOrdinal(settled, after) > 0 ? settled : after,
+            Gap = evicted || Ulid.Parse(after).Time < now.AddHours(-24),
+        };
     }
 
     private async ValueTask<bool> FlushOwnerAsync(DatabaseOwner owner, CancellationToken cancellationToken)
