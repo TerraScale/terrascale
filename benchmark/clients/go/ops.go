@@ -168,12 +168,15 @@ func rawDo(ctx context.Context, hc *http.Client, method, target string, body []b
 // status maps an operation's error to its status key. An SDK error carries the HTTP status.
 func status(err error) string {
 	var api *v1.APIError
+	var auth *tsauth.Error
 	var ne net.Error
 	switch {
 	case err == nil:
 		return "ok"
 	case errors.As(err, &api):
 		return strconv.Itoa(api.Status)
+	case errors.As(err, &auth):
+		return "auth_" + strconv.Itoa(auth.Status)
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
 		return "timeout"
 	case errors.Is(err, context.Canceled):

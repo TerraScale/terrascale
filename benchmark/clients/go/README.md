@@ -10,8 +10,10 @@ JSON-lines protocol are in [docs/api-bench.md](../../docs/api-bench.md).
   stdin closes.
 - `make api-bench-build` builds it to `bin/api-bench-go`. The runner starts it;
   run it by hand only against a non-production endpoint.
-- SDK: `terrascale.tech/sdk` is pinned in `go.mod` to ts-go main `9f704645`
-  (adds `Database.Delete`) through a replace to `git.terrascale.tech`.
+- SDK: `terrascale.tech/sdk` is pinned in `go.mod` to public ts-go
+  `07ffb51e1d66fb2f7a42673683e731bdfc26d158` through a replace to
+  `github.com/TerraScale/ts-go`. This SDK has no retry setting, so `run` keeps the
+  shipped retry policy.
 
 The TS-761 capacity client is not implemented here.
 See [docs/protocol.md](../../docs/protocol.md) for that protocol.
