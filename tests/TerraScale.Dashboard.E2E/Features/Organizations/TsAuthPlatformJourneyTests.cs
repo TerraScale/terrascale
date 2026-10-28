@@ -963,6 +963,7 @@ public sealed partial class TsAuthPlatformJourneyTests
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(Producer, fallback)));
                 // The production transport, not the in-memory platform used by other journeys.
                 builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform, TsAuthGateway>());
+                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(services => (TsAuthGateway)services.GetRequiredService<ITsAuthPlatform>()));
                 configure?.Invoke(builder);
             });
             app.MapGet("/__test/project-context", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databaseService) =>
