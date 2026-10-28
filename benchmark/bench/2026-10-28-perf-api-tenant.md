@@ -25,3 +25,18 @@ inbox deletion settled and private credential directory removed. That measuremen
 no speedup. The accompanying keyed-auth attribution report is historical diagnostic evidence, with its original
 one-second warmup and source identity; it does not describe the current ten-second-warmup harness.
 The continuation-header retention change was syntax-checked; it has not yet been exercised against live auth.
+
+Recovery recheck on 2026-10-28: the gru auth task's local readyz returned 200 at
+06:52 UTC. Two subsequent receipt reads at 06:57:52 and 06:58:12 UTC still returned
+503 `temporarily_unavailable`. Scrubbed correlated auth logs identify
+`TerraBaseUnavailableException` in `TerraBaseConnection.OpenAsync`, called by
+`AccountDeletion.ReadReceiptAsync`. This establishes a storage-read refusal rather
+than account deletion completion. Both attempts stopped before a deletion mutation;
+private recovery material remains on beta and no replacement tenant was created.
+No more identical receipt retries are attempted until relevant service state changes.
+
+The normal main retry, Actions run `40643893257`, failed release admission for
+both ts-auth and TerraBase: all three regions reported `connect: nats: Authorization
+Violation` (auth 06:31 UTC, TerraBase 06:46 UTC). This differs from the earlier bake
+log-coverage failure. No workflow, deployment credential or serving data was changed.
+These failures prevent a claim of a complete normal rollout or live after proof.
