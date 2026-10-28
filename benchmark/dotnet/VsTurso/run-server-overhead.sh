@@ -44,7 +44,7 @@ for repeat in 1 2 3; do
   for arm in "${arms[@]}"; do
     prefix=$out/$arm-$repeat
     { date -u +%FT%TZ; uptime; cat /proc/pressure/cpu; } > "$prefix.host"
-    TERRABASE_VS_TURSO_LANES=engine,api TERRABASE_VS_TURSO_WORKLOADS=read \
+    TERRABASE_VS_TURSO_LANES=${TERRABASE_VS_TURSO_LANES:-engine,api} TERRABASE_VS_TURSO_WORKLOADS=read \
       TERRABASE_VS_TURSO_SECONDS=5 TERRABASE_VS_TURSO_REPEATS=1 TERRABASE_VS_TURSO_OUT="$prefix.md" \
       dotnet exec "$out/$arm/TerraBase.E2E.dll" --treenode-filter '/*/*/VsTursoBenchmark/*' \
       --minimum-expected-tests 1 > "$prefix.log" 2>&1 || { tail -60 "$prefix.log"; exit 1; }

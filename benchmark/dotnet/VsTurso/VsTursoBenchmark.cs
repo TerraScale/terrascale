@@ -67,7 +67,7 @@ namespace TerraBase.E2E
                 // One node outside a cell: change capture, change groups and the feed run, nothing ships and no write waits for a remote ack.
                 // Its attribution splits each measured HTTP request into server, engine and overhead time; it stops listening before the cluster.
                 using (var attribution = new ServerAttribution())
-                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "floor" || plugins.Any(plugin => plugin.Name == lane))
+                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "api-exceptions" or "floor" || plugins.Any(plugin => plugin.Name == lane))
                     ? await ManagementApi.StartAsync(services: attribution.Install) : null)
                 {
                     if (node is not null)
@@ -155,6 +155,11 @@ namespace TerraBase.E2E
                 targets.Add(("api" + suffix, new ApiTarget(address, token, path, engine)));
             }
 
+            if (lanes.Contains("api-exceptions" + suffix))
+            {
+                targets.Add(("api-exceptions" + suffix, new ApiTarget(address, token, path, engine)));
+            }
+
             // The HTTP floor: the same client and listener answering GET /healthz, so no auth, catalog or storage.
             if (lanes.Contains("floor" + suffix))
             {
@@ -200,12 +205,12 @@ namespace TerraBase.E2E
                                 // measured requests at c=16; give these cells a useful sample window on the same dataset.
                                 var window = workload == "read" && lane is "sql" or "hrana" or "pg"
                                     ? TimeSpan.FromSeconds(Math.Max(30, duration.TotalSeconds)) : duration;
-                                var timing = lane is "api" or "api-json" or "sdk" ? attribution : null;
-                                var cell = await MeasureAsync(target, body, workload, concurrency, window, timing) with { Lane = lane, Repeat = repeat };
+                                var timing = lane is "api" or "api-exceptions" or "api-json" or "sdk" ? attribution : null;
+                                var cell = await MeasureAsync(target, body, workload, concurrency, window, timing, lane) with { Lane = lane, Repeat = repeat };
                                 cells.Add(cell);
                                 await log.WriteLineAsync(JsonSerializer.Serialize(cell, VsTursoJson.Default.Cell));
                                 await log.FlushAsync(cancellationToken);
-                                if (attribution is not null && (lane is "api" or "api-json" or "sdk") && cell.Server is null)
+                                if (attribution is not null && (lane is "api" or "api-exceptions" or "api-json" or "sdk") && cell.Server is null)
                                 {
                                     throw new InvalidOperationException($"{lane}: HTTP attribution is missing; reject this run.");
                                 }
@@ -216,8 +221,9 @@ namespace TerraBase.E2E
             }
         }
 
-        private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration, ServerAttribution? attribution)
+        private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration, ServerAttribution? attribution, string lane)
         {
+            var countExceptions = lane is "api-exceptions" or "api-exceptions-3";
             var warmup = TimeSpan.FromSeconds(10);
             var start = Stopwatch.GetTimestamp();
             var measureFrom = start + (long)(warmup.TotalSeconds * Stopwatch.Frequency);
@@ -277,20 +283,33 @@ namespace TerraBase.E2E
             long canceledExceptions = 0;
             void CountCanceled(object? _, FirstChanceExceptionEventArgs args)
             {
-                if (args.Exception is OperationCanceledException && Stopwatch.GetTimestamp() is var now && now >= measureFrom && now <= end)
+                if (args.Exception is not OperationCanceledException)
+                {
+                    return;
+                }
+
+                var now = Stopwatch.GetTimestamp();
+                if (now >= measureFrom && now <= end)
                 {
                     Interlocked.Increment(ref canceledExceptions);
                 }
             }
 
-            AppDomain.CurrentDomain.FirstChanceException += CountCanceled;
+            if (countExceptions)
+            {
+                AppDomain.CurrentDomain.FirstChanceException += CountCanceled;
+            }
+
             try
             {
                 await Task.WhenAll(workers);
             }
             finally
             {
-                AppDomain.CurrentDomain.FirstChanceException -= CountCanceled;
+                if (countExceptions)
+                {
+                    AppDomain.CurrentDomain.FirstChanceException -= CountCanceled;
+                }
             }
 
             var cpu = Process.GetCurrentProcess().TotalProcessorTime - cpuBefore;
@@ -305,7 +324,7 @@ namespace TerraBase.E2E
             var ops = all.Length;
             return new Cell(
                 string.Empty, 0, body.Size, workload, concurrency, Math.Round(ops / duration.TotalSeconds, 3), Math.Round(Micros(0.50), 1), Math.Round(Micros(0.99), 1),
-                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors, ops, duration.TotalSeconds, server, canceledExceptions);
+                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors, ops, duration.TotalSeconds, server, countExceptions ? canceledExceptions : null);
         }
 
         private static string Summary(List<Cell> cells)
@@ -353,7 +372,7 @@ namespace TerraBase.E2E
 
         internal sealed record Cell(
             string Lane, int Repeat, string Size, string Workload, int Concurrency, double OpsPerSecond, double P50Micros, double P99Micros,
-            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, int Samples, double Seconds, ServerStats? Server = null, long CanceledExceptions = 0);
+            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, int Samples, double Seconds, ServerStats? Server = null, long? CanceledExceptions = null);
 
         /// <summary>JSON documents of one size: a fixed shape with a 13-digit counter, so no write repeats the stored body.</summary>
         private sealed class Bodies
