@@ -28,6 +28,10 @@ Keep EF Core support in `src/TerraScale.EntityFrameworkCore`. It uses this SDK a
 - Provide XML docs for public APIs. Enable nullable reference types, analyzers, and warnings as errors.
 - No console output or process-wide mutable state. Hidden background work is forbidden unless an explicitly owned reactive object starts and disposes it.
 
+## Pull requests
+
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
+
 ## Zero configuration (user decision 2026-10-09, do not revert)
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles, or kill switches in code, config, or CI. Delete switches and their guarded paths.
 - Every region always serves. NetBird network membership admits a node automatically; the node discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
