@@ -97,6 +97,14 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidTarget, "The project is not one this key reaches.");
         }
 
+        // A closure is accepted before every region confirms it (an account deletion closes its sole organizations): from
+        // acceptance on, keys of the closing organization or project mint nothing, even while the closure is pending.
+        if (await directory.ClosureAsync("organization", key.OrganizationId, cancellationToken).ConfigureAwait(false) is not null
+            || project is not null && await directory.ClosureAsync("project", project, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
+        }
+
         var requested = request.GetScopes();
         if (requested.Except(key.Scopes).Any())
         {

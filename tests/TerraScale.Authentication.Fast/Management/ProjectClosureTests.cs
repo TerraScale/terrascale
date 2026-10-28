@@ -25,6 +25,8 @@ namespace TerraScale.Authentication.Fast.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class ProjectClosureTests(TerraBaseFixture fixture)
 {
+    private static readonly string[] DocumentsRead = ["documents:read"];
+
     [Test]
     public async Task A_project_is_removed_only_after_terrabase_accepts_and_a_lost_answer_is_retried_with_the_same_closure()
     {
@@ -458,6 +460,33 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{solo}", token);
     }
 
+    // QA round 4 (sites cleanup): an accepted account deletion closes its sole organizations, and their project keys kept
+    // minting tokens until every region confirmed. Keys stop at acceptance: any pending organization or project closure.
+    [Test]
+    [Arguments("organization")]
+    [Arguments("project")]
+    public async Task A_key_mints_nothing_once_its_organization_or_project_has_a_pending_closure(string scope)
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
+        var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token, "Solo");
+        var project = await oidc.CreateProjectAsync(token, organization, "Keys");
+        var key = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
+            new { name = "backend", scopes = DocumentsRead }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+        using (var before = await oidc.ApiKeyTokenAsync(key))
+        {
+            await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var subject = scope == "organization" ? organization : project;
+        var (_, intent) = ClosureJob.New("terrascale", scope, subject, organization, alice.Id, clock, alice.Id);
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<AuthStore>().TransactAsync([intent])).IsNull();
+        using var after = await oidc.ApiKeyTokenAsync(key);
+        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That((await OidcHarness.JsonAsync(after)).GetProperty("error").GetString()).IsEqualTo("invalid_client");
+    }
+
     // Every deferral is a remote-durable write: a pending intent backs off (2 s doubling, at most a minute) instead of being
     // rewritten on every two-second pass while its account intent drives it.
     [Test]
@@ -489,6 +518,19 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         }
 
         await Assert.That(string.Join(",", delays)).IsEqualTo("2,4,8,16,32,60,60");
+
+        // An intent still pending after about an hour at the cap is parked: every 15 minutes, never dropped.
+        var directory = services.GetRequiredService<PlatformDirectory>();
+        var stuck = (await directory.ClosureAsync("project", project, CancellationToken.None))!;
+        await Assert.That(await store.ReplaceAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("project", project),
+            JsonSerializer.SerializeToElement(stuck.Value with { Attempts = Closures.ParkAfter - 1 }, ClosureJson.Default.ClosureJob), stuck.Version)).IsNotNull();
+        for (var pass = 0; pass < 2; pass++)
+        {
+            await worker.RunOnceAsync();
+            var parked = (await JobAsync(oidc, "project", project))!;
+            await Assert.That(parked.NextAttemptAt - clock.UtcNow).IsEqualTo(TimeSpan.FromMinutes(15));
+            clock.UtcNow = parked.NextAttemptAt;
+        }
     }
 
     // Review R2 P2-2: a step that read the organizations before a concurrent cancellation can no longer create an

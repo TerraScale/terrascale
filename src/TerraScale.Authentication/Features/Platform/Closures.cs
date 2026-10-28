@@ -20,6 +20,14 @@ public sealed class Closures(
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
 
+    // After about an hour at the one-minute cap an intent waits on something its retries cannot change (a TerraBase
+    // region that never fences, an account closure that never finishes). It keeps its authority and is never dropped,
+    // but it is parked: retried every 15 minutes, with one warning when it parks.
+    private static readonly TimeSpan ParkedRetry = TimeSpan.FromMinutes(15);
+
+    /// <summary>The attempt count after which a pending intent is parked at <see cref="ParkedRetry"/>.</summary>
+    internal const int ParkAfter = 65;
+
     /// <summary>
     /// Closes a project for <paramref name="userId"/>, who needs its admin role: true once it is removed, false while
     /// TerraBase has not accepted the closure (it finishes in the background). 409 <c>not_empty</c> while TerraBase holds its
@@ -240,8 +248,9 @@ public sealed class Closures(
             .Select(document => document.Document.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
     }
 
-    // 2 s, doubling per earlier attempt, at most a minute.
-    internal static TimeSpan Backoff(int attempts) => attempts >= 5 ? MaxRetry : TimeSpan.FromTicks(Math.Min(Retry.Ticks << attempts, MaxRetry.Ticks));
+    // 2 s, doubling per earlier attempt, at most a minute; from the deferral that reaches ParkAfter on, every 15 minutes.
+    internal static TimeSpan Backoff(int attempts) => attempts + 1 >= ParkAfter ? ParkedRetry
+        : attempts >= 5 ? MaxRetry : TimeSpan.FromTicks(Math.Min(Retry.Ticks << attempts, MaxRetry.Ticks));
 
     // Moves a pending intent behind the others; a lost race means another pass already did.
     internal async Task DeferAsync(Versioned<ClosureJob> job, string failure, CancellationToken cancellationToken, bool fenceSeen = false)
@@ -258,6 +267,10 @@ public sealed class Closures(
             JsonSerializer.SerializeToElement(next, ClosureJson.Default.ClosureJob), job.Version, cancellationToken).ConfigureAwait(false))
         {
             logger.ZLogInformation($"A closure intent changed while it was deferred; the next pass reads it again");
+        }
+        else if (attempts + 1 == ParkAfter)
+        {
+            logger.ZLogWarning($"A {job.Value.Scope:@Scope} closure intent is parked after {ParkAfter} attempts ({failure:@FailureCode}); it now retries every 15 minutes and needs attention");
         }
     }
 }
