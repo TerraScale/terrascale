@@ -91,14 +91,14 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
             throw ApiException.Unavailable();
         }
 
-        codeSlot.EnqueueEmail(AuthEmailKind.EmailChangeCode, new AuthEmailValues(normalized)
+        await codeSlot.EnqueueEmailAsync(AuthEmailKind.EmailChangeCode, new AuthEmailValues(normalized)
         {
             Code = code,
             ExpiresIn = Lifetime,
             NewEmail = normalized,
             Tenant = caller.InstanceId,
         });
-        noticeSlot.EnqueueEmail(AuthEmailKind.EmailChangeNotice, new AuthEmailValues(caller.Email)
+        await noticeSlot.EnqueueEmailAsync(AuthEmailKind.EmailChangeNotice, new AuthEmailValues(caller.Email)
         {
             Link = new Uri(options.PublicOrigin, $"/ui/terrascale/email-change/cancel?user={caller.Id}&token={cancel}"),
             ExpiresIn = Lifetime,

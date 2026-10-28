@@ -73,7 +73,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         var pending = Tokens.RandomToken(43);
         var tenant = this.Tenant;
         cancellationToken.ThrowIfCancellationRequested();
-        reservation.EnqueueIssue(() => passcodes.RequestSignUpAsync(tenant, email, hash, pending, CancellationToken.None), locale);
+        await reservation.EnqueueSignUpAsync(tenant, email, hash, pending, locale);
         return (pending, null);
     }
 
@@ -88,7 +88,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         var tenant = this.Tenant;
         using var reservation = mail.Reserve();
         cancellationToken.ThrowIfCancellationRequested();
-        reservation.EnqueueIssue(() => passcodes.RequestAsync(tenant, email, PasscodePurpose.PasswordReset, CancellationToken.None), locale);
+        await reservation.EnqueueCodeAsync(tenant, email, PasscodePurpose.PasswordReset, locale);
         return null;
     }
 

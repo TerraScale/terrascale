@@ -47,7 +47,11 @@ internal static class StepUpHosted
                     throw StepUpProofs.Required();
                 }
 
-                services.GetRequiredService<SignInMail>().EnqueueIssue(() => passcodes.RequestStepUpAsync(user, id, CancellationToken.None));
+                using (var reservation = services.GetRequiredService<SignInMail>().Reserve())
+                {
+                    await reservation.EnqueueStepUpAsync(user, id);
+                }
+
                 notice = "One verification code was requested. Check your email; restart from the application if it expires.";
             }
             else

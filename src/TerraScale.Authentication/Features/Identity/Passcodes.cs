@@ -35,6 +35,12 @@ public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset Ex
     /// <summary>Server-resolved instance identity for mail accounting.</summary>
     public string Tenant { get; init; } = "platform";
 
+    /// <summary>The store key the code lives under (user id, pending sign-up or step-up request).</summary>
+    public string Key { get; init; } = "";
+
+    /// <summary>This issuance; a later code under <see cref="Key"/> replaces it.</summary>
+    public string IssueId { get; init; } = "";
+
     /// <summary>Omits the code and address, so formatting or logging the record never discloses them.</summary>
     public override string ToString() => nameof(IssuedPasscode);
 }
@@ -246,6 +252,17 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         }
     }
 
+    /// <summary>
+    /// Whether the code issued as <paramref name="issueId"/> under <paramref name="key"/> still redeems: not replaced,
+    /// consumed, exhausted or expired. Mail delivery checks it right before sending, so a stale code is never delivered.
+    /// </summary>
+    internal async Task<bool> IsCurrentAsync(string instanceId, PasscodePurpose purpose, string key, string issueId, CancellationToken cancellationToken)
+    {
+        var collection = purpose == PasscodePurpose.StepUp ? AuthStore.StepUpPasscodeCollection : AuthStore.PasscodeCollection;
+        return (await store.GetAsync(collection, instanceId, key, cancellationToken).ConfigureAwait(false))?.Document.Deserialize(IdentityJson.Default.PasscodeRecord) is { } passcode
+            && passcode.IssueId == issueId && !passcode.Consumed && passcode.FailedAttempts < MaxAttempts && passcode.ExpiresAt > clock.GetUtcNow();
+    }
+
     /// <summary>Whether <paramref name="code"/> has the shape of an issued code (six digits, surrounding spaces allowed).</summary>
     public static bool WellFormed(string? code) => code?.Trim() is { Length: 6 } trimmed && trimmed.All(char.IsAsciiDigit);
 
@@ -317,7 +334,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         }
 
         return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null
-            ? new IssuedPasscode(email, code, passcode.ExpiresAt, purpose) { Tenant = instanceId } : null;
+            ? new IssuedPasscode(email, code, passcode.ExpiresAt, purpose) { Tenant = instanceId, Key = key, IssueId = passcode.IssueId } : null;
     }
 
     /// <summary>

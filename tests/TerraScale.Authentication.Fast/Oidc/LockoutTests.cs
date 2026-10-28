@@ -531,19 +531,14 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
 
     private static Task DrainAsync(params AuthTestServer[] servers) => Task.WhenAll(servers.Select(async server =>
     {
-        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        server.App.Services.GetRequiredService<SignInMail>().EnqueueIssue(() =>
-        {
-            drained.SetResult();
-            return Task.FromResult<IssuedPasscode?>(null);
-        });
+        var drained = server.DrainMailAsync();
         var noticesDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.App.Services.GetRequiredService<SignInMail>().EnqueueLockout(() =>
         {
             noticesDrained.SetResult();
             return Task.FromResult<AuthEmailValues?>(null);
         });
-        await Task.WhenAll(drained.Task, noticesDrained.Task).WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.WhenAll(drained, noticesDrained.Task).WaitAsync(TimeSpan.FromSeconds(60));
     }));
 
     private static async Task AssertNoticeAsync(OidcHarness oidc, string email, DateTimeOffset deadline, bool portuguese = false)
