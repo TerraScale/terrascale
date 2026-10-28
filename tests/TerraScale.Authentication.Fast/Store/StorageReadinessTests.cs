@@ -187,7 +187,8 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
 
         // Only the startup bootstrap creates collections; the readiness probe never repairs storage.
         await database.DropCollectionAsync(collection);
-        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
+        // A ready replica turns not ready on the third consecutive failed pass.
+        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(45))).IsTrue();
         await Assert.That((await database.ListCollectionsAsync()).Items.Any(item => item.Name == collection)).IsFalse();
     }
 
