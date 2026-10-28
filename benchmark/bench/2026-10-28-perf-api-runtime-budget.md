@@ -10,7 +10,8 @@ This audit establishes no GC change or other adjustment that reaches that target
 
 ## Scope and method
 
-- **When.** 2026-10-28, 12:50:34–12:52:53 UTC: three passive snapshots per host, ~60 s apart.
+- **When.** The retained data contains two snapshots per host on 2026-10-28: first at 12:51:41–55 UTC, second at
+  12:52:48–53 UTC, about 60 s apart. An earlier third snapshot is not present in the retained artifacts.
 - **Access.** Only `ts-orch netbird ssh`, from delta, through the operator wrapper the earlier read-only diagnostics used.
   Hosts: peers `ts-fra-1`, `ts-gru-1` and `ts-sjc-1`. gru's peer reports hostname **`ts-gru-2`**. Each region has one host
   here. Other hosts in a region, if any, were not inspected.
@@ -56,13 +57,13 @@ This audit establishes no GC change or other adjustment that reaches that target
 | Leaf cgroup `cpu.max` (quota) | `100000 100000` = **1 CPU** | **1 CPU** | **1 CPU** |
 | Parent `/terrascale` and `/system.slice` `cpu.max` | `max` (no hierarchical cap) | `max` | `max` |
 | Leaf `memory.max` / `memory.high` / `swap.max` / `pids.max` | **4 GiB** / max / 0 / 256 | 4 GiB / max / 0 / 256 | 4 GiB / max / 0 / 256 |
-| Leaf `memory.current` / `memory.peak` | 2.08 / 2.29 GB | 2.80 / 3.04 GB | 1.96 / 2.10 GB |
+| Leaf `memory.current` / `memory.peak` (first snapshot) | 2.08 / 2.29 GB | 2.76 / 3.04 GB | 1.93 / 2.10 GB |
 | `memory.stat` anon / file (incl. shmem) | 1.56 / 0.51 (0.13) GB | 2.30 / 0.44 (0.14) GB | 1.51 / 0.40 (0.13) GB |
-| Process RssAnon / VmHWM / threads | 1.52 GB / 1.80 GB / 52 | 2.25 GB / 2.57 GB / 59 | 1.47 GB / 1.77 GB / 50 |
+| Process RssAnon / VmHWM / threads (first snapshot) | 1.558 GB / 1.845 GB / 52 | 2.303 GB / 2.634 GB / 59 | 1.510 GB / 1.813 GB / 50 |
 | GC committed (`dotnet_gc_last_collection_memory_committed_size_bytes`) | 0.154 GB | 0.178 GB | 0.135 GB |
 | Runtime `dotnet_process_cpu_count` (= `Environment.ProcessorCount`) | **2** | **4** | **2** |
 | App `terrabase_pressure_memory_budget_bytes` (`options.MemoryBudget`) | 3,126,672,384 | **6,284,313,600** | 3,126,672,384 |
-| App `terrabase_memory_reserved_bytes` | 746 MB | 11 MB | 715 MB |
+| App `terrabase_memory_reserved_bytes` (second snapshot) | 746 MB | 11 MB | 715 MB |
 | CPU used since start (CPU-s per wall s) | 0.975 | 0.978 | 0.987 |
 | CFS periods throttled since start | 94.2% | 96.7% | 96.6% |
 
@@ -81,12 +82,13 @@ This audit establishes no GC change or other adjustment that reaches that target
 
 **Budget mismatch on gru (objection, not fixed here).**
 - gru's app memory budget (6.28 GB) is higher than its cgroup `memory.max` (4.29 GB).
-- Pressure utilisation is computed against the 6.28 GB figure: working set 2.62 GB, so 42%. The cgroup is already at 65–71%.
+- Pressure utilisation is computed against the 6.28 GB figure: working set 2.62 GB, so 42%. Cgroup current usage is
+  64–65% across the snapshots and its recorded peak is 71%.
 - A budget above the kernel limit cannot alone provide headroom against that limit. Whether the kernel OOM path or an
   application refusal occurs first also depends on actual reservations, untracked memory and other pressure mechanisms;
   this audit does not establish the next failure path.
 - fra and sjc budgets (3.13 GB) are 73% of `memory.max`; this observation does not establish that budget derivation accounts
-  for the container limit.
+  for the container limit. Reservations plus unreserved memory can still exceed it. No `memory.events` OOM counter was read.
 
 **`StorageThreads` default.** It is `Math.Clamp(Environment.ProcessorCount, 1, 1024)`, so 2 (fra/sjc) and 4 (gru) storage
 threads share a 1-CPU quota. This is inferred from source plus the observed `ProcessorCount`. No configured value was read.
@@ -110,6 +112,7 @@ ts-auth ran only on the gru host among the three inspected.
 (1.5–2.3 GB). These are different measurements and observation boundaries, not a complete managed/native decomposition.
 The gap is consistent with substantial native/runtime memory, but is not attributed to Turso/SQLite, temporary storage,
 stacks or code heaps here. Any GC experiment must measure total `memory.current`, not only the managed metric.
+After converting `/proc` KiB with 1024 bytes, process `RssAnon` equals cgroup `memory.stat` anon in each first snapshot.
 
 ## GC configuration: requested/configured vs observed
 
@@ -122,17 +125,16 @@ stacks or code heaps here. Any GC experiment must measure total `memory.current`
 | One `.NET BGC` thread, no other GC-named threads, 50–59 threads total | thread-name histogram | **passive indication** consistent with workstation concurrent GC |
 | `GCSettings.IsServerGC` | no existing metric or endpoint exposes it | **unverified** |
 
-A missing override is not proof of the runtime mode. The thread-name observation fits workstation concurrent GC: server GC
-would create per-heap GC threads, and with `ProcessorCount` at 2/4 there would be more than one. It is still not a
-`GCSettings` read.
+A missing override is not proof of the runtime mode. The thread-name observation fits workstation concurrent GC but is
+not a `GCSettings` read. Server GC's dynamic heap adaptation also weakens arguments based only on thread counts.
 
 **Dockerfile, CI vs deployment.**
 - `Dockerfile:11-16` sets `DOTNET_PROCESSOR_COUNT=8` and `DOTNET_GCHeapCount=8` in `base`.
 - The comment says publish/runtime stages "have their own base". That holds for the runtime stage (`runtime-deps` chiseled,
   `Dockerfile:152`) but not for publish: `publish-terrabase` derives from `source → restored → base`, so the publish-time SDK
   processes run with those variables.
-- This affects build-time processes only. The deployed binary's runtimeconfig has no heap-count property, and the deployed
-  environment has neither variable. The CI test containers (8 CPUs, 8 heaps requested) are therefore not the deployment
+- This affects build-time processes only. No heap-count property was found in the scanned JSON windows (the full bundle
+  entry was not parsed), and the deployed environment has neither variable. The CI test containers (8 CPUs, 8 heaps requested) are not the deployment
   envelope. Comment accuracy objection only; nothing changed.
 
 ## Deployed GC and CPU signals (passive counters, not per request)
@@ -148,9 +150,11 @@ would create per-heap GC threads, and with `ProcessorCount` at 2/4 there would b
 
 - **Window precision.** Window bounds are the reducer start times. Metrics were scraped seconds later, after the in-place
   executable scan, so window rates are ±~10%. The since-start rows use exact process start times.
+- **Probe perturbation.** The collector read each approximately 300 MB executable twice. This is additional work on a
+  shared host; the probes were passive but not zero-cost.
 - **Pause time is wall time.** CFS throttling can extend it. Mean pauses of 2.6–4.9 ms (profile p50: 1.5 ms on unthrottled
   CPUs) cannot be split into GC work and throttle wait with these counters, which are not joined per collection.
-- **Gen2 collections run every ~2–3 s** (2.1–2.6% of GCs). Their cause (budget, induced or native pressure) was not determined.
+- **Gen2 collections run every ~2.2–3.4 s** (2.06–2.13% of GCs). Their cause (budget, induced or native pressure) was not determined.
 - **Lock contentions.** gru recorded ~2.0 M lock contentions since start; fra and sjc recorded ~59–77 k. Not diagnosed.
 
 ## How the profiled 10-CPU loopback differs from deployment
@@ -192,6 +196,8 @@ The load client runs in a separate process on CPUs outside the server's set, so 
 the server. This requires a separately qualified harness; the existing in-process loopback benchmark does not provide
 that topology. A resource-discovery fix would also require a new matched baseline with the corrected runtime view.
 These are design prerequisites, not an executable or approved experiment plan.
+After fixing visibility, define a separate E2 envelope from measured effective CPU count, memory budget, worker count and
+pressure signals. E1 and E1-gru reproduce the current defect and cannot substitute for E2.
 
 **Arms:**
 
@@ -206,8 +212,11 @@ These are design prerequisites, not an executable or approved experiment plan.
 - ops/s and ops per CPU-s (cgroup `usage_usec`), and server-over-engine p50/p99 with the unchanged engine denominator.
 - Engine p50, as a control that must stay within ±5% of A0.
 - Pause share, GCs/s, mean/p99 pause, and allocated bytes per request.
+- Absolute server p50/p99, including CFS throttle tails; a ratio can improve when its engine denominator slows.
 - `nr_throttled`/`nr_periods`.
-- `memory.peak`, anon, file, GC committed, RssAnon, thread count and errors.
+- `memory.peak`, anon, file, GC committed, RssAnon, thread count, errors and changes in `memory.events` (`oom`, `oom_kill`, `max`).
+- Verify that a proposed gen0 override takes effect on the pinned runtime before registering an arm. Under quota, use
+  operations per CPU-second as the primary efficiency measure. The deployed saturated workload remains unidentified.
 
 **Acceptance for calling an arm "worth a code proposal":** every one of these must hold in E1 *and* E1-gru against
 interleaved A0.
@@ -215,7 +224,7 @@ interleaved A0.
 2. ops per CPU-s does not regress by more than 2%.
 3. `memory.peak` stays at or below A0 + 256 MiB and below 75% of `memory.max` (3 GiB), with native memory included.
 4. Threads stay at or below A0 + 8 and well below 256.
-5. Zero errors, and the engine-p50 control holds.
+5. Zero errors or increments in the memory-event counters, and the engine-p50 control holds.
 
 A pass would show only that the arm deserves a reviewed proposal, not that it attained the <10% server-over-engine target.
 The discovery issue and its corrected envelope must be resolved before using this matrix for a production decision.
@@ -236,6 +245,25 @@ The target remains unmet in the current evidence; any future attainment needs a 
 5. **Limited host coverage.** Only one host per region was inspected. Revisions are mixed: sjc runs `e3a778f7c`, fra and gru
    run `6931b0b57`.
 6. The CORS 500 B and cached-open 356 B allocation cuts stay **HELD**. This audit adds no evidence for or against them.
+
+## Remediation boundary and qualification risks
+
+Source review of ts-orchestrator `d0ba23b40874f916ca21e7bc6e2b9553ae10a2a1`
+identifies the generic container option list in `internal/swarmruntime/controller.go` as the relevant boundary.
+It uses containerd v2.4.2 defaults, which omit both a cgroup mount and a private cgroup namespace. A proposed fix needs
+both: a read-only mount without a private namespace would expose the host cgroup tree. This has not been implemented or
+qualified here; source inspection does not prove the deployed runc version's behavior.
+
+The generic path serves more products than TerraBase. Making limits visible would change runtime CPU discovery and
+potentially GC limits across those products. On TerraBase, default worker and pool counts, usage stripes, cache size and
+pressure denominators would change. Existing reservations on fra/sjc are already about 715–746 MB; the new budget and
+reservation headroom must be measured, not assumed. Current CPU pressure divides by the observed 2/4 CPUs despite the
+1-CPU quota, so saturated nodes can report roughly 0.49/0.24. Consumption of these signals by autoscaling was not traced.
+
+The stateful `ts-db-*` path replaces namespaces and mounts from its own pinned spec and would require a separate review.
+Existing containers retain their specs until recreation. Qualification needs a real-containerd control for private,
+read-only cgroup2 visibility, exact CPU/memory limits and refused writes, then a canary measurement of effective runtime
+budgets, pressure, reservations and readiness. No rollout or production configuration change occurred in this audit.
 
 ## Publication provenance
 
