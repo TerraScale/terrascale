@@ -41,10 +41,11 @@ timeout cannot be attributed to the server.
 ## Limits
 
 - Raw net/http wire replays remain unobservable (`RoundTripper attempts; net/http internal wire replays are not observable`).
-- The launcher's retained-directory check pipes `find` into `grep` under
+- The original launcher's retained-directory check piped `find` into `grep` under
   `pipefail`, so a concurrent `find` race (one appeared here) could hide a
   match. A separate operator check found no such directory before or after the
-  run. Fix this before any reuse.
+  run. The follow-up below fixes the check; this fixed-output launcher must not
+  be rerun for another attempt.
 - Database deletion is only logical acceptance. Because the create is
   `uncertain` and the delete returned `absent`, the owned name above needs
   reconciliation in fra.
@@ -55,3 +56,21 @@ SHA-256: cells.jsonl `e5fca7a8…3f4f`, run.log `e3c44dca…2994`,
 cpu-processes.jsonl `c23a917e…1742`, quiet-summary.json `82dbd65a…1232`,
 host.txt `cc191530…89a1dd`, run.sh `a9f5a67b…ee76`. No credential, recovery,
 receipt, tenant, user or project content is included here.
+
+## Launcher follow-up
+
+Commit `c56e72c47` captures the complete directory enumeration before checking
+for matches, refuses any matching entry (including links), and exits 74 on an
+enumeration error. These shell controls and `bash -n` passed on delta through
+`ts-heavy-any nice -n 19`; only the extracted guard ran, with a fake `find`.
+No tenant launcher, credentials or network request was exercised by the controls.
+
+| Guard control | Observed exit |
+|---|---|
+| Successful empty enumeration | 0 |
+| Matching entry | 74 |
+| Enumeration failure without output | 74 |
+| Matching output followed by enumeration failure | 74 |
+
+This correction does not reconcile the uncertain database or clear the failed
+quiet-host gate. No new tenant attempt is authorized by these controls.
