@@ -93,7 +93,11 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
             if (simultaneous) await Task.WhenAll(first.StartAsync(), second.StartAsync());
             else { await first.StartAsync(); await second.StartAsync(); }
             Origin = Address(first); ReplicaOrigin = Address(second);
-            return true;
+            // TerraBase failures never stop startup: an app that could not initialize its state keeps running, not ready,
+            // and retries until the producer recovers.
+            if (Initialized) return true;
+            StartupError = "not-initialized";
+            return false;
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException)
         {
@@ -101,6 +105,16 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
             await StopHostsAsync();
             return false;
         }
+    }
+
+    public bool Initialized => new[] { first, second }.All(app => app?.Services.GetRequiredService<DashboardStateInitializer>().Initialized == true);
+
+    // Waits for both running replicas to finish state initialization on their own, without a restart.
+    public async Task<bool> WaitInitializedAsync(TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!Initialized && DateTimeOffset.UtcNow < deadline) await Task.Delay(100);
+        return Initialized;
     }
 
     public async Task<bool> RestartAsync()
@@ -349,6 +363,8 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 if (path == "/__test/observations") return Observe();
                 if (path == "/__test/control") return await ControlAsync(http);
                 if (path == "/__test/redirected") { Interlocked.Increment(ref redirectTargetRequests); return Results.NoContent(); }
+                // TerraBase unreachable: the connection drops before any answer, as a restarting or partitioned listener does.
+                if (Mode == "unreachable") { http.Abort(); return Results.Empty; }
                 Require(http.Request.Host.Host == "127.0.0.1" && http.Request.Host.Port == 8081, "The state SDK must use the private listener origin.");
                 Require(http.Request.Headers.TryGetValue(TerraBasePeerCredential.Header, out var peer) && peer.Count == 1 && peer[0] == TestIdentity.PeerSecret,
                     "Every private-listener request carries exactly one delivered peer credential.");
