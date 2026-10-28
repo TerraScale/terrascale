@@ -217,9 +217,9 @@ interleaved A0.
 4. Threads stay at or below A0 + 8 and well below 256.
 5. Zero errors, and the engine-p50 control holds.
 
-A pass shows only that the arm deserves a reviewed proposal. Even a passing arm leaves the <10% server-over-engine target
-unmet. The discovery issue and its corrected envelope must be resolved before using this matrix for a production decision.
-Recording target attainment separately is required.
+A pass would show only that the arm deserves a reviewed proposal, not that it attained the <10% server-over-engine target.
+The discovery issue and its corrected envelope must be resolved before using this matrix for a production decision.
+The target remains unmet in the current evidence; any future attainment needs a separate result against the same denominator.
 
 ## Findings and objections
 
