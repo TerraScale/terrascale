@@ -199,7 +199,8 @@ namespace TerraBase.E2E
                                 // measured requests at c=16; give these cells a useful sample window on the same dataset.
                                 var window = workload == "read" && lane is "sql" or "hrana" or "pg"
                                     ? TimeSpan.FromSeconds(Math.Max(30, duration.TotalSeconds)) : duration;
-                                var cell = await MeasureAsync(target, body, workload, concurrency, window, attribution) with { Lane = lane, Repeat = repeat };
+                                var timing = lane is "api" or "api-json" or "sdk" ? attribution : null;
+                                var cell = await MeasureAsync(target, body, workload, concurrency, window, timing) with { Lane = lane, Repeat = repeat };
                                 cells.Add(cell);
                                 await log.WriteLineAsync(JsonSerializer.Serialize(cell, VsTursoJson.Default.Cell));
                                 await log.FlushAsync(cancellationToken);
