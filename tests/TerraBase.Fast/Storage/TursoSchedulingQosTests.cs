@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
@@ -18,11 +19,13 @@ public sealed class TursoSchedulingQosTests
     public async Task Hobby_saturation_preserves_a_worker_and_admission_for_paid_and_system_requests()
     {
         using var clock = new HeldHobbyClock();
+        // Admission limits count every holder: a timer-driven system call admitted beside the held query would refuse the
+        // second Hobby query, then satisfy the barrier below in its place. A clock that stands still keeps those timers quiet.
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             settings["storage-threads"] = "2";
             settings["storage-queue"] = "4";
-        }, services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
+        }, services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock), new FakeTimeProvider(DateTimeOffset.UtcNow));
         using var plans = api.Service(api.User);
         var hobby = await api.CreateManagedDatabaseAsync("hobby");
         var paid = await api.CreateManagedDatabaseAsync("paid");
@@ -59,8 +62,9 @@ public sealed class TursoSchedulingQosTests
             await ProbeAsync("worker-held");
             queued = QueryAsync(hobbyData, hobby, cancelQueued.Token);
             pending.Add(queued);
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(io.Admitted == 2 && io.Queued == 1));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(queued.IsCompleted || io.Admitted == 2 && io.Queued == 1));
             await ProbeAsync("global-barrier");
+            await Assert.That(queued.IsCompleted).IsFalse();
             // The two admitted Hobby operations consume their lane; a third cannot take the paid slots.
             using var refused = await QueryAsync(hobbyData, hobby, TUnit.Core.TestContext.Current.Execution.CancellationToken);
             await ProbeAsync("third-response");
