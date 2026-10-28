@@ -157,7 +157,11 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
                 await GotoAsync(page, "/onboarding?payment=canceled&plan=starter");
                 await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Payment setup canceled" }).WaitForAsync();
                 await Assert.That(await page.Locator("input[name=plan][value=starter]").IsCheckedAsync()).IsTrue().Because("cancel keeps selected plan");
-                await Assert.That(await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).InnerTextAsync()).Matches(@"\$30\.00\s+/ year");
+                var starter = page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") });
+                await Assert.That(await starter.InnerTextAsync()).Matches(@"\$3\.00\s+/ month").Because("onboarding opens on monthly billing");
+                await page.Locator("label.ts-segment").Filter(new() { Has = page.Locator("input[name=interval][value=annual]") }).ClickAsync();
+                await Assert.That(await page.Locator("input[name=interval][value=annual]").IsCheckedAsync()).IsTrue();
+                await Assert.That(await starter.InnerTextAsync()).Matches(@"\$30\.00\s+/ year").Because("the yearly choice shows every plan's yearly price");
                 await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=pro]") }).ClickAsync();
                 await Assert.That(await page.Locator("input[name=plan][value=pro]").IsCheckedAsync()).IsTrue();
                 await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).ClickAsync();

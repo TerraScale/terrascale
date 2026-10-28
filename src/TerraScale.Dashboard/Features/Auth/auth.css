@@ -55,11 +55,14 @@
   gap: var(--ts-s8);
 }
 
-/* Neutral dotted world map: masked dots, dashed static routes, muted markers, no animation. */
+/* Dotted world map with a replication ring: a pulse relays SJC → FRA → GRU → SJC
+   and each site pings as it arrives. The overlay shares the dot map's viewBox. */
 .ts-auth-map {
+  --ts-auth-cycle: 7.5s;
+  --ts-auth-leg: 2.5s;
   position: relative;
   width: 100%;
-  aspect-ratio: 119 / 60;
+  aspect-ratio: 126 / 60;
 }
 
 .ts-auth-map::before {
@@ -67,7 +70,7 @@
   position: absolute;
   inset: 0;
   background: var(--ts-ink-3);
-  opacity: 0.4;
+  opacity: 0.45;
   -webkit-mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
   mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
 }
@@ -80,27 +83,100 @@
   overflow: visible;
 }
 
-.ts-auth-routes path {
+.ts-auth-route,
+.ts-auth-pulse-tail,
+.ts-auth-pulse-head {
   fill: none;
-  stroke: var(--ts-ink-3);
-  stroke-width: 1;
-  stroke-dasharray: 3 4;
-  opacity: 0.7;
+  stroke: var(--ts-link);
+  stroke-linecap: round;
 }
 
-.ts-auth-point {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  margin: -5px;
-  border: 2px solid var(--ts-surface);
-  border-radius: 50%;
-  background: var(--ts-ink-2);
+.ts-auth-route {
+  stroke-width: 0.2;
+  opacity: 0.45;
 }
 
-.ts-auth-point-sjc { left: 16.1%; top: 32.8%; background: var(--ts-chart-4); }
-.ts-auth-point-gru { left: 37%; top: 75.7%; background: var(--ts-chart-2); }
-.ts-auth-point-fra { left: 52.4%; top: 23.9%; background: var(--ts-chart-3); }
+/* Head and tail share timing; the tail's dash ends where the head's does. */
+.ts-auth-pulse-tail,
+.ts-auth-pulse-head {
+  opacity: 0;
+  animation: var(--ts-auth-cycle) cubic-bezier(0.45, 0, 0.3, 1) infinite;
+}
+
+.ts-auth-pulse-tail {
+  stroke-width: 0.45;
+  stroke-dasharray: 0.22 2;
+  animation-name: ts-auth-tail;
+}
+
+.ts-auth-pulse-head {
+  stroke: color-mix(in oklab, var(--ts-link) 40%, var(--ts-ink));
+  stroke-width: 0.95;
+  stroke-dasharray: 0.02 2;
+  animation-name: ts-auth-head;
+}
+
+.ts-auth-leg-1 { animation-delay: var(--ts-auth-leg); }
+.ts-auth-leg-2 { animation-delay: calc(var(--ts-auth-leg) * 2); }
+
+@keyframes ts-auth-head {
+  0% { stroke-dashoffset: 0.02; opacity: 0; }
+  3% { opacity: 1; }
+  27% { opacity: 1; }
+  30%, 100% { stroke-dashoffset: -1; opacity: 0; }
+}
+
+@keyframes ts-auth-tail {
+  0% { stroke-dashoffset: 0.22; opacity: 0; }
+  3% { opacity: 0.65; }
+  27% { opacity: 0.65; }
+  30%, 100% { stroke-dashoffset: -0.8; opacity: 0; }
+}
+
+.ts-auth-site-core {
+  fill: var(--ts-link);
+  stroke: var(--ts-surface);
+  stroke-width: 0.35;
+}
+
+/* A site pings when the pulse of the leg ending there arrives (30% of a leg's cycle). */
+.ts-auth-site-ring {
+  fill: none;
+  stroke: var(--ts-link);
+  stroke-width: 0.25;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ts-auth-ping var(--ts-auth-cycle) cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+  animation-delay: calc(var(--ts-auth-cycle) * 0.3);
+}
+
+.ts-auth-arrival-1 .ts-auth-site-ring { animation-delay: calc(var(--ts-auth-cycle) * 0.3 + var(--ts-auth-leg)); }
+.ts-auth-arrival-2 .ts-auth-site-ring { animation-delay: calc(var(--ts-auth-cycle) * 0.3 + var(--ts-auth-leg) * 2); }
+
+@keyframes ts-auth-ping {
+  0% { transform: scale(1); opacity: 0.85; }
+  24%, 100% { transform: scale(4); opacity: 0; }
+}
+
+.ts-auth-site-label {
+  fill: var(--ts-ink-2);
+  font: 500 2px var(--ts-font-mono);
+  letter-spacing: 0.04em;
+  paint-order: stroke;
+  stroke: var(--ts-surface);
+  stroke-width: 0.7;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-auth-pulse-tail,
+  .ts-auth-pulse-head,
+  .ts-auth-site-ring {
+    animation: none;
+    display: none;
+  }
+}
 
 .ts-auth-regions {
   display: flex;

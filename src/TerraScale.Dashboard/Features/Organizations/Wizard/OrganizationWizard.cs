@@ -30,7 +30,7 @@ public static class OrganizationWizard
                     var plan = PlanCatalog.For(form["plan"].ToString());
                     if (plan.PriceCents <= 0) throw new OnboardingValidationException("Choose a paid plan for this business organization.");
                     var returnPath = WorkspaceUrl.For(context, "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(context.Organization.Id), replace: true);
-                    return HttpRedirects.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].Count == 0 ? plan.CheckoutInterval : form["interval"].ToString(), returnPath, http.RequestAborted));
+                    return HttpRedirects.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].Count == 0 ? BillingPlan.DefaultInterval : form["interval"].ToString(), returnPath, http.RequestAborted));
                 }
                 if (form["step"] != "project") throw new AccountAccessException("Choose an organization setup step.", 400);
                 if (!context.Organization.CanProvision(context.UserId)) throw new AccountAccessException("Confirm this organization's billing before creating its first project.", 409);

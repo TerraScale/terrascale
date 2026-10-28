@@ -990,7 +990,7 @@ sealed class TestStripeTransport : HttpMessageHandler
             value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId }, invoice_settings = new { default_payment_method = (object?)null }, tax_ids = new { @object = "list", has_more = false, data = Array.Empty<object>() } };
         }
         else if (request.Method == HttpMethod.Get && path == "/v1/prices")
-            value = new { @object = "list", has_more = false, data = PlanCatalog.Plans.Where(item => item.PriceCents > 0).Select(item => Price(item, item.CheckoutInterval)).ToArray() };
+            value = new { @object = "list", has_more = false, data = PlanCatalog.Plans.Where(item => item.PriceCents > 0).SelectMany(item => item.Intervals, Price).ToArray() };
         else if (request.Method == HttpMethod.Get && path == "/v1/invoices")
         {
             var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
@@ -1101,7 +1101,7 @@ sealed class TestStripeTransport : HttpMessageHandler
                 status = plan.TrialDays > 0 ? "trialing" : "active",
                 metadata = checkout.Metadata,
                 default_payment_method = "pm_demo",
-                items = new { @object = "list", data = new[] { new { id = "si_demo", @object = "subscription_item", quantity = 1, current_period_end = (plan.TrialDays > 0 ? DateTimeOffset.UtcNow.AddDays(plan.TrialDays) : plan.BillingInterval == "year" ? DateTimeOffset.UtcNow.AddYears(1) : DateTimeOffset.UtcNow.AddMonths(1)).ToUnixTimeSeconds(), price = Price(plan, checkout.Metadata["interval"]) } } }
+                items = new { @object = "list", data = new[] { new { id = "si_demo", @object = "subscription_item", quantity = 1, current_period_end = (plan.TrialDays > 0 ? DateTimeOffset.UtcNow.AddDays(plan.TrialDays) : checkout.Metadata["interval"] == "annual" ? DateTimeOffset.UtcNow.AddYears(1) : DateTimeOffset.UtcNow.AddMonths(1)).ToUnixTimeSeconds(), price = Price(plan, checkout.Metadata["interval"]) } } }
             };
             invoices.TryAdd(checkout.CustomerId, Enumerable.Range(0, 24).Select(index => new Invoice("in_" + checkout.CustomerId + "_" + index,
                 "INV-" + index.ToString("D2"), index % 2 == 0 ? "open" : "paid", 500 + index,
@@ -1131,7 +1131,7 @@ sealed class TestStripeTransport : HttpMessageHandler
         @object = "price",
         active = true,
         currency = "usd",
-        unit_amount = interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents,
+        unit_amount = plan.PriceCentsFor(interval),
         recurring = new { interval = interval == "annual" ? "year" : "month", interval_count = 1 },
         product = new { id = "prod_" + plan.Key, @object = "product", active = true, name = "TerraScale " + plan.Name, metadata = new { plan = plan.Key } }
     };

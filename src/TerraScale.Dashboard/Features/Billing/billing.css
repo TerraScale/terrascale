@@ -1,0 +1,34 @@
+/* Billing interval choice: segmented radios pick which interval's prices plan cards show. */
+
+.ts-interval-choice {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ts-interval-choice .ts-segment {
+  position: relative;
+  cursor: pointer;
+}
+
+.ts-interval-choice .ts-segment > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-interval-choice .ts-segment:has(> input:checked) {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-interval-choice .ts-segment:has(> input:focus-visible) {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
+}
+
+/* Monthly prices show until the yearly radio is checked. */
+.ts-interval-scope:not(:has(.ts-interval-choice [value="annual"]:checked)) [data-interval="annual"],
+.ts-interval-scope:has(.ts-interval-choice [value="annual"]:checked) [data-interval="monthly"] {
+  display: none;
+}

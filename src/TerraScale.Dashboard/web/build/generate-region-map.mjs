@@ -1,10 +1,12 @@
-// Generates the dotted world map used as the dashboard's region-map visual.
+// Generates the dotted world maps used as the dashboard's region-map visual and as the
+// auth pages' animated hero (Features/Auth/AuthRegionMap.cshtml).
 //
 //   npm run build:region-map   (from src/TerraScale.Dashboard/web)
 //
-// Run by hand when the map artwork changes; the output, web/static/brand/region-map.svg,
-// is committed and the project build never runs this. The SVG records its projection,
-// grid, title and description; region selection stays on labeled form controls.
+// Run by hand when the map artwork changes; the outputs, web/static/brand/region-map.svg and
+// web/static/brand/world-map-dots.svg, are committed and the project build never runs this.
+// Each SVG records its projection, grid and region pins; region selection stays on labeled
+// form controls. The printed pins are the hero's marker coordinates.
 import DottedMapModule from "dotted-map";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -41,3 +43,25 @@ const svg = generated.replace(
 mkdirSync(BRAND, { recursive: true });
 writeFileSync(join(BRAND, "region-map.svg"), svg);
 console.log("src/TerraScale.Dashboard/web/static/brand/region-map.svg (dotted world map)");
+
+// The auth hero masks this map with a theme color, so every dot is one round-capped
+// zero-length stroke in currentColor. Pins are dotted-map's own grid points for each region.
+const hero = new DottedMap({ height: 60, grid: "diagonal" });
+const regions = { GRU: { lat: -23.43, lng: -46.47 }, FRA: { lat: 50.03, lng: 8.57 }, SJC: { lat: 37.36, lng: -121.93 } };
+const pins = Object.entries(regions).map(([code, at]) => ({ code, ...hero.getPin(at) }));
+const heroViewBox = generatedViewBox(hero);
+const dots = hero.getPoints().map((point) => `M${round(point.x)} ${round(point.y)}h0`).join("");
+const heroSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${heroViewBox}" fill="none" data-projection="web-mercator" data-grid="diagonal" data-pins="${pins.map((pin) => `${pin.code} ${round(pin.x)} ${round(pin.y)}`).join(";")}"><path d="${dots}" stroke="currentColor" stroke-width="0.44" stroke-linecap="round"/></svg>\n`;
+writeFileSync(join(BRAND, "world-map-dots.svg"), heroSvg);
+console.log(`src/TerraScale.Dashboard/web/static/brand/world-map-dots.svg (auth hero map, viewBox ${heroViewBox})`);
+for (const pin of pins) console.log(`  ${pin.code} ${round(pin.x)} ${round(pin.y)}`);
+
+function generatedViewBox(dottedMap) {
+  const viewBox = dottedMap.getSVG({ radius: 0.22 }).match(/viewBox="([^"]+)"/)?.[1];
+  if (!viewBox) throw new Error("dotted-map did not report a viewBox");
+  return viewBox;
+}
+
+function round(value) {
+  return Math.round(value * 100) / 100;
+}

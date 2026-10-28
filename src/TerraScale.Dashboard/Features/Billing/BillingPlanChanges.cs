@@ -395,7 +395,7 @@ public sealed partial class StripeBilling
         key = key.Trim().ToLowerInvariant(); interval = interval.Trim().ToLowerInvariant();
         var plan = PlanCatalog.For(key);
         if (plan.Key == "free") { if (context.Organization?.Kind != "personal") throw new AccountAccessException(plan.Name + " is available only for Personal workspaces.", 400); return (key, ""); }
-        if (interval.Length == 0) interval = plan.CheckoutInterval;
+        if (interval.Length == 0) interval = BillingPlan.DefaultInterval;
         if (!plan.SupportsInterval(interval)) throw new AccountAccessException("Choose the published billing interval for this plan.", 400);
         return (key, interval);
     }

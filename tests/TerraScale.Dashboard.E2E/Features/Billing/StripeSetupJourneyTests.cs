@@ -20,10 +20,11 @@ public sealed class StripeSetupJourneyTests
     {
         var stripe = new FakeStripe(live);
         var mode = live ? "live" : "test";
-        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"product_starter_created\",\"price_starter_annual_created\",\"product_pro_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"product_enterprise_created\",\"price_enterprise_monthly_created\",\"portal_created\"]}"),
-            "The first run creates four products, four prices and the default portal");
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"product_starter_created\",\"price_starter_monthly_created\",\"price_starter_annual_created\",\"product_pro_created\",\"price_pro_monthly_created\",\"price_pro_annual_created\",\"product_team_created\",\"price_team_monthly_created\",\"price_team_annual_created\",\"product_enterprise_created\",\"price_enterprise_monthly_created\",\"portal_created\"]}"),
+            "The first run creates four products, seven prices and the default portal");
+        Check(stripe.Products.Count == 4, "Each plan's intervals share one product");
         Check(stripe.Prices.Select(price => (string)price["unit_amount"]! + "/" + (string)price["recurring[interval]"]!).Order().SequenceEqual(
-                PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).Select(plan => plan.BillingInterval == "year" ? plan.AnnualPriceCents + "/year" : plan.PriceCents + "/month")
+                PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).SelectMany(plan => plan.Intervals, (plan, interval) => plan.PriceCentsFor(interval) + (interval == "annual" ? "/year" : "/month"))
                     .Append(PlanCatalog.ComparisonPlans.Single(plan => plan.Key == "enterprise").PriceCents + "/month").Order()),
             "Price amounts come from PlanCatalog");
         Check(stripe.Products.Single(product => product["metadata[plan]"] == "enterprise")["name"] == "TerraScale Enterprise support" &&
@@ -61,18 +62,18 @@ public sealed class StripeSetupJourneyTests
                 ["lookup_key"] = "terrascale_" + plan + "_" + interval
             });
         var legacy = stripe.Prices.Select(price => new Dictionary<string, string>(price)).ToArray();
-        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"price_starter_annual_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"price_enterprise_monthly_created\",\"portal_created\"]}"),
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"price_starter_monthly_created\",\"price_starter_annual_created\",\"price_pro_monthly_created\",\"price_pro_annual_created\",\"product_team_created\",\"price_team_monthly_created\",\"price_team_annual_created\",\"price_enterprise_monthly_created\",\"portal_created\"]}"),
             "Legacy products are reused and only approved replacement prices are created");
-        Check(stripe.Prices.Count == 9, "Five legacy prices and four new prices remain addressable");
+        Check(stripe.Prices.Count == 12, "Five legacy prices and seven new prices remain addressable");
         foreach (var old in legacy)
         {
             var retained = stripe.Prices.Single(price => price["id"] == old["id"]);
             foreach (var field in new[] { "unit_amount", "currency", "product", "recurring[interval]", "recurring[interval_count]" })
                 Check(retained[field] == old[field], "Legacy immutable field is preserved: " + old["id"] + "/" + field);
-            var transferred = old["lookup_key"] is "terrascale_starter_annual" or "terrascale_pro_monthly" or "terrascale_enterprise_monthly";
-            Check(transferred ? !retained.ContainsKey("lookup_key") : retained["lookup_key"] == old["lookup_key"], "Only approved lookup keys transfer from old prices");
+            Check(!retained.ContainsKey("lookup_key"), "Every legacy lookup key transfers to its approved replacement price");
         }
-        foreach (var (lookupKey, amount, interval) in new[] { ("terrascale_starter_annual", "3000", "year"), ("terrascale_pro_monthly", "2000", "month"), ("terrascale_team_monthly", "5000", "month"), ("terrascale_enterprise_monthly", "99900", "month") })
+        foreach (var (lookupKey, amount, interval) in new[] { ("terrascale_starter_monthly", "300", "month"), ("terrascale_starter_annual", "3000", "year"), ("terrascale_pro_monthly", "2000", "month"), ("terrascale_pro_annual", "20000", "year"),
+            ("terrascale_team_monthly", "5000", "month"), ("terrascale_team_annual", "50000", "year"), ("terrascale_enterprise_monthly", "99900", "month") })
         {
             var price = stripe.Prices.Single(price => price.GetValueOrDefault("lookup_key") == lookupKey);
             Check(!legacy.Any(old => old["id"] == price["id"]), "Approved price gets a new immutable ID: " + lookupKey);

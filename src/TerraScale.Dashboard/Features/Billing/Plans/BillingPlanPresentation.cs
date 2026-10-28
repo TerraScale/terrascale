@@ -25,7 +25,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
         if (!page.CanManage || query["review"] != "1") return new(binding, state, null, stateError);
         var key = query["plan"].ToString().Trim().ToLowerInvariant(); var interval = query["interval"].ToString().Trim().ToLowerInvariant();
         var plan = page.Plans.FirstOrDefault(plan => plan.Key == key);
-        if (interval.Length == 0 && plan is not null) interval = plan.CheckoutInterval;
+        if (interval.Length == 0 && plan is not null) interval = BillingPlan.DefaultInterval;
         string errorMessage = stateError; var canUndo = false; var price = ""; var effect = ""; var estimate = "";
         if (errorMessage.Length == 0 && state?.PendingPlanKey is { Length: > 0 } pending)
             errorMessage = "Stripe is still confirming the change to " + Name(pending) + ". You can change plans again once it’s confirmed.";
@@ -40,7 +40,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
             else
             {
                 if (key == "free") interval = "";
-                price = MoneyFormat.Money(interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) + (interval.Length == 0 ? "" : interval == "annual" ? " / year" : " / month");
+                price = plan.PriceFor(interval) + (interval.Length == 0 ? "" : " " + BillingPlan.UnitFor(interval));
                 if (!subscribed)
                 {
                     effect = binding?.TrialUsed != true && plan.TrialDays > 0 ? "After Stripe confirms the " + plan.TrialDays + "-day trial" : "After Stripe confirms checkout";

@@ -38,15 +38,16 @@
         }
         else if (Model.Step == "payment-method")
         {
-            <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="payment-method-title">
+            <form class="ts-form ts-interval-scope" method="post" action="/onboarding/step" data-submit-once aria-labelledby="payment-method-title">
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="payment-method" /><input type="hidden" name="return" value="/onboarding" />
                 <div class="ts-row-between ts-onboarding-payment-head">
                     <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="payment-method-title">Choose your plan</h2><p class="ts-meta">Payment setup is optional for your Personal workspace. Stripe collects your card and confirms the subscription.</p></div>
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Plans.BillingIntervalChoice, string>(Model.Interval))
                 </div>
                 <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
                     @foreach (var plan in Model.Plans ?? [])
                     {
-                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.Price<span class="ts-meta"> @plan.PriceUnit</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span><span class="ts-onboarding-plan-name">@plan.Name</span>@foreach (var interval in plan.Intervals) { <span class="ts-onboarding-plan-price" data-interval="@interval">@plan.PriceFor(interval)<span class="ts-meta"> @BillingPlan.UnitFor(interval)</span></span> }@foreach (var interval in plan.Intervals) { <span class="ts-meta" data-interval="@interval">@plan.DescriptionFor(interval)</span> }<span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
                     }
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>

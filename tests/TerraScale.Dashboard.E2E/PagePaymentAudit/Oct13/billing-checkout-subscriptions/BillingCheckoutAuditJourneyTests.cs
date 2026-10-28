@@ -155,7 +155,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
     [Test, Category("Slow")]
     [Arguments(1440, 900)]
     [Arguments(390, 844)]
-    public async Task PlanChooserUsesPublishedCadencesEvenWithAnnualQuery(int width, int height)
+    public async Task PlanChooserOpensOnTheRequestedAnnualCadence(int width, int height)
     {
         var cookies = new CookieContainer();
         using var client = fixture.CreateClient(cookies);
@@ -167,10 +167,11 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await page.GotoAsync(new Uri(fixture.Origin, Billing + "&interval=annual").ToString());
         await page.GetByRole(AriaRole.Button, new() { Name = "Choose plan", Exact = true }).ClickAsync();
         await page.Locator("#change-billing-plan[open]").WaitForAsync();
-        var annual = (await page.Locator("#change-billing-plan").InnerTextAsync()).Contains("$30.00 / year · Billed yearly", StringComparison.Ordinal);
+        var chooser = await page.Locator("#change-billing-plan").InnerTextAsync();
+        var annual = chooser.Contains("$30.00 / year · Billed yearly", StringComparison.Ordinal) && !chooser.Contains("$3.00 / month", StringComparison.Ordinal);
         await CaptureAsync(page, $"annual-chooser-{width}");
         await RecordAsync($"annual-chooser-{width}", new { route = Billing + "&interval=annual", width, height, annual });
-        await Assert.That(annual).IsTrue().Because("The chooser must show Starter’s yearly charge without offering unapproved billing intervals.");
+        await Assert.That(annual).IsTrue().Because("The chooser opens on the requested yearly interval and shows only its prices.");
     }
 
     [Test, Category("Slow")]
@@ -199,6 +200,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await Assert.That(await choose.EvaluateAsync<bool>("el => el === document.activeElement")).IsTrue();
         await choose.ClickAsync();
         await page.Locator("#change-billing-plan input[name=plan][value=starter]").PressAsync("Space");
+        await page.Locator("#change-billing-plan input[name=interval][value=annual]").PressAsync("Space");
         await page.GetByRole(AriaRole.Button, new() { Name = "Review change", Exact = true }).PressAsync("Enter");
         await page.Locator("#review-billing-plan[open]").WaitForAsync();
         await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("$30.00 / year");
