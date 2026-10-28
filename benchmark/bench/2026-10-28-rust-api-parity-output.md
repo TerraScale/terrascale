@@ -19,3 +19,12 @@ Release binary: `db1ae6b303dab20fe5101806d395883fef7114c20246c7ff59d2c72636697cd
 Raw log/script/source identity: delta managed `fix-api-rust-parity-9af0251ebbd63b43768b65541559f1a88c451410738ab8f7645e9fa4f1243f49`,
 `benchmark/bench/rust-output-qualification-b/`; staged clean SDK:
 `~/remote-builds/rust-parity/output-qualification-b`.
+
+Lifecycle follow-up: `ff62897a5` passed the same full-stack checks, eight controls
+and eight CLI cases on delta via `ts-heavy-any nice -n 19`; no live requests.
+The added policy control requires reconciliation for uncertain-create/404 and retains
+logical-acceptance/known-absence cases. The runner now retains recovery for that uncertainty.
+Artifacts: same managed checkout, `benchmark/bench/rust-lifecycle-qualification-a/`;
+SDK stage `~/remote-builds/rust-parity/lifecycle-qualification-a`, lock unchanged.
+Main SHA-256 `6b61709879220f1616907bdcac1ac6803ca20944e10e40d8090d1fc518e0080c`;
+binary `3f2074fdc1d37b21d8da8e4d0640725a720f7ee77509ddfb9b69978a3e458681`.
