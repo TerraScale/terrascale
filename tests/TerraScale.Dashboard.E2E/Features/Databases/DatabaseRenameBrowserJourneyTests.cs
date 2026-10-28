@@ -35,7 +35,7 @@ public sealed class DatabaseRenameBrowserJourneyTests(DashboardRootFixture fixtu
         var id = body.RootElement.GetProperty("id").GetString()!;
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        await using var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin, "/databases/" + id + "/settings", account.Email, account.Password);
         await page.GetByLabel("New database name", new() { Exact = true }).FillAsync("rename-draft");
