@@ -97,7 +97,7 @@ It cannot use raw `fetch`, a generic SDK request, direct TerraBase, TBEP, Dashbo
 - Every region always serves. NetBird membership admits a node automatically; it discovers every region, infers its own region from where it runs, and serves without a per-region enable step.
 - OCI Vault creates, delivers, and configures every first-party production secret. Vendor keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically. Nobody copies secrets by hand.
 - Values have one correct setting in code. Expose no tuning knobs.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 
 Customer credentials authorize access; service secrets belong in OCI Vault and must never ship in a client bundle.
 
