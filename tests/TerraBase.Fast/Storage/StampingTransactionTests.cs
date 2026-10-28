@@ -223,30 +223,28 @@ public sealed class StampingTransactionTests
     }
 
     [Test]
-    public async Task System_stores_handed_out_together_stamp_every_write_and_none_is_handed_out_after_shutdown()
+    public async Task Concurrent_management_writes_move_system_stamps_and_shutdown_refuses_cached_opens()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         const int Writers = 16;
-        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
-        // The request opens the system database, so every store below is handed out from the opened one.
-        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 }, cancellationToken: token)).Status.ShouldBe(System.Net.HttpStatusCode.Created);
+        await using var api = await ManagementApi.StartAsync(cancellationToken: token);
+        // HTTP setup opens the system database before the concurrent updates use the cached path.
+        var organizations = await Task.WhenAll(Enumerable.Range(0, Writers).Select(i => api.CreateOrganizationAsync($"stamp probe {i}")));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var stamps = api.Server.Services.GetRequiredService<IWriteStamps>();
-        var collections = Enumerable.Range(0, Writers).Select(i => $"stamp_probe_{i}").ToArray();
-        var before = collections.Select(collection => stamps.Collection(null, collection)).ToArray();
+        var before = stamps.Collection(null, "organizations");
 
-        await Task.WhenAll(collections.Select(async collection =>
+        await Task.WhenAll(organizations.Select(async organization =>
         {
-            var system = await engine.OpenSystemDatabaseAsync(token);
-            await using var transaction = await system.BeginTransactionAsync(write: true, token);
-            _ = await transaction.PutAsync(collection, "probe", "{}"u8.ToArray(), token);
-            _ = await transaction.CommitAsync(token);
+            var uri = ManagementApi.Uri($"/v1/management/organizations/{organization}");
+            var name = $"renamed {organization}";
+            using var renamed = await api.Client.PatchAsJsonAsync(uri, new { name }, token);
+            await Assert.That(renamed.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
+            var read = await api.Client.GetFromJsonAsync<JsonElement>(uri, token);
+            await Assert.That(read.GetProperty("name").GetString()).IsEqualTo(name);
         }));
 
-        for (var i = 0; i < Writers; i++)
-        {
-            await Assert.That(stamps.Collection(null, collections[i])).IsGreaterThan(before[i]);
-        }
+        await Assert.That(stamps.Collection(null, "organizations")).IsGreaterThanOrEqualTo(before + Writers);
 
         // The server disposes the engine again when it stops; the second call is a no-op.
         await api.Server.Services.GetRequiredService<TursoStorageEngine>().DisposeAsync();
