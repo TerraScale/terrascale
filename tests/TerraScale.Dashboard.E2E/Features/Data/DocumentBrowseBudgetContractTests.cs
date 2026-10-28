@@ -132,7 +132,7 @@ public sealed class DocumentBrowseBudgetContractTests
         var (service, context) = Service(documents, wire);
         var http = new DefaultHttpContext();
         http.Items[DashboardMcp.ContextKey] = context;
-        return new(new HttpContextAccessor { HttpContext = http }, service, null!);
+        return new(new HttpContextAccessor { HttpContext = http }, service, null!, null!);
     }
 
     private static (DataService, AccountContext) Service(Documents documents, Regions wire)
@@ -140,7 +140,7 @@ public sealed class DocumentBrowseBudgetContractTests
         var backend = new DatabaseBackend(wire, null!);
         var project = new ProjectRecord { Id = "project", OrganizationId = "organization", Region = "gru" };
         project.Databases.Add("database", new() { Id = "database", ProjectId = project.Id, Name = "app", Region = "gru" });
-        var organization = new OrganizationRecord { Id = "organization", Members = { ["user"] = new() { UserId = "user", Role = "owner" } } };
+        var organization = new OrganizationRecord { Id = "organization", Members = { ["user"] = new() { UserId = "user", Role = "owner" } }, Projects = { [project.Id] = project } };
         var context = new AccountContext(new("user", "Synthetic", "synthetic@example.test", "token", null, DateTimeOffset.UtcNow.AddMinutes(5)), new() { UserId = "user" }, [], organization, project);
         return (new(new(null!, backend), documents, backend), context);
     }

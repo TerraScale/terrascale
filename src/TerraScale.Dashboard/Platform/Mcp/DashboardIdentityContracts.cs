@@ -16,12 +16,21 @@ public sealed record DashboardMcpUser(string Id, string Name, string Email,
 
 public sealed record DashboardMcpSelection(string OrganizationId, string ProjectId);
 
-public sealed record DashboardMcpOrganization(string Id, string Name, string Kind, string Status, string Role,
-    string PlanId, string PlanName, string BillingStatus, bool CanManage, bool CanProvision, bool DeletionRequested,
+// Keep member fields compatible while representing unavailable organization metadata honestly.
+public sealed record DashboardMcpOrganization(string Id, string Name,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Status,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Role,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? PlanId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? PlanName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? BillingStatus,
+    bool CanManage, bool CanProvision,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? DeletionRequested,
     IReadOnlyList<DashboardMcpProject> Projects);
 
 public sealed record DashboardMcpProject(string Id, string Name, string Region, string BackupRegion,
-    IReadOnlyList<string> Regions, bool IsDefault, int Databases);
+    IReadOnlyList<string> Regions, bool IsDefault, int Databases,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Role, bool CanWriteProjectData);
 
 public sealed record DashboardMcpOrganizationDetails(string Id, string Name, string Kind, string Status, string Role,
     string PlanId, string PlanName, string BillingStatus, bool CanManage, bool CanProvision, bool DeletionRequested,
