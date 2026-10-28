@@ -1,12 +1,13 @@
 // Qualifies measurement-window and CLI guards, not TerraBase performance.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { discoverRegions, measure } from "./parity.mjs";
+import { V1NotFoundError } from "@terrascale/sdk";
+import { discoverRegions, measure, Tenant } from "./parity.mjs";
 const directory = await mkdtemp(join(tmpdir(), "parity-window-"));
 const previous = process.env.TS_PEERS_FILE;
 try {
@@ -26,6 +27,20 @@ try {
   assert.equal(stats.failed, 0);
   assert.equal(stats.stuck, false);
   assert.ok(stats.elapsed_s > 5);
+  const output = join(directory, "cleanup.jsonl");
+  const file = await open(output, "wx", 0o600);
+  try {
+    const tenant = new Tenant({ db: "api-perf-control", out: file.fd });
+    const absent = { databases: { delete: async () => { throw new V1NotFoundError({ status: 404, code: "not_found" }); } } };
+    assert.equal(await tenant.cleanup(absent), false); // A timed-out create may still commit after a 404.
+    tenant.createAccepted = true;
+    assert.equal(await tenant.cleanup(absent), true);
+  } finally {
+    await file.close();
+  }
+  const cleanup = (await readFile(output, "utf8")).trim().split("\n").map(JSON.parse);
+  assert.deepEqual(cleanup.map(row => [row.outcome, row.reconcile_required, row.remote_erasure]),
+    [["absent", true, "unverified"], ["absent", false, "unverified"]]);
   console.log(JSON.stringify({ ...stats, tail_retained: true, symlink_guard: true, peers_gate: true }));
 } finally {
   if (previous === undefined) delete process.env.TS_PEERS_FILE; else process.env.TS_PEERS_FILE = previous;

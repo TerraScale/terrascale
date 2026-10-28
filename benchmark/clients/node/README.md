@@ -8,7 +8,8 @@ The private file contains api_key/project. Output must be new. `TS_PEERS_FILE` s
 the ts-orch peer catalog; all discovered regions run, with gru/sjc/fra required.
 
 Setup creates one owned all-regions database and two documents, under a 60 s deadline.
-Cleanup records accepted logical deletion; remote erasure is unverified. Account/inbox
+Cleanup distinguishes accepted logical deletion from absence; a 404 after an uncertain
+create requires reconciliation. Remote erasure is unverified. Account/inbox
 cleanup remains external. Repeated interrupts keep cleanup active.
 Each region gets three alternating repeats, 256/4096 B, c=1/16, matched
 raw-h1/sdk-h1/raw-h2/sdk-h2. Every cell owns a pool for readiness, warmup and measurement.

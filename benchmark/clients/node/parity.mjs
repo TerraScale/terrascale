@@ -142,6 +142,7 @@ function sdkSourceDigest(root) {
 export class Tenant {
   seeds = new Map();
   tokens = new Map();
+  createAccepted = false;
   constructor({ key, project, db, out, run }) {
     Object.assign(this, { key, project, db, out, run });
     this.dbPath = `/v1/projects/${project}/databases/${db}`;
@@ -210,6 +211,7 @@ export class Tenant {
   async setup(admin, home) {
     const options = { signal: AbortSignal.any([this.run, AbortSignal.timeout(READY_S * 1000)]) };
     await admin.databases.create({ name: this.db, homeRegion: home, allRegions: true }, options);
+    this.createAccepted = true;
     const database = admin.database(this.db);
     await database.collections.create(COLLECTION, options);
     const collection = database.collection(COLLECTION);
@@ -221,16 +223,16 @@ export class Tenant {
   }
   /** Deletes the exact owned name directly; the server coordinates remote erasure. */
   async cleanup(admin) {
-    let row = { accepted: true };
+    let row = { accepted: true, outcome: "logical_accepted", reconcile_required: false };
     try {
       await admin.databases.delete(this.db, { signal: AbortSignal.timeout(CLEANUP_S * 1000) });
     } catch (error) {
-      if (!(error instanceof V1NotFoundError)) {
-        row = { accepted: false, status: error?.status ?? null, error: error?.constructor?.name ?? "Error" };
-      }
+      row = error instanceof V1NotFoundError
+        ? { accepted: true, outcome: "absent", reconcile_required: !this.createAccepted }
+        : { accepted: false, outcome: "failed", reconcile_required: true, status: error?.status ?? null, error: error?.constructor?.name ?? "Error" };
     }
     this.emit({ type: "database_deletion", database: this.db, ...row, remote_erasure: "unverified" });
-    return row.accepted;
+    return row.accepted && !row.reconcile_required;
   }
 }
 
@@ -278,9 +280,12 @@ async function session(args, run) {
         }
       }
     } finally {
-      cleaned = await tenant.cleanup(admin);
-      setGlobalDispatcher(previous);
-      await setupAgent.destroy();
+      try {
+        cleaned = await tenant.cleanup(admin);
+      } finally {
+        setGlobalDispatcher(previous);
+        await setupAgent.destroy();
+      }
     }
     if (!cleaned) throw new Rejected("cleanup failed");
   } finally {
