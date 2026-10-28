@@ -68,11 +68,18 @@ public sealed class AlertEmailTests(TerraBaseFixture fixture)
         public ConcurrentBag<EmailMessage> ProductMessages { get; } = [];
         public int Attempts;
         public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) => signIn.SendAsync(recipient, message, cancellationToken);
-        public Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+        public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         {
+            if (message.Purpose is EmailPurpose.Authentication or EmailPurpose.Invitation)
+            {
+                // Authentication mail goes through the outbox's DeliverAsync too; it is captured, never a product outcome.
+                await signIn.SendAsync(recipient, message, cancellationToken);
+                return EmailDeliveryOutcome.Accepted;
+            }
+
             _ = Interlocked.Increment(ref Attempts);
             ProductMessages.Add(message);
-            return Task.FromResult(EmailDeliveryOutcome.Accepted);
+            return EmailDeliveryOutcome.Accepted;
         }
     }
 }

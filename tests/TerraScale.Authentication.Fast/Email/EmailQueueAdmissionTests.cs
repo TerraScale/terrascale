@@ -44,7 +44,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
                 tenant = await oidc.CreateProjectAsync(token, organization, "Queue test project");
             }
 
-            var firstDequeued = await SaturateAsync(oidc, sender, SignInMail.Capacity);
+            await SaturateAsync(oidc, sender, SignInMail.Capacity);
             var addresses = DistinctEmails(oidc, sender.BlockedRecipient!);
             await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync(tenant, addresses[0])).IsNotNull();
             var passcodes = oidc.Server.App.Services.GetRequiredService<Passcodes>();
@@ -76,8 +76,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             await Assert.That(after).IsEquivalentTo(before);
 
             sender.Release.TrySetResult();
-            await firstDequeued.WaitAsync(TimeSpan.FromSeconds(10));
-            await DrainAsync(oidc);
+            await oidc.Server.DrainMailAsync();
             await Assert.That((await captured.NextAsync()).Recipient).IsEqualTo(sender.BlockedRecipient);
             await Assert.That(captured.HasPending).IsFalse();
             clock.Advance(HostedAuth.MailCooldown);
@@ -94,7 +93,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
                 }
             }
 
-            await DrainAsync(oidc);
+            await oidc.Server.DrainMailAsync();
             await Assert.That(captured.HasPending).IsFalse();
         }
         finally
@@ -167,7 +166,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             if (submit)
             {
-                reservation.EnqueueIssue(() => oidc.Server.App.Services.GetRequiredService<Passcodes>().RequestAsync(OidcIssuer.InstanceId, Owner));
+                await reservation.EnqueueCodeAsync(OidcIssuer.InstanceId, Owner, PasscodePurpose.SignIn);
             }
         }
         finally
@@ -201,7 +200,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             await oidc.OkAsync(HttpMethod.Post, path, token, new { email = pending, role = "viewer", project_id = project }, HttpStatusCode.Created);
             await captured.NextAsync();
 
-            var firstDequeued = await SaturateAsync(oidc, sender, SignInMail.Capacity - 1);
+            await SaturateAsync(oidc, sender, SignInMail.Capacity - 1);
             // The transaction fails after reserving the last slot. A later create must still be able to use it.
             await Assert.That(await oidc.FailAsync(HttpMethod.Post, path, token,
                 new { email = pending, role = "viewer", project_id = project })).IsEqualTo((409, "invitation_pending"));
@@ -219,8 +218,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
                 .GetProperty("project_id").GetString()).IsEqualTo(project);
 
             sender.Release.TrySetResult();
-            await firstDequeued.WaitAsync(TimeSpan.FromSeconds(10));
-            await DrainAsync(oidc);
+            await oidc.Server.DrainMailAsync();
             await Assert.That((await captured.NextAsync()).Recipient).IsEqualTo(sender.BlockedRecipient);
             var delivered = await captured.NextAsync();
             await Assert.That(delivered.Recipient).IsEqualTo(accepted);
@@ -238,6 +236,84 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
         }
     }
 
+    [Test]
+    public async Task A_replica_taking_over_delivers_accepted_codes_and_never_resends_an_interrupted_send()
+    {
+        var captured = new CapturingEmailSender();
+        var sender = new GatedEmailSender(captured);
+        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
+        try
+        {
+            sender.BlockedRecipient = DistinctEmails(oidc, Owner)[0];
+            await oidc.CreateUserAsync(sender.BlockedRecipient);
+            await oidc.CreateUserAsync(Owner);
+            foreach (var address in new[] { sender.BlockedRecipient, Owner })
+            {
+                using var started = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in", Form(address));
+                await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await sender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
+            // This replica is stuck in a provider call, as if it crashed there, with a second code accepted behind it.
+            await Assert.That(await oidc.Server.MailStatesAsync()).IsEquivalentTo(["sending", "queued"]);
+            await using var replica = await oidc.StartReplicaAsync(clock: new ManualClock(DateTimeOffset.UtcNow + SignInMail.Lease + TimeSpan.FromSeconds(1)),
+                services: services => services.AddSingleton<IEmailSender>(sender));
+            var (recipient, message) = await captured.NextAsync();
+            await Assert.That(recipient).IsEqualTo(Owner);
+            await Assert.That(message.Purpose).IsEqualTo(EmailPurpose.Authentication);
+            await replica.DrainMailAsync();
+            await Assert.That(await replica.MailStatesAsync()).IsEquivalentTo(["unknown", "sent"]);
+
+            // Only the interrupted call itself ever reaches the provider.
+            sender.Release.TrySetResult();
+            await oidc.Server.DrainMailAsync();
+            await Assert.That((await captured.NextAsync()).Recipient).IsEqualTo(sender.BlockedRecipient);
+            await Assert.That(captured.HasPending).IsFalse();
+            await Assert.That(await replica.MailStatesAsync()).IsEquivalentTo(["unknown", "sent"]);
+        }
+        finally
+        {
+            sender.Release.TrySetResult();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_code_superseded_or_expired_before_its_retry_is_never_delivered(bool expire)
+    {
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        var captured = new CapturingEmailSender();
+        var sender = new GatedEmailSender(captured) { RefuseOnce = true };
+        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, clock: clock, services: services => services.AddSingleton<IEmailSender>(sender));
+        await oidc.CreateUserAsync(Owner);
+        using (var reservation = oidc.Server.App.Services.GetRequiredService<SignInMail>().Reserve())
+        {
+            await reservation.EnqueueCodeAsync(OidcIssuer.InstanceId, Owner, PasscodePurpose.SignIn);
+        }
+
+        // The provider refused without sending; wait until the row is deferred for a retry.
+        await sender.Refused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        while (await oidc.Server.MailStatesAsync() is not ["ready"])
+        {
+            await Task.Delay(25);
+        }
+
+        if (expire)
+        {
+            clock.Advance(Passcodes.Lifetime);
+        }
+        else
+        {
+            await Assert.That(await oidc.Server.App.Services.GetRequiredService<Passcodes>().RequestAsync(OidcIssuer.InstanceId, Owner)).IsNotNull();
+            clock.Advance(SignInMail.RetryDelay);
+        }
+
+        await oidc.Server.DrainMailAsync();
+        await Assert.That(captured.HasPending).IsFalse();
+        await Assert.That(await oidc.Server.MailStatesAsync()).IsEquivalentTo(["suppressed"]);
+    }
+
     private static Dictionary<string, string> Form(string email) => new() { ["email"] = email, ["password"] = "Synthetic-password-123!" };
 
     private static string[] DistinctEmails(OidcHarness oidc, string excluded)
@@ -249,7 +325,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             .Where(email => folds.Add(limiter.Fold(email))).Take(2).ToArray();
     }
 
-    private static async Task<Task> SaturateAsync(OidcHarness oidc, GatedEmailSender sender, int queued)
+    private static async Task SaturateAsync(OidcHarness oidc, GatedEmailSender sender, int queued)
     {
         sender.BlockedRecipient = DistinctEmails(oidc, Owner)[0];
         await oidc.CreateUserAsync(sender.BlockedRecipient);
@@ -257,30 +333,12 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
         await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await sender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var mail = oidc.Server.App.Services.GetRequiredService<SignInMail>();
-        var dequeued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        // Unknown-account work really occupies queue slots too. A blocked real sender keeps these items waiting.
-        mail.EnqueueIssue(() =>
+        // Unknown-account work really occupies queue slots too. A blocked real sender keeps these rows waiting.
+        for (var index = 0; index < queued; index++)
         {
-            dequeued.TrySetResult();
-            return Task.FromResult<IssuedPasscode?>(null);
-        });
-        for (var index = 1; index < queued; index++)
-        {
-            mail.EnqueueIssue(() => Task.FromResult<IssuedPasscode?>(null));
+            using var reservation = mail.Reserve();
+            await reservation.EnqueueCodeAsync(OidcIssuer.InstanceId, $"absent-{index}@example.test", PasscodePurpose.SignIn);
         }
-
-        return dequeued.Task;
-    }
-
-    private static async Task DrainAsync(OidcHarness oidc)
-    {
-        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        oidc.Server.App.Services.GetRequiredService<SignInMail>().EnqueueIssue(() =>
-        {
-            drained.TrySetResult();
-            return Task.FromResult<IssuedPasscode?>(null);
-        });
-        await drained.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     private sealed class GatedEmailSender(CapturingEmailSender captured) : IEmailSender
@@ -290,6 +348,21 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool RefuseOnce { get; init; }
+
+        public TaskCompletionSource Refused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+        {
+            if (this.RefuseOnce && this.Refused.TrySetResult())
+            {
+                return EmailDeliveryOutcome.Retryable;
+            }
+
+            await this.SendAsync(recipient, message, cancellationToken);
+            return EmailDeliveryOutcome.Accepted;
+        }
 
         public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         {

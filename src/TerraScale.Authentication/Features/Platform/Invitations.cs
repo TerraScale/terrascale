@@ -123,7 +123,7 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
         // The dashboard serves the accept page at /invitations/{token} on the origin of its first sign-in callback.
         if (dashboard is not null)
         {
-            reservation!.EnqueueInvitation(new AuthEmailValues(invitation.Email)
+            await reservation!.EnqueueEmailAsync(AuthEmailKind.Invitation, new AuthEmailValues(invitation.Email)
             {
                 Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
                 ExpiresIn = Lifetime,

@@ -58,7 +58,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
 /// <c>POST /ui/{slug}/sign-in</c>: emails a code when the address has an account. The page and its timing are the same
 /// either way: <see cref="SignInMail"/> delivers after the response.
 /// </summary>
-public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -104,8 +104,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         var tenant = SignInFlow.Tenant(this.HttpContext);
         using var reservation = mail.Reserve();
         cancellationToken.ThrowIfCancellationRequested();
-        reservation.EnqueueIssue(() => passcodes.RequestAsync(tenant, address, CancellationToken.None),
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next)));
     }

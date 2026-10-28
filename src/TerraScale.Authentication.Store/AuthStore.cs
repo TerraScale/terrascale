@@ -121,6 +121,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>One project tenant's sign-in methods and branding, addressed by the project id in its own instance.</summary>
     public const string ProjectAuthSettingsCollection = "project_auth_settings";
 
+    /// <summary>Authentication mail waiting for, or recently finished, delivery (sealed payloads, bounded retention).</summary>
+    public const string MailOutboxCollection = "auth_mail_outbox";
+
     /// <summary>Organizations' single sign-on connections, one per email domain.</summary>
     public const string OrganizationSsoCollection = "organization_sso";
 
@@ -137,7 +140,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, DashboardDeletionCursorCollection, ClosureJobCollection, HistoryMarkCollection,
         ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection, AccountDeletionReceiptCollection,
-        StepUpProofCollection, StepUpDeletionGrantCollection, StepUpPasscodeCollection, EmailChangeCollection,
+        StepUpProofCollection, StepUpDeletionGrantCollection, StepUpPasscodeCollection, EmailChangeCollection, MailOutboxCollection,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
