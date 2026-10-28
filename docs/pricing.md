@@ -18,7 +18,7 @@
 
 |  | Free | Starter | Pro | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
-| Subscription | $0; no card | $30/year only ($2.50/month equivalent) | $20/month | $50/month | $999/month support + usage; contact sales |
+| Subscription | $0; no card | $3/month or $30/year | $20/month or $200/year | $50/month or $500/year | $999/month support + usage; contact sales |
 | Availability | Sign up | Checkout | Checkout | Checkout | Contact sales |
 | Projects | 1 | 5 | 25 | 100 | Custom |
 | Databases | 1 | 5 | 25 | 100 | Custom |
@@ -33,7 +33,7 @@ Launch regions: GRU (São Paulo), SJC (San Francisco Bay Area), FRA (Frankfurt).
 Request rates, concurrency, query timeout, storage limit, point-in-time recovery, backup
 retention and support response targets per plan are in [plan entitlements](./limits.md#plan-entitlements).
 
-No trials or annual Pro/Team discounts are offered.
+Starter, Pro and Team are each billed monthly or yearly; a year costs ten monthly payments (two months free). No trials are offered.
 
 ## Pay-as-you-go rates
 
@@ -54,7 +54,7 @@ subscription invoice at the rate below. Storage and client egress over the allow
 
 ## Billing cycle
 
-Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Operation units over a paid allowance are added to the next subscription invoice. No trials or annual Pro/Team discounts are offered.
+Starter, Pro and Team are billed monthly or yearly (a year costs ten monthly payments); operation-unit overage is invoiced every month on both. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Operation units over a paid allowance are added to the next subscription invoice. No trials are offered.
 
 ## Subscription changes
 
