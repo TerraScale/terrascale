@@ -76,7 +76,7 @@ public sealed class ProjectCatalogEnrollmentTests
     }
 
     [Test]
-    public async Task A_denied_database_create_leaves_a_fresh_project_unenrolled_then_a_matching_create_can_enroll_it()
+    public async Task A_denied_database_create_leaves_a_fresh_project_unenrolled_then_an_unrestricted_create_enrolls_it()
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
@@ -108,7 +108,15 @@ public sealed class ProjectCatalogEnrollmentTests
             await Assert.That(organizations.Documents.Count).IsEqualTo(0);
         }
 
-        using var created = await restricted.PostAsJsonAsync(databases, new { name = "first" });
+        // A restricted token names an existing database's id, so it never creates one; an unrestricted writer enrolls the project.
+        await ErrorAssert.ErrorAsync(restricted.PostAsJsonAsync(databases, new { name = "first" }), HttpStatusCode.NotFound,
+            "unknown_database", "the database does not exist");
+        using var writer = api.WithToken(api.Issuer.Mint(actor, token =>
+        {
+            token.Claims["project_id"] = project;
+            token.Claims["scope"] = "databases:read databases:write";
+        }));
+        using var created = await writer.PostAsJsonAsync(databases, new { name = "first" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         var listed = await JsonAsync(unrestricted.GetAsync(databases));
         await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);

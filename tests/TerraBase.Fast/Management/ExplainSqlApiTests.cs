@@ -126,7 +126,7 @@ public sealed class ExplainSqlApiTests
             (EntityIds.New().ToString(), "databases:read", null, database.Project, HttpStatusCode.NotFound),
             ("not-a-project", "databases:read", null, "not-a-project", HttpStatusCode.Unauthorized),
             ("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "databases:read", null, "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", HttpStatusCode.Unauthorized),
-            (database.Project, "databases:read", "other", database.Project, HttpStatusCode.NotFound),
+            (database.Project, "databases:read", EntityIds.New().ToString(), database.Project, HttpStatusCode.NotFound),
             (database.Project, null, null, database.Project, HttpStatusCode.Forbidden),
             (database.Project, "documents:read", null, database.Project, HttpStatusCode.Forbidden),
             (database.Project, "databases:reader", null, database.Project, HttpStatusCode.Forbidden),
