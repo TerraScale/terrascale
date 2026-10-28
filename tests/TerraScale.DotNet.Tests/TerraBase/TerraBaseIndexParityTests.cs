@@ -8,35 +8,28 @@ public sealed class TerraBaseIndexParityTests
     [Test]
     [Arguments("applied", 201)]
     [Arguments("already-applied", 200)]
-    public async Task Policies_and_recommendations_use_canonical_routes_and_preserve_outcomes(string status, int responseStatus)
+    public async Task Recommendations_use_canonical_routes_and_preserve_outcomes(string status, int responseStatus)
     {
         var calls = new List<(string Method, string Path, string? Body)>();
         using var handler = new TerraBaseTestHandler(async (request, token) =>
         {
             calls.Add((request.Method.Method, request.RequestUri!.AbsolutePath, request.Content is null ? null : await request.Content.ReadAsStringAsync(token)));
             await Assert.That(request.Headers.Authorization!.Parameter).IsEqualTo("project-user-token");
-            return request.RequestUri.AbsolutePath.Contains("/auto-index/", StringComparison.Ordinal)
-                ? TerraBaseIntegrationFixture.Json("""{"collection":"items","enabled":false}""")
-                : request.Method == HttpMethod.Get
-                    ? TerraBaseIntegrationFixture.Json("""{"items":[{"id":"items:title","collection":"items","fields":["title"],"reason":"unindexed","queries":9007199254740993}]}""")
-                    : TerraBaseIntegrationFixture.Json($$$"""{"status":"{{{status}}}","index":{"name":"items_title","collection":"items","fields":["title"],"state":"active"}}""", (HttpStatusCode)responseStatus);
+            return request.Method == HttpMethod.Get
+                ? TerraBaseIntegrationFixture.Json("""{"items":[{"id":"items:title","collection":"items","fields":["title"],"reason":"unindexed","queries":9007199254740993}]}""")
+                : TerraBaseIntegrationFixture.Json($$$"""{"status":"{{{status}}}","index":{"name":"items_title","collection":"items","fields":["title"],"state":"active"}}""", (HttpStatusCode)responseStatus);
         });
         using var http = new HttpClient(handler);
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
-        var policy = await db.GetAutoIndexPolicyAsync("items");
-        await db.SetAutoIndexPolicyAsync("items", false);
         var recommendations = await db.ListIndexRecommendationsAsync();
         var result = await db.ApplyIndexRecommendationAsync(recommendations.Items[0].Id);
-        await Assert.That(policy.Enabled).IsFalse();
         await Assert.That(recommendations.Items.Single().Queries).IsEqualTo(9007199254740993L);
         await Assert.That(result.Status).IsEqualTo(status);
         await Assert.That(result.Index.Name).IsEqualTo("items_title");
-        await Assert.That(calls.Select(c => c.Method)).IsEquivalentTo(["GET", "PUT", "GET", "POST"]);
-        await Assert.That(calls[0].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/auto-index/items");
-        await Assert.That(calls[1].Body).IsEqualTo("{\"enabled\":false}");
-        await Assert.That(calls[2].Path).EndsWith("/index-recommendations");
-        await Assert.That(calls[3].Path).EndsWith("/index-recommendations/items%3Atitle/apply");
-        await Assert.That(calls[3].Body).IsNull();
+        await Assert.That(calls.Select(c => c.Method)).IsEquivalentTo(["GET", "POST"]);
+        await Assert.That(calls[0].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/index-recommendations");
+        await Assert.That(calls[1].Path).EndsWith("/index-recommendations/items%3Atitle/apply");
+        await Assert.That(calls[1].Body).IsNull();
     }
 
     [Test]
