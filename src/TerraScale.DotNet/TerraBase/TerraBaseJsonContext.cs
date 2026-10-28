@@ -84,8 +84,6 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseSavedQuery))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseSavedQuery>))]
 [JsonSerializable(typeof(TerraBaseSavedQueryRequest))]
-[JsonSerializable(typeof(TerraBaseAutoIndexPolicy))]
-[JsonSerializable(typeof(TerraBaseAutoIndexPolicyRequest))]
 [JsonSerializable(typeof(TerraBaseIndexRecommendationList))]
 [JsonSerializable(typeof(TerraBaseAppliedIndexRecommendation))]
 [JsonSerializable(typeof(TerraBaseBackup))]

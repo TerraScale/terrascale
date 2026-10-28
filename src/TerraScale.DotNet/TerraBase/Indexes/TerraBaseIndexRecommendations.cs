@@ -1,10 +1,5 @@
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>A collection's automatic index policy, including collections not yet created.</summary>
-/// <param name="Collection">Collection name.</param>
-/// <param name="Enabled">Whether automatic index creation and removal are allowed.</param>
-public sealed record TerraBaseAutoIndexPolicy(string Collection, bool Enabled);
-
 /// <summary>An observed workload's recommended single-field index.</summary>
 /// <param name="Id">Opaque collection:field selector; not a ULID.</param>
 /// <param name="Collection">Collection name.</param>
@@ -22,20 +17,8 @@ public sealed record TerraBaseIndexRecommendationList(IReadOnlyList<TerraBaseInd
 /// <param name="Index">Created or existing index.</param>
 public sealed record TerraBaseAppliedIndexRecommendation(string Status, TerraBaseIndex Index);
 
-internal sealed record TerraBaseAutoIndexPolicyRequest(bool Enabled);
-
 public sealed partial class TerraBaseDatabase
 {
-    /// <summary>Reads a collection's automatic index policy. Requires databases:read.</summary>
-    public async Task<TerraBaseAutoIndexPolicy> GetAutoIndexPolicyAsync(string collection, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Get, AutoIndexPath(collection), null, Json.TerraBaseAutoIndexPolicy, null, cancellationToken).ConfigureAwait(false)).Value;
-
-    /// <summary>Sets a collection's automatic index policy. Requires databases:write; sent once.</summary>
-    public async Task<TerraBaseAutoIndexPolicy> SetAutoIndexPolicyAsync(string collection, bool enabled, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Put, AutoIndexPath(collection),
-            TerraBaseConnection.Json(new TerraBaseAutoIndexPolicyRequest(enabled), Json.TerraBaseAutoIndexPolicyRequest),
-            Json.TerraBaseAutoIndexPolicy, null, cancellationToken).ConfigureAwait(false)).Value;
-
     /// <summary>Lists workload-based index recommendations. Requires databases:read.</summary>
     public async Task<TerraBaseIndexRecommendationList> ListIndexRecommendationsAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/index-recommendations", null,
@@ -45,6 +28,4 @@ public sealed partial class TerraBaseDatabase
     public async Task<TerraBaseAppliedIndexRecommendation> ApplyIndexRecommendationAsync(string recommendationId, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Post, path + "/index-recommendations/" + TerraBaseConnection.Segment(recommendationId, nameof(recommendationId)) + "/apply",
             null, Json.TerraBaseAppliedIndexRecommendation, null, cancellationToken).ConfigureAwait(false)).Value;
-
-    private string AutoIndexPath(string collection) => path + "/auto-index/" + TerraBaseConnection.Segment(collection, nameof(collection));
 }

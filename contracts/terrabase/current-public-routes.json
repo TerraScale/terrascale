@@ -20,8 +20,6 @@
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}", "operation": "getDatabase", "source": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs", "line": 14},
     {"method": "PATCH", "path": "/v1/projects/{project}/databases/{database}", "operation": "updateDatabase", "source": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs", "line": 16},
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/analytics", "operation": "getDatabaseAnalytics", "source": "src/TerraBase/Features/Management/Usage/GetDatabaseAnalyticsEndpoint.cs", "line": 13},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/auto-index/{collection}", "operation": "getAutoIndexPolicy", "source": "src/TerraBase/Features/Management/Indexes/GetAutoIndexPolicyEndpoint.cs", "line": 16},
-    {"method": "PUT", "path": "/v1/projects/{project}/databases/{database}/auto-index/{collection}", "operation": "setAutoIndexPolicy", "source": "src/TerraBase/Features/Management/Indexes/SetAutoIndexPolicyEndpoint.cs", "line": 16},
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/backup-policy", "operation": "getBackupPolicy", "source": "src/TerraBase/Features/Management/Backups/GetBackupPolicyEndpoint.cs", "line": 15},
     {"method": "PUT", "path": "/v1/projects/{project}/databases/{database}/backup-policy", "operation": "setBackupPolicy", "source": "src/TerraBase/Features/Management/Backups/SetBackupPolicyEndpoint.cs", "line": 19},
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/backups", "operation": "listBackups", "source": "src/TerraBase/Features/Management/Backups/ListBackupsEndpoint.cs", "line": 15},
