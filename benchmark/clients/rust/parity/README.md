@@ -54,7 +54,8 @@ the release build and `cli-control.sh`. None of them reads credentials or makes 
 - Cleanup makes one bounded (30 s) SDK `delete_database` call on the exact owned database (by ID
   once known, otherwise by name) after success, setup failure, an uncertain create, any cell
   rejection, the run deadline or an interrupt. Acceptance means logical deletion; remote
-  erasure is unverified. On failure the identity is kept in the output and in
+  erasure is unverified. A 404 after an uncertain create requires reconciliation: the
+  create may still commit. On failure or uncertainty the identity is kept in the output and in
   `NEW.jsonl.recovery.json` (0600) for reconciliation.
 - Shutdown: the binary re-runs itself as a worker in its own process group, with a pipe from
   the supervisor as stdin. Ctrl-C or the supervisor's exit closes the pipe; the worker stops
