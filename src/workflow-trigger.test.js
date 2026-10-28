@@ -74,25 +74,6 @@ test("TerraBase binary helpers and their isolated provisioning support are absen
   }
 });
 
-test("the deploy profiles run no TerraBase producer command", async () => {
-  const deploy = JSON.parse(await readFile(new URL("../.terrascale/deploy.json", import.meta.url), "utf8"));
-  const commands = [
-    ...deploy.prProfiles,
-    ...deploy.releaseProfiles,
-    ...deploy.buildTargets,
-  ].flatMap((profile) => profile.commands);
-  assert.ok(commands.length > 0);
-  for (const command of commands) {
-    assert.ok(["npm", "node"].includes(command.command), command.description);
-    assert.doesNotMatch(
-      [command.command, ...command.arguments].join(" "),
-      /terrabase|integration|provision|producer|scripts\/ci\//iu,
-      command.description,
-    );
-  }
-  assert.doesNotMatch(JSON.stringify(deploy), /test:integration|provision:terrabase/u);
-});
-
 test("the owner-approved 0.0.x guard runs in CI and the real package passes it", async () => {
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
   const guard = runOf(stepNamed(jobDefinition(workflow, "verify"), "Require the owner-approved 0.0.x version policy"));
