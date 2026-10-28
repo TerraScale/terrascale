@@ -30,7 +30,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private static readonly TimeSpan Settle = TimeSpan.FromSeconds(30);
     private readonly Lock _gate = new();
     private readonly SemaphoreSlim _io = new(1, 1);
-    private readonly Dictionary<DatabaseOwner, List<Entry>> _pending = [];
+    private readonly Dictionary<DatabaseOwner, Ring> _pending = [];
     private readonly Counter<long> _drops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.request_logs.dropped", "{observation}", "Request observations omitted at bounded memory capacity.");
     private int _count;
@@ -48,24 +48,34 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             if (_disposed) { return; }
             var owner = DatabaseOwner.Of(database);
             _pending.TryGetValue(owner, out var entries);
+            IMemoryReservation reserved;
             if (entries?.Count == Kept)
             {
-                entries[0].Memory.Dispose();
-                entries.RemoveAt(0);
+                // The newest request takes the oldest's place and its admission: a busy database allocates no log or lease.
+                reserved = entries.RemoveOldest().Memory;
                 _count--;
             }
             // Retained server diagnostics belong to the process, even inside the completing request's QoS context.
-            if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, MaxRecordBytes, tenant: null) is not { } reserved)
+            else if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, MaxRecordBytes, tenant: null) is not { } admitted)
             {
                 RecordingLimited = true;
                 _drops.Add(1);
                 return;
             }
-            entries ??= [];
-            _pending[owner] = entries;
-            entries.Add(new(new(EntityIds.New(time).ToString(), time.GetUtcNow(), options.Region, method, route, status,
+            else
+            {
+                reserved = admitted;
+            }
+
+            if (entries is null)
+            {
+                entries = new Ring();
+                _pending.Add(owner, entries);
+            }
+
+            entries.Append(new(EntityIds.New(time), time.GetUtcNow(), method, route, status,
                 elapsed.TotalMilliseconds, operations, route.EndsWith("/query", StringComparison.Ordinal) || route.EndsWith("/sql", StringComparison.Ordinal) || statements > 0,
-                TerraScale.Endpoints.RequestIdentity.IsValid(requestId) ? requestId : null, statements, statementErrors), reserved));
+                TerraScale.Endpoints.RequestIdentity.IsValid(requestId) ? requestId : null, statements, statementErrors, reserved));
             _count++;
         }
     }
@@ -85,7 +95,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                 var saved = await LoadAsync(transaction, database.DatabaseId!, cancellationToken).ConfigureAwait(false);
                 if (saved is null) { return new Unavailable("request logs are unavailable or exceed the read budget"); }
                 DatabaseRequestLog[] pending;
-                lock (_gate) { pending = _pending.TryGetValue(DatabaseOwner.Of(database), out var entries) ? [.. entries.Select(entry => entry.Log)] : []; }
+                lock (_gate) { pending = _pending.TryGetValue(DatabaseOwner.Of(database), out var entries) ? entries.Logs(options.Region) : []; }
                 var recent = Recent(saved.Concat(pending)).ToArray();
                 var window = recent.Take(Kept).Where(log => statusClass is null || log.Status / 100 == statusClass).ToArray();
                 var body = new DatabaseRequestLogs(database.DatabaseId!, window, recent.Length >= Kept, RecordingLimited);
@@ -161,7 +171,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         lock (_gate)
         {
             if (!_pending.TryGetValue(owner, out var entries)) { return true; }
-            batch = [.. entries.Select(entry => entry.Log)];
+            batch = entries.Logs(options.Region);
         }
         var saved = await catalog.WriteAsync<bool>(async transaction =>
         {
@@ -204,8 +214,12 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         lock (_gate)
         {
             var entries = _pending[owner];
-            foreach (var entry in entries.Where(entry => flushed.Contains(entry.Log.Id))) { entry.Memory.Dispose(); }
-            _count -= entries.RemoveAll(entry => flushed.Contains(entry.Log.Id));
+            // Requests recorded meanwhile are newer than the batch, and evictions take the oldest: the saved ones lead.
+            while (entries.Count > 0 && flushed.Contains(entries.Oldest.Id.ToString()))
+            {
+                entries.RemoveOldest().Memory.Dispose();
+                _count--;
+            }
             if (entries.Count == 0) { _pending.Remove(owner); }
         }
         return true;
@@ -216,10 +230,9 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         lock (_gate)
         {
             if (_pending.Count == 0) { return false; }
-            var oldest = _pending.MinBy(pair => pair.Value[0].Log.Time);
+            var oldest = _pending.MinBy(pair => pair.Value.Oldest.Time);
             var entries = oldest.Value;
-            entries[0].Memory.Dispose();
-            entries.RemoveAt(0);
+            entries.RemoveOldest().Memory.Dispose();
             _count--;
             if (entries.Count == 0) { _pending.Remove(oldest.Key); }
             RecordingLimited = true;
@@ -273,7 +286,10 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         {
             lock (_gate)
             {
-                foreach (var entry in _pending.Values.SelectMany(entries => entries)) { entry.Memory.Dispose(); }
+                foreach (var entries in _pending.Values)
+                {
+                    while (entries.Count > 0) { entries.RemoveOldest().Memory.Dispose(); }
+                }
                 _pending.Clear();
                 _count = 0;
             }
@@ -281,5 +297,59 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         finally { _io.Release(); }
     }
 
-    private sealed record Entry(DatabaseRequestLog Log, IMemoryReservation Memory);
+    // A recorded request as plain values; its log, id string included, is built only when it is saved or read.
+    private readonly record struct Entry(Ulid Id, DateTimeOffset Time, string Method, string Route, int Status, double LatencyMs, long Operations,
+        bool IsQuery, string? RequestId, long Statements, long StatementErrors, IMemoryReservation Memory)
+    {
+        public DatabaseRequestLog Log(string region) =>
+            new(Id.ToString(), Time, region, Method, Route, Status, LatencyMs, Operations, IsQuery, RequestId, Statements, StatementErrors);
+    }
+
+    // A database's unsaved requests, oldest first, in a circular array of at most Kept entries reused in place.
+    private sealed class Ring
+    {
+        private Entry[] _entries = new Entry[4];
+        private int _start;
+
+        public int Count { get; private set; }
+
+        public Entry Oldest => _entries[_start];
+
+        public void Append(in Entry entry)
+        {
+            if (Count == _entries.Length)
+            {
+                var grown = new Entry[Math.Min(Kept, _entries.Length * 2)];
+                for (var i = 0; i < Count; i++)
+                {
+                    grown[i] = _entries[(_start + i) % _entries.Length];
+                }
+
+                (_entries, _start) = (grown, 0);
+            }
+
+            _entries[(_start + Count) % _entries.Length] = entry;
+            Count++;
+        }
+
+        public Entry RemoveOldest()
+        {
+            var oldest = _entries[_start];
+            _entries[_start] = default;
+            _start = (_start + 1) % _entries.Length;
+            Count--;
+            return oldest;
+        }
+
+        public DatabaseRequestLog[] Logs(string region)
+        {
+            var logs = new DatabaseRequestLog[Count];
+            for (var i = 0; i < Count; i++)
+            {
+                logs[i] = _entries[(_start + i) % _entries.Length].Log(region);
+            }
+
+            return logs;
+        }
+    }
 }
