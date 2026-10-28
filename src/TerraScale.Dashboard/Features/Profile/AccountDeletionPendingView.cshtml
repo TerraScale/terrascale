@@ -5,7 +5,7 @@
     <p class="ts-auth-subtitle" role="status" aria-live="polite">@Model.Message</p>
     @if (Model.Automatic)
     {
-        <p class="ts-auth-subtitle">This page checks automatically up to five times, with longer pauses between checks. You can also check manually. You do not need to submit another deletion request.</p>
+        <p class="ts-auth-subtitle">This page keeps checking automatically for about eight minutes, with pauses of up to 30 seconds, and opens the confirmation once closure finishes. You can also check manually. You do not need to submit another deletion request.</p>
     }
     else if (!Model.Attention)
     {

@@ -23,5 +23,10 @@ public static class AccountRequest
         return values[0];
     }
 
-    public static IResult LoginRedirect(HttpContext http) => Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
+    // ts-auth revokes the session once it accepts an account deletion; a browser still holding that deletion's
+    // recovery cookie follows it to completion (/account-deleted) instead of being asked to sign in again.
+    public static IResult LoginRedirect(HttpContext http) =>
+        http.Request.Cookies[TerraScale.Dashboard.Features.Profile.AccountDeletion.Cookie] is { Length: 64 } deletion && deletion.All(char.IsAsciiHexDigitLower)
+            ? Results.Redirect("/account-deletion")
+            : Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
 }
