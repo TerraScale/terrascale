@@ -180,6 +180,9 @@ allocation reports, should not be trusted for small types.
 - **One process, two sides.** Client and server share the process. Thread-pool dispatch and socket-loop work stay
   unattributed. The benchmark's instrumentation is ~0.9% of CPU samples, and hosting Activity creation may be partly caused by
   its listener.
+- **Measurement boundaries.** The [source audit](2026-10-28-perf-api-measurement-boundaries.md) records the fixed warmup,
+  process-wide CPU/allocation boundaries and per-request reservoir semantics. It supplies no measured correction and does
+  not establish the cause of the slow first-cell state observed in a later experiment.
 - **Allocation views.** The sampled and tick allocation views come from different processes and intervals, because enabling
   sampling disables ticks. In p2 the analyzer rejects the empty tick view; this is recorded in `rejected.txt`.
 - **Scope.** Single host (beta, 10 pinned CPUs, nice 19), not live gru/sjc/fra. The binary is the frozen `93b873792` build, not
@@ -226,7 +229,7 @@ Reproduce with:
 This report preserves the data from experiment commit `c400ebc63a77db88c0a199e010b230818f2615ec`.
 The measured artifacts and historical source hashes above are unchanged. Publication edits clarify that GC and scheduler
 causality were inferred, and that the inclusive slices each contain multiple middleware stages. The publication
-branch contains only this report; it does not integrate the experimental profiling tools.
+branch contains this report and the companion measurement-boundary source audit; it does not integrate the experimental profiling tools.
 Their exact sources remain available for review and reproduction:
 
 - [Collection and quiet reservation](https://github.com/TerraScale/terrascale/blob/c400ebc63a77db88c0a199e010b230818f2615ec/benchmark/scripts/api-common-profile-20261028.sh).
