@@ -86,7 +86,14 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             else
             {
                 var account = await ReadAccountAsync(document, session.UserId, cancellationToken);
-                if (account.PersonalOrganizationId.Length != 0) return account;
+                if (account.PersonalOrganizationId.Length != 0)
+                {
+                    // ts-auth owns the sign-in email; a changed address replaces the stored copy at the next sign-in.
+                    if (session.Email.Length == 0 || account.Email == session.Email) return account;
+                    await UpdateAccountAsync(session, current => current.Email = session.Email, cancellationToken);
+                    account.Email = session.Email;
+                    return account;
+                }
                 if (account.PersonalClaimUntil > now)
                 {
                     // Another replica is creating this account's Personal organization.
