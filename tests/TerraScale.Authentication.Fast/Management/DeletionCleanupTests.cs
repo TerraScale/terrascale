@@ -75,7 +75,8 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
         await Assert.That(overdue.DueAt).IsEqualTo(pending.DueAt);
 
         restartFaults.Fail = false;
-        clock.UtcNow += TimeSpan.FromMinutes(2);
+        // Failure retries use persisted exponential backoff and jitter; two minutes need not make this job due.
+        clock.UtcNow = overdue.NextAttemptAt;
         await restarted.App.Services.GetRequiredService<DeletionCleanup>().RunOnceAsync();
         var finished = await JobAsync(restartedStore, alice.InstanceId, "account", alice.Id);
         await Assert.That(finished.AuthLogicalVerifiedAt).IsEqualTo(clock.UtcNow);
