@@ -42,7 +42,7 @@
 }
 
 .ts-sidebar-brand img {
-  height: 20px;
+  height: var(--ts-control-h-sm);
   width: auto;
 }
 
@@ -118,7 +118,7 @@ details[open] > .ts-context-trigger {
 
 .ts-context-icon {
   width: 28px;
-  height: 28px;
+  height: var(--ts-control-h-sm);
   font-size: var(--ts-fs-sm);
 }
 
@@ -366,7 +366,7 @@ details[open] > .ts-context-trigger {
   align-items: center;
   justify-self: start;
   gap: var(--ts-s2);
-  height: 28px;
+  height: var(--ts-control-h-sm);
   padding: 0 var(--ts-s3);
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-pill);
