@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { formatEntitlementRows, formatPlanBilling, formatPlanLimits } from '../src/lib/pricing.ts';
+import { annualSavingMonths, formatEntitlementRows, formatPlanBilling, formatPlanCadences, formatPlanLimits } from '../src/lib/pricing.ts';
 import { en } from '../src/lib/i18n/messages/en.ts';
 import { es } from '../src/lib/i18n/messages/es.ts';
 import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
 
 const catalog = JSON.parse(readFileSync(new URL('../static/pricing.json', import.meta.url), 'utf8'));
 const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
+const billed = (plan) => ({ price: plan.priceMonthlyUsd, annualPrice: plan.priceAnnualUsd, available: plan.available, billingIntervals: plan.billingIntervals });
 const usageCaveats = {
   en: /storage and client egress overages are not billed yet/i,
   es: /excedentes de almacenamiento y salida a clientes aún no se facturan/i,
@@ -45,22 +46,32 @@ for (const [locale, messages] of locales) {
   });
   test(`${locale}: all five plans have coherent prices, cadence, and allowances`, () => {
     assert.deepEqual(Object.keys(messages.pricing.plans), catalog.plans.map((p) => p.id));
+    assert.equal(annualSavingMonths(catalog.plans.map(billed)), 2);
     for (const plan of catalog.plans) {
-      const billing = formatPlanBilling({
-        price: plan.priceMonthlyUsd, annualPrice: plan.priceAnnualUsd, billingInterval: plan.billingInterval,
-      }, messages.pricing, locale);
-      assert.ok(!/null|undefined|NaN|\{/.test(Object.values(billing).join(' ')));
-      if (plan.id === 'starter') {
-        assert.match(billing.price, /30/);
-        assert.equal(billing.suffix, messages.pricing.suffixAnnual);
-        assert.match(billing.cadence, /2[.,]50/);
-      } else if (plan.id === 'free') {
-        assert.equal(billing.suffix, '');
-        assert.equal(billing.cadence, messages.pricing.cadence.free);
+      const monthly = formatPlanBilling(billed(plan), 'month', messages.pricing, locale);
+      const yearly = formatPlanBilling(billed(plan), 'year', messages.pricing, locale);
+      const cadences = formatPlanCadences(billed(plan), messages.pricing, locale);
+      for (const text of [...Object.values(monthly), ...Object.values(yearly), cadences]) assert.ok(!/null|undefined|NaN|\{/.test(text));
+      if (plan.id === 'free') {
+        for (const billing of [monthly, yearly]) {
+          assert.equal(billing.suffix, '');
+          assert.equal(billing.cadence, messages.pricing.cadence.free);
+        }
+      } else if (plan.id === 'enterprise') {
+        assert.deepEqual(yearly, monthly);
+        assert.equal(monthly.suffix, messages.pricing.suffixUsage);
       } else {
-        assert.ok(billing.price.includes(String(plan.priceMonthlyUsd)));
-        assert.equal(billing.suffix, plan.id === 'enterprise' ? messages.pricing.suffixUsage : messages.pricing.suffixMonthly);
+        // Every paid plan sells monthly and yearly; a year costs ten monthly payments.
+        assert.deepEqual(plan.billingIntervals, ['month', 'year']);
+        assert.equal(plan.priceAnnualUsd, plan.priceMonthlyUsd * 10);
+        assert.ok(monthly.price.includes(String(plan.priceMonthlyUsd)));
+        assert.equal(monthly.suffix, messages.pricing.suffixMonthly);
+        assert.ok(yearly.price.includes(String(plan.priceAnnualUsd)));
+        assert.equal(yearly.suffix, messages.pricing.suffixAnnual);
+        assert.match(yearly.cadence, /\b2\b/);
+        assert.ok(cadences.includes(String(plan.priceMonthlyUsd)) && cadences.includes(String(plan.priceAnnualUsd)));
       }
+      if (plan.id === 'starter') assert.match(yearly.cadence, /2[.,]50/);
       const limits = formatPlanLimits(plan.limits, messages.pricing.limits, locale);
       assert.equal(limits.length, plan.id === 'enterprise' ? 3 : 6);
       assert.ok(!limits.some((line) => /null|undefined|NaN|\{/.test(line)));

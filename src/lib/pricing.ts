@@ -55,24 +55,43 @@ export function formatPlanLimits(limits: PlanLimits, copy: LimitCopy, bcp47: str
   return lines
 }
 
-// Starter is annual-only; a monthly equivalent must never become a monthly offer.
-export function formatPlanBilling(
-  plan: { price: number; annualPrice: number | null; billingInterval: 'free' | 'year' | 'month' | 'contact' },
-  copy: Messages['pricing'],
-  bcp47: string,
-) {
-  const usd = (n: number) => new Intl.NumberFormat(bcp47, {
-    style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
-    maximumFractionDigits: 2,
-  }).format(n)
-  const suffix = {
-    free: '', year: copy.suffixAnnual, month: copy.suffixMonthly, contact: copy.suffixUsage,
-  }[plan.billingInterval]
-  return {
-    price: usd(plan.billingInterval === 'year' ? plan.annualPrice! : plan.price),
-    suffix,
-    cadence: copy.cadence[plan.billingInterval]
-      .replace('{annual}', plan.annualPrice === null ? '' : usd(plan.annualPrice))
-      .replace('{monthly}', usd(plan.price)),
+export type BillingInterval = 'month' | 'year'
+type BilledPlan = { price: number; annualPrice: number | null; available: boolean; billingIntervals: readonly BillingInterval[] }
+
+const currency = (bcp47: string) => (n: number) => new Intl.NumberFormat(bcp47, {
+  style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+  maximumFractionDigits: 2,
+}).format(n)
+
+// Months of the monthly price that yearly billing saves, when every paid plan saves the same.
+export function annualSavingMonths(plans: readonly BilledPlan[]): number | null {
+  const months = [...new Set(plans.filter((plan) => plan.annualPrice !== null && plan.billingIntervals.includes('year'))
+    .map((plan) => Math.round(12 - plan.annualPrice! / plan.price)))]
+  return months.length === 1 && months[0] > 0 ? months[0] : null
+}
+
+// Paid plans sell monthly and yearly, and the chosen interval sets the headline price.
+// Free and Enterprise read the same on either interval.
+export function formatPlanBilling(plan: BilledPlan, interval: BillingInterval, copy: Messages['pricing'], bcp47: string) {
+  const usd = currency(bcp47)
+  if (plan.price === 0) return { price: usd(0), suffix: '', cadence: copy.cadence.free }
+  if (!plan.available) return { price: usd(plan.price), suffix: copy.suffixUsage, cadence: copy.cadence.contact }
+  if (interval === 'year' && plan.annualPrice !== null && plan.billingIntervals.includes('year')) {
+    return {
+      price: usd(plan.annualPrice),
+      suffix: copy.suffixAnnual,
+      cadence: copy.cadence.year
+        .replace('{monthly}', usd(Math.round((plan.annualPrice / 12) * 100) / 100))
+        .replace('{months}', String(annualSavingMonths([plan]) ?? 0)),
+    }
   }
+  return { price: usd(plan.price), suffix: copy.suffixMonthly, cadence: copy.cadence.month }
+}
+
+// Every price a plan is sold at, for the comparison table.
+export function formatPlanCadences(plan: BilledPlan, copy: Messages['pricing'], bcp47: string) {
+  const usd = currency(bcp47)
+  if (plan.price === 0) return copy.cadence.free
+  if (!plan.available || plan.annualPrice === null) return copy.cadence.contact
+  return copy.cadence.both.replace('{monthly}', usd(plan.price)).replace('{annual}', usd(plan.annualPrice))
 }

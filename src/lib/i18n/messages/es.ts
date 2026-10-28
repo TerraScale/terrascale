@@ -150,7 +150,7 @@ export const es: Messages = {
     ctaPrimary: 'Registrarse en Public Alpha',
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
-    perks: ['Free sin tarjeta', 'Starter anual; Pro y Team mensuales'],
+    perks: ['Free sin tarjeta', 'Planes pagados mensuales o anuales'],
   },
 
   pricingTeaser: {
@@ -167,21 +167,27 @@ export const es: Messages = {
     badge: 'Más popular',
     suffixMonthly: '/mes',
     suffixAnnual: '/año',
+    intervals: {
+      label: 'Intervalo de facturación',
+      month: 'Mensual',
+      year: 'Anual',
+      saving: '{months} meses gratis',
+    },
     plans: {
       free: {
         description: 'Crea y evalúa sin tarjeta de pago',
         cta: 'Empezar con Free',
       },
       starter: {
-        description: 'Suscripción exclusivamente anual para proyectos pequeños',
+        description: 'Suscripción para proyectos pequeños',
         cta: 'Elegir Starter',
       },
       pro: {
-        description: 'Suscripción mensual para proyectos en crecimiento',
+        description: 'Suscripción para proyectos en crecimiento',
         cta: 'Elegir Pro',
       },
       team: {
-        description: 'Suscripción mensual para equipos',
+        description: 'Suscripción para equipos',
         cta: 'Elegir Team',
       },
       enterprise: {
@@ -292,7 +298,7 @@ export const es: Messages = {
         },
         {
           q: '¿Cómo se facturan las suscripciones?',
-          a: 'Free no requiere tarjeta. Starter se factura solo anualmente; su importe mensual es un equivalente, no una compra mensual. Pro y Team son mensuales. No se ofrecen pruebas ni descuentos anuales para Pro o Team.',
+          a: 'Free no requiere tarjeta. Starter, Pro y Team se facturan mensual o anualmente; un año cuesta diez pagos mensuales, así que la facturación anual ahorra dos meses. No se ofrecen pruebas.',
         },
         {
           q: '¿Puedo exportar mis datos?',
@@ -317,8 +323,9 @@ export const es: Messages = {
     status: 'Los planes pagados están disponibles en el checkout. Las unidades de operación por encima de la asignación se suman a la próxima factura; los excedentes de almacenamiento y salida a clientes aún no se facturan.',
     cadence: {
       free: 'Sin tarjeta de pago',
-      year: 'Solo {annual}/año · equivalente a {monthly}/mes',
+      year: 'Facturación anual · equivalente a {monthly}/mes · {months} meses gratis',
       month: 'Facturación mensual',
+      both: '{monthly}/mes o {annual}/año',
       contact: 'Soporte + uso · contactar ventas',
     },
     suffixUsage: '/mes + uso',

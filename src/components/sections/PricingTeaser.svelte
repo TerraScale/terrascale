@@ -3,14 +3,15 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
-  import { formatPlanBilling, formatPlanLimits } from '@/lib/pricing'
+  import { formatPlanBilling, formatPlanCadences, formatPlanLimits } from '@/lib/pricing'
   import { publicAlphaCatalog } from '@/lib/site'
 
   $: plans = publicAlphaCatalog
     .filter((plan) => plan.available)
     .map((plan) => ({
       ...plan,
-      billing: formatPlanBilling(plan, $dict.pricing, localeMeta($locale).bcp47),
+      billing: formatPlanBilling(plan, 'month', $dict.pricing, localeMeta($locale).bcp47),
+      cadences: formatPlanCadences(plan, $dict.pricing, localeMeta($locale).bcp47),
       summary: formatPlanLimits({ ...plan.limits, members: null }, $dict.pricing.limits, localeMeta($locale).bcp47).join(' · '),
     }))
 </script>
@@ -49,7 +50,7 @@
           <strong>{plan.billing.price}</strong>
           <span>{plan.billing.suffix}</span>
         </p>
-        <p class="pricing-teaser__limits">{plan.billing.cadence}</p>
+        <p class="pricing-teaser__limits">{plan.cadences}</p>
         <p class="pricing-teaser__limits">{plan.summary}</p>
       </RouteLink>
     {/each}
