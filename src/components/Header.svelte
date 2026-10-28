@@ -53,13 +53,12 @@
       <ExternalLink
         href="https://status.terrascale.tech"
         target="_blank"
-        class="ts-status-link"
+        class="ts-header__action"
       >
-        <span class="pulse-dot ts-status-link__dot"></span>
         {$dict.chrome.status}
       </ExternalLink>
 
-      <ExternalLink href={loginUrl} class="ts-status-link">
+      <ExternalLink href={loginUrl} class="ts-header__action">
         {$dict.chrome.login}
       </ExternalLink>
 
@@ -110,7 +109,7 @@
           {$dict.chrome.docs}
         </ExternalLink>
         <ExternalLink href="https://status.terrascale.tech" target="_blank" class="site-nav__sheet-link">
-          <span class="site-nav__icon site-nav__status"><span class="pulse-dot ts-status-link__dot"></span></span>
+          <Icon name="activity" className="site-nav__icon" />
           {$dict.chrome.status}
         </ExternalLink>
       </nav>
@@ -189,7 +188,8 @@
   }
 
   :global(.ts-nav__link),
-  :global(.ts-header__docs) {
+  :global(.ts-header__docs),
+  :global(.ts-header__action) {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -208,7 +208,8 @@
   }
 
   :global(.ts-nav__link:hover),
-  :global(.ts-header__docs:hover) {
+  :global(.ts-header__docs:hover),
+  :global(.ts-header__action:hover) {
     color: var(--ts-text);
     background: rgba(255, 255, 255, 0.05);
   }
@@ -232,29 +233,10 @@
     gap: 8px;
   }
 
-  :global(.ts-status-link) {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    color: var(--ts-text-muted);
-    font-size: 14px;
-    font-weight: 500;
-    font-family: var(--ts-font-accent);
-    text-decoration: none;
-    padding: 6px 4px;
-    transition: color 150ms ease;
-  }
-
-  :global(.ts-status-link:hover) {
-    color: var(--ts-text);
-  }
-
-  .ts-status-link__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #6bca92;
-    display: inline-block;
+  :global(.ts-header__action) {
+    height: var(--ts-control-h-sm);
+    padding: 0 var(--ts-s3);
+    white-space: nowrap;
   }
 
   :global(.ts-cta) {
@@ -309,11 +291,6 @@
   .site-nav__sheet :global(.site-nav__icon) {
     width: var(--ts-icon);
     height: var(--ts-icon);
-  }
-
-  .site-nav__status {
-    display: inline-grid;
-    place-items: center;
   }
 
   .site-nav__sheet {
