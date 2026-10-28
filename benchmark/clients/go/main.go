@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -62,16 +63,19 @@ func startup(w io.Writer) error {
 // measurement on the SDK as shipped.
 func sdkTransport() http.RoundTripper {
 	return &http.Transport{
-		Proxy:             http.ProxyFromEnvironment,
-		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS13},
-		ForceAttemptHTTP2: true,
-		IdleConnTimeout:   90 * time.Second,
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13},
+		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       90 * time.Second,
 	}
 }
 
-// sdkClient disables SDK retries so every request is measured once.
+// sdkClient retains the shipped SDK retry policy.
 func sdkClient(endpoint, token string, hc *http.Client) (*v1.Client, error) {
-	return v1.New(v1.Config{BaseURL: endpoint, Token: token, HTTPClient: hc, MaxRetries: -1})
+	return v1.New(v1.Config{BaseURL: endpoint, Token: token, HTTPClient: hc})
 }
 
 // bench is one client run: its database, the current token and SDK handle,
