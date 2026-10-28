@@ -22,11 +22,11 @@ public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
         var status = await Tool(replica, secret, "get_onboarding", new { });
         Progress(status, "account-information", 0);
         Check(status.GetProperty("plans").GetArrayLength() == 3 && status.GetProperty("plans").EnumerateArray().All(plan =>
-            plan.GetProperty("priceCents").GetInt64() > 0 &&
-            (plan.GetProperty("billingInterval").GetString() == "year"
-                ? plan.GetProperty("priceCents").GetInt64() == 3000 && plan.GetProperty("monthlyEquivalentCents").GetInt64() == 250 && plan.GetProperty("price").GetString() == "$30.00 / year"
-                : plan.GetProperty("priceCents").GetInt64() == plan.GetProperty("monthlyEquivalentCents").GetInt64() && plan.GetProperty("price").GetString()!.EndsWith(" / month", StringComparison.Ordinal))),
-            "The payment step advertises only the three paid onboarding plans with only their published cadence");
+            plan.GetProperty("monthlyPriceCents").GetInt64() > 0 && plan.GetProperty("annualPriceCents").GetInt64() == 10 * plan.GetProperty("monthlyPriceCents").GetInt64() &&
+            plan.GetProperty("intervals").EnumerateArray().Select(interval => interval.GetString()).SequenceEqual(["monthly", "annual"]) &&
+            plan.GetProperty("monthlyPrice").GetString()!.EndsWith(" / month", StringComparison.Ordinal) && plan.GetProperty("annualPrice").GetString()!.EndsWith(" / year", StringComparison.Ordinal)) &&
+            status.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("key").GetString() == "starter").GetProperty("monthlyPrice").GetString() == "$3.00 / month",
+            "The payment step advertises the three paid onboarding plans, each monthly and annual");
         await SafeError(replica, secret, new { step = "project", name = "Premature", region = "GRU" }, "Complete the current setup step first.");
         await SafeError(replica, secret, new { step = "account-information", displayName = "\u0001" }, "Enter a valid name.");
         Progress(await Tool(replica, secret, "get_onboarding", new { }), "account-information", 0);

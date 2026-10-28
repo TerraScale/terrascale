@@ -28,7 +28,8 @@ public static class OnboardingEndpoints
         // Accounts are created on ts-auth's hosted sign-up; a signed-out visitor here is registering, so open it directly.
         if (session is null)
         {
-            var target = ReturnPath(returnTo) is { Length: > 0 } path ? path : "/onboarding" + (OfferedPlan(plans, requested) is { Length: > 0 } plan ? "?plan=" + Uri.EscapeDataString(plan) : "");
+            var target = ReturnPath(returnTo) is { Length: > 0 } path ? path : "/onboarding" + (OfferedPlan(plans, requested) is { Length: > 0 } plan ? "?plan=" + Uri.EscapeDataString(plan)
+                + (context.Request.Query["interval"] == "annual" ? "&interval=annual" : "") : "");
             return HttpRedirects.SeeOther("/login?signup=1&returnTo=" + Uri.EscapeDataString(target));
         }
         var page = Page(context) with { Plans = plans, Plan = OfferedPlan(plans, requested) };
@@ -50,6 +51,7 @@ public static class OnboardingEndpoints
             ProjectName = draft?["name"].ToString() ?? "Personal",
             Region = draft?["region"].ToString() ?? "",
             Plan = OfferedPlan(plans, requested).Length == 0 ? plans.FirstOrDefault()?.Key ?? "" : requested,
+            Interval = (draft?["interval"].ToString() ?? context.Request.Query["interval"].ToString()) is "annual" ? "annual" : BillingPlan.DefaultInterval,
             Document = new("Activate your TerraScale account", DocumentModel.NonceFor(context))
         };
         if (payment == "success" && page.Step == "payment-method")

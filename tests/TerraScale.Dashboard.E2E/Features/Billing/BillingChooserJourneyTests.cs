@@ -13,7 +13,7 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
     [Test]
     [Arguments("annual")]
     [Arguments("monthly")]
-    public async Task FreeBillingShowsPublishedCadencesRegardlessOfRequestedIntervalAndAnnouncesCanceledCheckout(string interval)
+    public async Task FreeBillingOffersBothCadencesOpenOnTheRequestedIntervalAndAnnouncesCanceledCheckout(string interval)
     {
         using var client = fixture.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
@@ -22,11 +22,16 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         var html = WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
         var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
         await Assert.That(chooser.Length).IsGreaterThan(0);
-        await Assert.That(chooser.Contains("name=\"interval\"", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(chooser).Contains("$30.00 / year · Billed yearly · $2.50/month equivalent");
-        await Assert.That(chooser.Contains("$2.50 / month", StringComparison.Ordinal)).IsFalse().Because("Starter is sold only by the year.");
-        await Assert.That(chooser).Contains("$20.00 / month · Billed monthly");
-        await Assert.That(chooser).Contains("$50.00 / month · Billed monthly");
+        foreach (var form in new[] { html, chooser })
+            await Assert.That(Regex.IsMatch(form, "<input[^>]*name=\"interval\"[^>]*value=\"" + interval + "\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue()
+                .Because("Plan prices open on the requested interval.");
+        foreach (var price in new[] { "$3.00 / month · Billed monthly", "$30.00 / year · Billed yearly · $2.50/month · 2 months free", "$20.00 / month · Billed monthly",
+            "$200.00 / year · Billed yearly · $16.67/month · 2 months free", "$50.00 / month · Billed monthly", "$500.00 / year · Billed yearly · $41.67/month · 2 months free" })
+            await Assert.That(chooser).Contains(price);
+        await Assert.That(Regex.IsMatch(html, "Yearly\\s+<span class=\"ts-segment-note\">2 months free</span>", RegexOptions.CultureInvariant)).IsTrue();
+        foreach (var plan in new[] { "starter", "pro", "team" })
+            foreach (var cadence in new[] { "monthly", "annual" })
+                await Assert.That(PlanCard(html, plan)).Contains("data-interval=\"" + cadence + "\"><input type=\"hidden\" name=\"_csrf\"");
         await Assert.That(html.Contains("Save up to", StringComparison.Ordinal)).IsFalse();
         await Assert.That(html).Contains("Checkout canceled");
         await Assert.That(Regex.Matches(chooser, "name=\"plan\"").Count).IsEqualTo(3);
@@ -43,7 +48,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
 
     [Test]
     [Arguments("starter", "annual", "Annual")]
+    [Arguments("starter", "monthly", "Monthly")]
     [Arguments("pro", "monthly", "Monthly")]
+    [Arguments("team", "annual", "Annual")]
     public async Task PendingAndCanceledCheckoutCadenceDoesNotReplaceFreeUntilSubscriptionConfirmed(string plan, string interval, string paidCadence)
     {
         using var client = fixture.CreateClient();
@@ -79,9 +86,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
-    [Arguments("starter", "monthly")]
-    [Arguments("pro", "annual")]
-    [Arguments("team", "annual")]
+    [Arguments("starter", "weekly")]
+    [Arguments("pro", "quarterly")]
+    [Arguments("team", "biennial")]
     public async Task CheckoutRejectsUnpublishedPlanCadences(string plan, string interval)
     {
         using var client = fixture.CreateClient();
@@ -108,8 +115,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         using var wizard = await client.GetAsync(wizardUri);
         await Assert.That(wizard.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var wizardBody = await wizard.Content.ReadAsStringAsync();
+        await Assert.That(wizardBody).Contains("<strong>$3.00</strong> / month");
         await Assert.That(wizardBody).Contains("<strong>$30.00</strong> / year");
-        await Assert.That(wizardBody.Contains("<strong>$2.50</strong> / month", StringComparison.Ordinal)).IsFalse().Because("the pre-selected Starter plan is sold only by the year.");
+        await Assert.That(Regex.IsMatch(wizardBody, "<input[^>]*name=\"interval\"[^>]*value=\"monthly\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue().Because("the wizard opens on monthly billing.");
         using var checkout = await HttpJourney.PostFormAsync(client,
             "/api/v1/dashboard/organization/new-organization?organizationId=" + Uri.EscapeDataString(organizationId), new()
             { ["_csrf"] = csrf, ["step"] = "payment-method", ["organizationID"] = organizationId, ["plan"] = "starter" });
@@ -144,6 +152,10 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing"));
         var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
         await Assert.That(Regex.IsMatch(chooser, "<input[^>]*name=\"plan\"[^>]*value=\"starter\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue();
+        foreach (var form in new[] { html, chooser })
+            await Assert.That(Regex.IsMatch(form, "<input[^>]*name=\"interval\"[^>]*value=\"annual\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue();
+        await Assert.That(PlanCard(html, "starter")).Contains("Switch to monthly billing");
+        await Assert.That(Regex.IsMatch(PlanCard(html, "starter"), "data-interval=\"annual\">.*?disabled[^>]*>Current plan</button>", RegexOptions.Singleline | RegexOptions.CultureInvariant)).IsTrue();
         await Assert.That(Regex.Matches(html, "class=\"ts-plan ts-plan-current\"").Count).IsEqualTo(1);
         await Assert.That(html).Contains("aria-labelledby=\"plan-starter\" aria-current=\"true\"");
         await AssertComparisonAsync(html);

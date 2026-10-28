@@ -103,8 +103,11 @@
   gap: var(--ts-s1);
 }
 
+/* The interval choice sits beside the heading and drops below it when space runs out. */
 .ts-onboarding-payment-head {
+  flex-wrap: wrap;
   align-items: flex-start;
+  gap: var(--ts-s3);
 }
 
 .ts-onboarding-footer {
@@ -123,57 +126,21 @@
   min-width: 0;
 }
 
-/* Segmented radio control (billing interval). */
-.ts-segmented {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--ts-control-line);
-  border-radius: var(--ts-radius);
-  background: var(--ts-canvas);
-}
-
-.ts-segmented label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ts-s2);
-  padding: var(--ts-s1) var(--ts-s3);
-  border-radius: var(--ts-radius-sm);
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ts-segmented input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.ts-segmented label:has(input:checked) {
-  background: var(--ts-surface-3);
-  color: var(--ts-ink);
-}
-
-.ts-segmented label:has(input:focus-visible) {
-  outline: 2px solid var(--ts-focus);
-  outline-offset: 2px;
-}
-
-/* Plan cards: the radio is visually hidden, the whole card is the target. */
+/* Plan rows: the radio is visually hidden, the whole row is the target. */
 .ts-onboarding-plans {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  gap: var(--ts-s3);
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .ts-onboarding-plan {
   position: relative;
   display: grid;
-  align-content: start;
-  justify-items: start;
-  gap: var(--ts-s2);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ts-s1) var(--ts-s3);
   padding: var(--ts-s4);
   border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius-lg);
@@ -182,8 +149,9 @@
   transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
 }
 
-.ts-onboarding-plan > .ts-row-between {
-  width: 100%;
+/* Billing and allowance lines align under the plan name. */
+.ts-onboarding-plan > .ts-meta {
+  grid-column: 2 / -1;
 }
 
 .ts-onboarding-plan:hover {
@@ -208,7 +176,7 @@
 
 .ts-onboarding-plan-name {
   color: var(--ts-ink);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .ts-onboarding-plan-check {
@@ -232,10 +200,12 @@
   font-family: var(--ts-font-mono);
   display: flex;
   align-items: baseline;
+  justify-self: end;
   gap: var(--ts-s1);
-  font-size: var(--ts-fs-xl);
+  font-size: var(--ts-fs-lg);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 @media (max-width: 30rem) {

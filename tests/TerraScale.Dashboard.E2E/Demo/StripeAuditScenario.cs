@@ -183,8 +183,11 @@ public sealed class StripeAuditScenario : IAsyncDisposable
             var all = new List<(string Plan, string Interval, int Amount, string Id, bool Active, bool ProductActive)>
             {
                 ("starter", "annual", 3000, "price_starter_annual", true, true),
+                ("starter", "monthly", 300, "price_starter_monthly", true, true),
                 ("pro", "monthly", 2000, "price_pro_monthly", true, true),
-                ("team", "monthly", 5000, "price_team_monthly", true, true)
+                ("pro", "annual", 20000, "price_pro_annual", true, true),
+                ("team", "monthly", 5000, "price_team_monthly", true, true),
+                ("team", "annual", 50000, "price_team_annual", true, true)
             };
             if (fault == "missing-price") all.RemoveAll(row => row.Id == "price_starter_annual");
             if (fault == "duplicate-price") all.Add(("pro", "monthly", 2000, "price_pro_monthly_duplicate", true, true));

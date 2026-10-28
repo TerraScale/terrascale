@@ -55,7 +55,7 @@ canonical HTTPS origin, the webhook URL/API version/required events, recent
 features, subscription key-mode consistency, and subscription status counts.
 It also inventories active recurring USD prices and products. For each paid
 plan/interval pair it expects exactly one matching active price: Starter, Pro
-and Business, monthly and annual, for six unique prices total. Subscription
+and Team, monthly and annual, for six unique prices total. Subscription
 counts are inventory only; the report does not infer a TerraScale organization
 from a Stripe customer. Check endpoint delivery attempts in Stripe Workbench;
 the public Events API cannot verify delivery success to a particular endpoint.
@@ -118,8 +118,9 @@ the dashboard stores no overage state. The billing page shows "Usage this
 period" from the same items.
 
 Units used after the last hourly run of a month are never billed, which favors
-the customer. Annual subscriptions (Starter) collect pending overage items at
-their next renewal invoice.
+the customer. Annual subscriptions would hold pending items until renewal, so the
+reporter sets their pending-invoice-item interval to one month and they are
+invoiced for overage monthly too.
 
 ## Internal billing
 

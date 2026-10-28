@@ -84,8 +84,7 @@ public static class BillingEndpoints
     // The next invoice is the renewal charge: the scheduled plan's price when a change applies at renewal, else the current plan's.
     private static InvoiceRenewal? Renewal(BillingBinding? binding, BillingPlanState? state)
     {
-        static long Price(string key, string interval) => PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key) is { } plan
-            ? interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents : 0;
+        static long Price(string key, string interval) => PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key)?.PriceCentsFor(interval) ?? 0;
         if (state is not null)
         {
             var scheduled = state.ScheduledPlanKey.Length > 0 && (state.ScheduledAt is null || state.ScheduledAt <= state.RenewalAt);

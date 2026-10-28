@@ -1,0 +1,3 @@
+@inherits RazorSlice<string>
+@* Monthly/yearly radios; an ancestor marked .ts-interval-scope shows only the [data-interval] prices of the checked interval. *@
+<fieldset class="ts-interval-choice"><legend class="ts-sr-only">Billing interval</legend><div class="ts-segmented">@foreach (var (interval, label) in new[] { ("monthly", "Monthly"), ("annual", "Yearly") }) { <label class="ts-segment"><input type="radio" name="interval" value="@interval" checked="@(interval == Model ? "checked" : null)" />@label @if (interval == "annual" && PlanCatalog.AnnualSaving.Length > 0) { <span class="ts-segment-note">@PlanCatalog.AnnualSaving</span> }</label> }</div></fieldset>

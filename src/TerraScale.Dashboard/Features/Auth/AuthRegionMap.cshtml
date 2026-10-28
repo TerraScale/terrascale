@@ -1,9 +1,16 @@
 @inherits RazorSlice
+@using System.Globalization
 @inject AssetUrls Assets
 <span></span>
 <div class="ts-auth-map">
-    <svg class="ts-auth-routes" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M16.1 32.8 Q 22 70 37 75.7"/><path d="M37 75.7 Q 46 40 52.4 23.9"/></svg>
-    <i class="ts-auth-point ts-auth-point-sjc"></i><i class="ts-auth-point ts-auth-point-gru"></i><i class="ts-auth-point ts-auth-point-fra"></i>
+    <svg class="ts-auth-routes" viewBox="0 0 126 60" focusable="false" data-projection="web-mercator">
+        @foreach (var (from, to, index) in Routes) { <path class="ts-auth-route" d="@Arc(from, to)" /> }
+        @foreach (var (from, to, index) in Routes) { <path class="ts-auth-pulse-tail ts-auth-leg-@index" d="@Arc(from, to)" pathLength="1" data-from="@from.Code" data-to="@to.Code" /><path class="ts-auth-pulse-head ts-auth-leg-@index" d="@Arc(from, to)" pathLength="1" /> }
+        @foreach (var (site, index) in Sites.Select((site, index) => (site, index)))
+        {
+            <g class="ts-auth-site ts-auth-arrival-@Arrival(index)" data-region="@site.Code" data-x="@Number(site.X)" data-y="@Number(site.Y)"><circle class="ts-auth-site-ring" cx="@Number(site.X)" cy="@Number(site.Y)" r="1" /><circle class="ts-auth-site-core" cx="@Number(site.X)" cy="@Number(site.Y)" r="0.8" /><text class="ts-auth-site-label" x="@Number(site.X + site.LabelDx)" y="@Number(site.Y + 0.75)" text-anchor="@(site.LabelDx < 0 ? "end" : "start")">@site.Code.ToLowerInvariant()</text></g>
+        }
+    </svg>
 </div>
 <ul class="ts-auth-regions">
     @foreach (var code in new[] { "GRU", "FRA", "SJC" })
@@ -11,3 +18,30 @@
         <li class="ts-auth-region" title="@Regions.Name(code)">@if (Regions.Country(code) is { Length: > 0 } flag) { <img src="@Assets.Url("flags/" + flag + ".svg")" alt="" /> }<span class="ts-mono">@code.ToLowerInvariant()</span></li>
     }
 </ul>
+@functions {
+    // Pin centers on brand/world-map-dots.svg, as printed (and stored in its data-pins) by npm run build:region-map.
+    private sealed record Site(string Code, double X, double Y, double LabelDx);
+    private static readonly Site[] Sites = [new("SJC", 20, 21.65, -2), new("FRA", 66.5, 15.59, 2), new("GRU", 47, 44.17, 2)];
+
+    // A replication ring: each leg hands its pulse to the next site, so leg i ends at site i + 1.
+    private static IEnumerable<(Site From, Site To, int Index)> Routes =>
+        Sites.Select((site, index) => (site, Sites[(index + 1) % Sites.Length], index));
+
+    // The site a pulse reaches at the end of leg i - 1 pings in that leg's slot.
+    private static int Arrival(int site) => (site + Sites.Length - 1) % Sites.Length;
+
+    // Each leg bows away from the ring's center so the three arcs read as one loop.
+    private static string Arc(Site from, Site to)
+    {
+        var (centerX, centerY) = (Sites.Average(site => site.X), Sites.Average(site => site.Y));
+        var (midX, midY) = ((from.X + to.X) / 2, (from.Y + to.Y) / 2);
+        var (dx, dy) = (to.X - from.X, to.Y - from.Y);
+        var length = Math.Sqrt(dx * dx + dy * dy);
+        var (normalX, normalY) = (-dy / length, dx / length);
+        if (normalX * (midX - centerX) + normalY * (midY - centerY) < 0) (normalX, normalY) = (-normalX, -normalY);
+        var bow = length * 0.18;
+        return $"M{Number(from.X)} {Number(from.Y)}Q{Number(midX + normalX * bow)} {Number(midY + normalY * bow)} {Number(to.X)} {Number(to.Y)}";
+    }
+
+    private static string Number(double value) => Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
+}

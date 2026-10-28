@@ -26,6 +26,7 @@
 @import "../../../Features/Analytics/analytics.css" layer(features);
 @import "../../../Features/Organizations/audit.css" layer(features);
 @import "../../../Features/Usage/usage.css" layer(features);
+@import "../../../Features/Billing/billing.css" layer(features);
 @import "../../../Features/QuerySubscriptions/subscriptions.css" layer(features);
 @import "../../../Features/Notifications/notifications.css" layer(features);
 @import "../../../Features/Organizations/organization.css" layer(features);

@@ -23,8 +23,8 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
 
     [Test]
     [Arguments("free", "3BN8V1JQWTB3R3NSZ26SERTHWT", "")]
-    [Arguments("starter", "443RCMMF70MNP6S1QMT230NF99", "annual")]
-    [Arguments("pro", "7CNW2H87JE68ATZX224CV2G625", "monthly")]
+    [Arguments("starter", "443RCMMF70MNP6S1QMT230NF99", "monthly")]
+    [Arguments("pro", "7CNW2H87JE68ATZX224CV2G625", "annual")]
     [Arguments("team", "01K8A00000TEAM000000000000", "monthly")]
     public async Task PublishedCatalogDrivesMcpBillingCardsAndRealizedAllowances(string key, string id, string interval)
     {
@@ -66,9 +66,11 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
             await Assert.That(card.Length).IsGreaterThan(0);
             await Assert.That(card).Contains(published.GetProperty("name").GetString()!);
             await Assert.That(card).Contains("$" + published.GetProperty("priceMonthlyUsd").GetDecimal().ToString("F2", CultureInfo.InvariantCulture));
-            // A yearly plan's headline price is its yearly charge; the monthly figure is only an equivalent.
-            await Assert.That(card).Contains(published.GetProperty("billingInterval").GetString() == "year"
-                ? "$" + published.GetProperty("priceAnnualUsd").GetDecimal().ToString("F2", CultureInfo.InvariantCulture) + "<small>/ year</small>" : "<small>/ month</small>");
+            // A paid card carries each published interval's price; the interval choice shows one of them.
+            var intervals = published.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()!).ToArray();
+            if (intervals.Contains("year"))
+                await Assert.That(card).Contains("$" + published.GetProperty("priceAnnualUsd").GetDecimal().ToString("F2", CultureInfo.InvariantCulture) + "<small>/ year</small>");
+            await Assert.That(card).Contains("<small>/ month</small>");
             await Assert.That(card).Contains(Number(limits, "storageGb") + " GB-region storage");
             await Assert.That(card).Contains(limits.GetProperty("operationUnitsPerMonth").GetInt64().ToString("N0", CultureInfo.InvariantCulture) + " operation units/month (4 KiB)");
             await Assert.That(card).Contains(Number(limits, "egressGbPerMonth") + " GB client egress/month");
@@ -80,12 +82,14 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
             if (planKey == "free") continue;
             var plan = paid.Single(plan => plan.GetProperty("key").GetString() == planKey);
             await Assert.That(plan.GetProperty("name").GetString()).IsEqualTo(published.GetProperty("name").GetString());
-            var yearly = published.GetProperty("billingInterval").GetString() == "year";
-            var charged = published.GetProperty(yearly ? "priceAnnualUsd" : "priceMonthlyUsd").GetDecimal();
-            await Assert.That(plan.GetProperty("priceCents").GetInt64()).IsEqualTo((long)(charged * 100));
-            await Assert.That(plan.GetProperty("monthlyEquivalentCents").GetInt64()).IsEqualTo((long)(published.GetProperty("priceMonthlyUsd").GetDecimal() * 100));
-            await Assert.That(plan.GetProperty("price").GetString()).IsEqualTo("$" + charged.ToString("F2", CultureInfo.InvariantCulture) + (yearly ? " / year" : " / month"));
-            await Assert.That(plan.GetProperty("billingInterval").GetString()).IsEqualTo(published.GetProperty("billingInterval").GetString());
+            var monthly = published.GetProperty("priceMonthlyUsd").GetDecimal();
+            var annual = published.GetProperty("priceAnnualUsd").GetDecimal();
+            await Assert.That(plan.GetProperty("monthlyPriceCents").GetInt64()).IsEqualTo((long)(monthly * 100));
+            await Assert.That(plan.GetProperty("annualPriceCents").GetInt64()).IsEqualTo((long)(annual * 100));
+            await Assert.That(plan.GetProperty("monthlyPrice").GetString()).IsEqualTo("$" + monthly.ToString("F2", CultureInfo.InvariantCulture) + " / month");
+            await Assert.That(plan.GetProperty("annualPrice").GetString()).IsEqualTo("$" + annual.ToString("F2", CultureInfo.InvariantCulture) + " / year");
+            await Assert.That(plan.GetProperty("intervals").EnumerateArray().Select(interval => interval.GetString()!).ToArray())
+                .IsEquivalentTo(intervals.Select(interval => interval == "year" ? "annual" : "monthly").ToArray());
             await Assert.That(plan.GetProperty("monthlyEgressBytes").GetInt64()).IsEqualTo((long)(limits.GetProperty("egressGbPerMonth").GetDecimal() * 1_000_000_000));
             await Assert.That(plan.GetProperty("trialDays").GetInt32()).IsEqualTo(published.GetProperty("trialDays").ValueKind == JsonValueKind.Null ? 0 : published.GetProperty("trialDays").GetInt32());
             await Assert.That(plan.GetProperty("maxDatabases").GetInt32()).IsEqualTo(limits.GetProperty("databases").GetInt32());
@@ -123,9 +127,9 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
     [Arguments("enterprise", "monthly", "Choose an available plan.")]
     [Arguments("", "monthly", "Choose an available plan.")]
     [Arguments("free", "monthly", "Free does not require Stripe checkout.")]
-    [Arguments("starter", "monthly", "Choose the published billing interval for this plan.")]
-    [Arguments("pro", "annual", "Choose the published billing interval for this plan.")]
-    [Arguments("team", "annual", "Choose the published billing interval for this plan.")]
+    [Arguments("starter", "weekly", "Choose the published billing interval for this plan.")]
+    [Arguments("pro", "quarterly", "Choose the published billing interval for this plan.")]
+    [Arguments("team", "biennial", "Choose the published billing interval for this plan.")]
     public async Task CheckoutRejectsUnavailablePlansAndUnsupportedCadences(string key, string interval, string error)
     {
         using var client = fixture.CreateClient();
