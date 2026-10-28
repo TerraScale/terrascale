@@ -294,7 +294,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         Post("/ui/{slug}/sign-up");
         Name("ui_sign_up_start");
         Summary("Start a sign-up");
-        Description("Same-origin form post with email and password (8 to 1024 UTF-8 bytes). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post with email and password (15 to 256 Unicode characters, not a common, repetitive or own-email password). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -316,11 +316,18 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if (Users.NormalizeEmail(address) is null || !PasswordHasher.Acceptable(form.Password))
+        if (Users.NormalizeEmail(address) is null)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
-                "Enter a valid email address and a password of at least 8 characters.")
+                "Enter a valid email address.")
             { ErrorTitle = "Check your details" }, StatusCodes.Status400BadRequest);
+        }
+
+        if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
+                PasswordPolicy.Message(problem))
+            { ErrorTitle = "Choose another password" }, StatusCodes.Status400BadRequest);
         }
 
         if (await SignInFlow.SsoAsync(this.HttpContext, address, next, cancellationToken) is { } sso)
@@ -471,7 +478,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Post("/ui/{slug}/reset/complete");
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("Same-origin form post with email, code and password. Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Description("Same-origin form post with email, code and password; the password follows the sign-up policy (400 outside it, the code stays live). Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -494,11 +501,11 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if (!PasswordHasher.Acceptable(form.Password))
+        if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next,
-                "Choose a password of at least 8 characters.")
-            { ErrorTitle = "Password too short" }, StatusCodes.Status400BadRequest);
+                PasswordPolicy.Message(problem))
+            { ErrorTitle = "Choose another password" }, StatusCodes.Status400BadRequest);
         }
 
         var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext),

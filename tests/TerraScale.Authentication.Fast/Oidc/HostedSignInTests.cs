@@ -156,6 +156,14 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         using var forged = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = Password }, "https://evil.example");
         await Assert.That(forged.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 
+        // Short, common and own-email passwords are refused before any code is mailed.
+        foreach (var weak in new[] { "fourteen chars", "1234567890123456", Address })
+        {
+            using var refused = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = weak, ["next"] = string.Empty });
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("Choose another password");
+        }
+
         using var started = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = Password, ["next"] = string.Empty });
         var verifyPage = await started.Content.ReadAsStringAsync();
         await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -314,7 +322,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
             await Assert.That(notSignIn.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 
-        foreach (var weak in new[] { "short", new string('x', PasswordHasher.MaxBytes + 1) })
+        foreach (var weak in new[] { "short", "fourteen chars", "passwordpassword", new string('x', PasswordPolicy.MaxCharacters + 1) })
         {
             using var refused = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new(complete) { ["password"] = weak });
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

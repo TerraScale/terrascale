@@ -1,4 +1,3 @@
-using System.Text;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Security;
 
@@ -11,34 +10,14 @@ namespace TerraScale.Authentication.Features.Identity;
 /// </summary>
 public sealed class PasswordHasher : IDisposable
 {
-    /// <summary>Shortest accepted password, in UTF-8 bytes.</summary>
-    public const int MinBytes = 8;
-
-    /// <summary>Longest accepted password, in UTF-8 bytes.</summary>
-    public const int MaxBytes = 1024;
-
     private const int Concurrency = 4;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
-    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private readonly SemaphoreSlim slots = new(Concurrency);
 
     // Verified against when there is no real hash, so an unknown account costs what a real one does. Computed when the
     // service is constructed, which App.Build does before serving, so no request pays for it.
     private readonly string equalizer = Passwords.Hash("ts-auth sign-in timing equalizer");
-
-    /// <summary>Whether <paramref name="password"/> is well-formed UTF-16 of <see cref="MinBytes"/> to <see cref="MaxBytes"/> UTF-8 bytes.</summary>
-    public static bool Acceptable(string? password)
-    {
-        try
-        {
-            return password is not null && StrictUtf8.GetByteCount(password) is >= MinBytes and <= MaxBytes;
-        }
-        catch (EncoderFallbackException)
-        {
-            return false;
-        }
-    }
 
     /// <summary>A fresh Argon2id hash of <paramref name="password"/>.</summary>
     public Task<string> HashAsync(string password, CancellationToken cancellationToken) =>

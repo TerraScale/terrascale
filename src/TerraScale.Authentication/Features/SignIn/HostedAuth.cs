@@ -162,7 +162,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
     private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
     {
-        if (!PasswordHasher.Acceptable(password))
+        if (!PasswordPolicy.Verifiable(password))
         {
             return null;
         }
