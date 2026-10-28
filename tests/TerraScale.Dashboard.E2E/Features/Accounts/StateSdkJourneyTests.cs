@@ -268,25 +268,41 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
-    public async Task PlanReconcilerPublishesEveryOrganizationsPlanAgainAfterATerraBaseWipe()
+    public async Task PlanReconcilerPublishesChangesAtOnceAndOtherwiseOnlyRechecksSettledPlans()
     {
         await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        var clock = new Clock();
+        scenario.RegistrationTime = clock;
         using var controls = scenario.CreateProviderClient();
         Check(await scenario.StartHostsAsync(), "The dashboard starts against the producer: " + scenario.StartupError);
         using var client = scenario.CreateClient();
         await ReadyAsync(client);
         await NativeAccountAsync(client);
-        var organization = await scenario.UpgradeOnlyOrganizationAsync(OrganizationRecord.StarterPlanId);
         static string? Plan(JsonElement observed, string id) =>
             observed.GetProperty("organizationPlans").TryGetProperty(id, out var plan) ? plan.GetString() : null;
+        static int Publishes(JsonElement observed) => observed.GetProperty("planPublishes").GetInt32();
 
+        // Hobby without storage answers 404, which settles: the next passes do not send it again.
         await scenario.ReconcilePlansAsync();
-        Check(Plan(await ObserveAsync(controls), organization) == "starter", "One reconciler pass publishes a Starter organization's plan to TerraBase by organization id.");
+        var hobby = Publishes(await ObserveAsync(controls));
+        await scenario.ReconcilePlansAsync();
+        await scenario.ReconcilePlansAsync();
+        Check(Publishes(await ObserveAsync(controls)) == hobby, "A settled 404 is not re-sent every 30 seconds (the gru plan-publish storm).");
+
+        // A plan change publishes on the next pass, then settles.
+        var organization = await scenario.UpgradeOnlyOrganizationAsync(OrganizationRecord.StarterPlanId);
+        await scenario.ReconcilePlansAsync();
+        var upgraded = await ObserveAsync(controls);
+        Check(Plan(upgraded, organization) == "starter", "One reconciler pass publishes a changed plan to TerraBase by organization id.");
+        await scenario.ReconcilePlansAsync();
+        Check(Publishes(await ObserveAsync(controls)) == Publishes(upgraded), "An unchanged, stored plan is not published again before its recheck.");
+
         // A TerraBase wipe drops every plan; nothing in billing changes, and no one opens the dashboard.
         await ControlAsync(controls, new { command = "wipe-plans" });
+        clock.Now += TerraScale.Dashboard.Platform.Persistence.TerraBasePlanSync.Refresh;
         await scenario.ReconcilePlansAsync();
         var observed = await ObserveAsync(controls);
-        Check(Plan(observed, organization) == "starter", "The next reconciler pass restores the Starter plan TerraBase lost.");
+        Check(Plan(observed, organization) == "starter", "The first pass after the recheck interval restores the Starter plan TerraBase lost.");
         Check(observed.GetProperty("failures").GetArrayLength() == 0, "Every plan publish and state list followed the producer contract: " + observed.GetProperty("failures").GetRawText());
         // Each catalog plan names the TerraBase tier with its allowances; an unpaid organization keeps Hobby.
         var tiers = PlanCatalog.Plans.Select(plan => TerraScale.Dashboard.Platform.Persistence.TerraBasePlanSync.PlanFor(new OrganizationRecord { PlanId = plan.Id, BillingStatus = "active" }));
@@ -422,4 +438,10 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     private static void CheckProtocol(JsonElement observation) => Check(observation.GetProperty("failures").GetArrayLength() == 0,
         "The external state producer observed no contract violation: " + observation.GetProperty("failures").GetRawText());
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+
+    private sealed class Clock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
 }
