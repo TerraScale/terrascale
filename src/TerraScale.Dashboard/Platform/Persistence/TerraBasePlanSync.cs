@@ -49,6 +49,9 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
         catch (IOException) { return; }
         var now = time.GetUtcNow();
         if (!reconcile && published.TryGetValue(organization.Id, out var last) && last.Plan == plan && now - last.At < Fresh) return;
+        // Views try a plan at most once per window, whatever the outcome: a failing TerraBase route otherwise cost every
+        // page view its full budget (QA dashui:26/27/36). The reconciler ignores the window and keeps retrying.
+        if (!reconcile) published[organization.Id] = (plan, now);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (!reconcile) budget.CancelAfter(ViewBudget);
         try

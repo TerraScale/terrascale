@@ -256,6 +256,10 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         using (var home = await client.GetAsync("/"))
             Check(home.StatusCode == HttpStatusCode.OK && clock.Elapsed >= TimeSpan.FromSeconds(1.5) && clock.Elapsed < TimeSpan.FromSeconds(10),
                 "A view answers within the publisher's own deadline while TerraBase's plan route stalls (QA newuser:8): " + clock.Elapsed);
+        clock.Restart();
+        using (var again = await client.GetAsync("/"))
+            Check(again.StatusCode == HttpStatusCode.OK && clock.Elapsed < TimeSpan.FromSeconds(1.5),
+                "The next view does not wait on the same failing publish again within the window (QA dashui:36): " + clock.Elapsed);
         await ControlAsync(controls, new { command = "release-plans" });
         await scenario.ReconcilePlansAsync();
         var observed = await ObserveAsync(controls);
