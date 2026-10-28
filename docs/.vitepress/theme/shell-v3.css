@@ -47,17 +47,39 @@
   .Layout .VPNavBarSearch .DocSearch-Button-Placeholder { color: var(--ts-ink-3); font-size: 13px; font-weight: 400; }
   .Layout .VPNavBarSearch .DocSearch-Search-Icon { color: var(--ts-ink-3); }
 }
+/* Narrower screens get tight (five links in most locales): drop link icons, then shrink search, then the wordmark. */
+@media (min-width: 768px) and (max-width: 1439px) {
+  .Layout .VPNavBarMenuLink::before { display: none; }
+}
+@media (min-width: 1280px) and (max-width: 1439px) {
+  .Layout .VPNavBarSearch .DocSearch-Button { width: 160px; }
+}
+@media (min-width: 768px) and (max-width: 1279px) {
+  .Layout .VPNavBarSearch .DocSearch-Button { width: 32px; min-width: 0; padding: 0; justify-content: center; }
+  .Layout .VPNavBarSearch .DocSearch-Button-Placeholder,
+  .Layout .VPNavBarSearch .DocSearch-Button-Keys { display: none; }
+  .Layout .VPNavBarSearch .DocSearch-Search-Icon { margin: 0; }
+}
+@media (min-width: 768px) and (max-width: 959px) {
+  .Layout .VPNavBarTitle .title > span,
+  .Layout .docs-brand-word { display: none; }
+}
+/* Local nav (On this page) lines up with the article column. */
+@media (min-width: 960px) {
+  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { padding-inline: clamp(16px, 2.5vw, 40px); }
+}
 
 /* ---------- Sidebar: 240px, frosted, neutral nav with icons ---------- */
 @media (min-width: 960px) {
   .Layout .VPSidebar {
     width: var(--vp-sidebar-width); max-width: none;
-    padding: var(--vp-nav-height) 12px 96px;
+    padding: calc(var(--vp-nav-height) + 8px) 12px 96px;
     background-color: var(--vp-sidebar-bg-color);
     -webkit-backdrop-filter: var(--v3-frost);
     backdrop-filter: var(--v3-frost);
     border-inline-end: 1px solid var(--ts-line);
   }
+  .Layout .VPSidebar .group { width: auto; }
   .Layout .VPContent.has-sidebar { padding-left: var(--vp-sidebar-width); padding-right: 0; }
   .Layout .VPNavBar.has-sidebar .title { width: var(--vp-sidebar-width); padding: 0 12px; }
   .Layout .VPNavBar.has-sidebar .content { padding-left: var(--vp-sidebar-width); padding-right: 24px; }
@@ -155,6 +177,7 @@ body .VPLocalSearchBox .result > div { margin: 8px 12px; }
 body .VPLocalSearchBox .result.selected .titles,
 body .VPLocalSearchBox .result.selected .title-icon { color: var(--ts-ink) !important; }
 body .VPLocalSearchBox .title-icon { color: var(--ts-ink-3); }
+body .VPLocalSearchBox .search-keyboard-shortcuts { padding: 12px 16px; }
 body .VPLocalSearchBox .excerpt-gradient-bottom,
 body .VPLocalSearchBox .excerpt-gradient-top { display: none; }
 
