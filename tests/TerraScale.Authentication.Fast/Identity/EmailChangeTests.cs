@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -27,9 +28,7 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
 
         var pending = await oidc.OkAsync(HttpMethod.Post, Change, token, new { new_email = " Erin.New@Example.test " }, HttpStatusCode.Accepted);
         await Assert.That(pending.GetProperty("new_email").GetString()).IsEqualTo("erin.new@example.test");
-        var code = await oidc.Email.NextCodeAsync("erin.new@example.test");
-        var (to, notice) = await oidc.Email.NextAsync();
-        await Assert.That(to).IsEqualTo("erin@example.test");
+        var (code, notice) = await ChangeMailsAsync(oidc, "erin.new@example.test", "erin@example.test");
         await Assert.That(notice.Text).Contains("erin.new@example.test").And.Contains("/ui/terrascale/email-change/cancel?user=" + user.Id);
 
         var wrong = code == "000000" ? "111111" : "000000";
@@ -89,8 +88,8 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var (_, token) = await oidc.SignInUserAsync("hana@example.test");
         await oidc.OkAsync(HttpMethod.Post, Change, token, new { new_email = "hana.new@example.test" }, HttpStatusCode.Accepted);
-        var code = await oidc.Email.NextCodeAsync("hana.new@example.test");
-        var link = new Uri(CancelLink().Match((await oidc.Email.NextAsync()).Message.Text).Value);
+        var (code, notice) = await ChangeMailsAsync(oidc, "hana.new@example.test", "hana@example.test");
+        var link = new Uri(CancelLink().Match(notice.Text).Value);
 
         using var page = await oidc.Client.GetAsync(link.PathAndQuery);
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -117,6 +116,17 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
         using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
         return (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
     }
+
+    // The outbox delivers the new address's code and the old address's notice in either order.
+    private static async Task<(string Code, EmailMessage Notice)> ChangeMailsAsync(OidcHarness oidc, string newAddress, string oldAddress)
+    {
+        (string Recipient, EmailMessage Message)[] mails = [await oidc.Email.NextAsync(), await oidc.Email.NextAsync()];
+        await Assert.That(mails.Select(mail => mail.Recipient).Order().ToArray()).IsEquivalentTo(new[] { newAddress, oldAddress }.Order().ToArray());
+        return (SixDigits().Match(mails.Single(mail => mail.Recipient == newAddress).Message.Text).Value, mails.Single(mail => mail.Recipient == oldAddress).Message);
+    }
+
+    [GeneratedRegex(@"\b[0-9]{6}\b")]
+    private static partial Regex SixDigits();
 
     [GeneratedRegex(@"https?://\S+/ui/terrascale/email-change/cancel\?user=[0-9A-Z]{26}&token=[A-Za-z0-9_-]{43}")]
     private static partial Regex CancelLink();
