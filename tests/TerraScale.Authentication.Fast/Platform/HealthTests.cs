@@ -189,18 +189,23 @@ public sealed class HealthTests
 
         await Assert.That(await ReadinessWait.ReadyWithinAsync(server.Client, TimeSpan.FromSeconds(10))).IsTrue();
         health.Healthy = false;
+        // A ready replica rides out fewer than three failed passes (one slow write must not drain every replica), then
+        // reports not ready.
         await NextPassAsync(1);
-        using var failing = await server.Client.GetAsync("/readyz");
+        using var tolerated = await server.Client.GetAsync("/readyz");
         await NextPassAsync(2);
-        using var stillFailing = await server.Client.GetAsync("/readyz");
-        health.Healthy = true;
+        using var stillTolerated = await server.Client.GetAsync("/readyz");
         await NextPassAsync(3);
+        using var failing = await server.Client.GetAsync("/readyz");
+        health.Healthy = true;
+        await NextPassAsync(4);
         using var recovered = await server.Client.GetAsync("/readyz");
 
+        await Assert.That(tolerated.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(stillTolerated.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(failing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(stillFailing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(logs.Levels).IsEqualTo("Warning,Debug,Information");
+        await Assert.That(logs.Levels).IsEqualTo("Warning,Debug,Debug,Information");
         await Assert.That(logs.Entries.First().Message).IsEqualTo("Readiness check failed: storage reported unhealthy");
 
         // Moves the clock to the next pass and waits until that pass has logged.

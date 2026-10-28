@@ -1,5 +1,7 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
@@ -21,6 +23,19 @@ public sealed class DeletionCleanup(
     private const int RecordBudget = 100;
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
 
+    // A failing job backs off from one minute, doubling, to this; progress (another batch remains) retries at once.
+    private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(30);
+
+    private static readonly Meter Meter = new(AuthMetrics.MeterName);
+
+    // Logical cleanup outcomes per job attempt: verified, a failure code, or invalid.
+    private static readonly Counter<long> Outcomes = Meter.CreateCounter<long>("ts_auth.deletion_cleanup", description: "Account and scope deletion cleanup attempts by outcome.");
+
+    /// <summary>The wait before a job's next attempt: <paramref name="jitter"/> (0.8–1.2) spreads failing jobs apart.</summary>
+    internal static TimeSpan Retry(string? failure, int attempts, double jitter) =>
+        failure is null or "batch_remaining" or "records_remaining" ? Interval
+            : TimeSpan.FromTicks((long)(Math.Min(Interval.Ticks << Math.Min(attempts, 5), MaxRetry.Ticks) * jitter));
+
     /// <summary>Runs one fair batch. A failing job moves behind waiting jobs; deadlines are never extended.</summary>
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
@@ -39,6 +54,9 @@ public sealed class DeletionCleanup(
             // Logical cleanup needs only the request's own identity and deadline (jobs written before the history fields too).
             if (!LogicallyValid(job))
             {
+                // Never silent: its key does not match its own fields, so it cannot be rewritten safely; an operator must act.
+                Outcomes.Add(1, new KeyValuePair<string, object?>("outcome", "invalid"));
+                logger.ZLogError($"Auth deletion job {document.Id:@DocumentId} is malformed and cannot be processed; an operator must repair or remove it");
                 continue;
             }
 
@@ -63,10 +81,19 @@ public sealed class DeletionCleanup(
             }
 
             var finished = clock.GetUtcNow();
+            var attempts = Math.Clamp(job.Attempts, 0, 999_999);
+            var wait = Retry(failure, attempts, 0.8 + (Random.Shared.NextDouble() * 0.4));
+            Outcomes.Add(1, new KeyValuePair<string, object?>("outcome", failure ?? "verified"));
+            if (failure is not null and not ("batch_remaining" or "records_remaining"))
+            {
+                // A blocked deletion (handoff required, scope mismatch, storage) is visible every attempt, with its deadline.
+                logger.ZLogWarning($"Auth deletion job {job.Id:@JobId} not finished: {failure:@FailureCode} after {attempts + 1:@Attempts} attempts; retrying in {(long)wait.TotalSeconds:@RetrySeconds} s, due {job.DueAt:@DueAt}");
+            }
+
             var updated = job with
             {
-                Attempts = Math.Clamp(job.Attempts, 0, 999_999) + 1,
-                NextAttemptAt = finished + Interval,
+                Attempts = attempts + 1,
+                NextAttemptAt = finished + wait,
                 FailureCode = failure,
                 AuthLogicalVerifiedAt = failure is null ? finished : null,
             };

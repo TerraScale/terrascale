@@ -105,8 +105,8 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(other.Accepted).IsEqualTo(0);
-        // Ready requires the local backend to take writes.
-        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
+        // Ready requires the local backend to take writes; a ready replica flips after three consecutive failed passes.
+        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(45))).IsTrue();
     }
 
     [Test]

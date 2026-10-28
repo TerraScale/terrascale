@@ -62,12 +62,13 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// </summary>
     public async Task<(string? PendingToken, TimeSpan? Wait)> SignUpAsync(string email, string password, string ip, string locale, CancellationToken cancellationToken)
     {
+        // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
+        using var reservation = mail.Reserve();
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
             return (null, wait);
         }
 
-        using var reservation = mail.Reserve();
         // Hashed whether or not the address has an account, so both take the same time.
         var hash = await passwords.HashAsync(password, cancellationToken);
         var pending = Tokens.RandomToken(43);
@@ -80,13 +81,13 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// <summary>Emails a password-reset code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
     public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, string locale, CancellationToken cancellationToken)
     {
+        using var reservation = mail.Reserve();
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
         {
             return wait;
         }
 
         var tenant = this.Tenant;
-        using var reservation = mail.Reserve();
         cancellationToken.ThrowIfCancellationRequested();
         await reservation.EnqueueCodeAsync(tenant, email, PasscodePurpose.PasswordReset, locale);
         return null;

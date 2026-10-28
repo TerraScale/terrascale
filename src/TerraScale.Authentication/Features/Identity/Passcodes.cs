@@ -197,7 +197,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// Redeems a sign-up code presented with the pending token of the request that started that sign-up, and creates
     /// the account with the password chosen there. Returns <see langword="null"/> for another requester's token (without
     /// charging a guess), a wrong, expired, used, exhausted or superseded code, or when the address got an account in the
-    /// meantime. The code is consumed before the account is written, so a failed write costs a new sign-up.
+    /// meantime. The code is consumed and the account created in one transaction.
     /// </summary>
     public async Task<UserRecord?> RedeemSignUpAsync(string instanceId, string email, string code, string pendingToken, CancellationToken cancellationToken = default)
     {
@@ -205,15 +205,15 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         if (token is null || !WellFormed(code) || Users.NormalizeEmail(email) is not { } normalized
             || await this.ConsumeAsync(instanceId, SignUpKey + normalized, code.Trim(), PasscodePurpose.SignUp,
                 passcode => passcode.Email == normalized && passcode.AuthEpoch == 0 && passcode.PasswordHash is not null
-                    && passcode.PendingTokenHash is { } stored && Tokens.FixedTimeEquals(stored, token), cancellationToken).ConfigureAwait(false) is not { } consumed)
+                    && passcode.PendingTokenHash is { } stored && Tokens.FixedTimeEquals(stored, token), cancellationToken,
+                // The issuance fixes the account id: replaying one sign-up in two regions cannot create two different owners.
+                // The account is created in the redemption's own transaction (one remote-durable write, not two).
+                createAccount: passcode => users.NewAccount(instanceId, normalized, passcode.PasswordHash, passcode.UserId)).ConfigureAwait(false) is not { } consumed)
         {
             return null;
         }
 
-        // The issuance fixes the account id: replaying one sign-up in two regions cannot create two different owners.
-        var user = await users.CreateAccountAsync(instanceId, normalized, consumed.PasswordHash, consumed.UserId, cancellationToken).ConfigureAwait(false);
-        // Account creation selects its scoped email owner and user state; separate claim clocks cannot choose its state.
-        return user;
+        return consumed.AuthenticatedUser;
     }
 
     /// <summary>
@@ -343,7 +343,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// it), or <see langword="null"/>.
     /// </summary>
     private async Task<PasscodeRecord?> ConsumeAsync(string instanceId, string key, string code, PasscodePurpose purpose, Func<PasscodeRecord, bool> belongs,
-        CancellationToken cancellationToken, string? passwordHash = null)
+        CancellationToken cancellationToken, string? passwordHash = null, Func<PasscodeRecord, (UserRecord User, StoreOperation[] Operations)>? createAccount = null)
     {
         var collection = purpose == PasscodePurpose.StepUp ? AuthStore.StepUpPasscodeCollection : AuthStore.PasscodeCollection;
         // A round loses its write only to another charged guess, a redemption or a reissue, each bounded, so these
@@ -392,8 +392,22 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
                     JsonSerializer.SerializeToElement(authenticated, IdentityJson.Default.UserRecord), current.Version));
             }
 
-            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null)
+            var accountAt = operations.Count;
+            if (matches && createAccount is not null)
             {
+                var (created, creates) = createAccount(passcode);
+                authenticated = Users.BindAuthenticationState(created);
+                operations.AddRange(creates);
+            }
+
+            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is { } failed)
+            {
+                if (createAccount is not null && failed >= accountAt)
+                {
+                    // The address got an account (or this account id exists) in the meantime: nothing was consumed.
+                    return null;
+                }
+
                 continue;
             }
 

@@ -27,7 +27,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
     [Arguments("sign-in", true)]
     [Arguments("sign-up", true)]
     [Arguments("reset", true)]
-    public async Task Full_queue_refuses_known_and_unknown_mail_starts_and_preserves_abuse_limits(string action, bool projectTenant)
+    public async Task Full_queue_refuses_known_and_unknown_mail_starts_without_spending_their_limits(string action, bool projectTenant)
     {
         var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         var captured = new CapturingEmailSender();
@@ -68,9 +68,9 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
                 await Assert.That(body).IsEqualTo(failure);
             }
 
-            using var limited = await oidc.PostFormAsync(path, Form(addresses[0]));
-            await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(limited.Headers.RetryAfter).IsNotNull();
+            // A refused start spends no mail budget: retrying is refused by the queue again, never by a cooldown.
+            using var retried = await oidc.PostFormAsync(path, Form(addresses[0]));
+            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             var after = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items
                 .OrderBy(item => item.Id).Select(item => (item.Id, item.Version, item.Document.GetRawText())).ToArray();
             await Assert.That(after).IsEquivalentTo(before);
@@ -79,7 +79,7 @@ public sealed class EmailQueueAdmissionTests(TerraBaseFixture fixture)
             await oidc.Server.DrainMailAsync();
             await Assert.That((await captured.NextAsync()).Recipient).IsEqualTo(sender.BlockedRecipient);
             await Assert.That(captured.HasPending).IsFalse();
-            clock.Advance(HostedAuth.MailCooldown);
+            // No cooldown to wait out: the refused starts never charged one.
             foreach (var address in addresses)
             {
                 using var recovered = await oidc.PostFormAsync(path, Form(address));

@@ -34,8 +34,9 @@ public sealed record ReadinessObservation(bool Ready, string? Region, string? Er
 
 /// <summary>
 /// Evaluates readiness on a background loop five seconds after each evaluation ends, bounds each
-/// evaluation to eight seconds and serves the latest result to <c>/readyz</c> without running checks. A result older
-/// than fifteen seconds means the loop is stuck, so readiness fails.
+/// evaluation to eight seconds and serves the latest result to <c>/readyz</c> without running checks. A ready replica
+/// turns not ready after <see cref="FailuresBeforeNotReady"/> consecutive failed passes. A result older than fifteen
+/// seconds means the loop is stuck, so readiness fails.
 /// </summary>
 public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
 {
@@ -44,6 +45,9 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(15);
     private const string TimedOut = "timed out";
+
+    /// <summary>Consecutive failed passes after which a ready replica reports not ready (about 15 s at the 5 s interval).</summary>
+    internal const int FailuresBeforeNotReady = 3;
     private const string Stale = "readiness evaluation is stale";
 
     private readonly Lock gate = new();
@@ -67,6 +71,9 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
 
     // Why the latest observation failed; null while ready. Only the logging transitions read it.
     private string? failure;
+
+    // Consecutive failed passes, reset by a successful one.
+    private int failures;
 
     /// <summary>
     /// Returns the latest evaluation. Not ready before the first evaluation completes, and not ready
@@ -176,12 +183,21 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
         return this.Settle(observation, cause, fault);
     }
 
-    // Publishes the observation, then logs the transition.
+    // Publishes the observation, then logs the transition. A ready replica stays ready through fewer than
+    // FailuresBeforeNotReady consecutive failed passes: one slow storage write (every replica shares the store) must not pull
+    // every replica out of rotation at once. Before the first success, and for failures an operator must fix, it is
+    // not ready at once.
     private ReadinessObservation Settle(ReadinessObservation observation, string? cause, Exception? fault)
     {
         lock (this.gate)
         {
-            this.latest = observation;
+            this.failures = observation.Ready ? 0 : this.failures + 1;
+            if (observation.Ready || observation.Error is not null || this.latest is not { Ready: true } || this.failures >= FailuresBeforeNotReady)
+            {
+                this.latest = observation;
+            }
+
+            observation = this.latest!;
             this.latestTimestamp = clock.GetTimestamp();
         }
 

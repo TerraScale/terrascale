@@ -24,7 +24,8 @@ namespace TerraScale.Authentication.Fast.Store;
 /// </summary>
 public sealed class StorageRecoveryTests
 {
-    private static readonly TimeSpan Recovery = TimeSpan.FromSeconds(20);
+    // A ready replica turns not ready after three consecutive failed passes, about 15 s, plus slack.
+    private static readonly TimeSpan Recovery = TimeSpan.FromSeconds(45);
 
     [Test]
     public async Task Ts_auth_started_before_terrabase_becomes_ready_once_terrabase_serves()
