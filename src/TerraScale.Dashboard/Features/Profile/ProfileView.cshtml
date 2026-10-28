@@ -9,6 +9,7 @@
     @if (Model.Tab == "profile")
     {
         <div class="ts-profile-settings">
+            @await RenderPartialAsync(TerraScale.Dashboard.Features.Profile.EmailChangeView.Create(Model))
             @await RenderPartialAsync(TerraScale.Dashboard.Features.Profile.SignInMethodsView.Create(Model))
             <section class="ts-card" id="profile-details" aria-labelledby="profile-details-title">
                 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-details-title">Profile details</h2><p class="ts-card-description">Update the account information shown across TerraScale.</p></div></header>

@@ -1,22 +1,23 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "632440121a76b6a3860db127a4bc00c365de266d",
-  "sourceTree": "ca62921a85236380373de70d3a2bc5711fcf5e6e",
-  "sourceArchiveSha256": "7d57bb7c65aa00e96adb5f5795d92a470c45c2885647c5eefd8c60c24fd03809",
-  "file": "TerraScale.DotNet.0.0.19.nupkg",
-  "sourceDateEpoch": 1793175314,
-  "sha256": "653a73ee20f9a04e37a21edb842990cbdce47c2f8ddaabf36289a199cab921ad",
+  "sourceRevision": "4cda2df01a936b16f0f22901db7c39c7f285b1a8",
+  "sourceTree": "23663c2860255439b64ed9306a5b6c388c23b107",
+  "sourceArchiveSha256": "a0248e95c09ba1563568156dcfa215b6a1d31a13398b60f96885156f702e0b41",
+  "file": "TerraScale.DotNet.0.0.20.nupkg",
+  "sourceDateEpoch": 1793181486,
+  "sha256": "b850718c23ac5c0e0721be3d4cb719b2a529ddaaef8392462434114ed9a590ba",
   "assemblySha256ByFramework": {
-    "net10.0": "2479c2a119d598b15a0e6963841500b112c8e816d81d98d9738197f4b1ea5af4",
-    "net11.0": "7dd35a5fefedb2c8d23cd123da0cbb37ab69cd186dc1f25e819b0eef74865b10"
+    "net10.0": "372e7092efb59ba06858f12b161a660e5b656cc6162be5b2a52a975bc67f6458",
+    "net11.0": "3dcc1c52aa8a973457d7dfa1d9b847811320f3d7197578cb66cc99fa2cf3a3a2"
   },
   "contractSha256ByPath": {
     "contracts/auth/README.md": "f20906f8f726a743be8caf446b9806bbcce75fa87059d86cbe270d4d48e017ad",
     "contracts/auth/cidr-provenance.json": "6119d37ab6ebb050340b3240b6837b0d060dcb3b4d6fcb07417f1d23d34077dd",
     "contracts/auth/cidrs.md": "8b69761909dd8636274dcee6e54dc722659691791319cd0b20aa06bd78513cb4",
     "contracts/auth/dtos.json": "9b9b1f9cd893c60a98a1dca7a7c2a42188d568340bc2de1ccd40e144b4e17be4",
+    "contracts/auth/email-change-provenance.json": "c33be3d3b66278a13ed5069239260304d659010a72ef89e8f5c1d86f6f6d3e41",
     "contracts/auth/end-user-tokens.json": "8313537b5cc0f8caea42bfcc210b543ccb9370c901ed9067ac803732c161bf6d",
     "contracts/auth/error-codes.json": "f98981b42326b8ea5b8dadb9b8f3d5545e4a75b465f0b3d5c8246800499ffdc6",
     "contracts/auth/fixtures/oauth.json": "5f45685decb0c2cf6873a9ac8bcbbad28b5ca98dd7cdaed9aa940005dd1f0757",

@@ -100,7 +100,7 @@ public static class StepUpFlow
             var session = await sessions.ReadAsync(http);
             if (session?.UserId != intent.UserId || Browser(http) != intent.Browser) throw Required();
             http.Request.QueryString = new(intent.Query);
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts) ?? throw Required();
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: intent.Purpose != "change_email") ?? throw Required();
             http.Items[IntentKey] = intent;
             _ = Intent(http, context, intent.Purpose);
             // The one-use encrypted intent and original browser binding authorize this
@@ -112,6 +112,7 @@ public static class StepUpFlow
             var services = http.RequestServices;
             return intent.Purpose switch
             {
+                "change_email" => await EmailChange.SubmitAsync(http, sessions, accounts, services.GetRequiredService<IAuthEmailChangeGateway>(), false),
                 "delete_account" => await AccountDeletion.DeleteAsync(http, sessions, accounts, services.GetRequiredService<ITsAuthPlatform>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardState>(), services.GetRequiredService<AccessTokens>(), services.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardIdentity>()),
                 "create_pat" => await AuthEndpoints.AuthorizeAsync(http, "/profile?tab=access-tokens", intent.Form.GetValueOrDefault("name")?.SingleOrDefault() ?? "", intent.Mcp is null ? int.Parse(intent.Form["expiresInDays"].Single(), System.Globalization.CultureInfo.InvariantCulture) : 0, mcp: intent.Mcp, stepUp: intent),
                 "create_api_key" => await ApiKeyEndpoints.CreateAsync(http, "api-key", sessions, accounts, services.GetRequiredService<ApiKeyService>()),
