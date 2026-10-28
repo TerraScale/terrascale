@@ -1,7 +1,5 @@
 using System.Globalization;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Features.Ui;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -97,27 +95,11 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
         }
     }
 
-    // A hosted page's browser request: its HTML form posts and navigations, never an API or protocol call.
-    private static bool Hosted(HttpRequest request) =>
-        request.Path.StartsWithSegments("/ui", StringComparison.OrdinalIgnoreCase)
-        && (request.HasFormContentType || request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase));
-
     private static async Task WriteAsync(HttpContext context, ApiException error)
     {
         try
         {
             context.Response.Clear();
-            if (error.Status >= StatusCodes.Status409Conflict && Hosted(context.Request))
-            {
-                // A browser on a hosted page gets a page it can read, not the JSON envelope (QA round 4, auth:6).
-                var page = new SignInPageModel(SignInStep.Rejected, OidcIssuer.Slug, Error: "ts-auth could not finish this request. Try again in a moment.")
-                {
-                    ErrorTitle = "Something went wrong",
-                };
-                await SignInPageModel.Render(context, page, error.Status).ExecuteAsync(context);
-                return;
-            }
-
             context.Response.StatusCode = error.Status;
             context.Response.Headers.CacheControl = "no-store";
             if (error.RetryAfter is { } wait)

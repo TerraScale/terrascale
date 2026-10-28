@@ -23,7 +23,6 @@ public sealed class ErrorEnvelopeTests
         // ts-auth's own storage origin, needs no credential; the handler answers before any connection.
         app.MapGet("/__test/storage-unavailable", () => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
         app.MapGet("/__test/storage-conflict", () => StorageAsync(HttpStatusCode.PreconditionFailed, "precondition_failed"));
-        app.MapGet("/ui/__test/storage-unavailable", () => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
         app.MapGet("/__test/slow", async (HttpContext context) =>
         {
             var signals = context.RequestServices.GetRequiredService<DisconnectSignals>();
@@ -101,19 +100,6 @@ public sealed class ErrorEnvelopeTests
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("conflict");
-    }
-
-    [Test]
-    public async Task A_hosted_page_browser_gets_a_readable_page_when_storage_fails()
-    {
-        await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/ui/__test/storage-unavailable", UriKind.Relative));
-        request.Headers.Add("Accept", "text/html");
-        using var response = await server.Client.SendAsync(request);
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
-        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Something went wrong");
     }
 
     [Test]
