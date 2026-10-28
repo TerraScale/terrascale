@@ -8,7 +8,8 @@ namespace TerraBase.Features.Replication;
 /// <summary>Imports a whole pinned snapshot, then its obsolete-origin prefix proofs. Partial transfers certify nothing.</summary>
 internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IReplicaStates states, PeerCredential credential)
 {
-    internal async Task<bool> PullAsync(TenantContext database, ClusterMember peer, IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+    internal async Task<bool> PullAsync(TenantContext database, ClusterMember peer, IReadOnlySet<ulong> origins, CancellationToken cancellationToken,
+        TimeSpan? holdBudget = null)
     {
         if (await states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
         {
@@ -26,7 +27,7 @@ internal sealed class ReplicaSnapshots(IReplicaSnapshotImporter importer, IRepli
 
         // Deliberately read every state, even if digests match. Coverage comes from one native read snapshot and its
         // terminal vector, never from equality of independently sampled XOR roots.
-        return await importer.ImportAsync(database, local.Incarnation, Pages(cancellationToken), origins, cancellationToken).ConfigureAwait(false);
+        return await importer.ImportAsync(database, local.Incarnation, Pages(cancellationToken), origins, cancellationToken, holdBudget).ConfigureAwait(false);
 
         async IAsyncEnumerable<ReplicaSnapshotPage> Pages([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
         {

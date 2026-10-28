@@ -9,8 +9,11 @@ namespace TerraBase.Features.Replication;
 /// <summary>Asks other regions for units of an organization's database allowance (decision 0016).</summary>
 internal sealed class EscrowPeers(IMembership membership, PeerCredential credential, TimeProvider time) : IEscrowPeers
 {
-    // A region that has not answered by then counts as unreachable; the create is refused rather than held.
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
+    // A region that has not answered by then counts as unreachable; the create is refused rather than held. A grant is a
+    // durable SYSTEM write at the granting region, which queues behind that region's writer: 2 s refused fresh-project
+    // creates whenever the genesis region's writer was briefly busy (gru, 2026-10-28). Two peers asked in turn stay inside
+    // the edge's 30 s request deadline.
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(8);
 
     public async ValueTask<IReadOnlyList<string>> RegionsAsync(CancellationToken cancellationToken)
     {

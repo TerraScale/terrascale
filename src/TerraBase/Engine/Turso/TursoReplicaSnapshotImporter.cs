@@ -9,12 +9,13 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
 /// <summary>A whole pinned source snapshot becomes one durable receiver transaction; incomplete streams roll back.</summary>
 internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, StorageChangeGroupSink sink, StampingStorageEngine stamps,
-    IMemoryBudget memory, TerraBaseOptions options, IMeterFactory meters) : IReplicaSnapshotImporter
+    IMemoryBudget memory, TerraBaseOptions options, IMeterFactory meters, ILogger<TursoReplicaSnapshotImporter> logger) : IReplicaSnapshotImporter
 {
     internal static readonly TimeSpan ImportTimeout = TimeSpan.FromMinutes(10);
     internal static readonly TimeSpan BaseReplayTimeout = TimeSpan.FromSeconds(5);
@@ -28,7 +29,7 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         .CreateHistogram<double>("terrabase.replication.snapshot_import", "s", "Snapshot receive, staging and atomic replay time.");
 
     public async Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
-        IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+        IReadOnlySet<ulong> origins, CancellationToken cancellationToken, TimeSpan? holdBudget = null)
     {
         using var deadline = new CancellationTokenSource(ImportTimeout, engine.HostTime);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -74,8 +75,17 @@ internal sealed class TursoReplicaSnapshotImporter(TursoStorageEngine engine, St
         }
 
         staged.Position = 0;
-        var replayTicks = BaseReplayTimeout.Ticks + states * ReplayTicksPerState + frames * ReplayTicksPerFrame
-            + staged.Length * TimeSpan.TicksPerSecond / ReplayBytesPerSecond;
+        var workTicks = states * ReplayTicksPerState + frames * ReplayTicksPerFrame + staged.Length * TimeSpan.TicksPerSecond / ReplayBytesPerSecond;
+        if (holdBudget is { } budgetHold && workTicks > budgetHold.Ticks)
+        {
+            // Staging took no writer. A whole SYSTEM file replays for minutes (sjc/fra, 2026-10-28: 115-300 s every few
+            // minutes), and every create, escrow grant and replication push waits behind it.
+            var work = TimeSpan.FromTicks(workTicks).TotalSeconds;
+            logger.ZLogInformation($"A snapshot import of database {database.DatabaseId:@Database} was skipped before taking its writer: {states:@States} states would hold it about {work:@Seconds} s, over the caller's {budgetHold.TotalSeconds:@Budget} s");
+            return false;
+        }
+
+        var replayTicks = BaseReplayTimeout.Ticks + workTicks;
         using var replayDeadline = new CancellationTokenSource(TimeSpan.FromTicks(Math.Min(replayTicks, MaxReplayTimeout.Ticks)), engine.HostTime);
         using var replay = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, replayDeadline.Token);
         var started = Stopwatch.GetTimestamp();

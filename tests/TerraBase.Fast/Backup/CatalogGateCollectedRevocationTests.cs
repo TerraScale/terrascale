@@ -168,7 +168,7 @@ public sealed class CatalogGateCollectedRevocationTests
     private sealed class RefusingImporter : IReplicaSnapshotImporter
     {
         public Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
-            IReadOnlySet<ulong> origins, CancellationToken cancellationToken) => Task.FromResult(false);
+            IReadOnlySet<ulong> origins, CancellationToken cancellationToken, TimeSpan? holdBudget = null) => Task.FromResult(false);
     }
 
     private sealed class ImportObservation(string id, ReplicaId origin, ulong held)
@@ -183,7 +183,7 @@ public sealed class CatalogGateCollectedRevocationTests
     private sealed class ObservingImporter(IReplicaSnapshotImporter inner, IStorageEngine engine, ImportObservation observation) : IReplicaSnapshotImporter
     {
         public async Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
-            IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+            IReadOnlySet<ulong> origins, CancellationToken cancellationToken, TimeSpan? holdBudget = null)
         {
             // The gate has completed all peer verification pulls before it invokes the importer.
             var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
@@ -192,7 +192,7 @@ public sealed class CatalogGateCollectedRevocationTests
                 observation.SawUncoveredSurvivor |= await read.GetAsync("organizations", observation.Id, cancellationToken) is { Deleted: false }
                     && (await read.GetAppliedAsync(cancellationToken)).GetValueOrDefault(observation.Origin).Value <= observation.Held;
             }
-            var imported = await inner.ImportAsync(database, incarnation, pages, origins, cancellationToken);
+            var imported = await inner.ImportAsync(database, incarnation, pages, origins, cancellationToken, holdBudget);
             observation.Imported |= imported;
             Console.WriteLine($"revocation snapshot imported={imported}");
             return imported;

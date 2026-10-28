@@ -274,4 +274,41 @@ public sealed class SnapshotImportSafetyTests
             yield return new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc> { [retired] = before });
         }
     }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_import_over_its_hold_budget_is_skipped_before_it_takes_the_writer(bool over)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var replayed = false;
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) => replayed |= step == "replication.snapshot.page"));
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
+        var origin = ReplicaId.Of(99, 8, 0);
+        var stamp = engine.Member.Clock.Tick();
+        using var body = System.Text.Json.JsonDocument.Parse("""{"budget":true}""");
+        var state = DocumentState.Bottom.Put(new EntryVersion(stamp, origin), body.RootElement);
+        // 1,024 states estimate about 2 s of replay: over a 1 s budget, inside a 10 s one.
+        var states = Enumerable.Range(0, 1024).Select(_ => new RepairState("snapshot_hold", Ulid.NewUlid().ToString(), state))
+            .OrderBy(row => TursoStorageTransaction.Bucket(row.Collection, row.Id)).ThenBy(row => row.Id, StringComparer.Ordinal).ToArray();
+
+        var imported = await api.Server.Services.GetRequiredService<IReplicaSnapshotImporter>().ImportAsync(ChangeGroups.System, store.Incarnation,
+            Pages(token), new HashSet<ulong> { origin.Value }, token, TimeSpan.FromSeconds(over ? 1 : 10));
+
+        await Assert.That(imported).IsEqualTo(!over);
+        await Assert.That(replayed).IsEqualTo(!over);
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        await Assert.That(await read.GetAsync("snapshot_hold", states[0].Id, token) is not null).IsEqualTo(!over);
+        await Assert.That((await read.GetAppliedAsync(token)).ContainsKey(origin)).IsEqualTo(!over);
+
+        async IAsyncEnumerable<ReplicaSnapshotPage> Pages([EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            yield return new ReplicaSnapshotPage(states);
+            await Task.CompletedTask;
+            yield return new ReplicaSnapshotPage([], new Dictionary<ReplicaId, Hlc> { [origin] = stamp });
+        }
+    }
+
 }
