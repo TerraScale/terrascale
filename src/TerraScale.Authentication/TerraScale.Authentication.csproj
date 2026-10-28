@@ -65,5 +65,6 @@
     <EmbeddedResource Include="Assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
     <EmbeddedResource Include="Assets/fonts/Geist-Variable.woff2" LogicalName="assets/fonts/Geist-Variable.woff2" />
     <EmbeddedResource Include="Assets/fonts/GeistMono-Variable.woff2" LogicalName="assets/fonts/GeistMono-Variable.woff2" />
+    <EmbeddedResource Include="Assets/passwords/common.txt.gz" LogicalName="assets/passwords/common.txt.gz" />
   </ItemGroup>
 </Project>

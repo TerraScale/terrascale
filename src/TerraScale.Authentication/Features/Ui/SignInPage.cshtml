@@ -220,8 +220,8 @@ case SignInStep.SignUp:
 </div>
 <div class="field">
 <label for="sign-up-password">Password</label>
-<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
-<span class="hint">At least 8 characters.</span>
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" required>
+<span class="hint">At least 15 characters. A passphrase of a few words works well.</span>
 </div>
 <button type="submit">Create account</button>
 </form>
@@ -270,8 +270,8 @@ case SignInStep.ResetCode:
 </div>
 <div class="field">
 <label for="reset-password">New password</label>
-<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
-<span class="hint">At least 8 characters. Every session ends when it changes.</span>
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" required>
+<span class="hint">At least 15 characters. Every session ends when it changes.</span>
 </div>
 <button type="submit">Set new password</button>
 </form>

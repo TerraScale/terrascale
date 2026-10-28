@@ -57,7 +57,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {limited.Headers.GetValues("Retry-After").Single()} seconds.</p>");
 
             // The reset budget is independent, even for the same normalized email.
-            using var recovery = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "new password" });
+            using var recovery = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "a new long passphrase" });
             await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
     }
@@ -166,17 +166,17 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         {
             for (var attempt = 0; attempt < HostedAuth.CodePerEmail; attempt++)
             {
-                using var wrong = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "new password" });
+                using var wrong = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "a new long passphrase" });
                 await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             }
 
-            using var limited = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "123456", ["password"] = "new password" });
+            using var limited = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "123456", ["password"] = "a new long passphrase" });
             await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
             await Assert.That(limited.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.CodeWindow);
         }
 
         clock.Advance(HostedAuth.CodeWindow);
-        using var renewed = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = UnknownEmail(oidc), ["code"] = "not-a-code", ["password"] = "new password" });
+        using var renewed = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = UnknownEmail(oidc), ["code"] = "not-a-code", ["password"] = "a new long passphrase" });
         await Assert.That(renewed.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
