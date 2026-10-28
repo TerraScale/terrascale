@@ -28,10 +28,10 @@ sed 's/^4d83e14a7d674f3541520b31de8b7893e805edaff62f15bf2f157f64d2baa925 /0101b7
 for arm in before after; do
   cmp "$out/$arm.sha256" "$frozen/$arm.sha256"
   (cd "$frozen/$arm" && sha256sum --check --quiet "$out/$arm.sha256")
-  # Read-only use of the originals: the arms run from byte-identical copies of every file.
+  # Read-only use of the originals: the arms run from byte-identical copies. TUnit rewrites TestResults/ on every run.
   cp -a "$frozen/$arm" "$out/$arm"
-  diff -r "$frozen/$arm" "$out/$arm"
-  (cd "$out/$arm" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$out/$arm.all.sha256"
+  diff -r -x TestResults "$frozen/$arm" "$out/$arm"
+  (cd "$out/$arm" && find . -type f -not -path "./TestResults/*" -print0 | sort -z | xargs -0 sha256sum) > "$out/$arm.all.sha256"
 done
 cp benchmark/scripts/api-cpu-observer.py "$out/"
 lscpu -e > "$out/cpu-topology.txt"
