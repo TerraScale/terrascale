@@ -1,6 +1,5 @@
 using System.Net;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -74,8 +73,7 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     [Test]
     public async Task Logout_revokes_the_session_and_continues_only_to_a_registered_uri()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var oidc = await OidcHarness.StartAsync(fixture);
         await oidc.CreateUserAsync();
         var session = await oidc.SignInAsync("alice@example.test");
         var (_, challenge) = OidcHarness.Pkce();
@@ -86,8 +84,35 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(unregistered.Headers.Location).IsNull();
         await Assert.That(await unregistered.Content.ReadAsStringAsync()).Contains("<h1>Request refused</h1>");
 
-        // A registered URI gets the hosted Signed out page, which continues there (with state) by link and meta refresh.
-        using var registered = await oidc.AuthorizeAsync(logout + Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri), session);
+        // Without an ID token hint the session stays: the request only shows the confirmation, which posts its parameters back.
+        using var unhinted = await oidc.AuthorizeAsync(logout + Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri), session);
+        var confirm = await unhinted.Content.ReadAsStringAsync();
+        await Assert.That(unhinted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(confirm).Contains("<h1>Sign out?</h1>");
+        await Assert.That(confirm).Contains($"<form method=\"post\" action=\"/{OidcIssuer.Slug}/oauth/logout\">");
+        await Assert.That(confirm).Contains($"<input type=\"hidden\" name=\"post_logout_redirect_uri\" value=\"{OidcHarness.PostLogoutRedirectUri}\">");
+        await Assert.That(confirm).Contains("<input type=\"hidden\" name=\"state\" value=\"x\">");
+        await Assert.That(confirm).Contains("<button type=\"submit\" name=\"confirm\" value=\"1\">");
+        await Assert.That(confirm).DoesNotContain("alice@example.test");
+        await Assert.That(confirm).DoesNotContain("http-equiv=\"refresh\"");
+        await Assert.That(unhinted.Headers.Contains("Set-Cookie")).IsFalse();
+        var fields = new Dictionary<string, string> { ["client_id"] = OidcIssuer.DashboardClientId, ["state"] = "x", ["post_logout_redirect_uri"] = OidcHarness.PostLogoutRedirectUri, ["confirm"] = "1" };
+
+        // A cross-site page can post the confirmation, but not from the public origin; a confirm query parameter is not a post.
+        foreach (var origin in new string?[] { "https://evil.example", null })
+        {
+            using var crossSite = await PostAsync(oidc, $"/{OidcIssuer.Slug}/oauth/logout", fields, session, origin);
+            await Assert.That(await crossSite.Content.ReadAsStringAsync()).Contains("<h1>Sign out?</h1>");
+            await Assert.That(crossSite.Headers.Contains("Set-Cookie")).IsFalse();
+        }
+
+        using var confirmQuery = await oidc.AuthorizeAsync(logout + Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri) + "&confirm=1", session);
+        await Assert.That(await confirmQuery.Content.ReadAsStringAsync()).Contains("<h1>Sign out?</h1>");
+        using var stillSignedIn = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), session);
+        await Assert.That(stillSignedIn.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
+
+        // The confirmed post gets the hosted Signed out page, which continues to the registered URI (with state) by link and meta refresh.
+        using var registered = await PostAsync(oidc, $"/{OidcIssuer.Slug}/oauth/logout", fields, session, OidcHarness.PublicOrigin);
         var signedOut = await registered.Content.ReadAsStringAsync();
         var returnTo = $"{OidcHarness.PostLogoutRedirectUri}?state=x";
         await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -103,17 +128,40 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         await Assert.That(after.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
 
-        clock.Advance(HostedAuth.MailCooldown);
-        var second = await oidc.SignInAsync("alice@example.test");
-        using var page = await oidc.AuthorizeAsync($"/{OidcIssuer.Slug}/oauth/logout", second);
+        // Without a live session there is nothing to confirm. Without a redirect URI the page stays put.
+        using var page = await oidc.AuthorizeAsync($"/{OidcIssuer.Slug}/oauth/logout", session);
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var plain = await page.Content.ReadAsStringAsync();
         await Assert.That(plain).Contains("You are signed out.");
-        // Without a redirect URI the page stays put.
         await Assert.That(plain).DoesNotContain("http-equiv=\"refresh\"");
         await Assert.That(ClearsSessionCookie(page)).IsTrue();
-        using var afterPage = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), second);
-        await Assert.That(afterPage.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
+    }
+
+    [Test]
+    public async Task Logout_with_an_id_token_hint_ends_only_its_own_users_session()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, session, tokens) = await oidc.SignInAndRedeemAsync();
+        var hint = tokens.GetProperty("id_token").GetString()!;
+        var (_, other, _) = await oidc.SignInAndRedeemAsync("bob@example.test");
+        var (_, challenge) = OidcHarness.Pkce();
+        var logout = $"/{OidcIssuer.Slug}/oauth/logout?id_token_hint={hint}&state=x&post_logout_redirect_uri={Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri)}";
+
+        // Another user's session is not ended by this hint; the confirmation carries the hint so the client stays identified.
+        using var mismatched = await oidc.AuthorizeAsync(logout, other);
+        var confirm = await mismatched.Content.ReadAsStringAsync();
+        await Assert.That(confirm).Contains("<h1>Sign out?</h1>");
+        await Assert.That(confirm).Contains($"<input type=\"hidden\" name=\"id_token_hint\" value=\"{hint}\">");
+        await Assert.That(mismatched.Headers.Contains("Set-Cookie")).IsFalse();
+        using var otherAlive = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), other);
+        await Assert.That(otherAlive.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
+
+        using var hinted = await oidc.AuthorizeAsync(logout, session);
+        await Assert.That(hinted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await hinted.Content.ReadAsStringAsync()).Contains($"href=\"{OidcHarness.PostLogoutRedirectUri}?state=x\"");
+        await Assert.That(ClearsSessionCookie(hinted)).IsTrue();
+        using var after = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), session);
+        await Assert.That(after.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
     }
 
     [Test]
@@ -149,23 +197,30 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
 
-        using var logout = await Post($"/{OidcIssuer.Slug}/oauth/logout", new() { ["client_id"] = OidcIssuer.DashboardClientId, ["state"] = "x", ["post_logout_redirect_uri"] = OidcHarness.PostLogoutRedirectUri }, session);
+        using var logout = await Post($"/{OidcIssuer.Slug}/oauth/logout", new() { ["id_token_hint"] = tokens.GetProperty("id_token").GetString()!, ["state"] = "x", ["post_logout_redirect_uri"] = OidcHarness.PostLogoutRedirectUri }, session);
         await Assert.That(logout.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await logout.Content.ReadAsStringAsync()).Contains($"href=\"{OidcHarness.PostLogoutRedirectUri}?state=x\"");
         await Assert.That(ClearsSessionCookie(logout)).IsTrue();
         using var after = await oidc.AuthorizeAsync(path, session);
         await Assert.That(after.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
 
-        async Task<HttpResponseMessage> Post(string target, Dictionary<string, string> fields, string? cookie)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, target) { Content = new FormUrlEncodedContent(fields) };
-            if (cookie is not null)
-            {
-                request.Headers.Add("Cookie", $"tsauth_session={cookie}");
-            }
+        Task<HttpResponseMessage> Post(string target, Dictionary<string, string> fields, string? cookie) => PostAsync(oidc, target, fields, cookie);
+    }
 
-            return await oidc.Client.SendAsync(request);
+    private static async Task<HttpResponseMessage> PostAsync(OidcHarness oidc, string target, Dictionary<string, string> fields, string? cookie, string? origin = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, target) { Content = new FormUrlEncodedContent(fields) };
+        if (cookie is not null)
+        {
+            request.Headers.Add("Cookie", $"tsauth_session={cookie}");
         }
+
+        if (origin is not null)
+        {
+            request.Headers.Add("Origin", origin);
+        }
+
+        return await oidc.Client.SendAsync(request);
     }
 
     [Test]
