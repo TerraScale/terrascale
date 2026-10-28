@@ -26,6 +26,8 @@ public sealed class ProjectLimitJourneyTests(DashboardRootFixture fixture)
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             var html = await refused.Content.ReadAsStringAsync();
             await Assert.That(html).Contains("project limit (1 project)");
+            await Assert.That(html.Split("project limit (1 project)").Length - 1).IsEqualTo(1)
+                .Because("The open create-project dialog states the refusal once, not again behind it.");
             await Assert.That(html).Contains("Billing tab");
         }
         await Assert.That(await ProjectCountAsync(client, organizationId)).IsEqualTo(1).Because("A refused project is never created.");

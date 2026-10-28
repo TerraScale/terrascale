@@ -51,14 +51,19 @@ public sealed record DatabaseListMetric(long? Reads, long? Writes, long? Storage
 public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseListMetric> Databases, string Message)
 {
     private static readonly string[] Writes = ["put", "patch", "delete"];
+    // The list's sparklines are secondary: TerraBase's analytics route has a multi-second tail (gru p99 4.4 s against a
+    // 7 ms median), so the list stops waiting for them well before the analytics page's own deadline.
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(2);
 
     public static async Task<DatabaseListMetrics> LoadAsync(IAnalyticsBackend backend, AccountContext context, string range, CancellationToken cancellationToken)
     {
         if (context.Project is not { Databases.Count: > 0 }) return new(new Dictionary<string, DatabaseListMetric>(), "");
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(Budget);
         try
         {
             var selection = AnalyticsSelection.For(context, "", "", "", range);
-            var batch = await backend.ReadAsync(selection, cancellationToken);
+            var batch = await backend.ReadAsync(selection, budget.Token);
             if (batch.State == AnalyticsSourceState.Unavailable) return new(new Dictionary<string, DatabaseListMetric>(), "Database metrics are unavailable.");
             if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) return new(new Dictionary<string, DatabaseListMetric>(), "No database measurements in the last " + range + ".");
             // Build validates buckets and values the same way the analytics page does.
