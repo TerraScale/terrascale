@@ -88,6 +88,16 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
 
     internal string? Owned { get; private set; }
 
+    internal TaskCompletionSource CreateEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal TaskCompletionSource DeleteEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal TaskCompletionSource DeleteRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal bool DeleteCanceled { get; private set; }
+
+    internal Action? OnDelete { get; set; }
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref requests);
@@ -105,10 +115,15 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
         if (request.Method == HttpMethod.Post && path.EndsWith("/databases", StringComparison.Ordinal))
         {
             Owned = OutputAtCreate?.Invoke();
+            CreateEntered.TrySetResult();
+            if (modes.Contains("create-block")) await Task.Delay(Timeout.Infinite, cancellationToken);
+            if (modes.Contains("create-transport")) throw new HttpRequestException("synthetic lost connection");
+            if (modes.Contains("create-refused")) return FakeReads.Reply(HttpStatusCode.Forbidden, """{"error":{"code":"forbidden","message":"control"}}""");
             return FakeReads.Reply(HttpStatusCode.Created, """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"x","branchedFrom":null,"createdAt":"2026-10-28T00:00:00+00:00","region":"fra","homeRegion":"fra","replicaRegions":[],"allRegions":true}""");
         }
         if (request.Method == HttpMethod.Post)
         {
+            if (modes.Contains("collection-hang")) await Task.Delay(Timeout.Infinite, cancellationToken);
             return FakeReads.Reply(HttpStatusCode.Created, """{"name":"bench","created_at":"0","id":"01ARZ3NDEKTSV4RRFFQ69G5FAC"}""");
         }
         if (request.Method == HttpMethod.Put)
@@ -116,7 +131,13 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
             documents[id] = await request.Content!.ReadAsStringAsync(cancellationToken);
             return FakeReads.Reply(HttpStatusCode.Created, $$"""{"id":"{{id}}","version":"v-{{id}}","offset":1,"durability":"replicated"}""");
         }
-        return FakeReads.Reply(HttpStatusCode.NoContent, null);
+        DeleteEntered.TrySetResult();
+        OnDelete?.Invoke();
+        if (modes.Contains("delete-block")) await DeleteRelease.Task;
+        DeleteCanceled = cancellationToken.IsCancellationRequested;
+        return modes.Contains("delete-404") ? FakeReads.Reply(HttpStatusCode.NotFound, """{"error":{"code":"not_found","message":"control"}}""")
+            : modes.Contains("delete-500") ? FakeReads.Reply(HttpStatusCode.InternalServerError, """{"error":{"code":"internal","message":"control"}}""")
+            : FakeReads.Reply(HttpStatusCode.NoContent, null);
     }
 
     // Shared by every lane of a run; lanes dispose their clients, which must not end this fake.

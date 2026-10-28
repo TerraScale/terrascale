@@ -25,6 +25,7 @@ internal static class Program
         {
             ["startup"] => Startup(),
             ["run", "--spec", var spec, "--credentials", var credentials] => await RunAsync(spec, credentials),
+            ["parity", "--credentials", var credentials, "--out", var output] => await ParityAsync(credentials, output),
             _ => Usage(),
         };
     }
@@ -76,6 +77,24 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// Main's SIGINT/SIGTERM registrations outlive this call, so repeated signals stay caught while the owned database is
+    /// deleted; the first one cancels the run.
+    /// </summary>
+    private static async Task<int> ParityAsync(string credentials, string output)
+    {
+        using var cut = new CancellationTokenSource();
+        lock (Gate) running = cut;
+        try
+        {
+            return await ParityRun.RunAsync(credentials, output, ParityPeers.Read, ParityRig.Live, Console.Error, cut.Token);
+        }
+        finally
+        {
+            lock (Gate) running = null;
+        }
+    }
+
     /// <summary>Setup, then one result per stdin step line, then cleanup on EOF.</summary>
     private static async Task<int> SessionAsync(Bench bench)
     {
@@ -112,15 +131,21 @@ internal static class Program
     /// <summary>Cuts the running step short. The process keeps serving steps until stdin closes.</summary>
     private static void Interrupt(PosixSignalContext context)
     {
+        lock (Gate) Catch(context, running);
+    }
+
+    /// <summary>Every signal is caught, never default-terminating the process; only the running work is canceled.</summary>
+    internal static void Catch(PosixSignalContext context, CancellationTokenSource? work)
+    {
         context.Cancel = true;
-        lock (Gate) running?.Cancel();
+        work?.Cancel();
     }
 
     private static void Emit<T>(T value, JsonTypeInfo<T> info) => Console.Out.WriteLine(JsonSerializer.Serialize(value, info));
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: api-bench startup | api-bench run --spec PATH --credentials PATH");
+        Console.Error.WriteLine("usage: api-bench startup | api-bench run --spec PATH --credentials PATH | api-bench parity --credentials PATH --out PATH");
         return 2;
     }
 }

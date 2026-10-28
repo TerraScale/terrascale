@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -80,5 +81,65 @@ public sealed class ParityRunTests
         await Assert.That(Text(cells[^1], "region")).IsEqualTo("sjc");
         await Assert.That(Text(cells[^1], "rejection")).IsEqualTo("region");
         await Assert.That(Text(run.Rows()[^2], "deletion")).IsEqualTo("logical_accepted");
+    }
+
+    [Test]
+    [Arguments("unknown-member")]
+    [Arguments("duplicate-member")]
+    [Arguments("empty")]
+    [Arguments("oversize")]
+    [Arguments("fifo")]
+    [Arguments("missing-member")]
+    [Arguments("bad-key")]
+    [Arguments("group-readable")]
+    [Arguments("symlink")]
+    [Arguments("existing-output")]
+    [Arguments("symlink-output")]
+    [Arguments("peers")]
+    public async Task InputIsRefusedBeforeAnyNetworkUseWithoutEchoingIt(string variant)
+    {
+        var valid = Run.Valid;
+        using var run = new Run(variant switch
+        {
+            "unknown-member" => valid[..^1] + ""","secret":"do-not-print"}""",
+            "duplicate-member" => valid[..^1] + $$""","project":"{{Project}}"}""",
+            "empty" => "",
+            "oversize" => valid + new string(' ', 4096),
+            "missing-member" => $$"""{"api_key":"{{FakeAuth.Key}}"}""",
+            "bad-key" => valid.Replace(FakeAuth.Key, "do-not-print", StringComparison.Ordinal),
+            _ => valid,
+        });
+        var elsewhere = Path.Combine(run.Directory.FullName, "elsewhere");
+        if (variant == "fifo")
+        {
+            File.Delete(run.Credentials);
+            using var fifo = Process.Start(new ProcessStartInfo("mkfifo") { ArgumentList = { "-m", "600", run.Credentials } })!;
+            await fifo.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(fifo.ExitCode).IsEqualTo(0);
+        }
+        if (variant == "group-readable") File.SetUnixFileMode(run.Credentials, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        if (variant == "symlink")
+        {
+            File.Move(run.Credentials, elsewhere);
+            File.CreateSymbolicLink(run.Credentials, elsewhere);
+        }
+        if (variant == "existing-output") File.WriteAllText(run.Output, "keep");
+        if (variant == "symlink-output") File.CreateSymbolicLink(run.Output, elsewhere);
+        var server = new FakeTerraBase();
+        var factories = 0;
+        var rig = server.Rig() with
+        {
+            Data = connections => { Interlocked.Increment(ref factories); return server; },
+            Auth = () => { Interlocked.Increment(ref factories); return new FakeAuth(3600); },
+        };
+        var code = await Task.Run(() => run.StartAsync(server, rig, variant == "peers" ? "ts-gru-1 gru 100.64.0.1\nts-sjc-1 sjc 100.64.0.2\n" : Peers))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(code).IsEqualTo(2);
+        await Assert.That(factories + server.Requests).IsEqualTo(0);
+        await Assert.That(run.Error.ToString().Contains("do-not-print", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(run.Error.ToString().Contains(FakeAuth.Key, StringComparison.Ordinal)).IsFalse();
+        if (variant == "existing-output") await Assert.That(File.ReadAllText(run.Output)).IsEqualTo("keep");
+        else if (variant == "symlink-output") await Assert.That(File.Exists(elsewhere)).IsFalse();
+        else await Assert.That(File.Exists(run.Output)).IsFalse();
     }
 }
