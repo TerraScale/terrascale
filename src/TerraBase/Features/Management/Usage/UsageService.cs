@@ -203,7 +203,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         var series = Sum(window, items.Select(item => item.Series));
         var fileBytes = await files.BytesAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false);
         return new ProjectUsage(
-            projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes), items.Sum(item => item.Documents),
+            projectId, items.Count, items.Sum(item => item.Collections), checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes), items.Sum(item => item.Documents),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
             new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes))
         { FileBytes = fileBytes };
