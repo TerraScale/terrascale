@@ -400,9 +400,9 @@ public sealed class HistoryErasureTests
         Interlocked.Exchange(ref snapshots, 0);
         await RunAsync(gru);
         var first = Volatile.Read(ref snapshots);
-        // One pull of the witness's two files serves every stalled erasure: per erasure, 150 of them held gru's SYSTEM writer
-        // about 60% of the time (2026-10-28).
-        await Assert.That(first).IsEqualTo(2);
+        // A witness that reports no more of the retired epoch than this machine holds is never pulled: each no-progress pull
+        // held SYSTEM's writer 65-200 s, and 150 stalled erasures starved creates on every node (2026-10-28).
+        await Assert.That(first).IsEqualTo(0);
         for (var pass = 0; pass < 4; pass++)
         {
             await RunAsync(gru);

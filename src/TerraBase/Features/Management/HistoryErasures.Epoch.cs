@@ -1,4 +1,5 @@
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 
@@ -45,11 +46,26 @@ internal sealed partial class HistoryErasures
             return;
         }
 
+        if (await LocalCutsAsync(cancellationToken).ConfigureAwait(false) is not { } local)
+        {
+            return;
+        }
+
+        // Another erasure's pull, or the streams, may already have brought what this one needs: no pull for that.
+        if (Progressed(own, origins, local))
+        {
+            await MarkAsync(record, own, cancellationToken, own.RecoveryAfter).ConfigureAwait(false);
+            return;
+        }
+
         // One peer's two files per pass, bounded by the snapshot RPC deadline. The receipt's cursor survives a restart.
+        // Only a witness that reports more of an obsolete origin than this machine holds can move the erasure on.
         var peers = AntiEntropy.Peers(await membership.RefreshAsync(cancellationToken).ConfigureAwait(false), Machine)
-            .Where(peer => receipts.Any(receipt => receipt.MachineId == peer.Name)
+            .Where(peer => receipts.SingleOrDefault(receipt => receipt.MachineId == peer.Name) is { } witness
+                && WitnessAhead(witness, origins, local)
+                && (!_peerPulls.TryGetValue(peer.Name, out var pull) || time.GetUtcNow() >= pull.Next)
                 && (!_recovery.TryGetValue((record.ErasureId, peer.Name), out var wait)
-                    || wait.Evidence != RecoveryEvidence(own, receipts.Single(receipt => receipt.MachineId == peer.Name), origins)
+                    || wait.Evidence != RecoveryEvidence(own, witness, origins)
                     || time.GetUtcNow() >= wait.Next)).OrderBy(peer => peer.Name, StringComparer.Ordinal).ToList();
         var peer = peers.FirstOrDefault(peer => own.RecoveryAfter is null || string.CompareOrdinal(peer.Name, own.RecoveryAfter) > 0)
             ?? peers.FirstOrDefault();
@@ -59,18 +75,6 @@ internal sealed partial class HistoryErasures
         }
 
         var key = (record.ErasureId, peer.Name);
-        // Another erasure's pull may already have imported what this one needs: the local cuts are read before pulling.
-        if (await ProgressedAsync(own, origins, cancellationToken).ConfigureAwait(false))
-        {
-            await MarkAsync(record, own, cancellationToken, peer.Name).ConfigureAwait(false);
-            _recovery.Remove(key);
-            return;
-        }
-
-        if (_peerPulls.TryGetValue(peer.Name, out var pull) && time.GetUtcNow() < pull.Next)
-        {
-            return;
-        }
 
         var evidence = RecoveryEvidence(own, receipts.Single(receipt => receipt.MachineId == peer.Name), origins);
         var progressed = false;
@@ -85,7 +89,7 @@ internal sealed partial class HistoryErasures
             }
 
             completed = true;
-            progressed = await ProgressedAsync(own, origins, cancellationToken).ConfigureAwait(false);
+            progressed = await LocalCutsAsync(cancellationToken).ConfigureAwait(false) is { } after && Progressed(own, origins, after);
             if (progressed)
             {
                 // Only actual imported prefix progress warrants a fresh fence. No-op imports must not churn every
@@ -143,20 +147,33 @@ internal sealed partial class HistoryErasures
     }
 
     // Whether this machine's auth or SYSTEM file now holds more of an obsolete origin than its receipt recorded.
-    private async Task<bool> ProgressedAsync(HistoryErasureReceipt own, IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+    private static bool Progressed(HistoryErasureReceipt own, IReadOnlySet<ulong> origins, LocalCuts local) =>
+        origins.Any(origin => local.Auth.GetValueOrDefault(new(origin)).Value > Cut(own.AuthApplied, origin)
+            || local.System.GetValueOrDefault(new(origin)).Value > Cut(own.SystemApplied, origin));
+
+    // Whether the witness reports more of an obsolete origin than this machine's files hold: otherwise its snapshots cannot
+    // move this erasure on, and pulling them would only hold SYSTEM's writer for the import (fra/sjc, 2026-10-28: 65-146 s
+    // per no-progress pull). A newer report from the witness changes its receipt and is looked at on the next pass.
+    private static bool WitnessAhead(HistoryErasureReceipt witness, IReadOnlySet<ulong> origins, LocalCuts local) =>
+        origins.Any(origin => Cut(witness.AuthApplied, origin) > local.Auth.GetValueOrDefault(new(origin)).Value
+            || Cut(witness.SystemApplied, origin) > local.System.GetValueOrDefault(new(origin)).Value);
+
+    private async Task<LocalCuts?> LocalCutsAsync(
+        CancellationToken cancellationToken)
     {
         var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false);
         if (auth is null)
         {
-            return false;
+            return null;
         }
 
         await using var read = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         var authCuts = await read.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
         var systemCuts = await catalog.ReadUncheckedAsync(transaction => transaction.GetAppliedAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
-        return origins.Any(origin => authCuts.GetValueOrDefault(new(origin)).Value > Cut(own.AuthApplied, origin)
-            || systemCuts.GetValueOrDefault(new(origin)).Value > Cut(own.SystemApplied, origin));
+        return new LocalCuts(authCuts, systemCuts);
     }
+
+    private sealed record LocalCuts(IReadOnlyDictionary<ReplicaId, Hlc> Auth, IReadOnlyDictionary<ReplicaId, Hlc> System);
 
     // Scheduling evidence excludes the ever-changing fence marker and cursor. A hash collision can delay a retry at
     // most an hour; it can never certify coverage. A peer's advancing old cuts or a new epoch retries immediately.
