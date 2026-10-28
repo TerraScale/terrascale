@@ -32,22 +32,18 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         var next = 0;
         while (next < groups.Count)
         {
-            // A group never splits; a single group holds at most one transaction's documents.
-            var end = next;
-            for (var deltas = 0; end < groups.Count && (end == next || deltas + groups[end].Deltas.Count <= ChangeGroups.MaxDeltasOf(database)); end++)
-            {
-                deltas += groups[end].Deltas.Count;
-            }
-
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var started = timings.Now;
             progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
             List<(string, string, DocumentState, EntryVersion)>? deferred = null;
             HashSet<(string Collection, string Id)> closureChanges = [];
             List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
-            for (; next < end; next++)
+            // Check between whole groups; deferred admission and closure observation still finish before each commit.
+            for (var deltas = 0; next < groups.Count && ReplicationWriteBatch.CanAdd(deltas, groups[next].Deltas.Count, timings.Elapsed(started)); next++)
             {
+                deltas += groups[next].Deltas.Count;
                 foreach (var delta in groups[next].Deltas)
                 {
                     var at = new EntryVersion(delta.Stamp, origin);
@@ -126,20 +122,30 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                 return null;
             }
 
-            if (changing.Count == 0)
+            var next = 0;
+            while (next < changing.Count)
             {
-                continue;
+                await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+                var started = timings.Now;
+                if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
+                {
+                    return null;
+                }
+
+                changed += await RepairPageAsync(transaction, database, Page(), baseline: false, cancellationToken).ConfigureAwait(false);
+
+                _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+                // The shared join/admission path also serves atomic snapshot replay; bound only this repair's input.
+                IEnumerable<RepairState> Page()
+                {
+                    var start = next;
+                    while (next < changing.Count && ReplicationWriteBatch.CanAdd(next - start, 1, timings.Elapsed(started)))
+                    {
+                        yield return changing[next++];
+                    }
+                }
             }
-
-            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-            if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
-            {
-                return null;
-            }
-
-            changed += await RepairPageAsync(transaction, database, changing, baseline: false, cancellationToken).ConfigureAwait(false);
-
-            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return changed;
@@ -172,7 +178,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
     }
 
     internal async ValueTask<int> RepairPageAsync(IStorageTransaction transaction, TenantContext database,
-        IReadOnlyList<RepairState> states, bool baseline, CancellationToken cancellationToken)
+        IEnumerable<RepairState> states, bool baseline, CancellationToken cancellationToken)
     {
         var changed = 0;
         List<(string, string, DocumentState, EntryVersion)>? deferred = null;

@@ -31,6 +31,8 @@ internal sealed class ReplicationTimings(IMeterFactory meters, TimeProvider time
 
     public long Now => time.GetTimestamp();
 
+    public TimeSpan Elapsed(long since) => time.GetElapsedTime(since);
+
     /// <summary>Records <paramref name="step"/> from <paramref name="since"/> (a <see cref="Now"/> value) and returns now.</summary>
     public long Record(string step, long since)
     {
