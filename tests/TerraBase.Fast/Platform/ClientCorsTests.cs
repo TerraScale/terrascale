@@ -109,6 +109,43 @@ public sealed class ClientCorsTests
         await Assert.That(internalResponse.Headers.Contains("Access-Control-Allow-Origin")).IsFalse();
     }
 
+    [Test]
+    [Arguments("/v1/projects/p/databases/d/collections", true)]
+    [Arguments("/v1/projects/p/databases/d/transactions", true)]
+    [Arguments("/v1/projects/p/databases/d/changes", true)]
+    [Arguments("/V1/PROJECTS/p/DATABASES/d/ChAnGeS", true)]
+    [Arguments("/v1/projects/p/databases/d/changes/", true)]
+    [Arguments("/v1/projects/p/databases/d/collections/c/documents/by-key/extra", true)]
+    [Arguments("/v1/projects/p/databases/d/collections//", true)]
+    [Arguments("/v1/projects/p/databases/d", false)]
+    [Arguments("/v1/projects/p/databases/d/", false)]
+    [Arguments("/v1/projects//databases/d/changes", false)]
+    [Arguments("/v1/projects/p/databases//changes", false)]
+    [Arguments("/v1//projects/p/databases/d/changes", false)]
+    [Arguments("/v2/projects/p/databases/d/changes", false)]
+    [Arguments("/v1/project/p/databases/d/changes", false)]
+    [Arguments("/v1/projectsx/p/databases/d/changes", false)]
+    [Arguments("/v1/projects/p/database/d/changes", false)]
+    [Arguments("/v1/projects/p/databases/d/changesx", false)]
+    [Arguments("/v1/projects/p/databases/d/change", false)]
+    [Arguments("/v1/projects/p/databases/d/sql/changes", false)]
+    [Arguments("/v1x/projects/p/databases/d/changes", false)]
+    public async Task Data_preflight_matches_only_the_project_database_data_prefix(string path, bool allowed)
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        using var client = new HttpClient { BaseAddress = server.ClientAddress };
+        using var request = Preflight(path, "GET");
+        using var response = await client.SendAsync(request);
+
+        await Assert.That(request.RequestUri!.AbsolutePath).IsEqualTo(path);
+        await Assert.That(response.Headers.Contains("Access-Control-Allow-Origin")).IsEqualTo(allowed);
+        if (allowed)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            await Assert.That(response.Headers.Contains("Access-Control-Allow-Credentials")).IsFalse();
+        }
+    }
+
     private static HttpRequestMessage Preflight(string route, string method)
     {
         var request = new HttpRequestMessage(HttpMethod.Options, route);

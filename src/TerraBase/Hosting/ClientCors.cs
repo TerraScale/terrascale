@@ -33,14 +33,16 @@ internal static class ClientCors
 
     private static bool IsDataPath(PathString path)
     {
-        var segments = path.Value?.Split('/');
-        return segments is { Length: >= 7 } && segments[0].Length == 0
-            && segments[3].Length > 0 && segments[5].Length > 0
-            && string.Equals(segments[1], "v1", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(segments[2], "projects", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
-            && (string.Equals(segments[6], "collections", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "transactions", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase));
+        // Same segments as string.Split('/') without allocating: the eighth range keeps any remainder.
+        var value = path.Value.AsSpan();
+        Span<Range> segments = stackalloc Range[8];
+        return value.Split(segments, '/') >= 7 && value[segments[0]].IsEmpty
+            && !value[segments[3]].IsEmpty && !value[segments[5]].IsEmpty
+            && value[segments[1]].Equals("v1", StringComparison.OrdinalIgnoreCase)
+            && value[segments[2]].Equals("projects", StringComparison.OrdinalIgnoreCase)
+            && value[segments[4]].Equals("databases", StringComparison.OrdinalIgnoreCase)
+            && (value[segments[6]].Equals("collections", StringComparison.OrdinalIgnoreCase)
+                || value[segments[6]].Equals("transactions", StringComparison.OrdinalIgnoreCase)
+                || value[segments[6]].Equals("changes", StringComparison.OrdinalIgnoreCase));
     }
 }
