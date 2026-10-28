@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
@@ -26,7 +27,31 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
         string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key);
 
-    public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+    public static string KeyOf(string token)
+    {
+        // Bound stack use; oversized credentials use scratch that is cleared before returning it.
+        var length = Encoding.UTF8.GetByteCount(token);
+        byte[]? pooled = null;
+        Span<byte> bytes = length <= 2048 ? stackalloc byte[length] : (pooled = ArrayPool<byte>.Shared.Rent(length)).AsSpan(0, length);
+        try
+        {
+            _ = Encoding.UTF8.GetBytes(token, bytes);
+            Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
+            _ = SHA256.HashData(bytes, digest);
+            return Convert.ToBase64String(digest);
+        }
+        finally
+        {
+            if (pooled is null)
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+            }
+            else
+            {
+                ArrayPool<byte>.Shared.Return(pooled, clearArray: true);
+            }
+        }
+    }
 
     public bool TryGet(string key, IReadOnlyList<SecurityKey> keys, out Accepted accepted)
     {
