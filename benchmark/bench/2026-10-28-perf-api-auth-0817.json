@@ -1,0 +1,31 @@
+[
+  {
+    "image": "ghcr.io/terrascale/ts-auth@sha256:9632c983ca6c3236ffd9a6abe9225506aaaaa54e03372f8c9dff8a721d240372",
+    "region": "gru",
+    "checks": {
+      "healthz": {
+        "http": 200
+      },
+      "readyz": {
+        "http": 200,
+        "status": "ready"
+      }
+    },
+    "peer": "ts-gru-1",
+    "observed_at": "2026-10-28T08:17:08.270664+00:00"
+  },
+  {
+    "running_auth": 0,
+    "auth_images": [],
+    "checks": {},
+    "peer": "ts-sjc-1",
+    "observed_at": "2026-10-28T08:17:12.709124+00:00"
+  },
+  {
+    "running_auth": 0,
+    "auth_images": [],
+    "checks": {},
+    "peer": "ts-fra-1",
+    "observed_at": "2026-10-28T08:17:16.230803+00:00"
+  }
+]

@@ -1,0 +1,60 @@
+{
+  "image": "ghcr.io/terrascale/ts-auth@sha256:9632c983ca6c3236ffd9a6abe9225506aaaaa54e03372f8c9dff8a721d240372",
+  "files": [
+    {
+      "stream": "stdout",
+      "readable": true,
+      "lines": 396
+    },
+    {
+      "stream": "stderr",
+      "readable": true,
+      "lines": 0
+    }
+  ],
+  "records": [
+    {
+      "request_case": [
+        0
+      ],
+      "time": "2026-10-28T06:57:52.121602Z",
+      "present_fields": [
+        "Code",
+        "error"
+      ],
+      "structured_codes": [
+        "temporarily_unavailable"
+      ],
+      "exception_types": [
+        "TerraScale.Authentication.Contracts.ApiException",
+        "TerraScale.Authentication.Hosting.ScrubbedException"
+      ],
+      "known_codes_in_exception_text": [],
+      "error_shape": "str",
+      "sdk_unavailable_type_in_record": true,
+      "sdk_open_frame_in_record": true
+    },
+    {
+      "request_case": [
+        1
+      ],
+      "time": "2026-10-28T06:58:12.090154Z",
+      "present_fields": [
+        "Code",
+        "error"
+      ],
+      "structured_codes": [
+        "temporarily_unavailable"
+      ],
+      "exception_types": [
+        "TerraScale.Authentication.Contracts.ApiException",
+        "TerraScale.Authentication.Hosting.ScrubbedException"
+      ],
+      "known_codes_in_exception_text": [],
+      "error_shape": "str",
+      "sdk_unavailable_type_in_record": true,
+      "sdk_open_frame_in_record": true
+    }
+  ],
+  "observed_at": "2026-10-28T08:07:12.931231+00:00"
+}
