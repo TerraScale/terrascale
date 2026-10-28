@@ -38,9 +38,10 @@ bash scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native |
 export TERRABASE_VS_TURSO_LANES=turso,turso-cdc,engine,api,api-query,api-batch,sql,pg,hrana,wire,tcp-echo
 export TERRABASE_VS_TURSO_WORKLOADS=read,write
 export TERRABASE_VS_TURSO_REPEATS=3 TERRABASE_VS_TURSO_SECONDS=5 TERRABASE_VS_TURSO_CONCURRENCY=1,16
-setsid bash benchmark/dotnet/VsTurso/run.sh "$out/local.raw" >"$out/run.log" 2>&1 &
-job=$!
+job=
 cleanup() {
+  job=${job:-$(jobs -pr)}
+  [[ -n "$job" ]] || return 0
   kill -TERM -- "-$job" 2>/dev/null || true
   for ((attempt=0; attempt<50; attempt++)); do
     kill -0 -- "-$job" 2>/dev/null || break
@@ -53,6 +54,8 @@ trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
+setsid bash benchmark/dotnet/VsTurso/run.sh "$out/local.raw" >"$out/run.log" 2>&1 &
+job=$!
 while kill -0 "$job" 2>/dev/null; do
   python3 - "$out/load.jsonl" <<'PY'
 import json, os, pathlib, sys, time

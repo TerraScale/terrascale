@@ -23,7 +23,18 @@ work, region, sha, output, probe, rt6, *operation = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("rt6", rt6)
 matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(matrix)
-signal.signal(signal.SIGTERM, lambda *_: sys.exit("terminated; cleaning synthetic tenant"))
+def ignore_stop_signals():
+    for stop in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(stop, signal.SIG_IGN)
+
+
+def terminate(*_):
+    ignore_stop_signals()
+    sys.exit("terminated; cleaning synthetic tenant")
+
+
+for stop in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(stop, terminate)
 if not operation:
     subprocess.run([probe, "-h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
@@ -53,6 +64,11 @@ class Live(matrix.Matrix):
         identity = {key: row[key] for row in rows for key in ("organization", "project", "database") if key in row}
         identity.update({key: getattr(self, key) for key in ("organization", "project", "database") if hasattr(self, key)})
         if "organization" not in identity:
+            for target in self.node:
+                _, body = self.http(target, "GET", "/v1/management/organizations", user=True, expect={200})
+                if body["items"]:
+                    raise RuntimeError("unidentified synthetic tenant remains; run cleanup")
+                self.record(kind="teardown", step="acting user empty", target=target, status=200)
             return
         path = "/v1/management/organizations/" + identity["organization"]
         paths = [("organization gone", path)]
@@ -68,10 +84,15 @@ class Live(matrix.Matrix):
                 self.record(kind="teardown", step=step, target=target, status=404)
 
     def teardown(self):
+        ignore_stop_signals()
+        if not getattr(self, "organization", None):
+            self.recover()
+            return
         super().teardown()
         self.verify_cleanup()
 
     def recover(self):
+        ignore_stop_signals()
         # The persisted acting-user ULID belongs only to this run. Recover even if
         # it died between the organization creation response and the tenant log.
         _, body = self.http("sjc", "GET", "/v1/management/organizations", user=True, expect={200})
@@ -126,6 +147,7 @@ with open(output, "x") as stream:
         if len(set(revisions.values())) != 1 or any(not isinstance(value, str) or not value for value in revisions.values()):
             raise RuntimeError("serving regions have different or missing revisions")
         live.record(kind="metadata", host=os.uname().nodename, region=region, revisions=revisions,
+                    native_ports=matrix.NATIVE_RELAYS[region],
                     harness_files_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                           for path in (pathlib.Path(__file__), pathlib.Path(__file__).with_suffix('.sh'), pathlib.Path(rt6), pathlib.Path(probe))},
                     load=os.getloadavg(), pressure=pathlib.Path('/proc/pressure/cpu').read_text())

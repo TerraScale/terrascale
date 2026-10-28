@@ -10,6 +10,7 @@ import sys
 directory = pathlib.Path(sys.argv[1])
 reads, lag, metadata, cleanup = collections.defaultdict(list), collections.defaultdict(list), {}, {}
 valid = True
+issues = []
 
 
 def percentile(values, quantile):
@@ -22,14 +23,23 @@ def number(value):
 
 
 for path in sorted(directory.glob("*/live.jsonl")):
-    rows = [json.loads(line) for line in path.read_text().splitlines()]
-    extra = path.with_name(path.name + ".cleanup.jsonl")
-    rows += [json.loads(line) for line in extra.read_text().splitlines()] if extra.exists() else []
+    try:
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        extra = path.with_name(path.name + ".cleanup.jsonl")
+        rows += [json.loads(line) for line in extra.read_text().splitlines()] if extra.exists() else []
+    except (OSError, ValueError):
+        valid = False
+        issues.append(f"Unreadable or partial regional evidence: {path.parent.name}")
+        continue
     for row in rows:
         for legacy in ("target_sha", "harness_sha"):
             if legacy in row:
                 row["legacy_operator_source_hint"] = row.pop(legacy)
-    first = next(row for row in rows if row["kind"] == "metadata")
+    first = next((row for row in rows if row.get("kind") == "metadata"), None)
+    if first is None:
+        valid = False
+        issues.append(f"Missing regional metadata: {path.parent.name}")
+        continue
     region = first["region"]
     if region in metadata:
         raise ValueError("duplicate regional evidence")
@@ -64,7 +74,7 @@ valid &= set(reads) == expected and set(lag) == directions
 valid &= all(len(runs) == 3 and {run["repeat"] for run in runs} == {1, 2, 3}
              and all(len(run["samples_ms"]) == 60 for run in runs) for runs in reads.values())
 valid &= all(len(runs) == 3 and {run["repeat"] for run in runs} == {1, 2, 3} for runs in lag.values())
-lines = ["# Live regional baseline", "", "Serving revision(s): " + ", ".join(sorted({str(v) for m in metadata.values() for v in m['revisions'].values()})) + ".",
+lines = ["# Live regional baseline", "", *issues, "Serving revision(s): " + ", ".join(sorted({str(v) for m in metadata.values() for v in m['revisions'].values()})) + ".",
          "Harness provenance is separate: older target_sha fields are retained as legacy_operator_source_hint, not serving revisions.",
          f"Evidence {'complete' if valid else 'INVALID / incomplete'}; observed production load is recorded in metadata. "
          "Reads are c=1, paced at most 10/s; percentiles pool 180 samples. These are host-local endpoint latencies, not public WAN latencies.",
@@ -87,7 +97,7 @@ for direction, runs in sorted(lag.items()):
     gaps.append(dict(direction=direction, p99_ms=tail, gap_ratio=None if tail is None else tail / 200))
     lines.append(f"| {direction} | {len(values)} | {floor:.3f} | {number(percentile(values, .5))} | "
                  f"{number(tail)} | {missing} | {'met' if not missing and tail is not None and tail < 200 else 'NOT MET'} |")
-result = dict(valid=bool(valid), metadata=metadata, cleanup=cleanup,
+result = dict(valid=bool(valid), issues=issues, metadata=metadata, cleanup=cleanup,
               reads=[dict(region=key[0], endpoint=key[1], size=key[2], runs=runs) for key, runs in sorted(reads.items())],
               lag=lag, ranked_lag_gaps=sorted(gaps, key=lambda row: row["gap_ratio"] or 0, reverse=True))
 (directory / "live-results.json").write_text(json.dumps(result, separators=(',', ':')) + '\n')

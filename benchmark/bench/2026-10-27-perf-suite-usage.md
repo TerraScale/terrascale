@@ -38,6 +38,9 @@ of 60 samples. These are descriptive tails, not confidence bounds.
 The synthetic tenant is deleted afterward, with organization/project/database
 absence checked in every region. For recovery after
 an abrupt process kill, rerun with `cleanup` replacing `live`, preserving `<output>/user`.
+Native connections use the host's standard TLS edge ports, PostgreSQL 5432 and
+Wire 7464, recorded in metadata; no private `native-relays.json` is required.
+Identity receipts and output locks are ignored by git.
 
 Collect regional output directories as `<evidence>/<region>/`, and the local output
 as `<evidence>/local/`. Generate JSON and Markdown, optionally comparing a prior run:
