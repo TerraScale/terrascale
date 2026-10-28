@@ -1,0 +1,203 @@
+diff --git a/src/TerraBase/Features/Management/Usage/UsageRequestMetering.cs b/src/TerraBase/Features/Management/Usage/UsageRequestMetering.cs
+index dc40fd406..402ad26e7 100644
+--- a/src/TerraBase/Features/Management/Usage/UsageRequestMetering.cs
++++ b/src/TerraBase/Features/Management/Usage/UsageRequestMetering.cs
+@@ -1,4 +1,6 @@
+ using System.Diagnostics;
++using System.IO.Pipelines;
++using Microsoft.AspNetCore.Http.Features;
+ using TerraBase.Features.Management.Logs;
+ using TerraBase.Features.UserAuth;
+ using TerraBase.Hosting;
+@@ -19,7 +21,7 @@ public static class UsageRequestMetering
+         context.Features.Set(new AttributedDatabase(database));
+     }
+ 
+-    /// <summary>Wraps body streams before authentication; records only requests that resolve an authorized database.</summary>
++    /// <summary>Wraps request and response bodies before authentication; records only requests that resolve an authorized database.</summary>
+     public static WebApplication UseTerraBaseUsage(this WebApplication app)
+     {
+         ArgumentNullException.ThrowIfNull(app);
+@@ -35,13 +37,14 @@ public static class UsageRequestMetering
+             }
+ 
+             var input = context.Request.Body;
+-            var output = context.Response.Body;
+-            using var transfer = new Transfer(context, meter, time, logs);
++            var output = context.Features.GetRequiredFeature<IHttpResponseBodyFeature>();
++            using var transfer = new Transfer(context, output, meter, time, logs);
+             var previousOperations = RequestLogOperations.Current.Value;
+             var operations = new RequestLogOperations();
+             RequestLogOperations.Current.Value = operations;
+             context.Request.Body = transfer.Received;
+-            context.Response.Body = transfer.Sent;
++            // A body feature over the server's own, so its native writer serves BodyWriter without adapting a stream.
++            context.Features.Set<IHttpResponseBodyFeature>(transfer.Sent);
+             var started = Stopwatch.GetTimestamp();
+             var failed = false;
+             try
+@@ -56,8 +59,17 @@ public static class UsageRequestMetering
+             finally
+             {
+                 context.Request.Body = input;
+-                context.Response.Body = output;
+-                try { transfer.Complete(failed ? 500 : context.Response.StatusCode, Stopwatch.GetElapsedTime(started), operations); }
++                context.Features.Set(output);
++                try
++                {
++                    // The server sends what a completed request committed to its writer; a failed one's is never sent.
++                    if (!failed)
++                    {
++                        transfer.Sent.Committed();
++                    }
++
++                    transfer.Complete(failed ? 500 : context.Response.StatusCode, Stopwatch.GetElapsedTime(started), operations);
++                }
+                 finally { RequestLogOperations.Current.Value = previousOperations; }
+             }
+         });
+@@ -80,17 +92,17 @@ public static class UsageRequestMetering
+         private long _sent;
+         private DateTimeOffset _transferredAt;
+ 
+-        public Transfer(HttpContext context, IUsageMeter meter, TimeProvider time, IRequestLogs logs)
++        public Transfer(HttpContext context, IHttpResponseBodyFeature response, IUsageMeter meter, TimeProvider time, IRequestLogs logs)
+         {
+             (_context, _meter, _time, _logs) = (context, meter, time, logs);
+             Received = new CountingStream(context.Request.Body, count => Moved(count, 0));
+-            Sent = new CountingStream(context.Response.Body, count => Moved(0, count));
++            Sent = new CountingBody(response, count => Moved(0, count));
+             _tracked = meter.TrackActive(Report);
+         }
+ 
+         public CountingStream Received { get; }
+ 
+-        public CountingStream Sent { get; }
++        public CountingBody Sent { get; }
+ 
+         public void Complete(int status, TimeSpan elapsed, RequestLogOperations operations)
+         {
+@@ -114,7 +126,6 @@ public static class UsageRequestMetering
+         {
+             _tracked.Dispose();
+             Received.Dispose();
+-            Sent.Dispose();
+         }
+ 
+         // On the request's own I/O, where its features may be read.
+@@ -180,8 +191,114 @@ public static class UsageRequestMetering
+         }
+     }
+ 
++    // The server's response body, counted on whichever of its stream and writer the request uses. Neither counts the other's
++    // bytes: the server's stream writes to the server's own writer, not to this one.
++    private sealed class CountingBody(IHttpResponseBodyFeature inner, Action<long> counted) : IHttpResponseBodyFeature
++    {
++        private CountingStream? _stream;
++        private CountingPipeWriter? _writer;
++
++        public Stream Stream => _stream ??= new CountingStream(inner.Stream, counted);
++
++        public PipeWriter Writer => _writer ??= new CountingPipeWriter(inner.Writer, counted);
++
++        public void DisableBuffering() => inner.DisableBuffering();
++
++        public Task StartAsync(CancellationToken cancellationToken = default) => inner.StartAsync(cancellationToken);
++
++        // Through the counting stream, as the stream feature this replaces sent files.
++        public async Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default)
++        {
++            await StartAsync(cancellationToken).ConfigureAwait(false);
++            await SendFileFallback.SendFileAsync(Stream, path, offset, count, cancellationToken).ConfigureAwait(false);
++        }
++
++        public async Task CompleteAsync()
++        {
++            await inner.CompleteAsync().ConfigureAwait(false);
++            Committed();
++        }
++
++        // Counts what the writer committed without a flush, once the server is certain to send it.
++        public void Committed() => _writer?.Flushed();
++    }
++
++    // Counts bytes once a flush hands them to the server, as the stream adapter it replaces did; unflushed ones stay pending.
++    private sealed class CountingPipeWriter(PipeWriter inner, Action<long> counted) : PipeWriter
++    {
++        private long _pending;
++
++        public override bool CanGetUnflushedBytes => inner.CanGetUnflushedBytes;
++
++        public override long UnflushedBytes => inner.UnflushedBytes;
++
++        public override void Advance(int bytes)
++        {
++            inner.Advance(bytes);
++            _pending += bytes;
++        }
++
++        public override Memory<byte> GetMemory(int sizeHint = 0) => inner.GetMemory(sizeHint);
++
++        public override Span<byte> GetSpan(int sizeHint = 0) => inner.GetSpan(sizeHint);
++
++        public override void CancelPendingFlush() => inner.CancelPendingFlush();
++
++        public override async ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
++        {
++            var result = await inner.FlushAsync(cancellationToken).ConfigureAwait(false);
++            if (!result.IsCanceled)
++            {
++                Flushed();
++            }
++
++            return result;
++        }
++
++        // The server's own write and flush, without copying through this writer.
++        public override async ValueTask<FlushResult> WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default)
++        {
++            var result = await inner.WriteAsync(source, cancellationToken).ConfigureAwait(false);
++            _pending += source.Length;
++            if (!result.IsCanceled)
++            {
++                Flushed();
++            }
++
++            return result;
++        }
++
++        public override void Complete(Exception? exception = null)
++        {
++            inner.Complete(exception);
++            if (exception is null)
++            {
++                Flushed();
++            }
++        }
++
++        public override async ValueTask CompleteAsync(Exception? exception = null)
++        {
++            await inner.CompleteAsync(exception).ConfigureAwait(false);
++            if (exception is null)
++            {
++                Flushed();
++            }
++        }
++
++        public void Flushed()
++        {
++            if (_pending > 0)
++            {
++                var pending = _pending;
++                _pending = 0;
++                counted(pending);
++            }
++        }
++    }
++
+     // The wrapper owns no buffer and never closes the server's streams.
+-    private sealed class CountingStream(Stream inner, Action<int> counted) : Stream
++    private sealed class CountingStream(Stream inner, Action<long> counted) : Stream
+     {
+         public override bool CanRead => inner.CanRead;
+         public override bool CanSeek => inner.CanSeek;
