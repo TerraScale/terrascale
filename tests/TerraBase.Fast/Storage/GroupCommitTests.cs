@@ -678,6 +678,9 @@ public sealed class GroupCommitTests
         public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent) =>
             inner.RecordRequest(database, method, status, elapsed, received, sent);
 
+        public void RecordStatement(TenantContext database, string protocol, bool failed, TimeSpan elapsed) =>
+            inner.RecordStatement(database, protocol, failed, elapsed);
+
         public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null) =>
             inner.RecordClientBytes(database, received, sent, transferredAt);
 

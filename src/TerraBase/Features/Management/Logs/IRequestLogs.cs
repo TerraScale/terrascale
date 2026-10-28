@@ -4,7 +4,11 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Logs;
 
-/// <summary>A completed authorized request. Route is a template, never a URL or query text.</summary>
+/// <summary>
+/// A completed authorized request: an HTTP request, or a PostgreSQL wire exchange (route <c>postgres</c>, ending at its Sync).
+/// Route is a template, never a URL, query text or parameters. Statements and statement errors count the SQL statements it
+/// carried, so a Hrana pipeline whose statements failed inside its 200 shows them.
+/// </summary>
 public sealed record DatabaseRequestLog(
     [property: JsonRequired] string Id,
     [property: JsonRequired] DateTimeOffset Time,
@@ -15,7 +19,9 @@ public sealed record DatabaseRequestLog(
     [property: JsonRequired] double LatencyMs,
     [property: JsonRequired] long Operations,
     [property: JsonRequired] bool IsQuery,
-    string? RequestId = null);
+    string? RequestId = null,
+    long Statements = 0,
+    long StatementErrors = 0);
 
 /// <summary>The newest recorded requests, bounded to 100 entries and 24 hours. Recording is best effort.</summary>
 public sealed record DatabaseRequestLogs(string DatabaseId, IReadOnlyList<DatabaseRequestLog> Items, bool Truncated, bool RecordingLimited);
@@ -41,7 +47,8 @@ public readonly union RequestLogReadResult(RequestLogRead, Unavailable);
 public interface IRequestLogs
 {
     /// <summary>Records only route templates and counters after database authorization.</summary>
-    void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null);
+    void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null,
+        long statements = 0, long statementErrors = 0);
 
     /// <summary>Reads recent observations, with an optional HTTP status class (2 through 5).</summary>
     ValueTask<RequestLogReadResult> ReadAsync(TenantContext database, int? statusClass, CancellationToken cancellationToken);
@@ -70,6 +77,30 @@ internal sealed class RequestLogOperations
             if (_database.OrganizationId == owner.OrganizationId && _database.ProjectId == owner.ProjectId && _database.DatabaseId == owner.DatabaseId) { _count = count > long.MaxValue - _count ? long.MaxValue : _count + count; }
         }
     }
+
+    private long _statements;
+    private long _statementErrors;
+
+    internal void Statement(TenantContext owner, bool failed)
+    {
+        lock (_gate)
+        {
+            _database ??= owner;
+            if (Owns(owner))
+            {
+                _statements = _statements == long.MaxValue ? long.MaxValue : _statements + 1;
+                _statementErrors = !failed || _statementErrors == long.MaxValue ? _statementErrors : _statementErrors + 1;
+            }
+        }
+    }
+
+    internal (long Statements, long Errors) Statements(TenantContext owner)
+    {
+        lock (_gate) { return Owns(owner) ? (_statements, _statementErrors) : (0, 0); }
+    }
+
+    private bool Owns(TenantContext owner) =>
+        _database?.OrganizationId == owner.OrganizationId && _database.ProjectId == owner.ProjectId && _database.DatabaseId == owner.DatabaseId;
 
     internal long Count(TenantContext owner)
     {

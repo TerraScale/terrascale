@@ -101,10 +101,12 @@ public sealed class SqlMeteringTests
             Password = key,
             Database = DocumentApi.Database,
             SslMode = SslMode.Disable,
+            IncludeErrorDetail = true,
         }.ConnectionString);
         await using var connection = await source.OpenConnectionAsync();
         await ExecuteAsync(connection, Notes);
         var before = await RequestsAsync(api);
+        var statements = await StatementsAsync(api, "postgres");
 
         // Parse, Bind, Describe, Execute and Sync are one exchange: one request, its latency and its bytes both ways.
         await ExecuteAsync(connection, "INSERT INTO notes VALUES (1, $1)", Faker.Lorem.Sentence());
@@ -122,6 +124,39 @@ public sealed class SqlMeteringTests
         var failed = await RequestsAsync(api);
         await Assert.That(failed.Requests).IsEqualTo(inserted.Requests + 1);
         await Assert.That(failed.Errors).IsEqualTo(inserted.Errors + 1);
+        var error = await Assert.That(async () => await ExecuteAsync(connection, "SELECT * FROM nowhere")).Throws<PostgresException>();
+        await Assert.That(error!.Detail).StartsWith("request id ");
+
+        // Statements are measured apart from exchanges, with their own errors and latency; each exchange is logged.
+        await Assert.That(await StatementsAsync(api, "postgres")).IsEqualTo((statements.Statements + 3, statements.Errors + 2, statements.Timed + 3));
+        var logs = (await LogsAsync(api)).Where(row => row.GetProperty("route").GetString() == "postgres").ToArray();
+        await Assert.That(logs.Count(row => row.GetProperty("status").GetInt32() == 400 && row.GetProperty("statementErrors").GetInt64() == 1)).IsEqualTo(2);
+        await Assert.That(logs.Any(row => row.GetProperty("requestId").GetString() == error.Detail!["request id ".Length..])).IsTrue();
+        await Assert.That(logs.All(row => row.GetProperty("isQuery").GetBoolean())).IsTrue();
+    }
+
+    [Test]
+    [Arguments("pipeline")]
+    [Arguments("cursor")]
+    public async Task Hrana_statement_errors_inside_a_200_are_statement_errors_not_request_errors(string endpoint)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, Notes);
+        const string steps = """[{"stmt":{"sql":"SELECT * FROM nowhere"}},{"stmt":{"sql":"SELECT id FROM notes"}}]""";
+        var request = endpoint == "cursor" ? $$$"""{"batch":{"steps":{{{steps}}}}}"""
+            : $$$"""{"requests":[{"type":"batch","batch":{"steps":{{{steps}}}}},{"type":"close"}]}""";
+        var response = await HranaPipelineTests.PostAsync(api, request, version: "v3", endpoint: endpoint);
+        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK);
+        if (endpoint == "cursor")
+        {
+            var baton = JsonElement.Parse(response.Raw.Split('\n')[0]).GetProperty("baton").GetString();
+            await HranaPipelineTests.PostAsync(api, $$"""{"baton":"{{baton}}","requests":[{"type":"close"}]}""", version: "v3");
+        }
+
+        await Assert.That(await StatementsAsync(api, "hrana")).IsEqualTo((2L, 1L, 2L));
+        var log = (await LogsAsync(api)).First(row => row.GetProperty("route").GetString()!.EndsWith("/" + endpoint, StringComparison.Ordinal));
+        await Assert.That(log.GetProperty("status").GetInt32()).IsEqualTo(200);
+        await Assert.That((log.GetProperty("statements").GetInt64(), log.GetProperty("statementErrors").GetInt64())).IsEqualTo((2L, 1L));
     }
 
     [Test]
@@ -288,6 +323,30 @@ public sealed class SqlMeteringTests
         }
 
         return (requests.Sum(meter => meter.Count), requests.Sum(meter => meter.Value), requests.Sum(meter => meter.Latency?.Sum() ?? 0), Bytes("received"), Bytes("sent"));
+    }
+
+    // A protocol's statements, failed statements and latency samples.
+    private static async Task<(long Statements, long Errors, long Timed)> StatementsAsync(DocumentApi api, string protocol)
+    {
+        var counts = await api.Server.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(await api.TenantOfAsync(),
+            new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1), CancellationToken.None);
+        var meters = (counts is UsageCounts usage ? usage.Lifetime : throw new InvalidOperationException("usage unavailable")).Meters?.Values
+            .Where(meter => meter.Dimension.Meter == "statements" && meter.Dimension.Kind == protocol).ToArray() ?? [];
+        return (meters.Sum(meter => meter.Count), meters.Sum(meter => meter.Value), meters.Sum(meter => meter.Latency?.Sum() ?? 0));
+    }
+
+    private static async Task<JsonElement[]> LogsAsync(DocumentApi api)
+    {
+        using var owner = api.Management.As(api.Tenant.User);
+        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
+        using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, token =>
+        {
+            token.Claims["project_id"] = api.Tenant.ProjectId;
+            token.Claims["scope"] = "databases:read";
+        }));
+        using var response = await project.GetAsync(ManagementApi.Uri(api.DatabasePath() + "/logs"));
+        response.EnsureSuccessStatusCode();
+        return [.. (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray()];
     }
 
     private static async Task<(long Put, long Patch, long Delete)> OperationsAsync(DocumentApi api)

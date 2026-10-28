@@ -344,22 +344,30 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     {
         var values = readings.ToArray();
         var requests = values.Where(reading => reading.Dimension.Meter == "requests").ToArray();
-        // Bins sum saturated readings; Int128 holds any merge without wrapping.
-        var histogram = new Int128[UsageReading.LatencyBounds.Count];
-        foreach (var request in requests)
-        {
-            for (var i = 0; i < histogram.Length; i++)
-            {
-                histogram[i] += request.Latency?[i] ?? 0;
-            }
-        }
-
         var storage = values.Where(reading => reading.Dimension.Meter == "storage_bytes").ToArray();
         var samples = storage.Saturated(reading => reading.Count);
         return new(start, ByKind(requests), ByKind(values.Where(reading => reading.Dimension.Meter == "ops")), requests.Saturated(reading => reading.Value),
-            new(Percentile(histogram, 0.5), Percentile(histogram, 0.95), Percentile(histogram, 0.99)),
+            Latency(requests),
             samples == 0 ? null : (long)(storage.Aggregate(Int128.Zero, (total, reading) => total + reading.Value) / samples),
-            Traffic(values, "client_bytes"), Traffic(values, "replication_bytes"));
+            Traffic(values, "client_bytes"), Traffic(values, "replication_bytes"),
+            values.Where(reading => reading.Dimension.Meter == "statements").GroupBy(reading => reading.Dimension.Kind).ToDictionary(group => group.Key,
+                group => new StatementUsage(group.Saturated(reading => reading.Count), group.Saturated(reading => reading.Value), Latency(group)),
+                StringComparer.Ordinal));
+    }
+
+    private static LatencyPercentiles Latency(IEnumerable<UsageReading> readings)
+    {
+        // Bins sum saturated readings; Int128 holds any merge without wrapping.
+        var histogram = new Int128[UsageReading.LatencyBounds.Count];
+        foreach (var reading in readings)
+        {
+            for (var i = 0; i < histogram.Length; i++)
+            {
+                histogram[i] += reading.Latency?[i] ?? 0;
+            }
+        }
+
+        return new(Percentile(histogram, 0.5), Percentile(histogram, 0.95), Percentile(histogram, 0.99));
     }
 
     private static Dictionary<string, long> ByKind(IEnumerable<UsageReading> readings) =>

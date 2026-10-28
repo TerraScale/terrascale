@@ -15,9 +15,19 @@ public sealed record ReplicationBandwidth(string SourceRegion, string Destinatio
 /// </summary>
 public sealed record LatencyPercentiles(double? P50Ms, double? P95Ms, double? P99Ms);
 
-/// <summary>One UTC analytics bucket. Storage is the average of sampled on-disk bytes, or null before sampling.</summary>
+/// <summary>
+/// One protocol's SQL statements: each statement a session ran or refused (several per request or wire exchange), the failed
+/// ones among them and their execution latency. Independent of the carrying request's status.
+/// </summary>
+public sealed record StatementUsage(long Statements, long Errors, LatencyPercentiles Latency);
+
+/// <summary>
+/// One UTC analytics bucket. Requests and errors are HTTP and wire requests (a PostgreSQL exchange ends at its Sync);
+/// statements are keyed by protocol (postgres, hrana). Storage is the average of sampled on-disk bytes, or null before sampling.
+/// </summary>
 public sealed record AnalyticsPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests, IReadOnlyDictionary<string, long> Operations,
-    long Errors, LatencyPercentiles Latency, long? StorageBytes, BandwidthUsage ClientBandwidth, BandwidthUsage ReplicationBandwidth);
+    long Errors, LatencyPercentiles Latency, long? StorageBytes, BandwidthUsage ClientBandwidth, BandwidthUsage ReplicationBandwidth,
+    IReadOnlyDictionary<string, StatementUsage> Statements);
 
 /// <summary>A database and observing region's analytics, oldest bucket first.</summary>
 public sealed record DatabaseAnalytics(string DatabaseId, string DatabaseName, string Region, IReadOnlyList<AnalyticsPoint> Series);

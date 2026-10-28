@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Sql;
 
@@ -12,8 +13,9 @@ internal readonly union HranaCommand(SqlCommand, HranaError);
 /// <param name="stream">The request's stream.</param>
 /// <param name="memory">Admits stored statements.</param>
 /// <param name="time">The request deadline clock.</param>
+/// <param name="usage">Records each statement's outcome; Hrana answers SQL errors inside an HTTP 200.</param>
 /// <param name="statements">What <see cref="Statements"/> counted for the request; a sequence may run the rest of the allowance.</param>
-internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements, TimeProvider time)
+internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements, TimeProvider time, IUsageMeter usage)
 {
     /// <summary>
     /// SQL statements (execute requests and batch steps) per HTTP request, the core's per-request limit; the core bounds a
@@ -148,6 +150,14 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
     /// <summary>Runs one statement into a wire result, refusing results past the response bound.</summary>
     public async ValueTask<HranaStmtOutcome> ExecuteAsync(HranaStmt stmt, CancellationToken cancellationToken)
     {
+        var started = time.GetTimestamp();
+        var outcome = await RunStatementAsync(stmt, cancellationToken).ConfigureAwait(false);
+        usage.RecordStatement(stream.Database, "hrana", outcome is HranaError, time.GetElapsedTime(started));
+        return outcome;
+    }
+
+    private async ValueTask<HranaStmtOutcome> RunStatementAsync(HranaStmt stmt, CancellationToken cancellationToken)
+    {
         if (Expired)
         {
             return HranaError.From(SqlErrors.Interrupt);
@@ -189,8 +199,17 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
         return outcome;
     }
 
-    // The core splits the text and runs its statements in order, stopping at the first failure.
+    // A sequence is recorded as one statement: the core reports neither how many of its statements ran nor which one failed.
     private async ValueTask<HranaError?> SequenceAsync(HranaRequest request, CancellationToken cancellationToken)
+    {
+        var started = time.GetTimestamp();
+        var failure = await RunSequenceAsync(request, cancellationToken).ConfigureAwait(false);
+        usage.RecordStatement(stream.Database, "hrana", failure is not null, time.GetElapsedTime(started));
+        return failure;
+    }
+
+    // The core splits the text and runs its statements in order, stopping at the first failure.
+    private async ValueTask<HranaError?> RunSequenceAsync(HranaRequest request, CancellationToken cancellationToken)
     {
         if (Expired)
         {

@@ -11,6 +11,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -377,7 +378,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     return;
                 }
 
-                var exchange = session.Exchange ??= new Exchange(Time.GetTimestamp(), output.Written);
+                var exchange = session.Exchange ??= new Exchange(Time.GetTimestamp(), output.Written, EntityIds.New(Time).ToString());
+                // The exchange's operations and statements, as an HTTP request's (UsageRequestMetering).
+                RequestLogOperations.Current.Value = exchange.Operations;
                 exchange.Received += 5 + body.Length;
                 if (!services.GetRequiredService<TerraBase.Features.Health.IPeerTopology>().IsCurrent)
                 {
@@ -436,9 +439,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
 
     // An error inside a transaction aborts it, as in PostgreSQL: only ROLLBACK or COMMIT (which rolls back) run next.
+    // The detail carries the exchange's request ID, as X-Request-ID does for HTTP, to find it in the database's request logs.
     private static void Fail(Session session, PgWriter output, PgError error)
     {
-        output.Error(error.Code, error.Message, error.Fatal);
+        output.Error(error.Code, error.Message, error.Fatal, session.Exchange is { } exchange ? $"request id {exchange.RequestId}" : null);
         session.Failed = !session.Sql.IsAutocommit;
         session.Exchange?.Failed = true;
     }
@@ -452,7 +456,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
 
     // An exchange ends at its Sync (a simple query syncs itself): one request of the database a statement in it resolved,
-    // with the protocol message bytes each way. Exchanges of only local commands (SET, SHOW, type loads) record nothing.
+    // with the protocol message bytes each way, and one request log entry. Exchanges of only local commands (SET, SHOW,
+    // type loads) record nothing.
     private void Meter(Session session, PgWriter output)
     {
         if (session.Exchange is not { } exchange)
@@ -463,8 +468,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         session.Exchange = null;
         if (exchange.Database is { } database)
         {
-            services.GetRequiredService<IUsageMeter>().RecordRequest(database, "OTHER", exchange.Failed ? 400 : 200, Time.GetElapsedTime(exchange.Started),
-                exchange.Received, output.Written - exchange.Written);
+            var (status, elapsed) = (exchange.Failed ? 400 : 200, Time.GetElapsedTime(exchange.Started));
+            services.GetRequiredService<IUsageMeter>().RecordRequest(database, "OTHER", status, elapsed, exchange.Received, output.Written - exchange.Written);
+            var (statements, errors) = exchange.Operations.Statements(database);
+            services.GetRequiredService<IRequestLogs>().Record(database, "OTHER", "postgres", status, elapsed, exchange.Operations.Count(database),
+                exchange.RequestId, statements, errors);
         }
     }
 
@@ -683,7 +691,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         switch (statement.Kind)
         {
             case PgKind.Show or PgKind.Catalog:
-                var outcome = await RunAsync(session, statement, [], cancellationToken).ConfigureAwait(false);
+                var outcome = await RunAsync(session, statement, [], cancellationToken, Counting.Failures).ConfigureAwait(false);
                 return (outcome is PgResult[] { Length: > 0 } results ? results[0].Columns : null, true, outcome is PgError error ? error : null);
             case PgKind.Sql:
                 SqlDescription? shape = null;
@@ -699,7 +707,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     }
 
                     return Array.Empty<PgResult>();
-                }, cancellationToken).ConfigureAwait(false);
+                }, cancellationToken, Counting.Failures).ConfigureAwait(false);
                 return guarded is PgError failure || shape is null
                     ? (null, false, guarded is PgError refused ? refused : new PgError("XX000", "internal error"))
                     : (shape.Columns.Count == 0 ? null : [.. shape.Columns.Select(column => new PgColumn(column.Name, PostgresStatements.DescribedOid(column)))],
@@ -709,7 +717,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
-    private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken)
+    private async ValueTask<PgOutcome> RunAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken cancellationToken,
+        Counting counting = Counting.All)
     {
         if (session.Failed && statement.Kind is not (PgKind.Commit or PgKind.Rollback or PgKind.Empty))
         {
@@ -750,7 +759,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 SqlResult result => new[] { PostgresStatements.Result(statement, result) with { ReadCharge = result.ReadCharge } },
                 SqlError error => PostgresStatements.Error(error),
             },
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, counting).ConfigureAwait(false);
     }
 
     // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only
@@ -789,8 +798,24 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return outcome;
     }
 
-    // Every statement that reaches the database re-checks the key and runs under the HTTP pipeline's admission.
-    private async ValueTask<PgOutcome> GuardAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run, CancellationToken cancellationToken)
+    // Every statement that reaches the database re-checks the key and runs under the HTTP pipeline's admission. A statement
+    // the key reaches is recorded with its outcome, including an admission refusal.
+    private async ValueTask<PgOutcome> GuardAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run, CancellationToken cancellationToken,
+        Counting counting = Counting.None)
+    {
+        var started = Time.GetTimestamp();
+        TenantContext? reached = null;
+        var outcome = await AdmitAsync(session, run, authorized => reached = authorized, cancellationToken).ConfigureAwait(false);
+        if (reached is { } owner && (counting == Counting.All || counting == Counting.Failures && outcome is PgError))
+        {
+            services.GetRequiredService<IUsageMeter>().RecordStatement(owner, "postgres", outcome is PgError, Time.GetElapsedTime(started));
+        }
+
+        return outcome;
+    }
+
+    private async ValueTask<PgOutcome> AdmitAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run,
+        Action<TenantContext> authorized, CancellationToken cancellationToken)
     {
         using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         session.Track(running);
@@ -804,6 +829,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             }
 
             session.Exchange?.Database = database;
+            authorized(database);
 
             // The HTTP pipeline's admission (QosExtensions): one organization lease, then the tenant's memory and budgets.
             var tenant = new TenantContext(database.OrganizationId, database.Plan);
@@ -950,8 +976,21 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null, DateTimeOffset? Until = null);
 
     // The messages since the last Sync: when the first arrived, the output written before it, and what they received and resolved.
-    private sealed class Exchange(long started, long written)
+    // Which outcomes of a guarded run are the client's statements: describing one runs it, and only a failure there is its
+    // outcome (it then never executes).
+    private enum Counting
     {
+        None,
+        Failures,
+        All,
+    }
+
+    private sealed class Exchange(long started, long written, string requestId)
+    {
+        public string RequestId => requestId;
+
+        public RequestLogOperations Operations { get; } = new();
+
         public long Started => started;
 
         public long Written => written;
@@ -1150,16 +1189,17 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             End();
         }
 
-        public void Error(string code, string message, bool fatal = false) => Fields('E', fatal ? "FATAL" : "ERROR", code, message);
+        public void Error(string code, string message, bool fatal = false, string? detail = null) => Fields('E', fatal ? "FATAL" : "ERROR", code, message, detail);
 
-        public void Notice(PgError notice) => Fields('N', "WARNING", notice.Code, notice.Message);
+        public void Notice(PgError notice) => Fields('N', "WARNING", notice.Code, notice.Message, null);
 
         public ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken) => pipe.FlushAsync(cancellationToken);
 
-        private void Fields(char type, string severity, string code, string message)
+        private void Fields(char type, string severity, string code, string message, string? detail)
         {
             Begin(type);
-            foreach (var (field, value) in new[] { ('S', severity), ('V', severity), ('C', code), ('M', message) })
+            foreach (var (field, value) in detail is null ? new[] { ('S', severity), ('V', severity), ('C', code), ('M', message) }
+                : [('S', severity), ('V', severity), ('C', code), ('M', message), ('D', detail)])
             {
                 _body.Write([(byte)field]);
                 CString(value);

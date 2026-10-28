@@ -34,11 +34,12 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private int _count;
     private bool _disposed;
 
-    public void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null)
+    public void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null,
+        long statements = 0, long statementErrors = 0)
     {
         if (!EntityIds.IsValid(database.OrganizationId) || !EntityIds.IsValid(database.ProjectId) || !EntityIds.IsValid(database.DatabaseId)
             || route.Length is 0 or > 512 || route.Contains('?', StringComparison.Ordinal) || route.EndsWith("/logs", StringComparison.Ordinal)
-            || status is < 100 or > 599 || elapsed < TimeSpan.Zero || operations < 0) { return; }
+            || status is < 100 or > 599 || elapsed < TimeSpan.Zero || operations < 0 || statements < 0 || statementErrors is < 0 || statementErrors > statements) { return; }
         method = method is "GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD" or "OPTIONS" ? method : "OTHER";
         lock (_gate)
         {
@@ -61,8 +62,8 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             entries ??= [];
             _pending[owner] = entries;
             entries.Add(new(new(EntityIds.New(time).ToString(), time.GetUtcNow(), options.Region, method, route, status,
-                elapsed.TotalMilliseconds, operations, route.EndsWith("/query", StringComparison.Ordinal) || route.EndsWith("/sql", StringComparison.Ordinal),
-                TerraScale.Endpoints.RequestIdentity.IsValid(requestId) ? requestId : null), reserved));
+                elapsed.TotalMilliseconds, operations, route.EndsWith("/query", StringComparison.Ordinal) || route.EndsWith("/sql", StringComparison.Ordinal) || statements > 0,
+                TerraScale.Endpoints.RequestIdentity.IsValid(requestId) ? requestId : null, statements, statementErrors), reserved));
             _count++;
         }
     }
