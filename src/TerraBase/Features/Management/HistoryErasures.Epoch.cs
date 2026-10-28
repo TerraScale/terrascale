@@ -14,6 +14,11 @@ internal sealed partial class HistoryErasures
     // stalled erasures pulled back to back and held it about 60% of the time (gru, 2026-10-28), so creates timed out.
     private readonly Dictionary<string, (DateTimeOffset Next, TimeSpan Delay)> _peerPulls = [with(StringComparer.Ordinal)];
 
+    // The longest a recovery import may hold a file's writer, by its staged estimate. A larger one is skipped before it takes
+    // the writer and backs off like a failed pull: the erasure stays pending, which is safe, while creates, escrow grants
+    // and replication pushes keep their writer (fra, 2026-10-28: a 265 s SYSTEM import timed out a fresh-project create).
+    internal static readonly TimeSpan RecoveryHold = TimeSpan.FromSeconds(5);
+
     private static ulong Cut(IEnumerable<OriginCut> cuts, ulong replica) =>
         cuts.Where(cut => cut.Replica == replica).Select(cut => cut.Stamp).DefaultIfEmpty().Max();
 
@@ -81,9 +86,13 @@ internal sealed partial class HistoryErasures
         var completed = false;
         try
         {
+            // Only the file the witness is ahead in: a SYSTEM import for an auth-only gap would hold SYSTEM's writer for nothing.
+            var witness = receipts.Single(receipt => receipt.MachineId == peer.Name);
             var snapshots = services.GetRequiredService<ReplicaSnapshots>();
-            if (!await snapshots.PullAsync(AuthDatabase, peer, origins, cancellationToken).ConfigureAwait(false)
-                || !await snapshots.PullAsync(ChangeGroups.System, peer, origins, cancellationToken).ConfigureAwait(false))
+            if (AuthAhead(witness, origins, local)
+                && !await snapshots.PullAsync(AuthDatabase, peer, origins, cancellationToken, RecoveryHold).ConfigureAwait(false)
+                || SystemAhead(witness, origins, local)
+                && !await snapshots.PullAsync(ChangeGroups.System, peer, origins, cancellationToken, RecoveryHold).ConfigureAwait(false))
             {
                 return;
             }
@@ -154,8 +163,13 @@ internal sealed partial class HistoryErasures
     // move this erasure on, and pulling them would only hold SYSTEM's writer for the import (fra/sjc, 2026-10-28: 65-146 s
     // per no-progress pull). A newer report from the witness changes its receipt and is looked at on the next pass.
     private static bool WitnessAhead(HistoryErasureReceipt witness, IReadOnlySet<ulong> origins, LocalCuts local) =>
-        origins.Any(origin => Cut(witness.AuthApplied, origin) > local.Auth.GetValueOrDefault(new(origin)).Value
-            || Cut(witness.SystemApplied, origin) > local.System.GetValueOrDefault(new(origin)).Value);
+        AuthAhead(witness, origins, local) || SystemAhead(witness, origins, local);
+
+    private static bool AuthAhead(HistoryErasureReceipt witness, IReadOnlySet<ulong> origins, LocalCuts local) =>
+        origins.Any(origin => Cut(witness.AuthApplied, origin) > local.Auth.GetValueOrDefault(new(origin)).Value);
+
+    private static bool SystemAhead(HistoryErasureReceipt witness, IReadOnlySet<ulong> origins, LocalCuts local) =>
+        origins.Any(origin => Cut(witness.SystemApplied, origin) > local.System.GetValueOrDefault(new(origin)).Value);
 
     private async Task<LocalCuts?> LocalCutsAsync(
         CancellationToken cancellationToken)

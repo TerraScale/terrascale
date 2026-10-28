@@ -16,6 +16,10 @@ public interface IReplicaSnapshotSource
 /// <summary>Atomically imports a pinned baseline and received-prefix proof, preserving survivor and deletion evidence.</summary>
 internal interface IReplicaSnapshotImporter
 {
+    /// <summary>
+    /// False without taking the writer when the staged replay's estimated work exceeds <paramref name="holdBudget"/>: a
+    /// caller that may wait (background recovery) must not hold a serving database's writer for minutes.
+    /// </summary>
     Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
-        IReadOnlySet<ulong> origins, CancellationToken cancellationToken);
+        IReadOnlySet<ulong> origins, CancellationToken cancellationToken, TimeSpan? holdBudget = null);
 }

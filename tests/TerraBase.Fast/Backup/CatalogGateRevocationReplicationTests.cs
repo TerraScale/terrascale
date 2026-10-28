@@ -120,13 +120,13 @@ public sealed class CatalogGateRevocationReplicationTests
         private sealed class Importer(StallingImporter owner, IReplicaSnapshotImporter inner) : IReplicaSnapshotImporter
         {
             public async Task<bool> ImportAsync(TenantContext database, Ulid incarnation, IAsyncEnumerable<ReplicaSnapshotPage> pages,
-                IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+                IReadOnlySet<ulong> origins, CancellationToken cancellationToken, TimeSpan? holdBudget = null)
             {
                 owner._started.Enqueue(incarnation);
                 var outcome = typeof(bool);
                 try
                 {
-                    return await inner.ImportAsync(database, incarnation, StallAsync(pages, cancellationToken), origins, cancellationToken);
+                    return await inner.ImportAsync(database, incarnation, StallAsync(pages, cancellationToken), origins, cancellationToken, holdBudget);
                 }
                 catch (Exception error)
                 {
