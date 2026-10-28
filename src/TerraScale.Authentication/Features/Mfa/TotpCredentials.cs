@@ -135,14 +135,9 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
         try
         {
-            // One storage round trip: activating a factor also changes the user's epoch, so whichever order the two reads
-            // land in, a token issued before the activation is refused.
-            var factorRead = this.ReadAsync(instanceId, userId, cancellationToken);
-            var userRead = users.GetVersionedAsync(instanceId, userId, cancellationToken);
-            await Task.WhenAll(factorRead, userRead).ConfigureAwait(false);
-            var enabled = (await factorRead.ConfigureAwait(false))?.Record.Enabled == true;
+            var enabled = (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled == true;
             return (!enabled || multiFactor)
-                && await userRead.ConfigureAwait(false) is { User: var user }
+                && await users.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { User: var user }
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
                     ? user with { MultiFactor = enabled }
                     : null;
