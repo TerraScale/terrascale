@@ -1,0 +1,6 @@
+{"observed_at":"2026-10-28T10:18:58.730222+00:00","pin":"fra","requested_protocol":"1.1","protocol":"1.1","status":"200","curl_exit":0,"region_headers":["fra"],"regions":["fra","gru","sjc"],"accepted":true}
+{"observed_at":"2026-10-28T10:18:59.015534+00:00","pin":"fra","requested_protocol":"2","protocol":"2","status":"200","curl_exit":0,"region_headers":["fra"],"regions":["fra","gru","sjc"],"accepted":true}
+{"observed_at":"2026-10-28T10:18:59.103626+00:00","pin":"gru","requested_protocol":"1.1","protocol":"1.1","status":"200","curl_exit":0,"region_headers":["gru"],"regions":["fra","gru","sjc"],"accepted":true}
+{"observed_at":"2026-10-28T10:18:59.202176+00:00","pin":"gru","requested_protocol":"2","protocol":"2","status":"200","curl_exit":0,"region_headers":["gru"],"regions":["fra","gru","sjc"],"accepted":true}
+{"observed_at":"2026-10-28T10:18:59.472724+00:00","pin":"sjc","requested_protocol":"1.1","protocol":"1.1","status":"200","curl_exit":0,"region_headers":["sjc"],"regions":["fra","gru","sjc"],"accepted":true}
+{"observed_at":"2026-10-28T10:18:59.773403+00:00","pin":"sjc","requested_protocol":"2","protocol":"2","status":"200","curl_exit":0,"region_headers":["sjc"],"regions":["fra","gru","sjc"],"accepted":true}
