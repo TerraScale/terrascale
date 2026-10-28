@@ -440,8 +440,6 @@ internal static class SqlRead
         }
     }
 
-    }
-
     /// <summary>
     /// Declared types of the result columns that name a table column directly (<c>*</c>, <c>t.*</c>, <c>c</c>, <c>t.c</c>,
     /// aliased or not), plus BOOLEAN for EXISTS; null for other columns or non-SELECT shapes.
