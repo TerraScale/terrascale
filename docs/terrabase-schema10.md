@@ -1,6 +1,6 @@
 # Prepared schema10 contract (TS-754 / TS-755)
 
-This SDK source prepares the schema operations against TerraBase PR [#118](https://git.terrascale.tech/TerraScale/terrabase/pulls/118),
+This SDK source prepares the schema operations against TerraBase PR #118 (retired Forgejo host; no GitHub copy),
 exact revision `1c2a7e082829bcebf816691537001f6aba168d9a`, which includes the TS-754 ULID prerequisite.
 The owning contract has not landed. This is a prepared source API, not a qualified schema10 release.
 Against TerraBase main (2026-10-11) these routes exist and need a ts-auth project token; an API key gets 401.
