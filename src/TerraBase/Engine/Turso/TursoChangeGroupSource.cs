@@ -417,7 +417,13 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         }
     }
 
-    public async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken)
+    public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
+        DigestAsync(database, expected, rows: true, cancellationToken);
+
+    public ValueTask<ReplicaDigest?> MaintainedDigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
+        DigestAsync(database, expected, rows: false, cancellationToken);
+
+    private async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, bool rows, CancellationToken cancellationToken)
     {
         // Discovery pins the copy in place first; the transaction then checks it is still that copy.
         var incarnation = expected
@@ -435,8 +441,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             // One snapshot: the head is the change id the digests cover, and the feed head the seq they cover. The digests
             // come from the rows, so a row deleted, added or rehashed outside the engine (a damaged or tampered file) differs
             // from the peers' and anti-entropy repairs it; the maintained _tb_merkle only shows whether that happened.
-            var buckets = await transaction.ReadRowDigestsAsync(cancellationToken).ConfigureAwait(false);
             var maintained = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+            var buckets = rows ? await transaction.ReadRowDigestsAsync(cancellationToken).ConfigureAwait(false) : maintained;
             stale = !buckets.AsSpan().SequenceEqual(maintained);
             var head = await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
             var feed = opened.IsSystem ? 0 : await transaction.ReadShapeFrontierAsync(remote: false, cancellationToken).ConfigureAwait(false);

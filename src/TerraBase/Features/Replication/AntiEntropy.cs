@@ -178,8 +178,10 @@ internal sealed class AntiEntropy : BackgroundService
         return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon, incarnation).ConfigureAwait(false);
     }
 
+    // A catalog gate's pull at start: from the maintained digests on both machines, so a restart does not scan the whole catalog
+    // twice before it serves (46-70 s to open on 2026-10-28, every pull repairing nothing). Rounds keep comparing the rows.
     internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
-        CompareAsync(database, peer, force: true, cancellationToken);
+        CompareAsync(database, peer, force: true, cancellationToken, maintained: true);
 
     /// <summary>
     /// The machines whose system catalog a comparison proved held here less than <paramref name="window"/> ago, counting
@@ -233,11 +235,13 @@ internal sealed class AntiEntropy : BackgroundService
     // A refill names the peer's incarnation it was asked for; a round discovers it from the digests. Every later read of
     // either copy is pinned to the incarnation its digests came from.
     private async Task<int?> CompareAsync(
-        TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null, Ulid? incarnation = null)
+        TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null, Ulid? incarnation = null,
+        bool maintained = false)
     {
         // Taken before either digest: whatever the peer held when this began is held here once the comparison completes.
         var began = _time.GetTimestamp();
-        if (await _states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
+        if (await (maintained ? _states.MaintainedDigestAsync(database, expected: null, cancellationToken) : _states.DigestAsync(database, expected: null, cancellationToken))
+            .ConfigureAwait(false) is not { } local)
         {
             return null;
         }
@@ -246,7 +250,7 @@ internal sealed class AntiEntropy : BackgroundService
         using var channel = PeerChannel.Create(new Uri(peer.PeerAddress), _credential);
         var client = new V1.Replication.ReplicationClient(channel);
         // gRPC evaluates absolute deadlines against the real clock, independently of scheduling and HLC clocks.
-        var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation) },
+        var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation), Maintained = maintained },
             deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
         {

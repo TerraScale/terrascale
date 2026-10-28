@@ -190,6 +190,9 @@ message Ack {
 
 message DigestRequest {
   Database database = 1;
+  // The digests the engine maintains instead of ones recomputed from every state row: a catalog gate's pull at start, which
+  // must not scan the whole catalog on both machines. A machine that predates the field answers from the rows.
+  bool maintained = 2;
 }
 
 // Held: the machine holds the database, as the requested incarnation when the request named one. Buckets: a TBLZ4E01

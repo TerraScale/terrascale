@@ -519,6 +519,7 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
         // leaves an I/O thread to client reads and replication.
         using var bulk = database == ChangeGroups.System ? null : StorageWork.Bulk();
         var digest = database == ChangeGroups.System && !_catalogGate.Value.Trusted ? null
+            : request.Maintained ? await _states.MaintainedDigestAsync(database, expected, context.CancellationToken).ConfigureAwait(false)
             : await _states.DigestAsync(database, expected, context.CancellationToken).ConfigureAwait(false);
         return digest is null
             ? new DigestReply { Held = false, CollectedBefore = 0 }

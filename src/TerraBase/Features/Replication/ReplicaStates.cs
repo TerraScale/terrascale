@@ -34,6 +34,14 @@ public interface IReplicaStates
     ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken);
 
     /// <summary>
+    /// As <see cref="DigestAsync"/>, from the digests the engine maintains instead of a scan of every state row: a restored
+    /// or behind copy differs from the peers' all the same, and only a row changed outside the engine needs the scan (the
+    /// next anti-entropy round finds it). What a catalog gate's pull at start compares.
+    /// </summary>
+    ValueTask<ReplicaDigest?> MaintainedDigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
+        DigestAsync(database, expected, cancellationToken);
+
+    /// <summary>
     /// A machine of another placed region answered digests equal to <paramref name="digest"/>: it holds every value of that
     /// snapshot, so the shape frontier (FR-25) rises to its feed head when the copy in place is still that incarnation.
     /// True when the frontier moved.
