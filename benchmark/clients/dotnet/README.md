@@ -8,8 +8,8 @@ exits 0. Existing results remain intact.
 
 ## Build and check
 
-Requires Linux, Bash, Git, GNU coreutils (`timeout`), util-linux (`flock`), the .NET 10.0.401 SDK (or newer
-10.0.4xx patch) and read access to the
+Requires Linux, Bash, Git, GNU coreutils (`timeout`), util-linux (`flock`), the .NET SDK pinned by
+[global.json](global.json) (11.0.100-rc.1.26425.128) and read access to the
 official private SDK Git repository. No SDK source is vendored. The production
 project references a separate checkout of the official `ts-dotnet` main build,
 pinned by [sdk.rev](sdk.rev). The CLI reports the referenced SDK assembly
@@ -68,7 +68,12 @@ validator and regional HTTPS resolver are exercised by tests. No UUID conversion
 SDK internals, raw HTTP or credential-swapping transport is used. SDK preparation
 uses Git only for dependency retrieval, not for database requests.
 
-## Upstream prerequisites
+## Historical upstream prerequisites
+
+The table below records the older SDK audit, not the current pin. The benchmark
+now pins v0.0.18; see [the SDK pin notes](SDK-PIN.md) for its verified source and
+remaining benchmark implementation gaps. The workload preflight still fails
+closed because its lifecycle and measurement contract are not implemented.
 
 Audited official `ts-dotnet` main at
 [`887d9de694bb3d9106d7d8e70029f9f7f554ff85`](https://git.terrascale.tech/TerraScale/ts-dotnet/src/commit/887d9de694bb3d9106d7d8e70029f9f7f554ff85).

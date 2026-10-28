@@ -2,7 +2,7 @@
 set -euo pipefail
 client_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # Bound opening FIFOs and stalled reads, which cannot be cancelled before open.
-if timeout --kill-after=1s 5s dotnet "$client_root/src/bin/Release/net10.0/bench-client.dll" "$@"; then
+if timeout --kill-after=1s 5s dotnet "$client_root/src/bin/Release/net11.0/bench-client.dll" "$@"; then
   exit 0
 else
   client_exit=$?

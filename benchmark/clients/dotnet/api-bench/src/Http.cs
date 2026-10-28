@@ -90,7 +90,7 @@ internal static class Http
     internal static Uri DocumentsUri(Uri endpoint, string project, string database, string collection) =>
         new(endpoint, $"{Database(project, database)}/collections/{Uri.EscapeDataString(collection)}/documents");
 
-    /// <summary>Point read by key. The pinned SDK still uses /documents/{id}; the by-key fix is on ts-dotnet branch cos/ts-832-dotnet-by-key, so raw uses the live route.</summary>
+    /// <summary>Point read by key, the same <c>/documents/by-key</c> route the SDK's <c>GetDocumentAsync</c> uses.</summary>
     internal static Uri ReadUri(Uri endpoint, string project, string database, string collection, string id) =>
         new(endpoint, $"{Database(project, database)}/collections/{Uri.EscapeDataString(collection)}/documents/by-key?id={Uri.EscapeDataString(id)}");
 
