@@ -16,6 +16,7 @@ internal sealed partial class S3ObjectStore
     // Tigris answers 408 under load (gru, 2026-10-27): each purge request retries transient statuses, jittered and bounded.
     private const int PurgeAttempts = 4;
     private static readonly TimeSpan PurgeBackoff = TimeSpan.FromMilliseconds(250);
+    private const int PurgeRequestsInFlight = 8;
 
     // Called only after durable deletion authority has stopped every writer to this database prefix.
     // A fresh empty versions AND uploads inventory is the proof; DELETE acknowledgements alone are insufficient.
@@ -71,56 +72,18 @@ internal sealed partial class S3ObjectStore
             throw new InvalidDataException("backup purge continuation is invalid");
         }
 
-        var refused = false;
-        foreach (var item in objects)
+        var refused = await MutateAsync(objects, (item, token) => RetriedAsync(() => _s3.DeleteObjectAsync(new DeleteObjectRequest
         {
-            try
-            {
-                await RetriedAsync(() => _s3.DeleteObjectAsync(new DeleteObjectRequest
-                {
-                    BucketName = _bucket,
-                    Key = item.Key,
-                    VersionId = item.VersionId,
-                }, cancellationToken), cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                refused = true;
-                break; // Persist the listed page's continuation even when its mutation budget expires.
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is AmazonS3Exception or HttpRequestException)
-            {
-                refused = true;
-            }
-        }
-
-        foreach (var upload in pending)
+            BucketName = _bucket,
+            Key = item.Key,
+            VersionId = item.VersionId,
+        }, token), token), cancellationToken).ConfigureAwait(false);
+        refused |= await MutateAsync(pending, (upload, token) => RetriedAsync(() => _s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                refused = true;
-                break;
-            }
-
-            try
-            {
-                await RetriedAsync(() => _s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
-                {
-                    BucketName = _bucket,
-                    Key = upload.Key,
-                    UploadId = upload.UploadId,
-                }, cancellationToken), cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                refused = true;
-                break; // Persist the listed page's continuation even when its mutation budget expires.
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is AmazonS3Exception or HttpRequestException)
-            {
-                refused = true;
-            }
-        }
+            BucketName = _bucket,
+            Key = upload.Key,
+            UploadId = upload.UploadId,
+        }, token), token), cancellationToken).ConfigureAwait(false);
 
         var versionsDirty = progress.VersionsDirty || objects.Count > 0;
         var uploadsDirty = progress.UploadsDirty || pending.Count > 0;
@@ -139,6 +102,34 @@ internal sealed partial class S3ObjectStore
         // Detect incompatible version-list implementations that omit current objects instead of certifying absence.
         await using var listed = ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken);
         return new(next, !await listed.MoveNextAsync().ConfigureAwait(false));
+    }
+
+    // Whether any listed entry was refused or left untried. One request at a time, a remote bucket's round trips held each
+    // erasure to about one page every few minutes (gru, sjc and fra, 2026-10-28); a few in flight keep the page in its budget.
+    private static async Task<bool> MutateAsync<T>(IReadOnlyList<T> items, Func<T, CancellationToken, Task> mutate, CancellationToken cancellationToken)
+    {
+        var refused = 0;
+        try
+        {
+            await Parallel.ForEachAsync(items, new ParallelOptions { MaxDegreeOfParallelism = PurgeRequestsInFlight, CancellationToken = cancellationToken },
+                async (item, token) =>
+                {
+                    try
+                    {
+                        await mutate(item, token).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (!token.IsCancellationRequested && error is AmazonS3Exception or HttpRequestException)
+                    {
+                        Volatile.Write(ref refused, 1);
+                    }
+                }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return true; // Persist the listed page's continuation even when its mutation budget expires.
+        }
+
+        return Volatile.Read(ref refused) == 1;
     }
 
     private async Task<T> RetriedAsync<T>(Func<Task<T>> request, CancellationToken cancellationToken)
