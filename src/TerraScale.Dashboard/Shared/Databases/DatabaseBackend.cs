@@ -32,7 +32,11 @@ public sealed record DatabaseRegion(string Code, string Id, string Name, string 
     public static DatabaseRegion? Resolve(IReadOnlyList<DatabaseRegion> catalog, string? code) =>
         catalog.FirstOrDefault(region => region.Code == code || region.Id == code) ?? FromId(code?.ToLowerInvariant());
 }
-public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false);
+public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false)
+{
+    public string? PreviousName { get; init; }
+    public string? ConflictOf { get; init; }
+}
 public sealed record CollectionStats(string Name, long Documents, long Bytes);
 public sealed record DatabaseSqlRow(string Id, JsonElement Value);
 public sealed record DatabaseSqlCatalog(IReadOnlyList<DatabaseSqlTable> Tables, bool Truncated);
@@ -65,6 +69,7 @@ public interface IDatabaseBackend
     Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
     Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
+    Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
     Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
@@ -192,6 +197,12 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             catch (TerraBaseUnavailableException error) when (error.ErrorCode == "catalog_anchor_unavailable" && attempt < 3)
             { await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken); }
         }
+    }
+
+    public async Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+    {
+        var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
+        return Map(await RunAsync(() => project.RenameDatabaseAsync(databaseId, name, cancellationToken)));
     }
 
     public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
@@ -339,7 +350,8 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     }
 
     private static ManagedDatabase Map(TerraBaseManagedDatabase item) => new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
-        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions);
+        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions)
+    { PreviousName = item.PreviousName, ConflictOf = item.ConflictOf };
     private static DatabaseIndex Map(TerraBaseIndex item) => new(item.Name, item.Collection, item.Fields, item.State);
     private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
     {
