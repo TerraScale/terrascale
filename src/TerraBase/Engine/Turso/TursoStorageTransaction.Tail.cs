@@ -64,8 +64,9 @@ internal sealed partial class TursoStorageTransaction
     /// <summary>
     /// Deletes what <see cref="RetentionCut"/> allows, oldest first, at most <see cref="RetentionRows"/> rows and
     /// <see cref="RetentionBytes"/> of after-images (at least one row). Reads only rows below the cut. A delete may stop inside
-    /// a transaction: no reader starts below the cut, whose commit row stays, and a peer whose ack the deletion passes
-    /// refills as for any cut (<see cref="RetainsAsync"/>). Returns whether rows below the cut remain.
+    /// a transaction: a lagging peer's read from below it skips that transaction's rest (<see cref="DecodeChangeGroups"/>),
+    /// and a peer whose ack the deletion passes refills as for any cut (<see cref="RetainsAsync"/>). Returns whether rows
+    /// below the cut remain.
     /// </summary>
     internal static bool Trim(SqliteConnection connection, SqliteTransaction? transaction, long below, long now, long gone)
     {
@@ -187,6 +188,10 @@ internal sealed partial class TursoStorageTransaction
             return (groups, quiet, null);
         }
 
+        // Past a cut (retention deleted rows after `after`), the first rows may be the rest of a transaction that a bounded
+        // delete stopped inside (Trim): its state rows without the document rows before them. They are skipped through its
+        // commit row, not decoded as damage; the caller sees the cut (Retains) and the peer refills.
+        var cut = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long oldest && oldest > after + 1;
         var bytes = 0;
         var scanned = 0L;
         long? first = null;
@@ -217,6 +222,12 @@ internal sealed partial class TursoStorageTransaction
                     if ((type == 2 && (!reader.IsDBNull(2) || !reader.IsDBNull(3))) || (type == -1 && !reader.IsDBNull(3)))
                     {
                         throw new InvalidDataException($"a captured change of type {type} has the shape of another type");
+                    }
+
+                    if (cut)
+                    {
+                        cut = type != 2;
+                        continue;
                     }
 
                     if (type == 2)
