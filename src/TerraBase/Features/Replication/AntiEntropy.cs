@@ -28,6 +28,10 @@ namespace TerraBase.Features.Replication;
 internal sealed class AntiEntropy : BackgroundService
 {
     internal static readonly TimeSpan Round = TimeSpan.FromSeconds(60);
+    // A round's digests scan every state row of each database it compares (25-row-derived-repair-digests.md): back to back
+    // they took the I/O threads for seconds once a minute, and every write behind them waited. A background round spreads its
+    // databases over half the round, at most this far apart.
+    private static readonly TimeSpan MaxPace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan DigestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromMinutes(10);
     private const int DigestBytes = 4096 * 16;
@@ -78,7 +82,7 @@ internal sealed class AntiEntropy : BackgroundService
         {
             try
             {
-                await RunRoundAsync(stoppingToken, system).ConfigureAwait(false);
+                await RunRoundAsync(stoppingToken, system, paced: true).ConfigureAwait(false);
             }
             catch (RpcException error) when (stoppingToken.IsCancellationRequested && error.StatusCode == StatusCode.Cancelled)
             {
@@ -98,14 +102,25 @@ internal sealed class AntiEntropy : BackgroundService
     /// One round over every database (only the system catalog, or only the others, when <paramref name="system"/> says so)
     /// and peer; a peer that fails is tried again next round.
     /// </summary>
-    internal async Task RunRoundAsync(CancellationToken cancellationToken, bool? system = null)
+    internal async Task RunRoundAsync(CancellationToken cancellationToken, bool? system = null, bool paced = false)
     {
         var peers = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false));
+        var databases = new List<TenantContext>();
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (system is { } only && only != (database == ChangeGroups.System))
+            if (system is not { } only || only == (database == ChangeGroups.System))
             {
-                continue;
+                databases.Add(database);
+            }
+        }
+
+        var pace = TimeSpan.FromTicks(Math.Min(Round.Ticks / 2 / Math.Max(databases.Count, 1), MaxPace.Ticks));
+        for (var index = 0; index < databases.Count; index++)
+        {
+            var database = databases[index];
+            if (paced && index > 0)
+            {
+                await Task.Delay(pace, _time, cancellationToken).ConfigureAwait(false);
             }
 
             // The system database is placed in every region.
