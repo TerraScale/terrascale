@@ -263,6 +263,19 @@ paths:
                   manage_url: { type: string, format: uri }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/sign-out:
+    post:
+      operationId: sign_out_everywhere
+      tags: [Members]
+      summary: Sign out everywhere
+      description: |
+        Advances the caller's authentication epoch: every hosted browser session, OAuth refresh token and sign-in access
+        token of the account, including the one making this call, is refused from then on, and pending sign-in codes and
+        challenges die. API keys are separate credentials and stay valid. Repeating the call is harmless.
+      responses:
+        '204': { description: 'Signed out everywhere.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/account:
     delete:
       operationId: delete_account
