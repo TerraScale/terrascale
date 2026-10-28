@@ -115,7 +115,7 @@ Confirmed security defects MUST be surfaced immediately. Add a minimal regressio
 
 ## Pull requests
 
-- Attach before/after screenshots for visual changes as PR attachments; never commit them solely for PR documentation. Use synthetic data and redact sensitive information.
+- The PR previews rule in the root `AGENTS.md` applies to every change to the ts-auth hosted pages (sign-in, sign-up, consent and account pages).
 
 ## Official references
 

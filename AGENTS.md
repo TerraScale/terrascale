@@ -90,11 +90,20 @@ Each product owns one area. Never duplicate another product's data; call its API
 ### Pull requests
 
 - Target **`main`**. Include a change summary, validation performed, and the relevant compatibility, storage, migration or security implications.
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
 - Never claim a check passed unless it actually ran successfully. Distinguish required checks from non-blocking Slow results.
 - CI is the gate: no local test/check run is required before pushing or opening a PR. Required checks (formatting, build, analyzers, required security checks, OpenAPI validation where the area has it, and Fast) must pass in CI before merge. Do not wait for or require Slow.
 - Update documentation and compatibility notes for API, storage or authentication behavior changes.
-- Request reviews from **`mariogk`**, excluding the PR author. Enable auto-merge once required checks pass. Never bypass checks or required reviews.
-- Before finishing, verify the target branch, title, reviewers, attachments and CI status. Send the PR URL and name any unresolved blockers or linked failure reports.
+- Enable auto-merge once required checks pass. Never bypass checks.
+- Before finishing, verify the target branch, title, attachments and CI status. Send the PR URL and name any unresolved blockers or linked failure reports.
+
+### PR previews (required for every visible change)
+
+- Every PR that changes anything a user sees (pages, components, styles, layout, copy, emails, generated pages, maps, charts) MUST embed previews in the PR body. A visible change without previews is not ready to merge.
+- Before and after screenshots of each changed page and state, desktop (1440 px wide) and mobile (390 px wide); light and dark too where the app has both. Add a short video or GIF for interactions (toggles, menus, flows, animations).
+- Capture from the real running build of the exact PR head (dev server, preview deploy or live preview), never mockups. Use synthetic or demo accounts; no secrets, tokens or real customer data on screen.
+- Upload: commit the images to this repo's orphan branch `pr-assets` under `<pr-number>/` (first time: `git switch --orphan pr-assets`); never put them on the PR branch or `main`, never merge `pr-assets`. Embed each as `![<page> <state> after, desktop](https://raw.githubusercontent.com/TerraScale/terrascale/pr-assets/<pr-number>/<file>.png)` and check that every URL returns 200 before posting.
+- When a later push changes the visuals, replace the previews. PRs with no visible change say "No visual change" in the body.
 
 ### Conflict rules
 
