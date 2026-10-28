@@ -188,9 +188,9 @@ public static class DataEndpoints
                         if (problem is not null) throw new AccountAccessException(problem.Message, 422);
                         if (action == "sql")
                         {
+                            if (DatabaseResults.WantsHtml(http)) return await RunAsync(http, context, id, collection, form, data, saved);
                             var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
-                            return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlResult: result)
-                                : Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
+                            return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                         }
                         var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
                         return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql", collection) + (collection.Length == 0 ? "?" : "&") + "savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
@@ -213,8 +213,37 @@ public static class DataEndpoints
         return endpoints;
     }
 
+    // A browser run answers 303 to a GET of its stored receipt, never a page rendered from the POST: refresh and back
+    // cannot resend the statement, including a write whose outcome is unknown. Failures keep the draft and their reason.
+    private static async Task<IResult> RunAsync(HttpContext http, AccountContext context, string id, string collection, IFormCollection form, DataService data, SavedQueryService saved)
+    {
+        var sql = form["sql"].ToString();
+        DatabaseSqlResult? result = null;
+        Exception? failure = null;
+        try { result = await data.SqlAsync(context, id, sql, true, http.RequestAborted); }
+        catch (Exception error) when (DatabaseResults.KnownFailure(error))
+        {
+            if (DatabaseResults.Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
+            failure = error;
+        }
+        var message = failure is null ? "" : DatabaseEndpoints.Message(failure);
+        var status = failure is null ? 200 : DatabaseEndpoints.Status(failure);
+        try
+        {
+            var receipt = await http.RequestServices.GetRequiredService<SqlRuns>().SaveAsync(context, id, sql,
+                SqlHistory.Run(SqlHistory.Read(form["history"].ToString()), sql), result, message, status, http.RequestAborted);
+            return HttpRedirects.SeeOther(DatabaseService.Path(id, "sql", collection) + (collection.Length == 0 ? "?" : "&") + "result=" + Uri.EscapeDataString(receipt));
+        }
+        catch (Exception error) when (SqlWorkspace.Unavailable(error) && !http.RequestAborted.IsCancellationRequested)
+        {
+            // Without a stored receipt the outcome renders once from the POST; say so rather than invite a resend.
+            return await PageAsync(http, context, id, "sql", data, saved, collection, message, sql: sql, sqlResult: result, status: status,
+                sqlNotice: "This outcome could not be saved for later viewing. Refreshing this page would send the statement again.");
+        }
+    }
+
     internal static async Task<IResult> PageAsync(HttpContext http, AccountContext context, string id, string section, DataService data, SavedQueryService saved,
-        string collection = "", string formError = "", string dialog = "", string documentId = "", string body = "{}", string version = "", string operation = "replace", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false)
+        string collection = "", string formError = "", string dialog = "", string documentId = "", string body = "{}", string version = "", string operation = "replace", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false, string sqlNotice = "")
     {
         DatabaseRecord database;
         try { database = DatabaseService.Database(context, id); }
@@ -284,6 +313,21 @@ public static class DataEndpoints
                 queries = await saved.ListAsync(context, id, http.RequestAborted);
                 // SQL runs on the database's SQL tables; document collections are not visible to /sql/execute,
                 // so the editor neither prefills nor suggests collection names.
+                if (submittedForm is null && http.Request.Query["result"].ToString() is { Length: > 0 } receiptId)
+                {
+                    try
+                    {
+                        if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadAsync(context, id, receiptId, http.RequestAborted) is { Receipt: { } run } workspace)
+                        {
+                            (sql, history, sqlResult, formError, status) = (workspace.Draft, workspace.History, run.Result, run.Error, run.Status);
+                            if (run.Result is { } kept && kept.Rows.Count < run.ReturnedRows)
+                                sqlNotice = $"The statement returned {run.ReturnedRows:N0} rows; this page keeps the first {kept.Rows.Count:N0}. Add a LIMIT or narrower columns to see the rest.";
+                        }
+                        else sqlNotice = "This query result expired or was replaced by a newer run. The statement was not run again.";
+                    }
+                    catch (Exception error) when (SqlWorkspace.Unavailable(error) && !http.RequestAborted.IsCancellationRequested)
+                    { sqlNotice = "This query result is unavailable right now. The statement was not run again; reload to retry."; }
+                }
                 if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "";
                 try { catalog = await data.CatalogAsync(context, id, http.RequestAborted); }
                 catch (Exception error) when (!http.RequestAborted.IsCancellationRequested &&
@@ -298,7 +342,7 @@ public static class DataEndpoints
             errorMessage = DatabaseResults.KnownFailure(error) ? DatabaseResults.Message(error) : "The live data plane is unavailable. Try again shortly.";
             if (DatabaseResults.KnownFailure(error) && DatabaseResults.Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
         }
-        var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(section)), database, section, collection, collections, browse, search, sort, descending, layout, errorMessage, formError, dialog, documentId, body, version, operation, sql, sqlResult, indexes, schema, queries, queryName, catalog, history, collectionCounts, sqlChecked, catalogError));
+        var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(section)), database, section, collection, collections, browse, search, sort, descending, layout, errorMessage, formError, dialog, documentId, body, version, operation, sql, sqlResult, indexes, schema, queries, queryName, catalog, history, collectionCounts, sqlChecked, catalogError, sqlNotice));
         result.StatusCode = status;
         return result;
     }

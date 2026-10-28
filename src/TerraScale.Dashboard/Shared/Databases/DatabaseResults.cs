@@ -9,8 +9,10 @@ internal static class DatabaseResults
     internal static bool WantsHtml(HttpContext http) => http.Request.GetTypedHeaders().Accept?.Any(value => value.MediaType.Value == "text/html") == true;
     internal static bool KnownFailure(Exception error) => error is AccountAccessException or TerraScaleAuthException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException or TerraBaseException { StatusCode: System.Net.HttpStatusCode.RequestEntityTooLarge or System.Net.HttpStatusCode.TooManyRequests };
     internal static int Status(Exception error) => error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
-    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or DocumentWriteOutcomeUnknownException ? error.Message
-        : error is TerraBaseException { ErrorCode: "operation_allowance" } ? AllowanceUsed : Generic(error) + Reason(error);
+    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or DocumentWriteOutcomeUnknownException or SqlOutcomeUnknownException ? error.Message
+        : error is TerraBaseException { ErrorCode: "operation_allowance" } ? AllowanceUsed : Generic(error) + Reason(error) + RetryHint(error);
+    private static int? RetrySeconds(Exception error) => error is DatabaseProviderException { RetryAfter: { } wait } ? (int)Math.Ceiling(Math.Clamp(wait.TotalSeconds, 0, 86400)) : null;
+    private static string RetryHint(Exception error) => RetrySeconds(error) is { } seconds ? $" Retry after {seconds} s." : "";
     // A plan allowance refusal lasts until the month ends or the plan changes; retrying soon never helps.
     internal const string AllowanceUsed = "This organization used its plan's operation units for this month, so new writes are paused. " +
         "Reads and deletes keep working, and writes resume next month (UTC). Upgrade the plan on the organization's Billing tab to keep writing now; Usage shows this month's total.";
@@ -20,13 +22,19 @@ internal static class DatabaseResults
     private static string Reason(Exception error) => error is TerraBaseException { Message: { Length: > 0 and <= 300 } message } && Status(error) is 400 or 409 or 413 or 422 or 429 &&
         message.Trim() is { Length: > 0 } reason
         ? " " + char.ToUpperInvariant(reason[0]) + reason[1..] + (reason[^1] is '.' or '!' or '?' ? "" : ".") : "";
-    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error),
-        extensions: error is DocumentWriteOutcomeUnknownException unknown ? new Dictionary<string, object?>
+    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error), extensions: error switch
+    {
+        DocumentWriteOutcomeUnknownException unknown => new Dictionary<string, object?>
         {
             ["operationId"] = unknown.OperationId,
             ["documentId"] = unknown.DocumentId,
             ["outcome"] = "unknown"
-        } : null);
+        },
+        SqlOutcomeUnknownException unknown => new Dictionary<string, object?> { ["operationId"] = unknown.AttemptId, ["outcome"] = "unknown" },
+        DatabaseSqlException { SqliteCode: { } code } => new Dictionary<string, object?> { ["sqliteCode"] = code },
+        _ when RetrySeconds(error) is { } seconds => new Dictionary<string, object?> { ["retryAfterSeconds"] = seconds },
+        _ => null
+    });
     // Browsers get the HTML not-found page for a database they cannot see; API clients keep problem+json.
     internal static IResult PageFailure(HttpContext http, AccountContext context, Exception error) =>
         WantsHtml(http) && Status(error) == 404 ? Features.NotFound.NotFoundEndpoints.Page(http, context) : Failure(error);

@@ -7,10 +7,10 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Dashboard.Features.Data;
 
 public sealed record SqlWorkspaceRecord(string OrganizationId, string ProjectId, string DatabaseId, string UserId,
-    string Draft, IReadOnlyList<string> History, string HistoryEpoch = "");
+    string Draft, IReadOnlyList<string> History, string HistoryEpoch = "", SqlRunReceipt? Receipt = null);
 public sealed record SqlWorkspaceSnapshot(SqlWorkspaceRecord Record, string Version);
 
-// Ownership-only erasure foundation; interactive workspace persistence is introduced separately.
+// Ownership-only erasure; SqlRuns keeps each user's latest run receipt here.
 public sealed class SqlWorkspace
 {
     public const string Collection = "dashboard_sql_workspaces";

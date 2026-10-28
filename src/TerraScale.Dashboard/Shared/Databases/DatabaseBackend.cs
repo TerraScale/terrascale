@@ -223,9 +223,23 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         var name = await NameAsync(scope, home, databaseId, cancellationToken);
         var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
         var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, write ? ["documents:read", "documents:write"] : ["documents:read"], cancellationToken);
+        if (!write) return await ExecuteSqlAsync(home, scope.ProjectId, name, token, statements, cancellationToken);
+        var attemptId = AccountService.NewId();
+        try { return await ExecuteSqlAsync(home, scope.ProjectId, name, token, statements, cancellationToken); }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TimeoutException or IOException or OperationCanceledException ||
+            error is HttpRequestException { StatusCode: null } || error is HttpRequestException { StatusCode: { } status } && (int)status >= 500))
+        {
+            // A lost, cut, timed-out or malformed answer may follow a commit, and /sql/execute has no idempotency key.
+            throw new SqlOutcomeUnknownException(attemptId);
+        }
+    }
+
+    private async Task<IReadOnlyList<SqlExecuteResult>> ExecuteSqlAsync(DatabaseRegion home, string projectId, string name, string token,
+        IReadOnlyList<SqlExecuteStatement> statements, CancellationToken cancellationToken)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(60));
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, "/v1/projects/" + Uri.EscapeDataString(scope.ProjectId) + "/databases/" + Uri.EscapeDataString(name) + "/sql/execute"))
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, "/v1/projects/" + Uri.EscapeDataString(projectId) + "/databases/" + Uri.EscapeDataString(name) + "/sql/execute"))
         { Content = JsonContent.Create(new SqlExecuteRequest(statements), DatabaseSqlJson.Default.SqlExecuteRequest) };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.Accept.ParseAdd("application/json");
@@ -242,13 +256,20 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         catch (JsonException error) { throw new HttpRequestException("TerraBase returned an invalid SQL result.", error); }
         if (!response.IsSuccessStatusCode)
             throw (int)response.StatusCode is 400 or 403 or 409 or 413 && body?.Error is { Message.Length: > 0 } refused
-                ? new DatabaseSqlException(response.StatusCode, refused.Code == "forbidden_scope" ? "Write access is required to change data or schema." : refused.Message)
-                : new DatabaseProviderException(response.StatusCode);
+                ? new DatabaseSqlException(response.StatusCode, refused.Code == "forbidden_scope" ? "Write access is required to change data or schema." : refused.Message, refused.SqliteCode)
+                : new DatabaseProviderException(response.StatusCode) { RetryAfter = RetryAfter(response) };
         if (body?.Results is not { } results || results.Count != statements.Count || results.Any(result => result is null || result.Columns is null || result.Rows is null ||
             result.Columns.Any(column => column is null) || result.Rows.Any(row => row is null || row.Count != result.Columns.Count)))
             throw new HttpRequestException("TerraBase returned an invalid SQL result.");
         return results;
     }
+
+    private static TimeSpan? RetryAfter(HttpResponseMessage response) => response.Headers.RetryAfter switch
+    {
+        { Delta: { } delta } => delta,
+        { Date: { } date } => date - DateTimeOffset.UtcNow is var wait && wait > TimeSpan.Zero ? wait : TimeSpan.Zero,
+        _ => null
+    };
 
     public async Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
     {
@@ -335,21 +356,36 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
 }
 
 // TerraBase refused a SQL statement; its message names the rule that failed and never quotes the statement.
-public sealed class DatabaseSqlException(HttpStatusCode status, string message) : DatabaseProviderException(status, message);
+public sealed class DatabaseSqlException(HttpStatusCode status, string message, string? sqliteCode = null)
+    : DatabaseProviderException(status, message + (sqliteCode is { Length: > 0 and <= 64 } ? " (" + sqliteCode + ")" : ""))
+{
+    public string? SqliteCode { get; } = sqliteCode is { Length: > 0 and <= 64 } ? sqliteCode : null;
+}
+
+// A SQL write whose answer was lost may have committed; the dashboard never resends it.
+public sealed class SqlOutcomeUnknownException(string attemptId) : DatabaseProviderException(HttpStatusCode.ServiceUnavailable,
+    $"SQL outcome unknown: the statement may have run. Check the data before running it again. Attempt {attemptId}.")
+{
+    public string AttemptId { get; } = attemptId;
+}
 
 internal sealed record SqlExecuteRequest(IReadOnlyList<SqlExecuteStatement> Statements);
 internal sealed record SqlExecuteStatement(string Sql);
 internal sealed record SqlExecuteResponse(IReadOnlyList<SqlExecuteResult>? Results, SqlExecuteError? Error);
 internal sealed record SqlExecuteResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows,
     [property: JsonPropertyName("rows_affected")] long RowsAffected, [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid);
-internal sealed record SqlExecuteError(string Code, string Message);
+internal sealed record SqlExecuteError(string Code, string Message, [property: JsonPropertyName("sqlite_code")] string? SqliteCode = null);
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(SqlExecuteRequest))]
 [JsonSerializable(typeof(SqlExecuteResponse))]
 internal sealed partial class DatabaseSqlJson : JsonSerializerContext;
 
-public class DatabaseProviderException(HttpStatusCode status, string message = "The database service could not complete the request.") : HttpRequestException(message, null, status);
+public class DatabaseProviderException(HttpStatusCode status, string message = "The database service could not complete the request.") : HttpRequestException(message, null, status)
+{
+    // The producer's Retry-After on a refusal, when it sent one.
+    public TimeSpan? RetryAfter { get; init; }
+}
 // A successful producer's invalid listing cannot be treated as an unreachable region.
 internal sealed class DatabaseListingException(string message) : DatabaseProviderException(HttpStatusCode.ServiceUnavailable, message);
 

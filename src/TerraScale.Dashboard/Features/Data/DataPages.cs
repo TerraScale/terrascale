@@ -13,7 +13,7 @@ public sealed record DataPage(ShellModel Shell, DatabaseRecord Database, string 
     string Version = "", string Operation = "replace", string Sql = "", DatabaseSqlResult? SqlResult = null,
     IReadOnlyList<DatabaseIndex>? Indexes = null, string Schema = "", IReadOnlyList<SavedQuery>? SavedQueries = null, string QueryName = "",
     SqlCatalog? Catalog = null, IReadOnlyList<string>? History = null, IReadOnlyDictionary<string, long>? CollectionCounts = null,
-    bool SqlChecked = false, string CatalogError = "")
+    bool SqlChecked = false, string CatalogError = "", string SqlNotice = "")
 {
     public AccountContext Context => Shell.Context;
     public SqlAnalysis Analysis => SqlValidation.Analyze(Sql);
