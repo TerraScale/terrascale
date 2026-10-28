@@ -5,14 +5,13 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
 // terrabase.database_create.stage_duration (docs/terrabase/database-create-stage-metrics.md): each stage of a create records
-// once, with how it ended, and cleanup after a refusal, cancellation or failure is its own stage.
+// with how it ended, and cleanup after a refusal, cancellation or failure is its own stage.
 public sealed class DatabaseCreateStageMetricsTests
 {
     private static readonly string[] Labels = ["outcome", "stage"];
@@ -75,8 +74,8 @@ public sealed class DatabaseCreateStageMetricsTests
         }).Throws<HttpRequestException>();
         await stages.Cleanup.WaitAsync(deadline.Token);
         await Assert.That(stages.Take()).IsEqualTo("serving:completed precheck:completed prepare:canceled cleanup:completed");
-        // Cleanup finished after the HTTP abort: no intent, registration or file remains.
-        await Assert.That(await PendingCleanupAsync(api)).IsEqualTo(0);
+        // The exception interrupted intent publication: recovery owns that intent; no registration or file remains.
+        await Assert.That(await PendingCleanupAsync(api)).IsEqualTo(1);
         await Assert.That(await ListedAsync(api, organization, project)).IsEqualTo(0);
         await Assert.That(DatabaseFiles(api, organization, project)).IsEqualTo(0);
     }
