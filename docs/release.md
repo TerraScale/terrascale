@@ -2,19 +2,19 @@
 
 The release artifact is one immutable public npm tarball. Qualification installs
 those exact bytes in a separate consumer; source tests alone cannot qualify it.
-CI publishes automatically: see [Publishing](#publishing). Capabilities still
+A version tag publishes it: see [Publishing](#publishing). Capabilities still
 pending C06/C07 management and credential admission or native single-writer
 security persistence fail at runtime with explicit capability errors.
 
-The native Forgejo workflow verifies the exact event revision on Node 22.23.2
-and 24.21.0 and current browser engines. All jobs pin the builder image to
-`sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f`.
-It provisions npm 11.18.0 and uses the locked dependency tree. Static checks
-cover type declarations, the v1 route manifest, forbidden surfaces, SBOM and
-vulnerability checks. Node jobs acquire the SHA-bound official C# TerraBase
-release and run the SDK tests against that real binary, then framework
-regressions. Browser jobs run current engine compatibility checks. Frozen
-contract bytes or archived overlays are not runtime qualification evidence.
+The GitHub Actions workflow `.github/workflows/ci.yml` runs on GitHub-hosted
+`ubuntu-24.04` runners. It uses Node 24.21.0 (22.23.2 for scheduled and manual
+runs), provisions the reviewed npm CLI, and audits every committed npm graph.
+Pull request and merge-queue runs that change non-documentation files install
+the locked dependency tree, then typecheck, build type declarations, check the
+v1 route manifest and run `npm test`. A push to `main` reuses a passing pull
+request check for the identical tree. Browser, integration and real-service checks are not part of
+GitHub CI. Frozen contract bytes or archived overlays are not runtime
+qualification evidence.
 
 Run the current local checks at low CPU priority:
 
@@ -75,13 +75,12 @@ Client/resource management responses use exact snake_case records and safe numer
 
 ## Publishing
 
-The `release` job in `.forgejo/workflows/ci.yml` publishes the `@terrascale/sdk`
-npm package on every push to `main`, after the guard, check, test and e2e jobs
-pass. It skips immediately when npm already has the `package.json` version;
-otherwise it packs the tarball once, publishes those exact bytes with
-`--access public --tag latest`, and fails unless npm then reports that version
-as `dist-tags.latest`. Bump the
-version to release. The current workflow reads `NPM_TOKEN` as an Actions secret.
+`.github/workflows/publish.yml` publishes the `@terrascale/sdk` npm package when
+a `v0.0.N` tag is pushed. The tag must match the `package.json` version, which
+must match `^0\.0\.[0-9]+$`. The job audits the npm graph, runs the typecheck,
+route-drift check and `npm test`, then runs `npm publish --provenance --access
+public`. Bump the version to release. The workflow uses npm trusted publishing
+(OIDC) when configured and otherwise reads `NPM_TOKEN` as an Actions secret.
 The TS-795 operating contract requires vendor-issued publication credentials
 to be stored once in OCI Vault and delivered to the job automatically, with
 first-party secrets created/delivered automatically. No hand-copying step is
