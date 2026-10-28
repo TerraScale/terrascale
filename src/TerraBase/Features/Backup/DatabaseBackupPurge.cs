@@ -220,7 +220,7 @@ internal sealed class DatabaseBackupPurge(
     private sealed class PendingErasures
     {
         private readonly ConcurrentDictionary<string, DateTimeOffset> _requested = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _swept = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _swept = [with(StringComparer.Ordinal)];
         private readonly Dictionary<(string Database, string Slot), string> _reported = [];
 
         public PendingErasures(Meter meter, TimeProvider time)
