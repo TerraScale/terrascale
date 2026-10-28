@@ -69,7 +69,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await page.GetByText("Change scheduled", new() { Exact = true }).WaitForAsync();
             await Assert.That(await PlanAsync()).IsEqualTo(Pro).Because("a scheduled downgrade keeps current resources until renewal");
             var schedules = await MutationsAsync(path => path == "/v1/subscription_schedules");
-            await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "annual" });
+            await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "monthly" });
             await Assert.That(await MutationsAsync(path => path == "/v1/subscription_schedules")).IsEqualTo(schedules);
             await PostAsync("/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" }, 409);
             await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");

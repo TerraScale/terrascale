@@ -201,7 +201,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             var summary = await page.Locator("#billing-summary").InnerTextAsync();
             await Assert.That(summary).Contains(paid ? "Starter" : "Free").Because("confirmed plan is persisted");
             if (paid) await Assert.That(summary).Contains("On file").Because("confirmed Stripe subscription stores payment status");
-            if (paid) await Assert.That(summary).Contains("Annual").Because("confirmed subscription retains selected annual interval");
+            if (paid) await Assert.That(summary).Contains("Monthly").Because("confirmed subscription retains the default monthly interval");
             checks.Add(size + " completed account/project persistence and billing");
         }
         // Logout ends the session at ts-auth; its hosted sign-in page (stood in here) is where the browser lands.
