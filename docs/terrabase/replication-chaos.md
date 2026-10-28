@@ -2,7 +2,7 @@
 
 TS-682 runs in the existing **Slow integration** workflow on main, nightly and
 on demand. It remains non-blocking; the existing failure reporter files a
-Forgejo issue with the Slow log. Run the whole lane locally with
+GitHub issue with the Slow log using `gh`. Run the whole lane locally with
 `nice -n 19 make test-slow`.
 
 To replay only these scenarios:

@@ -78,7 +78,7 @@ signal for the client to handle through discovery or its override policy.
 
 TS-496 owns Atlas discovery and session pinning for the C# TerraBase contract.
 As checked on 2026-10-04, Ku reports TS-496 as **In Progress**, with no comments;
-`fj pr search -s all TS-496` in ts-atlas returned no matching PR. The inspected
+the TS-496 PR search in ts-atlas returned no matching PR. The inspected
 Atlas `origin/main` commit was `fb3ce7803b206395c4b0be59c740eaff489e8e19`;
 its source and contracts have no `X-TerraScale-Region-Pin` implementation.
 TS-499 therefore uses the fallback header above, not a signed token or encoded
@@ -95,7 +95,7 @@ identity response header and the client's region pin.
 
 ## Probe dependency
 
-[TS-483 / TerraBase PR #16](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/pulls/16)
+TS-483 / TerraBase PR #16 (terrabase-premonorepo)
 was still open when checked on 2026-10-04. It owns public `/healthz` and `/readyz`
 listener exposure and readiness checks; TS-499 does not duplicate that work.
 Once composed with TS-483, both probe bodies must include `region` alongside

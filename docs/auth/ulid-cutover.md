@@ -22,7 +22,7 @@ the document envelope. The UUIDv8 addressing and `uniques` claim implementation
 must be deleted in that conversion.
 
 The exact prepared schema API is in SDK commit
-`1ce73bfdadd1d7e2b3d0451768388b08b4811bbb` ([PR 29](https://git.terrascale.tech/TerraScale/ts-dotnet/pulls/29)),
+[`1ce73bfdadd1d7e2b3d0451768388b08b4811bbb`](https://github.com/TerraScale/ts-dotnet/commit/1ce73bfdadd1d7e2b3d0451768388b08b4811bbb),
 against TerraBase PR 118 revision
 `1c2a7e082829bcebf816691537001f6aba168d9a`. Neither is a qualified schema10
 fixture/release pin. Native uniqueness is atomic locally and resolves replica
