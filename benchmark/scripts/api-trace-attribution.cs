@@ -185,6 +185,7 @@ namespace TraceAttribution
             if (foreign != 0 || roles.Total == 0)
             {
                 Console.Error.WriteLine(FormattableString.Invariant($"Rejected: {foreign} events from another process, {roles.Total} weighted samples."));
+                Print("Event (count)", events, events.Total, 40, 1, "count");
                 return 1;
             }
 

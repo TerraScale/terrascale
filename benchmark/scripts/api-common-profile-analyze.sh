@@ -37,9 +37,10 @@ for run in a b; do
       trace=$out/$run/$cell-${kind/sampled/alloc}.nettrace
       dotnet exec "$analysis/bin/Release/net11.0/TraceAttribution.dll" "$trace" "$kind" "$(cat "$out/$run/owned.pid")" \
         "$out/$run/$cell-threads.tsv" > "$analysis/$run-$cell-$kind.md" 2> "$analysis/$run-$cell-$kind.err" \
-        || { cat "$analysis/$run-$cell-$kind.err"; exit 1; }
+        || echo "$run $cell $kind: $(cat "$analysis/$run-$cell-$kind.err")" >> "$analysis/rejected.txt"
     done
   done
 done
 (cd "$analysis" && sha256sum Program.cs TraceAttribution.csproj ./*.md > artifacts.sha256)
+if [[ -e "$analysis/rejected.txt" ]]; then cat "$analysis/rejected.txt"; exit 1; fi
 echo 'Analysis completed.'
