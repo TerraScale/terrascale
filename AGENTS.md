@@ -12,10 +12,16 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 
 ## Pull requests
 
-- Every PR that changes what a reader sees (pages, navigation, styles, components, generated pricing/limits pages) MUST embed before/after screenshots of each changed page in the PR body: desktop and mobile, each in light and dark mode, with descriptive alt text. For shared UI changes, capture every affected page.
-- Capture the real built site, using `nice -n 19 npm run build` and `nice -n 19 npm run preview`, or the deployed Workers preview. Capture the base revision before editing and the PR revision after; label the page, revision, viewport and theme.
-- Upload PNGs with `node scripts/upload-pr-images.mjs <PR-number> <file.png> [more.png ...]`; paste its Markdown into the PR body. It commits only images to the dedicated orphan `pr-assets` branch and prints public raw URLs. Never commit screenshots to main or the PR branch. Use distinct filenames for each page/revision/viewport/theme.
-- Text-only, CI and repository-file PRs without a rendered change say `No visual change` in the PR body.
+- Base all changes on the most recent `main`. Fetch `origin/main` before starting and rebase onto the latest `origin/main` before merging; CI must pass on that exact latest head.
+- Upload PNGs with `node scripts/upload-pr-images.mjs <PR-number> <file.png> [more.png ...]`; paste its Markdown into the PR body. The helper creates the orphan `pr-assets` branch on first use and preserves existing images. Use descriptive alt text and distinct filenames for each page/revision/viewport/theme.
+
+### PR previews (required for every visible change)
+
+- Every PR that changes anything a user sees (pages, components, styles, layout, copy, emails, generated pages, maps, charts) MUST embed previews in the PR body. A visible change without previews is not ready to merge.
+- Before and after screenshots of each changed page and state, desktop (1440 px wide) and mobile (390 px wide); light and dark too where the app has both. Add a short video or GIF for interactions (toggles, menus, flows, animations).
+- Capture from the real running build of the exact PR head (dev server, preview deploy or live preview), never mockups. Use synthetic or demo accounts; no secrets, tokens or real customer data on screen.
+- Upload: commit the images to this repo's orphan branch `pr-assets` under `<pr-number>/` (first time: `git switch --orphan pr-assets`); never put them on the PR branch or `main`, never merge `pr-assets`. Embed each as `![<page> <state> after, desktop](https://raw.githubusercontent.com/TerraScale/<repo>/pr-assets/<pr-number>/<file>.png)` and check that every URL returns 200 before posting.
+- When a later push changes the visuals, replace the previews. PRs with no visible change say "No visual change" in the body.
 
 ## Cloudflare: `cf` CLI
 
