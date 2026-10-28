@@ -201,7 +201,7 @@ namespace TraceAttribution
                 var depth = role is "server" ? 40 : 12;
                 Print($"{role}: entry (root-most frame of the role)", entries[role], total, depth, unit, per);
                 Print($"{role}: owner (deepest application frame)", owners[role], total, depth, unit, per);
-            Print($"{role}: owner | leaf", owners[role + " | leaf"], total, depth, unit, per);
+                Print($"{role}: owner | leaf", owners[role + " | leaf"], total, depth, unit, per);
                 Print($"{role}: leaf method", leaves[role], total, depth, unit, per);
                 Print($"{role}: leaf module", modules[role], total, 15, unit, per);
                 if (role is "server" or "client")
@@ -241,19 +241,19 @@ namespace TraceAttribution
         }
 
         /// <summary>Count, total and quantiles of suspension intervals in milliseconds, and their share of the span.</summary>
-    private static string Pauses(string name, List<double> pauses, double span)
-    {
-        pauses.Sort();
-        double At(double quantile)
+        private static string Pauses(string name, List<double> pauses, double span)
         {
-            return pauses.Count == 0 ? 0 : pauses[Math.Min(pauses.Count - 1, (int)(quantile * pauses.Count))];
+            pauses.Sort();
+            double At(double quantile)
+            {
+                return pauses.Count == 0 ? 0 : pauses[Math.Min(pauses.Count - 1, (int)(quantile * pauses.Count))];
+            }
+
+            return FormattableString.Invariant(
+                $"# {name} n={pauses.Count} total_ms={pauses.Sum():F1} share={pauses.Sum() / 1000 / span:P2} p50_ms={At(0.5):F3} p99_ms={At(0.99):F3} max_ms={At(1):F3}");
         }
 
-        return FormattableString.Invariant(
-            $"# {name} n={pauses.Count} total_ms={pauses.Sum():F1} share={pauses.Sum() / 1000 / span:P2} p50_ms={At(0.5):F3} p99_ms={At(0.99):F3} max_ms={At(1):F3}");
-    }
-
-    private static Attributed Classify(TraceLog trace, Dictionary<CallStackIndex, Attributed> cache, TraceEvent item)
+        private static Attributed Classify(TraceLog trace, Dictionary<CallStackIndex, Attributed> cache, TraceEvent item)
         {
             var index = item.CallStackIndex();
             if (cache.TryGetValue(index, out var known))
