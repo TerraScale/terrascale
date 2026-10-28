@@ -71,6 +71,26 @@ The earlier helper did not retain the deletion-authorization response header for
 explicit continuation. Background closure nevertheless completed normally; neither
 the timeout's cause nor an authorization repair is established by this cleanup.
 
+## Follow-up setup rejection (run b)
+
+The next beta attempt used harness `1ab865ddc1402075a790faf308ffd31e625180d1`
+and cleanup helper `b9db654d7ed0623568c800c3a83eff294508fd6f`. Its binary SHA-256
+was `a90a02af1a742f5431cd84b7bfbec422ad0e53219fc137456bde6005faf3470b`.
+Database creation failed before any latency cell. The failure's HTTP classification
+was not retained, so its cause is unknown. Cleanup reconciliation was accepted;
+that does not establish whether creation committed. No SDK/raw comparison exists.
+
+Across setup and initial cleanup, 239 host samples had external CPU mean/p95/max
+3.26/7.92/42.59% of one CPU, with no external compiler/test observed at >=10%.
+The three health probes before setup still reported the differing revisions above.
+Artifacts remain in `go-parity-live-20261028-b/` beside run a; analysis copies are
+`/tmp/perf-api-go-live-b`. The executed script is retained as `run.sh` there.
+
+Initial account cleanup timed out. One resumed cleanup hit a transport failure.
+The authoritative receipt then returned 202 and the private recovery file retained
+continuation authorization. A subsequent authorized continuation returned 202;
+its bounded status polling is still running. Account/inbox cleanup is incomplete.
+
 ## Artifacts and reproduction
 
 Beta retains `benchmark/bench/go-parity-live-20261028-a/` beneath the managed
