@@ -70,7 +70,10 @@ public sealed class CatalogAnchorRollingRestartTests
         timings.Start();
         // The engine's own warnings by region: a writer waited on names what it queued behind (its holders' call sites).
         var warnings = new ConcurrentQueue<string>();
-        Action<IServiceCollection> Capture(string region) => services => TerraBaseTestServer.CaptureDebugLogs(services, new EngineWarnings(region, warnings));
+        Action<IServiceCollection> Capture(string region)
+        {
+            return services => TerraBaseTestServer.CaptureDebugLogs(services, new EngineWarnings(region, warnings));
+        }
         await using var gru = new RestartingMachine("gru", bucket, members);
         await using var sjc = new RestartingMachine("sjc", bucket, members);
         await using var fra = new RestartingMachine("fra", bucket, members);
