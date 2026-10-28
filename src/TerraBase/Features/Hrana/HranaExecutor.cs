@@ -172,31 +172,31 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
         return Command(stmt) switch
         {
             HranaError error => error,
-            SqlCommand command => await stream.Session.ExecuteAsync(command, cancellationToken).ConfigureAwait(false) switch
+            SqlCommand command => await stream.Session.ExecuteAsync(command, result => Admit(result, stmt.WantRows ?? true), cancellationToken).ConfigureAwait(false) switch
             {
                 SqlError error => HranaError.From(error),
-                SqlResult result => Bound(result, stmt.WantRows ?? true),
+                SqlResult result => Accept(result, stmt.WantRows ?? true),
             },
         };
     }
 
     private static readonly HranaError TooBig = new($"the response exceeds {MaxResponseBytes / 1024 / 1024} MiB", "SQLITE_TOOBIG");
 
-    // The statement that crosses the bound already ran: a read reports SQLITE_TOOBIG (rerunning it changes nothing); a
-    // write keeps its counts, without rows.
-    private HranaStmtOutcome Bound(SqlResult result, bool wantRows)
+    private static readonly SqlError TooBigSql = SqlErrors.TooBig(TooBig.Message);
+
+    // Asked before the statement takes effect: the result that crosses the bound is refused whole, so its writes never
+    // commit and a retry cannot duplicate them; a success always carries the rows it asked for.
+    private SqlError? Admit(SqlResult result, bool wantRows)
     {
         _responseBytes += 64 + result.Columns.Sum(column => 32L + column.Name.Length + (column.DeclType?.Length ?? 0))
             + (wantRows ? result.Rows.Sum(row => row.Sum(value => 32L + (value.Text?.Length ?? 0) * 3L)) : 0);
-        HranaStmtOutcome outcome = _responseBytes <= MaxResponseBytes ? HranaStmtResult.From(result, wantRows)
-            : result.RowsAffected > 0 ? HranaStmtResult.From(result, wantRows: false)
-            : TooBig;
-        if (outcome is HranaStmtResult)
-        {
-            result.ReadCharge?.Accept();
-        }
+        return _responseBytes <= MaxResponseBytes ? null : TooBigSql;
+    }
 
-        return outcome;
+    private static HranaStmtOutcome Accept(SqlResult result, bool wantRows)
+    {
+        result.ReadCharge?.Accept();
+        return HranaStmtResult.From(result, wantRows);
     }
 
     // A sequence is recorded as one statement: the core reports neither how many of its statements ran nor which one failed.

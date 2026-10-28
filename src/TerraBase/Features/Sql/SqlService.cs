@@ -106,13 +106,19 @@ internal sealed class SqlSession(
 
     public void BeginRequest() => _transportStarted = time.GetTimestamp();
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(command, admit: null, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         switch (Parse(command.Sql))
         {
             case SqlError error:
                 return error;
+            // Controls answer nothing: admitted before they act, so a refused COMMIT commits nothing.
+            case PragmaSql { Kind: PragmaKind.ForeignKeys } or TransactionSql when admit?.Invoke(Empty) is { } refused:
+                return refused;
             case PragmaSql { Kind: PragmaKind.ForeignKeys }:
                 return Empty;
             case TransactionSql { Kind: TransactionKind.Begin or TransactionKind.BeginReadOnly } begin:
@@ -134,9 +140,9 @@ internal sealed class SqlSession(
             case ParsedSql { IsWrite: true } when _readOnly == true:
                 return new SqlError("SQLITE_READONLY", "a READONLY transaction cannot write");
             case ParsedSql statement when _readOnly is null:
-                return await AutocommitAsync(statement, command, describe: false, cancellationToken).ConfigureAwait(false);
+                return await AutocommitAsync(statement, command, admit, describe: false, cancellationToken).ConfigureAwait(false);
             case ParsedSql statement:
-                return await InTransactionAsync(statement, command, cancellationToken).ConfigureAwait(false);
+                return await InTransactionAsync(statement, command, admit, cancellationToken).ConfigureAwait(false);
             default:
                 return SqlErrors.Error("this statement is not supported");
         }
@@ -233,7 +239,7 @@ internal sealed class SqlSession(
         command = command with { Args = [], Named = new Dictionary<string, SqlValue>() };
         if (IsAutocommit)
         {
-            return await AutocommitAsync(statement, command, describe: true, cancellationToken).ConfigureAwait(false);
+            return await AutocommitAsync(statement, command, admit: null, describe: true, cancellationToken).ConfigureAwait(false);
         }
 
         if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
@@ -274,7 +280,7 @@ internal sealed class SqlSession(
     }
 
     // A statement of the open transaction: run in this request's storage transaction, which first replays the log.
-    private async ValueTask<SqlOutcome> InTransactionAsync(ParsedSql statement, SqlCommand command, CancellationToken cancellationToken)
+    private async ValueTask<SqlOutcome> InTransactionAsync(ParsedSql statement, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
         {
@@ -284,6 +290,11 @@ internal sealed class SqlSession(
         // A failed statement undoes only itself, as in SQLite: this request's storage transaction (which a refused write
         // may leave uncommittable) is dropped, and the next statement replays the log without it.
         var outcome = await RunAsync(_request!, statement, command, _keys, cancellationToken).ConfigureAwait(false);
+        if (outcome is SqlResult answered && admit?.Invoke(answered) is { } inadmissible)
+        {
+            outcome = inadmissible;
+        }
+
         if (outcome is not SqlResult result)
         {
             await EndRequestAsync().ConfigureAwait(false);
@@ -376,7 +387,8 @@ internal sealed class SqlSession(
     }
 
     // One statement in its own storage transaction, committed when it writes.
-    private async ValueTask<SqlOutcome> AutocommitAsync(ParsedSql statement, SqlCommand command, bool describe, CancellationToken cancellationToken)
+    private async ValueTask<SqlOutcome> AutocommitAsync(
+        ParsedSql statement, SqlCommand command, Func<SqlResult, SqlError?>? admit, bool describe, CancellationToken cancellationToken)
     {
         // A described statement only reads, even a write with RETURNING.
         var (opened, error) = await OpenAsync(statement.IsWrite && !describe, cancellationToken).ConfigureAwait(false);
@@ -389,6 +401,12 @@ internal sealed class SqlSession(
         {
             // Autocommit keys are never replayed: a throwaway log.
             var outcome = await RunAsync(request, statement, command, new SqlKeys(), cancellationToken, describe).ConfigureAwait(false);
+            // A refused result commits nothing: disposing the request rolls its writes back.
+            if (outcome is SqlResult answered && admit?.Invoke(answered) is { } refused)
+            {
+                return refused;
+            }
+
             if (outcome is SqlResult && request.Lease is { } lease && await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false) is SqlError failed)
             {
                 return failed;

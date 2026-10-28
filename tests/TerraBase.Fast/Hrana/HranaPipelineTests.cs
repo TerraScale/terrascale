@@ -130,15 +130,53 @@ public sealed class HranaPipelineTests
             """);
         var rows = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t ORDER BY x"}},{"type":"close"}]}""");
 
-        await Assert.That(Types(crossingWrite.Json)).IsEqualTo("ok:execute,ok:execute,error,ok:close");
+        // The write whose 64-byte answer crosses the bound is refused before it commits: no success without its answer.
+        await Assert.That(Types(crossingWrite.Json)).IsEqualTo("ok:execute,error,error,ok:close");
         await Assert.That(Response(crossingWrite.Json, 0).GetProperty("result").GetProperty("rows")[0][0].GetProperty("value").GetString()!.Length).IsEqualTo(5_592_350);
-        await Assert.That(Response(crossingWrite.Json, 1).GetProperty("result").GetProperty("affected_row_count").GetInt64()).IsEqualTo(1);
-        await Assert.That(crossingWrite.Json.GetProperty("results")[2].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_TOOBIG");
+        await Assert.That(Codes(crossingWrite.Json, 1, 2)).IsEqualTo("SQLITE_TOOBIG,SQLITE_TOOBIG");
         await Assert.That(Types(crossingRead.Json)).IsEqualTo("error,error,error,ok:close");
-        await Assert.That(string.Join(',', crossingRead.Json.GetProperty("results").EnumerateArray().Take(3).Select(result => result.GetProperty("error").GetProperty("code").GetString())))
-            .IsEqualTo("SQLITE_TOOBIG,SQLITE_TOOBIG,SQLITE_TOOBIG");
-        await Assert.That(Response(rows.Json, 0).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("""[[{"type":"integer","value":"1"}]]""");
+        await Assert.That(Codes(crossingRead.Json, 0, 3)).IsEqualTo("SQLITE_TOOBIG,SQLITE_TOOBIG,SQLITE_TOOBIG");
+        await Assert.That(Response(rows.Json, 0).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("[]");
     }
+
+    // 5,592,320 characters estimate 16,777,089 bytes: room for a 64-byte control, not for a one-row RETURNING (136 bytes).
+    private const string NearlyFull =
+        "SELECT substr(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(char(120)))))))))))))))))))))))), 1, 5592320) AS v";
+
+    [Test]
+    public async Task A_returning_write_past_the_response_bound_is_refused_before_it_commits()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await PostAsync(api, CreateT);
+        var autocommit = await PostAsync(api, $$$"""
+            {"requests":[{"type":"execute","stmt":{"sql":"{{{NearlyFull}}}"}},{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (1) RETURNING x"}},{"type":"close"}]}
+            """);
+        var transaction = await PostAsync(api, $$$"""
+            {"requests":[{"type":"execute","stmt":{"sql":"BEGIN"}},{"type":"execute","stmt":{"sql":"{{{NearlyFull}}}"}},
+             {"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (2) RETURNING x"}},{"type":"execute","stmt":{"sql":"COMMIT"}}]}
+            """);
+        // The refused COMMIT left the transaction open without the refused insert: committing it now writes nothing.
+        var commit = await PostAsync(api, $$$"""
+            {"baton":"{{{transaction.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql":"COMMIT"}},{"type":"close"}]}
+            """);
+        var cursor = await PostAsync(api, $$$"""
+            {"baton":null,"batch":{"steps":[{"stmt":{"sql":"{{{NearlyFull}}}","want_rows":true}},{"stmt":{"sql":"INSERT INTO t VALUES (3) RETURNING x","want_rows":true}}]}}
+            """, version: "v3", endpoint: "cursor");
+        var rows = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t ORDER BY x"}},{"type":"close"}]}""");
+
+        await Assert.That(Types(autocommit.Json)).IsEqualTo("ok:execute,error,ok:close");
+        await Assert.That(Codes(autocommit.Json, 1, 1)).IsEqualTo("SQLITE_TOOBIG");
+        await Assert.That(Types(transaction.Json)).IsEqualTo("ok:execute,ok:execute,error,error");
+        await Assert.That(Codes(transaction.Json, 2, 2)).IsEqualTo("SQLITE_TOOBIG,SQLITE_TOOBIG");
+        await Assert.That(Types(commit.Json)).IsEqualTo("ok:execute,ok:close");
+        var steps = cursor.Raw.Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).Select(line => JsonElement.Parse(line)).ToList();
+        await Assert.That(string.Join(',', steps.Select(line => line.GetProperty("type").GetString()))).IsEqualTo("step_begin,row,step_end,step_error");
+        await Assert.That(steps[3].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_TOOBIG");
+        await Assert.That(Response(rows.Json, 0).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("[]");
+    }
+
+    private static string Codes(JsonElement body, int skip, int take) => string.Join(',', body.GetProperty("results").EnumerateArray().Skip(skip).Take(take)
+        .Select(result => result.GetProperty("error").GetProperty("code").GetString()));
 
     internal sealed record ApiResult(HttpStatusCode Status, JsonElement Json, string? ContentType, string Raw, string? RetryAfter = null);
 
