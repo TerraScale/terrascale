@@ -60,5 +60,5 @@ Nine stages by four outcomes gives at most 36 series. The exporter's cardinality
   time window and node only.
 - Stages that wait on peers (`serving`, `precheck`, `register`) include network time to
   those peers. Their duration does not isolate local work.
-- It makes no performance claim. Bucket boundaries go up to 60 seconds, the longest
-  observed runner deadline.
+- It makes no performance claim. Bucket boundaries go up to 60 seconds, covering the benchmark setup budget; the
+  earlier live create was canceled by its SDK at 30 seconds.
