@@ -22,7 +22,7 @@ AI MAY EDIT THIS FILE ONLY WITH HUMAN PERMISSION! If a human or the user request
 - Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
 - OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 
 The operating contract requires automatic public regional endpoint discovery. Customer credentials authorize access; production service credentials arrive from OCI Vault.
 
