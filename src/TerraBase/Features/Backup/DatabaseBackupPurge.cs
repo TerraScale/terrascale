@@ -90,6 +90,15 @@ internal sealed class DatabaseBackupPurge(
                 else
                 {
                     _pending.Pending(job.Database.DatabaseId!, job.RequestedAt);
+                    if (_pending.Report(job.Database.DatabaseId!, "reason", progress.Failure))
+                    {
+                        // Names whom a closure waits on: only a holder's own receipt proves its copy gone.
+                        var holders = progress.Failure == "active_copies_pending"
+                            ? string.Join(", ", await catalog.ReadUncheckedAsync(transaction => DatabasePurge.UnacknowledgedHoldersAsync(transaction, job, token), token).ConfigureAwait(false))
+                            : "";
+                        var hours = Math.Round((time.GetUtcNow() - job.RequestedAt).TotalHours, 1);
+                        logger.ZLogInformation($"Backup erasure of database {job.Database.DatabaseId:@Database} waits: {progress.Failure:@Reason} {holders:@Holders}, {hours:@Hours} h after its deletion");
+                    }
                 }
             }
 
