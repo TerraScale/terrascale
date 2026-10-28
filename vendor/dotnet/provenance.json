@@ -1,19 +1,19 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.14",
+  "version": "0.0.19",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "cb29e2f9ec0ca835be72af6df2549588de5976f4",
-  "sourceTree": "08c844549805821987d3a7879a90ee8b3f69ab2e",
-  "sourceArchiveSha256": "8b464652031fba2ea75644f4eeb4da8e9ccd0be41c2b85ec116fe398087d5254",
-  "file": "TerraScale.DotNet.0.0.14.nupkg",
-  "sourceDateEpoch": 1793140131,
-  "sha256": "b5b8381d9f578acb7f3a4462d8d8a25f43cd0f37ce8dd2fd5658b47fb926b4a3",
+  "sourceRevision": "632440121a76b6a3860db127a4bc00c365de266d",
+  "sourceTree": "ca62921a85236380373de70d3a2bc5711fcf5e6e",
+  "sourceArchiveSha256": "7d57bb7c65aa00e96adb5f5795d92a470c45c2885647c5eefd8c60c24fd03809",
+  "file": "TerraScale.DotNet.0.0.19.nupkg",
+  "sourceDateEpoch": 1793175314,
+  "sha256": "653a73ee20f9a04e37a21edb842990cbdce47c2f8ddaabf36289a199cab921ad",
   "assemblySha256ByFramework": {
-    "net10.0": "380609ce2ac010095e2deca2e763da7a0fb74146741bb5f1504ad2fd47b39941",
-    "net11.0": "3622062f3df6ae051fc77fdb80f03baf819452555b2d3d6eeb89b79dc74e5710"
+    "net10.0": "2479c2a119d598b15a0e6963841500b112c8e816d81d98d9738197f4b1ea5af4",
+    "net11.0": "7dd35a5fefedb2c8d23cd123da0cbb37ab69cd186dc1f25e819b0eef74865b10"
   },
   "contractSha256ByPath": {
-    "contracts/auth/README.md": "59c28bdc733f2795078da8b840244330bbc0d164a7d76135be2ba5309b49797c",
+    "contracts/auth/README.md": "f20906f8f726a743be8caf446b9806bbcce75fa87059d86cbe270d4d48e017ad",
     "contracts/auth/cidr-provenance.json": "6119d37ab6ebb050340b3240b6837b0d060dcb3b4d6fcb07417f1d23d34077dd",
     "contracts/auth/cidrs.md": "8b69761909dd8636274dcee6e54dc722659691791319cd0b20aa06bd78513cb4",
     "contracts/auth/dtos.json": "9b9b1f9cd893c60a98a1dca7a7c2a42188d568340bc2de1ccd40e144b4e17be4",
@@ -21,7 +21,7 @@
     "contracts/auth/error-codes.json": "f98981b42326b8ea5b8dadb9b8f3d5545e4a75b465f0b3d5c8246800499ffdc6",
     "contracts/auth/fixtures/oauth.json": "5f45685decb0c2cf6873a9ac8bcbbad28b5ca98dd7cdaed9aa940005dd1f0757",
     "contracts/auth/fixtures/oidc-discovery.json": "7c190cd01799330eba2b9eac9e1d36c0d5c6579ea40bce6ed4587f5297eb3c5a",
-    "contracts/auth/fixtures/platform-headless.json": "99e1e09dea5c15d6383a44f31e652a60dbac754f3215af655998fa7ca59a1f24",
+    "contracts/auth/fixtures/platform-headless.json": "643b317d910f473ed0dd6265f70c24b5389ea4dd624379543e7b3d67454e7894",
     "contracts/auth/fixtures/project-invitation.json": "bc83c3fe34812f639426f383ac5d2cb9a58e7645ee5fec7f59d637910af80919",
     "contracts/auth/fixtures/project-tenant.json": "58460cb9a326e50b7f33c508889a28117950b07d9046f8855881ff11f8d098b2",
     "contracts/auth/hosted-settings-provenance.json": "cf09d1cdf5319217719fcae63cc258afd9e71cccbaca40173a2a1a1cca0fe5e5",
@@ -31,7 +31,7 @@
     "contracts/auth/oidc-discovery-provenance.json": "da186eb4d296b741dcd2bcdafdd7c47421e78539a684a9372addd1fa252f4cde",
     "contracts/auth/provenance.json": "95663e72faf9f846c88924403442186ac6e24a2b25d05152b3370e063a4a821c",
     "contracts/auth/public-client-provenance.json": "dd4467455db016b0fcbe9cbbd734307cdb444a3804e377f8aeb51ac7cf94c3d3",
-    "contracts/auth/routes.json": "203f1142d4905bc134f6ad82d4a9ccb18d75a37b55064a45c439ca507af5ae30",
+    "contracts/auth/routes.json": "6b2d224f69e6227bbc99ec5182dd98095ae7b539f744cebce21f273028a2ca28",
     "contracts/auth/security.json": "49fcd9f01667dc595d0f1dd701a827c1b23bb83aa3ada76e449e10a7837e4992",
     "contracts/auth/step-up-provenance.json": "c3ac686fd2c395fbcc91953c9e30d2305115742a049eb11fe44b83c90f3a0d49",
     "contracts/auth/user-export-provenance.json": "2d4401db7963c9c79117e6d2df9ff46671dd7db3d1211f22fb934b5e650cd087",
@@ -41,7 +41,8 @@
     "contracts/terrabase/artifacts/terrabase-r8-2b95f5ef-source.tar.gz": "13edca03ed374fca0841bcb1734ea6512c5246f1bf9a280da8b068a47d759506",
     "contracts/terrabase/change-webhooks.md": "08e80fd5f750a7182bb782dc9bff456c9ed3544e00a1f7220c89279f97cc6df1",
     "contracts/terrabase/collection-rules.json": "21b8e3a5f6d0f4d4a906971193ad6a2f9a365cc6d83828be903b8836f164032c",
-    "contracts/terrabase/current-public-routes.json": "bbb9b7b413a910fa9648a39548a68f9a51cb7bb5ed7b9fdce9ede57d7c23d330",
+    "contracts/terrabase/current-public-routes.json": "b4553ce72fd46541757f304990c8e88b224f54ee0b9685755e70562ebd7827ec",
+    "contracts/terrabase/database-rename.md": "3f2fcf9557c58504decff7d8cf30ae53eee168402832edff0fe62bdd0d6d45ca",
     "contracts/terrabase/export-cursors.json": "5501c07e433bbeb43b5fd344d00e6f2577f9372dcaec9917afe1252ffcba4540",
     "contracts/terrabase/export-schedules.json": "5a9224387ec4cd9029955c45aec4d90325be4a543adf9777366ddf53c433018f",
     "contracts/terrabase/file-storage/CompleteFileUploadEndpoint.cs.txt": "22af6f1c866dbabe0301e22cb55526754e73b39f83c3d7498d66c939eae053ac",
@@ -130,5 +131,5 @@
     "contracts/terrabase/vector-pin.json": "2830faa64f4dde9a23dfe44682e91447500511cce9580e88bd83a763cad1e551"
   },
   "sdk": "11.0.100-rc.1.26425.128",
-  "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified."
+  "qualification": "Two clean locked builds produced identical package bytes; installed-package graph passed the fail-closed transitive NuGet audit and HTTP fake consumer on net10.0 and net11.0. Locally built, not published or live-service qualified."
 }

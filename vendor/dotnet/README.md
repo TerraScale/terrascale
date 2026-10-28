@@ -1,15 +1,15 @@
 # ts-dotnet package pin
 
-The dashboard consumes TerraScale.DotNet `0.0.14` from merged ts-dotnet revision
-`cb29e2f9ec0ca835be72af6df2549588de5976f4` (PR94). It adds purpose-bound step-up
-proofs and deletion continuation grants for the coordinated auth PR767 rollout.
-The package also carries current main’s contracts and fixed SDK request deadlines.
+The dashboard consumes TerraScale.DotNet `0.0.19` from merged ts-dotnet revision
+`632440121a76b6a3860db127a4bc00c365de266d` (after PR101). It adds
+`Platform.SignOutEverywhereAsync` for account-wide sign-out, on top of 0.0.15 to
+0.0.18 (transient-failure retries, database rename, HTTP/2 negotiation).
 
 `provenance.json` records the immutable source revision/tree, toolchain, package,
 assembly and contract hashes. Two clean locked builds produced identical package
 bytes, and the installed-package HTTP consumer passed on net10.0 and net11.0.
 NuGet publication and live-service qualification are separate gates. Earlier
-artifacts remain retained; only `0.0.14` is selected by the central version pin.
+artifacts remain retained; only `0.0.19` is selected by the central version pin.
 
 To regenerate from a clean checkout of that exact merged SDK revision:
 

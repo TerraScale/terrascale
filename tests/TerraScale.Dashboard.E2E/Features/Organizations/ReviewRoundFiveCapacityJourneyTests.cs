@@ -363,6 +363,7 @@ public sealed class ReviewRoundFiveCapacityJourneyTests
         public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken) => inner.CreateOrganizationAsync(session, name, cancellationToken);
         public Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken) => inner.RenameOrganizationAsync(session, organizationId, name, cancellationToken);
         public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.LeaveOrganizationAsync(session, organizationId, cancellationToken);
+        public Task SignOutEverywhereAsync(SessionRecord session, CancellationToken cancellationToken) => inner.SignOutEverywhereAsync(session, cancellationToken);
         public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.DeleteOrganizationAsync(session, organizationId, cancellationToken);
         public async Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {

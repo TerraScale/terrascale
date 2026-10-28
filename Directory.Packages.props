@@ -11,7 +11,7 @@
     <PackageVersion Include="Scalar.AspNetCore" Version="2.18.0" />
     <PackageVersion Include="Stripe.net" Version="53.0.0" />
     <!-- Qualified merged SDK from vendor/dotnet (NuGet.Config maps it there); see vendor/dotnet/README.md. -->
-    <PackageVersion Include="TerraScale.DotNet" Version="0.0.14" />
+    <PackageVersion Include="TerraScale.DotNet" Version="0.0.19" />
   </ItemGroup>
   <ItemGroup Label="E2E">
     <PackageVersion Include="TUnit" Version="1.73.19" />
