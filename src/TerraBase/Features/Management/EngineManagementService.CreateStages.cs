@@ -7,7 +7,7 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    // Up to the 60-second runner deadline that canceled a live create (docs/terrabase/database-create-stage-metrics.md).
+    // Buckets cover the 30-second SDK deadline and the 60-second setup budget (docs/terrabase/database-create-stage-metrics.md).
     private static readonly double[] CreateStageBuckets = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 20, 25, 30, 45, 60];
 
     private readonly Histogram<double> _createStages = meters.Create(Telemetry.MeterName).CreateHistogram<double>(
