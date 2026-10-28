@@ -8,6 +8,11 @@ internal sealed partial class HistoryErasures
 {
     private readonly Dictionary<(string Erasure, string Peer), (int Evidence, DateTimeOffset Next, TimeSpan Delay)> _recovery = [];
 
+    // Per peer, when its snapshots may be pulled again after a pull that moved no erasure on. A pull copies the peer's whole
+    // auth and SYSTEM files, the same for every erasure, and holds SYSTEM's writer for the import: keyed per erasure, 150
+    // stalled erasures pulled back to back and held it about 60% of the time (gru, 2026-10-28), so creates timed out.
+    private readonly Dictionary<string, (DateTimeOffset Next, TimeSpan Delay)> _peerPulls = [with(StringComparer.Ordinal)];
+
     private static ulong Cut(IEnumerable<OriginCut> cuts, ulong replica) =>
         cuts.Where(cut => cut.Replica == replica).Select(cut => cut.Stamp).DefaultIfEmpty().Max();
 
@@ -54,6 +59,19 @@ internal sealed partial class HistoryErasures
         }
 
         var key = (record.ErasureId, peer.Name);
+        // Another erasure's pull may already have imported what this one needs: the local cuts are read before pulling.
+        if (await ProgressedAsync(own, origins, cancellationToken).ConfigureAwait(false))
+        {
+            await MarkAsync(record, own, cancellationToken, peer.Name).ConfigureAwait(false);
+            _recovery.Remove(key);
+            return;
+        }
+
+        if (_peerPulls.TryGetValue(peer.Name, out var pull) && time.GetUtcNow() < pull.Next)
+        {
+            return;
+        }
+
         var evidence = RecoveryEvidence(own, receipts.Single(receipt => receipt.MachineId == peer.Name), origins);
         var progressed = false;
         var completed = false;
@@ -67,17 +85,7 @@ internal sealed partial class HistoryErasures
             }
 
             completed = true;
-            var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false);
-            if (auth is null)
-            {
-                return;
-            }
-
-            await using var read = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-            var authCuts = await read.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
-            var systemCuts = await catalog.ReadUncheckedAsync(transaction => transaction.GetAppliedAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
-            progressed = origins.Any(origin => authCuts.GetValueOrDefault(new(origin)).Value > Cut(own.AuthApplied, origin)
-                || systemCuts.GetValueOrDefault(new(origin)).Value > Cut(own.SystemApplied, origin));
+            progressed = await ProgressedAsync(own, origins, cancellationToken).ConfigureAwait(false);
             if (progressed)
             {
                 // Only actual imported prefix progress warrants a fresh fence. No-op imports must not churn every
@@ -89,6 +97,15 @@ internal sealed partial class HistoryErasures
         {
             if (!cancellationToken.IsCancellationRequested)
             {
+                if (completed)
+                {
+                    // A pull that moved this erasure on may move others too: their next pass looks without pulling.
+                    var wait = progressed ? TimeSpan.Zero
+                        : _peerPulls.TryGetValue(peer.Name, out var last) && last.Delay > TimeSpan.Zero
+                            ? TimeSpan.FromTicks(Math.Min(last.Delay.Ticks * 2, MaxBackoff.Ticks)) : TimeSpan.FromMinutes(1);
+                    _peerPulls[peer.Name] = (time.GetUtcNow() + wait, wait);
+                }
+
                 if (progressed)
                 {
                     _recovery.Remove(key);
@@ -123,6 +140,22 @@ internal sealed partial class HistoryErasures
                 }, static _ => false, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    // Whether this machine's auth or SYSTEM file now holds more of an obsolete origin than its receipt recorded.
+    private async Task<bool> ProgressedAsync(HistoryErasureReceipt own, IReadOnlySet<ulong> origins, CancellationToken cancellationToken)
+    {
+        var auth = await engine.OpenDatabaseAsync(AuthDatabase, cancellationToken).ConfigureAwait(false);
+        if (auth is null)
+        {
+            return false;
+        }
+
+        await using var read = await auth.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var authCuts = await read.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
+        var systemCuts = await catalog.ReadUncheckedAsync(transaction => transaction.GetAppliedAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+        return origins.Any(origin => authCuts.GetValueOrDefault(new(origin)).Value > Cut(own.AuthApplied, origin)
+            || systemCuts.GetValueOrDefault(new(origin)).Value > Cut(own.SystemApplied, origin));
     }
 
     // Scheduling evidence excludes the ever-changing fence marker and cursor. A hash collision can delay a retry at
