@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run on one serving host: bounded c=1 document writes against the local node, HTTP and Wire.
+"""Run on one serving host: bounded c=1 document writes (HTTP and Wire) and point reads (document, SQL, Hrana) locally.
 
 Each write is one FULL commit answered after this region's commit (0013e). A synthetic tenant comes from the RT6
 matrix (endpoint-replication-proof.py) and is deleted afterwards; writes are paced at most 10/s, 60 per cell.
@@ -65,8 +65,36 @@ with open(output, "x") as stream:
             if response.status not in (200, 201):
                 raise RuntimeError(f"http put {response.status}")
 
+        def get(endpoint, table, identifier, value):
+            # P1's live statements (perf-live.py), so its live baseline is the comparison.
+            sql = f"SELECT value FROM {table} WHERE id = '{identifier}'"
+            if endpoint == "documents":
+                method, path, body = "GET", live.document(live.name, table, identifier), None
+            elif endpoint == "sql":
+                method, path, body = "POST", live.data(live.name) + "/sql/execute", json.dumps({"statements": [{"sql": sql}]})
+            else:
+                method, path = "POST", live.data(live.name) + "/libsql/v2/pipeline"
+                body = json.dumps({"requests": [{"type": "execute", "stmt": {"sql": sql, "want_rows": True}}, {"type": "close"}]})
+            client.request(method, path, body, {"Authorization": "Bearer " + live.key, "Content-Type": "application/json"})
+            response = client.getresponse()
+            data = response.read()
+            if response.status != 200 or value.encode() not in data:
+                raise RuntimeError(f"{endpoint} read {response.status}")
+
         for repeat in range(1, 4):
             for size, (table, identifiers, value) in tables.items():
+                for endpoint in ("documents", "sql", "hrana"):
+                    get(endpoint, table, identifiers[0], value)
+                    samples = []
+                    for _ in range(60):
+                        began = time.perf_counter()
+                        get(endpoint, table, identifiers[0], value)
+                        samples.append((time.perf_counter() - began) * 1000)
+                        time.sleep(.1)
+                    samples.sort()
+                    live.record(kind="read_latency", region=region, endpoint=endpoint, repeat=repeat, size=size, concurrency=1,
+                                samples_ms=samples, p50_ms=statistics.median(samples), p99_ms=samples[math.ceil(len(samples) * .99) - 1],
+                                rate_window="paced at most 10/s; one warmup read")
                 for endpoint in ("documents", "wire"):
                     put(endpoint, table, identifiers[0], value)
                     samples = []
