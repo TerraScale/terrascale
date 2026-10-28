@@ -313,6 +313,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private readonly ConcurrentQueue<string> failures = new();
         private readonly Dictionary<string, (string Collection, string? Filter, string Last)> cursors = [];
         private readonly Dictionary<string, string> organizationPlans = new(StringComparer.Ordinal);
+        private int planPublishes;
         private TaskCompletionSource? collectionGate;
         private TaskCompletionSource? planGate;
         private TaskCompletionSource? documentGate;
@@ -365,6 +366,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 {
                     // A stalled private listener: the publisher's own deadline must end the wait, not this producer.
                     if (planGate is { } stalled) await stalled.Task.WaitAsync(http.RequestAborted);
+                    Interlocked.Increment(ref planPublishes);
                     using var plan = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
                     var tier = plan.RootElement.TryGetProperty("plan", out var value) ? value.GetString() : null;
                     Require(http.Request.Method == "PUT" && TerraScaleIds.IsValid(planOwner) && tier is "hobby" or "starter" or "pro" or "team" or "enterprise",
@@ -617,6 +619,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 sqlWorkspaceLists,
                 failures = failures.ToArray(),
                 organizationPlans = organizationPlans.ToDictionary(),
+                planPublishes = Volatile.Read(ref planPublishes),
                 collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
                 { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
                 documentDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', collections.OrderBy(item => item.Key, StringComparer.Ordinal)

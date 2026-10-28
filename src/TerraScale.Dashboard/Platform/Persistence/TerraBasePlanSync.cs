@@ -11,8 +11,10 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 // TerraBase enforces each organization's monthly operation and database allowances from the plan the platform publishes
 // for its storage organization, whose id is the ts-auth organization id (PUT /admin/organizations/{organization}/plan on
 // its private listener). The dashboard owns plans, so it publishes every organization's entitled plan: on each dashboard
-// view and billing change, and from PlanReconciler every 30 seconds, so a wipe, a missed write or an enrollment after
-// the last change converges within a minute. TerraBase keeps a paid plan published before the first database.
+// view and billing change, and from PlanReconciler. A changed plan is published at once. A settled one (TerraBase stored it,
+// or answered 404 because there is nothing to set it on yet) is checked again every five minutes, so a wipe converges
+// without re-sending every organization each 30 seconds; a failed publish retries with backoff. TerraBase keeps a paid
+// plan published before the first database.
 public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment environment, TimeProvider time, ILogger<TerraBasePlanSync> logger)
 {
     // Request metadata identifies this publisher's storage-only writes; it is never an incoming header or setting.
@@ -22,8 +24,19 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
     // A view never waits longer than this on TerraBase: the reconciler republishes within 30 seconds, while a
     // stalled private listener otherwise held sign-in callbacks until their 30-second request budget (QA newuser:8).
     private static readonly TimeSpan ViewBudget = TimeSpan.FromSeconds(2);
+    // A settled plan is published again this often, which bounds how long a TerraBase wipe goes unnoticed.
+    public static readonly TimeSpan Refresh = TimeSpan.FromMinutes(5);
+    // The reconciler retries a failed publish on its next pass, then waits this long, doubling per failure up to Refresh.
+    private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(30);
     private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
-    private readonly ConcurrentDictionary<string, (string Plan, DateTimeOffset At)> published = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Attempt> published = new(StringComparer.Ordinal);
+
+    // The last plan tried for an organization: settled when TerraBase stored it or had nothing to set it on (404).
+    private sealed record Attempt(string Plan, DateTimeOffset At, bool Settled, int Failures)
+    {
+        public bool Due(string plan, DateTimeOffset now, bool reconcile) => Plan != plan || now - At >= (Settled ? Refresh
+            : reconcile ? Failures <= 1 ? TimeSpan.Zero : TimeSpan.FromTicks(Math.Min(Refresh.Ticks, RetryAfter.Ticks << Math.Min(Failures - 2, 10))) : Fresh);
+    }
 
     // TerraBase's tiers carry the published catalog's allowances (https://terrascale.tech/pricing.json), so an organization
     // gets the smallest catalog plan covering its operation and database allowances; an internal policy above every
@@ -48,39 +61,40 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
         try { plan = PlanFor(organization); }
         catch (IOException) { return; }
         var now = time.GetUtcNow();
-        if (!reconcile && published.TryGetValue(organization.Id, out var last) && last.Plan == plan && now - last.At < Fresh) return;
+        var last = published.GetValueOrDefault(organization.Id);
+        if (last is not null && !last.Due(plan, now, reconcile)) return;
+        var failures = last is { Settled: false } && last.Plan == plan ? last.Failures : 0;
         // Views try a plan at most once per window, whatever the outcome: a failing TerraBase route otherwise cost every
-        // page view its full budget (QA dashui:26/27/36). The reconciler ignores the window and keeps retrying.
-        if (!reconcile) published[organization.Id] = (plan, now);
+        // page view its full budget (QA dashui:26/27/36).
+        if (!reconcile) published[organization.Id] = new(plan, now, false, failures);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (!reconcile) budget.CancelAfter(ViewBudget);
+        var settled = false;
         try
         {
             using var response = await PutAsync($"admin/organizations/{organization.Id}/plan", plan, budget.Token);
-            // 404 is Hobby for an organization TerraBase has no storage for yet: Hobby is its default.
-            if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound && plan == "hobby" && organization.Projects.Count == 0)
-            {
-                published[organization.Id] = (plan, now);
-                return;
-            }
             if (response.StatusCode != HttpStatusCode.NotFound)
             {
-                logger.LogWarning("TerraBase refused plan {Plan} for organization {Organization}: {Status}", plan, organization.Id, (int)response.StatusCode);
+                settled = response.IsSuccessStatusCode;
+                if (!settled) logger.LogWarning("TerraBase refused plan {Plan} for organization {Organization}: {Status}", plan, organization.Id, (int)response.StatusCode);
                 return;
             }
-            // shortcut: a TerraBase without the organization route answers 404; publish to each enrolled project as before
-            // until every region serves it.
-            var enrolled = true;
+            // 404: Hobby on an organization with no record (its default), a deleted organization, or one TerraBase created
+            // when a project token enrolled its first database, whose plan is set per enrolled project. A project 404
+            // (unknown, or bound to another organization) leaves nothing to set either; only a refusal stays unsettled.
+            settled = true;
             foreach (var project in organization.Projects.Keys)
             {
-                using var fallback = await PutAsync($"admin/projects/{project}/plan", plan, budget.Token);
-                enrolled &= fallback.IsSuccessStatusCode || fallback.StatusCode == HttpStatusCode.NotFound;
+                using var enrolled = await PutAsync($"admin/projects/{project}/plan", plan, budget.Token);
+                if (enrolled.IsSuccessStatusCode || enrolled.StatusCode == HttpStatusCode.NotFound) continue;
+                settled = false;
+                logger.LogWarning("TerraBase refused plan {Plan} for project {Project}: {Status}", plan, project, (int)enrolled.StatusCode);
             }
-            if (enrolled) published[organization.Id] = (plan, now);
         }
-        // The page, webhook or reconciler pass that triggered this still succeeds; the next one publishes again.
+        // The page, webhook or reconciler pass that triggered this still succeeds; a later one publishes again.
         catch (HttpRequestException error) { logger.LogWarning("TerraBase plan publish failed for organization {Organization} ({ErrorType})", organization.Id, error.GetType().Name); }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { logger.LogWarning("TerraBase plan publish timed out for organization {Organization}", organization.Id); }
+        finally { published[organization.Id] = new(plan, now, settled, settled ? 0 : failures + 1); }
     }
 
     private async Task<HttpResponseMessage> PutAsync(string path, string plan, CancellationToken cancellationToken)
