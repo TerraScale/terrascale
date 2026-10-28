@@ -7,12 +7,6 @@ import (
 	"net/url"
 )
 
-// AutoIndexPolicy controls the producer's automatic index maintenance.
-type AutoIndexPolicy struct {
-	Collection string `json:"collection"`
-	Enabled    bool   `json:"enabled"`
-}
-
 // IndexRecommendation is a workload-derived index suggestion. Its ID is an
 // opaque producer identifier, not an entity ULID.
 type IndexRecommendation struct {
@@ -72,24 +66,6 @@ func (d *Database) DropIndex(ctx context.Context, name string) error {
 	}
 	_, err = d.c.call(ctx, request{method: http.MethodDelete, path: p}, nil, nil)
 	return err
-}
-
-// AutoIndexPolicy reads the policy even when the collection does not exist.
-func (d *Database) AutoIndexPolicy(ctx context.Context, collection string) (*AutoIndexPolicy, error) {
-	if err := checkName("collection", collection); err != nil {
-		return nil, err
-	}
-	return databaseCall[AutoIndexPolicy](ctx, d, http.MethodGet, nil, nil, "auto-index", collection)
-}
-
-// SetAutoIndexPolicy replaces the collection's automatic-index policy.
-func (d *Database) SetAutoIndexPolicy(ctx context.Context, collection string, enabled bool) (*AutoIndexPolicy, error) {
-	if err := checkName("collection", collection); err != nil {
-		return nil, err
-	}
-	return databaseCall[AutoIndexPolicy](ctx, d, http.MethodPut, nil, struct {
-		Enabled bool `json:"enabled"`
-	}{enabled}, "auto-index", collection)
 }
 
 // IndexRecommendations lists workload-derived recommendations.
