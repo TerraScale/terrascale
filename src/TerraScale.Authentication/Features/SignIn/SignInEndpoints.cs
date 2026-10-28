@@ -602,12 +602,14 @@ internal static class SignInFlow
     /// A redirect back to the authorization request in <paramref name="next"/> when the browser already holds a live
     /// session for the page's tenant, so a signed-in visitor sent to sign in or sign up again (an application that lost
     /// its own session) returns without a second sign-in; otherwise null. The authorization endpoint still enforces
-    /// max_age and prompt, and refuses rather than redirects back here, so this never loops.
+    /// max_age and prompt; a request that demands a new sign-in carries ts_login_after and always gets the form, so this
+    /// never loops.
     /// </summary>
     public static async Task<IResult?> ResumeAsync(HttpContext context, string? next, CancellationToken cancellationToken)
     {
         var tenant = Tenant(context);
         if (next is null || !next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+            || next.Contains($"{AuthorizeEndpoint.LoginAfter}=", StringComparison.Ordinal)
             || context.Request.Cookies[Tenancy.SessionCookie(tenant)] is not { Length: > 0 } token)
         {
             return null;

@@ -253,15 +253,19 @@ no scopes and no email, and they get no identity or refresh token. Authorization
 the configured URIs use HTTPS except `localhost` or a loopback IP over HTTP,
 without a fragment or credentials. Public clients and self-service client
 registration are target behaviour.
+Discovery advertises `prompt_values_supported` `none` and `login` only.
 `prompt=none` uses only an active session and returns `login_required` when none
-exists. Forced reauthentication, consent, and account selection are unsupported:
-`prompt=login`, `prompt=consent`, and `prompt=select_account` return
-`login_required`, `consent_required`, and `account_selection_required`. A
-`max_age` that the session has exceeded returns `login_required` instead of
-forcing a new sign-in. OpenIddict validates the `prompt` parameter first; the
-endpoint then checks `login`, `consent` and `select_account` in that order, so
-`prompt=login consent` returns `login_required`. The Rust service answered it
-with `interaction_required`; that is not ported.
+exists or it is older than `max_age`. `prompt=login`, or an active session older
+than `max_age`, sends the browser to the hosted sign-in form even when it is
+signed in. The resumed request drops `login` from `prompt` and carries
+`ts_login_after` (Unix milliseconds); only a session created after that time
+satisfies it, in place of `max_age`, and the sign-in page always shows its form
+for it, so one deliberate sign-in completes the request and an older session
+never does. The identity token's `auth_time` is that sign-in. There is no
+consent or account picker page: OpenIddict refuses `prompt=consent` and
+`prompt=select_account` with `invalid_request` on the hosted error page. A
+repeated `prompt` or `ts_login_after`, or a malformed `ts_login_after`, returns
+`invalid_request`.
 
 Target behaviour: upstream OIDC connections request `openid email profile` by
 default. A custom

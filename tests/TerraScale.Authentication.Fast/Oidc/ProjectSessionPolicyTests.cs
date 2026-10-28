@@ -202,7 +202,7 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
 
         using var allowed = await AuthorizeAsync(oidc, project, client, session.Token, challenge, Callback);
         await Assert.That(allowed.Headers.Location!.AbsoluteUri).StartsWith(Callback + "?");
-        foreach (var extra in new[] { string.Empty, "&prompt=consent", "&response_mode=form_post" })
+        foreach (var extra in new[] { string.Empty, "&ts_login_after=soon", "&response_mode=form_post" })
         {
             using var rejected = await AuthorizeAsync(oidc, project, client, session.Token, challenge, Blocked, extra);
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

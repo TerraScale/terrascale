@@ -21,7 +21,7 @@ public sealed partial class FormPostBrowserTests(TerraBaseFixture fixture)
 
     [Test]
     [Arguments("", "code")]
-    [Arguments("&prompt=consent", "error")]
+    [Arguments("&ts_login_after=soon", "error")]
     public async Task Browser_form_post_delivers_the_result_once_to_the_registered_callback(string extra, string result)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);

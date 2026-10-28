@@ -153,7 +153,13 @@ public static class OidcIssuer
                     .AddSigningKey(new SymmetricSecurityKey(Derive(options, "ts-auth oidc token signing")) { KeyId = "ts-auth-internal" })
                     .AddSigningCredentials(new SigningCredentials(KeyRingPlaceholder(), SecurityAlgorithms.EcdsaSha256))
                     .AddEncryptionKey(new SymmetricSecurityKey(Derive(options, "ts-auth oidc token encryption")) { KeyId = "ts-auth-internal" })
-                    .Configure(server => server.CodeChallengeMethods.Remove(CodeChallengeMethods.Plain))
+                    .Configure(server =>
+                    {
+                        server.CodeChallengeMethods.Remove(CodeChallengeMethods.Plain);
+                        // There is no consent or account picker page: neither prompt is advertised, and OpenIddict refuses them.
+                        server.PromptValues.Remove(PromptValues.Consent);
+                        server.PromptValues.Remove(PromptValues.SelectAccount);
+                    })
                     .RemoveEventHandler(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Discovery.AttachSigningKeys.Descriptor)
