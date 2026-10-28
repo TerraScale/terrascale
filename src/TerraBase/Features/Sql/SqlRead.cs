@@ -293,12 +293,21 @@ internal static class SqlRead
     {
         var key = KeyParameter(read, tables, parameters.Count, out var keyLiteral);
         SqlGuard.Apply(read.Query, tables);
-        var affinities = SqlGuard.Affinity(read.Query, tables);
-        parameters = [.. parameters.Select((value, i) => affinities.TryGetValue(i + 1, out var affinity) ? Bound(affinity, value) : value)];
+        var bound = parameters.ToList();
         if (keyLiteral is not null)
         {
-            parameters = [.. parameters, keyLiteral];
+            bound.Add(keyLiteral);
         }
+
+        // The key filter compares the TEXT document id, so a key parameter gets its own text copy.
+        if (key is { } number && number <= parameters.Count && SqlCoerce.Bound(SqlAffinity.Text, parameters[number - 1]) is var text && !Equals(text, parameters[number - 1]))
+        {
+            bound.Add(text);
+            key = bound.Count;
+        }
+
+        SqlCoerce.Apply(read.Query, tables, bound);
+        parameters = bound;
 
         // Defense in depth: the text the engine runs must parse back to the same statement.
         var full = read.Query.ToSql();
@@ -415,25 +424,6 @@ internal static class SqlRead
             Found |= expression is Expression.Subquery or Expression.Exists or Expression.InSubquery;
             return ControlFlow.Continue;
         }
-    }
-
-    // A bound parameter converted by the affinity of the column it is compared with.
-    private static object? Bound(SqlAffinity affinity, object? value)
-    {
-        var converted = SqlWrite.Apply(affinity, value switch
-        {
-            long integer => SqlValue.Of(integer),
-            double real => SqlValue.Of(real),
-            string text => SqlValue.Of(text),
-            _ => SqlValue.Null,
-        });
-        return converted.Kind switch
-        {
-            SqlValueKind.Integer => converted.Integer,
-            SqlValueKind.Real => converted.Real,
-            SqlValueKind.Text => converted.Text,
-            _ => null,
-        };
     }
 
     /// <summary>

@@ -133,6 +133,36 @@ public sealed class SqlReadTests
         await Assert.That(table.Columns.Select(column => column.Default)).IsEquivalentTo([null, "-1", "'it''s'"]);
     }
 
+    // Affinity is applied per comparison, in that comparison's scope: one parameter can meet columns of other affinities.
+    [Test]
+    public async Task Comparisons_coerce_each_occurrence_by_the_column_in_its_own_scope()
+    {
+        await using var api = await SeedAsync();
+        await SqlApi.OkAsync(api,
+            "CREATE TABLE q (n INTEGER, s TEXT)", "CREATE TABLE r (s INTEGER)", "CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)",
+            "INSERT INTO q VALUES (1, '01')", "INSERT INTO r VALUES (1)", "INSERT INTO kv VALUES ('7', 'sev')");
+
+        var x = new { x = "01" };
+        (object Statement, string Rows)[] cases =
+        [
+            (new { sql = "SELECT n FROM q WHERE n = :x AND s = :x", named = x }, """[[1]]"""),
+            (new { sql = "SELECT n FROM q WHERE s = :x AND n IN (:x)", named = x }, """[[1]]"""),
+            (new { sql = "SELECT q.n FROM q JOIN r ON 1 = 1 WHERE r.s = :x AND q.s = :x", named = x }, """[[1]]"""),
+            (new { sql = "SELECT a.n FROM q a, r b WHERE b.s = '01' AND a.s = '01'" }, """[[1]]"""),
+            (new { sql = "WITH c AS (SELECT n AS m, s FROM q) SELECT m FROM c WHERE m = :x AND s = :x", named = x }, """[[1]]"""),
+            (new { sql = "WITH c (m, t) AS (SELECT n, s FROM q) SELECT m FROM c WHERE m = :x AND t = :x", named = x }, """[[1]]"""),
+            (new { sql = "SELECT t.n FROM (SELECT * FROM q) t WHERE t.n = :x AND t.s = :x", named = x }, """[[1]]"""),
+            (new { sql = "SELECT n FROM q WHERE EXISTS (SELECT 1 FROM r WHERE s = :x) AND s = :x", named = x }, """[[1]]"""),
+            (new { sql = "SELECT n FROM q WHERE s = :x AND n = (SELECT s FROM r WHERE s = :x)", named = x }, """[[1]]"""),
+            (new { sql = "SELECT v FROM kv WHERE k = ?", args = new object[] { 7 } }, """[["sev"]]"""),
+        ];
+
+        foreach (var (statement, rows) in cases)
+        {
+            await Assert.That(await RowsAsync(api, statement)).IsEqualTo(rows).Because(JsonSerializer.Serialize(statement));
+        }
+    }
+
     [Test]
     public async Task Reads_outside_sql_tables_functions_and_bounds_are_refused()
     {
