@@ -53,6 +53,10 @@ internal sealed class Bench : IDisposable
 
     internal TerraBaseDatabase Db => documents.Database(project, database);
 
+    /// <summary>Project-token create (<c>POST</c>) on every serving region; the legacy <c>PUT</c> route refuses project tokens.</summary>
+    internal static Task<TerraBaseManagedDatabase> CreateDatabaseAsync(TerraBaseDocumentsClient documents, string project, string name, CancellationToken ct) =>
+        documents.Project(project).CreateDatabaseAsync(name, allRegions: true, cancellationToken: ct);
+
     /// <summary>Token exchange, then database create. Nothing else is untimed setup.</summary>
     internal async Task<Ready> SetupAsync(CancellationToken ct)
     {
@@ -61,7 +65,7 @@ internal sealed class Bench : IDisposable
         var authMs = Stopwatch.GetElapsedTime(begin).TotalMilliseconds;
         database = DatabaseName(ids.NewId());
         attempted = true;
-        await Db.CreateAsync(ct);
+        await CreateDatabaseAsync(documents, project, database, ct);
         return new Ready("ready", Protocol.Client, Protocol.SdkName, Protocol.SdkVersion(), RuntimeInformation.FrameworkDescription, database,
             Stopwatch.GetElapsedTime(begin).TotalMilliseconds, authMs);
     }
@@ -188,7 +192,7 @@ internal sealed class Bench : IDisposable
         }
     }
 
-    /// <summary>Deletes the database. Only called after setup was attempted.</summary>
+    /// <summary>Deletes the database (logical deletion; the SDK documents remote erasure as durable, not synchronous). Only called after setup was attempted.</summary>
     internal async Task<Done> CleanupAsync()
     {
         if (!attempted) return new Done("done", true, "");

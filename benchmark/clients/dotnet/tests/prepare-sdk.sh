@@ -31,7 +31,7 @@ git init -q .sdk
 git -C .sdk -c user.name=fixture -c user.email=fixture@example.test -c commit.gpgsign=false commit -qm initial --allow-empty
 git -C .sdk rev-parse HEAD >sdk.rev
 expect_failure 'official ts-dotnet origin' --verify
-git -C .sdk remote add origin ssh://git@git.terrascale.tech/TerraScale/ts-dotnet.git
+git -C .sdk remote add origin https://github.com/TerraScale/ts-dotnet.git
 git -C .sdk update-ref refs/remotes/origin/main HEAD
 bash prepare-sdk.sh --verify
 touch .sdk/untracked

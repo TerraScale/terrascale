@@ -124,7 +124,7 @@ public sealed class FailureTests
             "FIFO integration test requires an eligible host.");
         var launcher = ScriptPath("bench-client");
         RequireTools("bash", "mkfifo", "timeout", "dotnet", "sleep");
-        Skip.Unless(File.Exists(Path.Combine(Path.GetDirectoryName(launcher)!, "src/bin/Release/net10.0/bench-client.dll")),
+        Skip.Unless(File.Exists(Path.Combine(Path.GetDirectoryName(launcher)!, "src/bin/Release/net11.0/bench-client.dll")),
             "FIFO integration test requires the Release client build.");
         var directory = Directory.CreateTempSubdirectory("dotnet-fifo-");
         Process? writer = null;

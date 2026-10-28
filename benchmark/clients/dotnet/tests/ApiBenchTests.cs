@@ -139,6 +139,31 @@ public sealed class ProtocolTests
     }
 
     [Test]
+    public async Task DatabaseCreateUsesTheProjectRoute()
+    {
+        var handler = new FakeHandler(HttpStatusCode.BadRequest, """{"error":{"code":"invalid_request","message":"stop"}}""");
+        var documents = new TerraBaseDocumentsClient(new HttpClient(handler), new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = new Uri("https://gru.api.terrascale.tech"),
+            AccessTokenProvider = _ => ValueTask.FromResult("token"),
+        });
+        var refused = false;
+        try
+        {
+            await Bench.CreateDatabaseAsync(documents, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "bench-x", CancellationToken.None);
+        }
+        catch (TerraBaseException)
+        {
+            refused = true;
+        }
+
+        await Assert.That(refused).IsTrue();
+        await Assert.That(handler.RequestMethod).IsEqualTo(HttpMethod.Post);
+        await Assert.That(handler.RequestUri!.AbsolutePath).IsEqualTo("/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases");
+        await Assert.That(handler.RequestBody).IsEqualTo("""{"name":"bench-x","allRegions":true}""");
+    }
+
+    [Test]
     public async Task CountingHandlerCountsRequestAndResponseBytes()
     {
         const string body = "{\"g\":1}";
@@ -157,8 +182,17 @@ public sealed class ProtocolTests
 
     private sealed class FakeHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
+        internal HttpMethod? RequestMethod { get; private set; }
+        internal Uri? RequestUri { get; private set; }
+        internal string? RequestBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestMethod = request.Method;
+            RequestUri = request.RequestUri;
+            RequestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(status) { Content = new StringContent(body) };
+        }
     }
 }
 
