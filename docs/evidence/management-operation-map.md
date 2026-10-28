@@ -30,7 +30,7 @@ Reviewed 2026-10-26 against Database/Authentication `a3cbf8b1c73d304189a489fa803
 | Usage/analytics | `metrics.usage/analytics/replication`, `db.metrics.usage/analytics/replication` | Database project/database usage routes; exact numeric counts retained |
 | Schema/catalog | `db.schema.list/infer/declare/queryShapes`, collection `getSchema/putSchema/deleteSchema`, `getTtl/putTtl/deleteTtl` | Database published schema/TTL routes; prospective validation |
 | Schema preview | Collection `previewSchema(schema, { cursor })` | Published `/schema/preview`; read + write scopes, raw schema bytes, bounded pages and redacted diagnostics; observational only |
-| Indexes | `db.indexes.create/list/drop/getAutoPolicy/setAutoPolicy/recommendations/applyRecommendation` | Database public index routes; no invented readiness or migration guarantee |
+| Indexes | `db.indexes.create/list/drop/recommendations/applyRecommendation` | Database public index routes; no invented readiness or migration guarantee |
 | Saved queries | `savedQueries.create/list/get/update/delete` | Database project `/saved-queries`; existing opaque pagination |
 | Data exploration | Root/`db.collection(name)` documents, query, SQL, transactions, shapes and webhooks | Existing root contracts; no new generic transport |
 | Platform exploration | Admin `databases/collections/documents/document` | Database `/v1/platform/databases/...`; server requires platform_role=admin; read-only |

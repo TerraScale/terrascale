@@ -1,17 +1,15 @@
 import { requireDatabaseSelector, requireName } from "./ids.js";
-import { flag, list, numeric, optional, record, text } from "./management-decode.js";
+import { list, numeric, optional, record, text } from "./management-decode.js";
 import { members, mutationOptions } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
 const index = record({ name: text, collection: text, fields: list(text), state: text, kind: optional(text) });
 const indexes = record({ items: list(index) });
-const policy = record({ collection: text, enabled: flag });
 const recommendations = record({ items: list(record({ id: text, collection: text, fields: list(text), reason: text, queries: numeric })) });
 const applied = record({ status: text, index });
 /** @typedef {ReturnType<typeof index>} V1Index */
 /** @typedef {ReturnType<typeof indexes>} V1IndexList */
-/** @typedef {ReturnType<typeof policy>} V1AutoIndexPolicy */
 /** @typedef {ReturnType<typeof recommendations>} V1IndexRecommendations */
 /** @typedef {ReturnType<typeof applied>} V1AppliedIndexRecommendation */
 /** @typedef {"btree" | "text"} V1IndexKind */
@@ -22,7 +20,7 @@ function indexName(value) {
   return value;
 }
 
-/** Secondary indexes, automatic policies and workload recommendations for one database. */
+/** Secondary indexes and workload recommendations for one database. */
 export class V1Indexes {
   /** @type {V1Transport} */
   #transport;
@@ -53,19 +51,6 @@ export class V1Indexes {
   async drop(name, options = {}) {
     mutationOptions(options);
     await this.#transport.call("dropIndex", { ...this.#params, index: indexName(name) }, { signal: options.signal });
-  }
-  /** @param {string} collection @param {V1RequestOptions} [options] @returns {Promise<V1AutoIndexPolicy>} */
-  async getAutoPolicy(collection, options = {}) {
-    return policy((await this.#transport.call("getAutoIndexPolicy", { ...this.#params, collection: requireName("collection", collection) }, { signal: options.signal })).value);
-  }
-  /** @param {string} collection @param {{ readonly enabled: boolean }} request @param {V1RequestOptions} [options] @returns {Promise<V1AutoIndexPolicy>} */
-  async setAutoPolicy(collection, request, options = {}) {
-    members(request, ["enabled"]);
-    if (typeof request.enabled !== "boolean") throw new TypeError("enabled must be boolean.");
-    mutationOptions(options);
-    return policy((await this.#transport.call("setAutoIndexPolicy", { ...this.#params, collection: requireName("collection", collection) }, {
-      body: stringifyExactJson(request, "auto-index policy"), signal: options.signal,
-    })).value);
   }
   /** @param {V1RequestOptions} [options] @returns {Promise<V1IndexRecommendations>} */
   async recommendations(options = {}) { return recommendations((await this.#transport.call("listIndexRecommendations", this.#params, { signal: options.signal })).value); }

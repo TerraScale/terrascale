@@ -119,7 +119,6 @@ export { V1Indexes } from "./v1/indexes.js";
 /** @typedef {import("./v1/indexes.js").V1Index} V1Index */
 /** @typedef {import("./v1/indexes.js").V1IndexKind} V1IndexKind */
 /** @typedef {import("./v1/indexes.js").V1IndexList} V1IndexList */
-/** @typedef {import("./v1/indexes.js").V1AutoIndexPolicy} V1AutoIndexPolicy */
 /** @typedef {import("./v1/indexes.js").V1IndexRecommendations} V1IndexRecommendations */
 /** @typedef {import("./v1/indexes.js").V1AppliedIndexRecommendation} V1AppliedIndexRecommendation */
 /** @typedef {import("./v1/indexes.js").V1CreateIndexRequest} V1CreateIndexRequest */
