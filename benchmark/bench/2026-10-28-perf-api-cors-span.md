@@ -133,12 +133,16 @@ Errors across all arms: 0. Overall: VALID
 - **Allocation: measured benefit.** Process B/op fell in all 12 paired cells, by 425–550 B/op; the median paired Δ is
   −500 to −512 B/op per cell. The before and after ranges do not overlap in any cell. This matches the profile's
   448–498 B/request attribution. Relative to the totals it is about 1.1–1.7 % of the 30–46 KB/op the process allocates.
-- **CPU and latency: no claim.** CPU µs/op, client p50/p99, server, overhead and engine before/after ranges overlap in
-  every cell, and the paired deltas change sign. This shows no speedup and does not move the <10 % overhead target;
-  overhead stays about 88–118 µs p50 against engine 4–7 µs.
-- **Watch item, not a finding:** in small/c16, all three paired deltas were positive for overhead p99 (+36 to +105 µs) and
-  client p99, and negative for ops/s. The ranges overlap and the medium/c16 deltas change sign, so 3 pairs cannot tell this
-  apart from noise. There is no plausible mechanism in a matcher that only removes allocations.
+- **CPU and latency: no speedup established.** CPU µs/op, client p50/p99, server p50 and overhead p50/p99
+  before/after ranges overlap in every cell. Overlap alone does not establish parity or rule out a regression.
+  Small/c16 is directionally worse in all three pairs for client p50/p99, overhead p99 and throughput, as detailed below.
+  Engine ranges do not all overlap: small/c16 engine p99 and medium/c16 engine p50/p99 have separate ranges, with lower
+  values after. These results do not move the <10 % overhead target; overhead remains about 88–118 µs p50 against
+  engine 4–7 µs.
+- **Unresolved tail concern:** in small/c16, all three paired deltas were positive for overhead p99 (+36 to +105 µs),
+  client p50 (+2.9 to +5.0 µs) and client p99 (+26 to +127 µs), and negative for ops/s (−104 to −901).
+  Three pairs, overlapping ranges and mixed medium/c16 results do not settle whether this is a regression.
+  A separate quiet repeat using the pinned binaries is required before accepting the latency impact as neutral.
 
 ## Limits
 
