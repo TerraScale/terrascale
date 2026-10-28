@@ -28,8 +28,11 @@ test "$(sha256sum < "$TS_PEERS_FILE" | cut -d ' ' -f 1)" = "$peers_sha"
 cp "$TS_PEERS_FILE" "$out/peers.txt"
 cp /tmp/perf-api-admitted-peers-20261028-live-d.json "$out/peers-source.json"
 cp /tmp/perf-api-auth-region-state-20261028-live-d.json "$out/auth-region-state.json"
-# No retained tenant may exist before this run owns a new one.
-if find /tmp -maxdepth 1 -type d -name 'api-overhead-*' | grep -q .; then
+# Refuse any matching entry, including links, and fail closed on enumeration errors.
+if ! retained=$(find /tmp -mindepth 1 -maxdepth 1 -name 'api-overhead-*' -print); then
+  echo 'Retained tenant directory check failed; no tenant created.' >&2; exit 74
+fi
+if [[ -n "$retained" ]]; then
   echo 'Retained tenant directory present; no tenant created.' >&2; exit 74
 fi
 (cd benchmark && go build -trimpath -o "$out/api-bench-go" ./clients/go)
