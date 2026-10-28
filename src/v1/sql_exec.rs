@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::client::Req;
 use super::documents::Database;
 use super::errors::{Error, Result};
-use super::ids::check_name;
+use super::ids::check_database_selector;
 
 /// Maximum statements in one request.
 pub const MAX_SQL_STATEMENTS: usize = 256;
@@ -244,7 +244,7 @@ impl Sql {
 
     /// Runs 1..=256 statements in one transaction; one result per statement.
     pub async fn batch(&self, statements: Vec<SqlStatement>) -> Result<Vec<SqlStatementResult>> {
-        check_name("database", self.db.name())?;
+        check_database_selector(self.db.name())?;
         if statements.is_empty() || statements.len() > MAX_SQL_STATEMENTS {
             return Err(Error::InvalidInput(format!(
                 "a SQL batch holds 1..={MAX_SQL_STATEMENTS} statements"

@@ -8,7 +8,7 @@ use serde_json::value::RawValue;
 use super::client::{Req, Resp};
 use super::documents::Database;
 use super::errors::Result;
-use super::ids::{check_name, is_valid_name};
+use super::ids::{check_database_selector, is_valid_name};
 
 /// A document selected by SQL; `value` is the whole document or its projection.
 #[derive(Debug, Serialize, Deserialize)]
@@ -114,7 +114,7 @@ impl Database {
     }
 
     async fn sql_request(&self, sql: &str, operation: Option<&str>) -> Result<Resp> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let mut segments = vec!["v1", "databases", self.name(), "sql"];
         if let Some(operation) = operation {
             segments.push(operation);

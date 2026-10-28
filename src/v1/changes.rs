@@ -2,7 +2,7 @@
 use super::{
     documents::Database,
     errors::{from_project_response, Error, Result},
-    ids::{check_name, document_id, DocumentId},
+    ids::{check_database_selector, check_name, document_id, DocumentId},
     types::u64_string,
 };
 use bytes::Bytes;
@@ -25,7 +25,7 @@ impl Database {
     /// `GET D/changes`; no automatic reconnect or cursor advancement.
     /// A stream ends at token expiry or after 30 minutes. Dropping it cancels delivery.
     pub async fn change_bytes(&self, options: &ChangesOptions) -> Result<ChangeBytes> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         if options.collections.len() > 64 {
             return Err(Error::InvalidInput(
                 "changes accepts at most 64 collections".into(),

@@ -1,6 +1,9 @@
 //! Incremental export reader. Child of client to reuse its scoped authorization.
 use super::{Client, Resp};
-use crate::v1::{ids::check_name, Database, DocumentId, Error, ExportDocument, Result};
+use crate::v1::{
+    ids::{check_database_selector, check_name},
+    Database, DocumentId, Error, ExportDocument, Result,
+};
 use bytes::Bytes;
 use futures_util::{stream, Stream, StreamExt};
 use reqwest::{Method, StatusCode};
@@ -26,7 +29,7 @@ impl Client {
                 "export requires a project client".into(),
             ));
         }
-        check_name("database", database)?;
+        check_database_selector(database)?;
         let mut query = Vec::new();
         if let Some((collection, id)) = after {
             check_name("collection", collection)?;

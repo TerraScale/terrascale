@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use super::client::{Client, Req};
 use super::documents::{Database, ProjectDatabaseInfo};
 use super::errors::Result;
-use super::ids::check_name;
+use super::ids::{check_database_selector, check_name};
 
 /// Management pagination uses `after` / `next`, independently of data cursors.
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +49,31 @@ impl Client {
             req = req.json(body)?;
         }
         self.send_project(req).await?.decode_status(&[status])
+    }
+
+    /// Renames by immutable ULID or current name (`PATCH P/databases/{database_id}`).
+    /// See docs/database-rename.md for producer availability and conflict handling.
+    /// Requires `databases:write`. Returns the existing database metadata; its
+    /// ID, data, keys and placement stay unchanged. Invalid names return 400
+    /// (or local validation errors); known same-region duplicates return 409.
+    /// After convergence the old name has no alias and may be claimed again.
+    /// Update name-based connection strings and handles; ID-based connection strings remain valid. Reconcile uncertain
+    /// failures before explicitly retrying this mutation.
+    pub async fn rename_database(
+        &self,
+        database_id: &str,
+        name: &str,
+    ) -> Result<ProjectDatabaseInfo> {
+        check_database_selector(database_id)?;
+        check_name("database", name)?;
+        self.management(
+            Method::PATCH,
+            vec!["v1", "databases", database_id],
+            &[],
+            Some(&serde_json::json!({"name": name})),
+            StatusCode::OK,
+        )
+        .await
     }
 
     /// `GET P/databases`; `after` is an opaque management cursor.
@@ -94,7 +119,7 @@ impl Database {
             .await
     }
 
-    /// `GET D`; selectors are database names, response identities are ULIDs.
+    /// `GET D`; selectors accept a current name or immutable ULID.
     pub async fn get_database(&self) -> Result<ProjectDatabaseInfo> {
         self.management(Method::GET, &[], &[], None::<&()>, StatusCode::OK)
             .await
@@ -117,7 +142,7 @@ impl Database {
     /// confirms logical deletion and local cleanup; remote erasure is retried
     /// durably and may complete later.
     pub async fn delete_database(&self) -> Result<()> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         self.client()
             .send_project(Req::new(
                 Method::DELETE,
@@ -148,7 +173,7 @@ impl Database {
         body: Option<&impl Serialize>,
         status: StatusCode,
     ) -> Result<T> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let mut segments = vec!["v1", "databases", self.name()];
         segments.extend_from_slice(suffix);
         self.client()

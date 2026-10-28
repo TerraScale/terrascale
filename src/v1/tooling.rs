@@ -3,7 +3,7 @@ use super::{
     client::Req,
     documents::{Collection, Database},
     errors::{Error, Result},
-    ids::check_name,
+    ids::{check_database_selector, check_name},
 };
 use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -72,7 +72,7 @@ fn index_dimensions<'de, D: serde::Deserializer<'de>>(
 
 impl Database {
     pub(crate) async fn management_delete(&self, suffix: &[&str]) -> Result<()> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         let mut segments = vec!["v1", "databases", self.name()];
         segments.extend_from_slice(suffix);
         self.client()
@@ -190,7 +190,7 @@ impl Database {
         &self,
         recommendation: &str,
     ) -> Result<T> {
-        check_name("database", self.name())?;
+        check_database_selector(self.name())?;
         if recommendation.is_empty() {
             return Err(Error::InvalidInput(
                 "recommendation must be nonempty".into(),

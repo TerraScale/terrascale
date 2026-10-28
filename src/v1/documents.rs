@@ -7,12 +7,12 @@ use serde_json::value::RawValue;
 
 use super::client::{Client, Req, Resp};
 use super::errors::{Error, Result};
-use super::ids::{check_name, DocumentId, Version};
+use super::ids::{check_database_selector, check_name, DocumentId, Version};
 use super::shapes::Shape;
 use super::tx::{Tx, TxResult};
 use super::types::{u64_string, Durability, Number};
 
-/// A handle to one database by name. Performs no I/O.
+/// A handle to one database by current name or immutable ULID. Performs no I/O.
 #[derive(Debug, Clone)]
 pub struct Database {
     client: Client,
@@ -24,7 +24,7 @@ impl Database {
         Self { client, name }
     }
 
-    /// The database name.
+    /// The selector used to construct this handle.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -60,7 +60,7 @@ impl Database {
 
     /// Creates a schemaless collection on C# TerraBase.
     pub async fn create_collection(&self, name: &str) -> Result<ProjectCollectionInfo> {
-        check_name("database", &self.name)?;
+        check_database_selector(&self.name)?;
         check_name("collection", name)?;
         let req = Req::new(
             Method::POST,
@@ -79,7 +79,7 @@ impl Database {
         limit: Option<u32>,
         cursor: Option<&str>,
     ) -> Result<ProjectCollectionPage> {
-        check_name("database", &self.name)?;
+        check_database_selector(&self.name)?;
         if limit.is_some_and(|n| !(1..=200).contains(&n)) {
             return Err(Error::InvalidInput(
                 "collection limit must be 1 to 200".into(),
@@ -106,7 +106,7 @@ impl Database {
     /// Failures name the failing op through [`Error::op`]. An uncertain
     /// mutation must be reconciled by reading state before an explicit retry.
     pub async fn commit(&self, tx: &Tx) -> Result<TxResult> {
-        check_name("database", &self.name)?;
+        check_database_selector(&self.name)?;
         let body = tx.encode()?;
         let mut req = Req::new(
             Method::POST,
@@ -131,6 +131,16 @@ pub struct ProjectDatabaseInfo {
     pub project_id: String,
     pub name: String,
     pub branched_from: Option<String>,
+    /// Contested name lost to another database during cross-region convergence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_name: Option<String>,
+    /// Immutable ULID of the database that kept the contested name.
+    #[serde(
+        default,
+        deserialize_with = "super::ids::optional_entity_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conflict_of: Option<String>,
     pub created_at: String,
     pub region: String,
     pub home_region: String,
@@ -645,7 +655,7 @@ impl Collection {
     }
 
     pub(crate) fn check(&self) -> Result<()> {
-        check_name("database", &self.db.name)?;
+        check_database_selector(&self.db.name)?;
         check_name("collection", &self.name)
     }
 
