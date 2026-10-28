@@ -458,6 +458,33 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{solo}", token);
     }
 
+    // QA round 4 (sites cleanup): an accepted account deletion closes its sole organizations, and their project keys kept
+    // minting tokens until every region confirmed. Keys stop at acceptance: any pending organization or project closure.
+    [Test]
+    [Arguments("organization")]
+    [Arguments("project")]
+    public async Task A_key_mints_nothing_once_its_organization_or_project_has_a_pending_closure(string scope)
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
+        var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token, "Solo");
+        var project = await oidc.CreateProjectAsync(token, organization, "Keys");
+        var key = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
+            new { name = "backend", scopes = new[] { "documents:read" } }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+        using (var before = await oidc.ApiKeyTokenAsync(key))
+        {
+            await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var subject = scope == "organization" ? organization : project;
+        var (_, intent) = ClosureJob.New("terrascale", scope, subject, organization, alice.Id, clock, alice.Id);
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<AuthStore>().TransactAsync([intent])).IsNull();
+        using var after = await oidc.ApiKeyTokenAsync(key);
+        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That((await OidcHarness.JsonAsync(after)).GetProperty("error").GetString()).IsEqualTo("invalid_client");
+    }
+
     // Every deferral is a remote-durable write: a pending intent backs off (2 s doubling, at most a minute) instead of being
     // rewritten on every two-second pass while its account intent drives it.
     [Test]
