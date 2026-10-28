@@ -52,4 +52,21 @@ internal static class DatabasePurge
 
         return true;
     }
+
+    /// <summary>The expected holders with no receipt bound to <paramref name="record"/>: whom an erasure waits on.</summary>
+    public static async ValueTask<string[]> UnacknowledgedHoldersAsync(IStorageTransaction transaction, DatabasePurgeRecord record, CancellationToken cancellationToken)
+    {
+        List<string> missing = [];
+        foreach (var holder in record.ExpectedHolders.Take(1024))
+        {
+            var receipt = await SystemCatalog.GetAsync(transaction, Receipts(record.Database.DatabaseId!), holder,
+                TerraBaseJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
+            if (receipt is null || !receipt.Binds(record, holder))
+            {
+                missing.Add(holder);
+            }
+        }
+
+        return [.. missing];
+    }
 }
