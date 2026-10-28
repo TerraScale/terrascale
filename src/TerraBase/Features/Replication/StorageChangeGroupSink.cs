@@ -121,18 +121,54 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         var changed = 0;
         foreach (var chunk in states.Chunk(ChangeGroups.MaxDeltasOf(database)))
         {
+            if (await ChangingAsync(store, incarnation, chunk, cancellationToken).ConfigureAwait(false) is not { } changing)
+            {
+                return null;
+            }
+
+            if (changing.Count == 0)
+            {
+                continue;
+            }
+
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
             if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
             {
                 return null;
             }
 
-            changed += await RepairPageAsync(transaction, database, chunk, baseline: false, cancellationToken).ConfigureAwait(false);
+            changed += await RepairPageAsync(transaction, database, changing, baseline: false, cancellationToken).ConfigureAwait(false);
 
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return changed;
+    }
+
+    // The states of a repair page that join into something, read before the writer is taken: a hot bucket differs in two
+    // rounds running while its writes are in flight, and each round pulls it whole, so most repaired states are already held
+    // (on gru, 2026-10-28, a writer held 1.6 s per page every 2-3 s, changing nothing). Closure states always go to the
+    // writer, which observes them. Null when the copy in place is another.
+    private static async ValueTask<List<RepairState>?> ChangingAsync(
+        IDatabaseStore store, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
+        {
+            return null;
+        }
+
+        List<RepairState> changing = [];
+        foreach (var state in states.Where(state => state.State.MaxStamp.Value != 0))
+        {
+            if (state.Collection is ClosureCancellation.Jobs or ClosureCancellation.Fences or ClosureCancellation.Commits
+                || await transaction.WouldJoinAsync(state.Collection, state.Id, state.State, cancellationToken).ConfigureAwait(false))
+            {
+                changing.Add(state);
+            }
+        }
+
+        return changing;
     }
 
     internal async ValueTask<int> RepairPageAsync(IStorageTransaction transaction, TenantContext database,

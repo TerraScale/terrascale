@@ -372,6 +372,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken) =>
             inner.JoinAsync(collection, id, delta, at, cancellationToken);
 
+        public ValueTask<bool> WouldJoinAsync(string collection, string id, DocumentState delta, CancellationToken cancellationToken) =>
+            inner.WouldJoinAsync(collection, id, delta, cancellationToken);
+
         public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
             inner.RecordAppliedAsync(origin, applied, cancellationToken);
         public ValueTask RequireAppliedAsync(ReplicaId origin, Hlc expected, CancellationToken cancellationToken) =>

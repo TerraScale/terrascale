@@ -56,6 +56,7 @@ elsewhere ("section 15") are the file number prefixes.
 - [24. Log chunks: change groups through the object store](replication/24-log-chunks.md)
 - [25. Row-derived repair digests](replication/25-row-derived-repair-digests.md)
 - [26. Replication through the HTTP and socket endpoints](replication/26-endpoint-matrix.md)
+- [28. Anti-entropy repairs read before they write](replication/28-repair-reads-off-the-writer.md)
 - [Receiver apply progress and the batch inactivity deadline](replication/receiver-apply-progress.md)
 - [Live replay of admitted writes after a cut-log refill](replication/admitted-write-refill-replay.md)
 
