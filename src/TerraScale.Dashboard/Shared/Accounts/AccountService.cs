@@ -480,7 +480,9 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     public async Task RecordAsync(AccountContext context, Action<OrganizationRecord> record, CancellationToken cancellationToken)
     {
         try { await UpdateOrganizationAsync(context, record, cancellationToken); }
-        catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or JsonException or TerraBaseException)
+        // A store timeout surfaces as cancellation; only the caller's own abort may skip the committed change's answer.
+        catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or JsonException or TerraBaseException or TimeoutException ||
+            error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { logger.LogWarning("Audit event was not recorded ({ErrorType})", error.GetType().Name); }
     }
 
