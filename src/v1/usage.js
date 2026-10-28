@@ -1,5 +1,5 @@
 import { requireId } from "../ids.js";
-import { requireName } from "./ids.js";
+import { requireDatabaseSelector } from "./ids.js";
 import { dictionary, flag, list, nullable, numeric, record, text } from "./management-decode.js";
 import { members } from "./management-validation.js";
 /** @import { V1Transport } from "./transport.js" */
@@ -85,7 +85,7 @@ export class V1DatabaseUsageClient {
   /** @type {{database: string}} */
   #params;
   /** @param {V1Transport} transport @param {string} database */
-  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireName("database", database) }; Object.freeze(this); }
+  constructor(transport, database) { this.#transport = transport; this.#params = { database: requireDatabaseSelector(database) }; Object.freeze(this); }
   /** @param {V1UsageRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1DatabaseUsage>} */
   async usage(request = {}, options = {}) {
     return databaseUsage((await this.#transport.call("getDatabaseUsage", this.#params, { query: usageQuery(request), signal: options.signal })).value);

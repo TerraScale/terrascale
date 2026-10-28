@@ -6,7 +6,7 @@ import {
 } from "./decode.js";
 import { requireId } from "../ids.js";
 import { searchCount, isJsonPointer, requireFilter, requireGeoPoint, requirePath } from "./filter.js";
-import { requireDocumentId, requireName, requireVersion } from "./ids.js";
+import { requireDatabaseSelector, requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
 import { readShapeManifest } from "./shape-manifest.js";
 import { V1ShapeSubscription } from "./shape-subscription.js";
@@ -416,7 +416,7 @@ export class V1Collection {
    */
   constructor(transport, database, name) {
     this.#transport = transport;
-    this.database = requireName("database", database);
+    this.database = requireDatabaseSelector(database);
     this.name = requireName("collection", name);
     this.webhooks = new V1ChangeWebhooks(transport, this.database, this.name);
     this.#params = Object.freeze({ database: this.database, collection: this.name });
@@ -653,7 +653,7 @@ export class V1Transaction {
    */
   constructor(transport, database) {
     this.#transport = transport;
-    this.#database = requireName("database", database);
+    this.#database = requireDatabaseSelector(database);
   }
 
   /** @returns {number} The number of ops added. */
@@ -850,7 +850,7 @@ export class V1Collections {
   /** @param {V1Transport} transport @param {string} database */
   constructor(transport, database) {
     this.#transport = transport;
-    this.#database = requireName("database", database);
+    this.#database = requireDatabaseSelector(database);
     Object.freeze(this);
   }
   /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<V1CollectionInfo>} */
@@ -891,7 +891,7 @@ export class V1Collections {
   }
 }
 
-/** A database handle by name. It performs no I/O until an operation runs. */
+/** A database handle by current name or immutable ULID. It performs no I/O until an operation runs. */
 export class V1Database {
   /** @type {V1Imports} */
   imports;
@@ -916,7 +916,7 @@ export class V1Database {
    */
   constructor(transport, name) {
     this.#transport = transport;
-    this.name = requireName("database", name);
+    this.name = requireDatabaseSelector(name);
     this.collections = new V1Collections(transport, this.name);
     this.schema = new V1DatabaseSchemaClient(transport, this.name);
     this.indexes = new V1Indexes(transport, this.name);

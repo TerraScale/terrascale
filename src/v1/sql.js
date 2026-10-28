@@ -1,5 +1,5 @@
 import { array, boolean, malformed, object, string } from "./decode.js";
-import { requireStoredId, requireName } from "./ids.js";
+import { requireDatabaseSelector, requireStoredId, requireName } from "./ids.js";
 /**
  * @import { JsonObject, JsonValue } from "./json.js"
  * @import { V1RequestOptions } from "./terrabase-v1.js"
@@ -79,7 +79,7 @@ function decodeCheck(value, operation) {
  */
 export async function runSql(transport, database, sql, options = {}) {
   const body = requestBody(sql, options);
-  return decodeResult((await transport.call("runSql", { database: requireName("database", database) }, { body, signal: options.signal })).value);
+  return decodeResult((await transport.call("runSql", { database: requireDatabaseSelector(database) }, { body, signal: options.signal })).value);
 }
 
 /**
@@ -94,5 +94,5 @@ export async function runSql(transport, database, sql, options = {}) {
 export async function checkSql(transport, database, sql, options = {}, operation = "checkSql") {
   if (operation !== "checkSql" && operation !== "explainSql") throw new TypeError("SQL checks use checkSql or explainSql.");
   const body = requestBody(sql, options);
-  return decodeCheck((await transport.call(operation, { database: requireName("database", database) }, { body, signal: options.signal })).value, operation);
+  return decodeCheck((await transport.call(operation, { database: requireDatabaseSelector(database) }, { body, signal: options.signal })).value, operation);
 }

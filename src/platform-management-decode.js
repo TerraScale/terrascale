@@ -63,7 +63,7 @@ export function endUserToken(value) {
   return result;
 }
 export const apiKey = record({ id: requireId, name: text, organization_id: requireId, project_id: nullable(requireId),
-  database: nullable(text), scopes: list(scope), created_by: requireId, created_at: instant,
+  database: nullable(requireId), scopes: list(scope), created_by: requireId, created_at: instant,
   expires_at: nullable(instant), previous_secret_expires_at: nullable(instant), last_used_at: nullable(instant), allowed_cidrs: list(text) });
 const secretBody = record({ api_key: apiKey, key: text });
 /** @param {JsonValue | undefined} value */

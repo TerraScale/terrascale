@@ -300,6 +300,7 @@ test("identity methods reject invalid bodies and selectors before reaching trans
   expect(() => client.changeMemberRole(config.project, config.project, /** @type {any} */ ({ role: "invalid" }))).toThrow(TypeError);
   expect(() => client.createOrganizationApiKey(config.project, { name: "test", scopes: [] })).toThrow(TypeError);
   expect(() => client.createOrganizationApiKey(config.project, /** @type {any} */ ({ name: "test", scopes: ["documents:read"], database: "app" }))).toThrow(TypeError);
+  expect(() => client.createProjectApiKey(config.project, config.project, { name: "test", scopes: ["documents:read"], database: "app" })).toThrow(TypeError);
   expect(() => client.rotateProjectApiKey(config.project, config.project, config.project, { previous_secret_ttl: 86401 })).toThrow(TypeError);
   await expect(client.getProject(config.project, "../other")).rejects.toThrow(TypeError);
   await expect(client.listOrganizations({}, /** @type {any} */ ({ idempotencyKey: "unsupported" }))).rejects.toThrow(TypeError);
@@ -321,6 +322,8 @@ test("identity DTOs validate required fields, nullability, roles, ULIDs and one-
     database: null, scopes: ["documents:read"], created_by: config.project, created_at: organizationBody.created_at,
     expires_at: null, previous_secret_expires_at: null, last_used_at: null, allowed_cidrs: [] };
   expect(apiKey(key).last_used_at).toBeNull();
+  expect(apiKey({ ...key, database: config.project }).database).toBe(config.project);
+  expect(() => apiKey({ ...key, database: "app" })).toThrow(TypeError);
   expect(() => apiKey({ ...key, project_id: "invalid" })).toThrow(TypeError);
   expect(() => apiKey({ ...key, scopes: ["unpublished:scope"] })).toThrow(TypeError);
   const secret = `${config.project}_${"a".repeat(52)}`;
@@ -415,4 +418,25 @@ test("management/admin reuse the producer-published route and scope manifest", a
     });
     expect(route.idempotencyKey).toBe("none");
   }
+});
+
+test("project API key creation sends a stable database ULID and listing preserves it", async () => {
+  const database = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
+  const key = { id: config.project, name: "test", organization_id: config.project, project_id: config.project,
+    database, scopes: ["documents:read"], created_by: config.project, created_at: "2026-10-26T00:00:00Z",
+    expires_at: null, previous_secret_expires_at: null, last_used_at: null, allowed_cidrs: [] };
+  const client = createTerraScaleIdentityManagementClient({ ...identityConfig, fetch: async input => {
+    const request = /** @type {Request} */ (input);
+    expect(new URL(request.url).pathname).toBe(`/v1/terrascale/organizations/${config.project}/projects/${config.project}/api-keys`);
+    if (request.method === "POST") {
+      expect(await request.json()).toEqual({ name: "test", scopes: ["documents:read"], database });
+      return Response.json({ api_key: key, key: `${config.project}_${"a".repeat(52)}` }, { status: 201 });
+    }
+    expect(request.method).toBe("GET");
+    return Response.json({ items: [key], next: null });
+  } });
+  expect(await client.createProjectApiKey(config.project, config.project, { name: "test", scopes: ["documents:read"], database }))
+    .toMatchObject({ ok: true, value: { api_key: { database } } });
+  expect(await client.listProjectApiKeys(config.project, config.project))
+    .toMatchObject({ ok: true, value: { items: [{ database }] } });
 });
