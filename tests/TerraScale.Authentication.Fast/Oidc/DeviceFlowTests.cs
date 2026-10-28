@@ -100,7 +100,7 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         await Assert.That(await PollAsync(oidc, denied.GetProperty("device_code").GetString()!)).IsEqualTo("access_denied");
 
         var expired = await AuthorizeDeviceAsync(oidc);
-        clock.Advance(TimeSpan.FromMinutes(11));
+        clock.Advance(DeviceFlow.Lifetime + TimeSpan.FromMinutes(1));
         await Assert.That(await PollAsync(oidc, expired.GetProperty("device_code").GetString()!)).IsEqualTo("expired_token");
         using var late = await DecideAsync(oidc, session, expired.GetProperty("user_code").GetString()!, "approve");
         await Assert.That(late.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
