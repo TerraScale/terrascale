@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -27,6 +28,7 @@ internal sealed class DatabaseBackupPurge(
     private readonly SemaphoreSlim _pass = new(1, 1);
     private readonly Counter<long> _failures = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.backup.purge_failures", description: "Backup erasure attempts that remain unverified, by fixed reason.");
+    private readonly PendingErasures _pending = new(meters.Create(Telemetry.MeterName), time);
     private string? _after;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,13 +74,35 @@ internal sealed class DatabaseBackupPurge(
                     // Provider errors can contain credentials. Persist and log only a bounded classification.
                     progress = progress with { ObjectsAbsentAt = null, Failure = "storage_unavailable", InventoryFailed = true };
                     _failures.Add(1, new KeyValuePair<string, object?>("reason", "storage_unavailable"));
-                    logger.ZLogWarning($"Backup erasure remains pending after a storage failure");
+                    if (_pending.Report(job.Database.DatabaseId!, "inventory", "storage_unavailable"))
+                    {
+                        logger.ZLogWarning($"Backup erasure of database {job.Database.DatabaseId:@Database} remains pending after a storage failure");
+                    }
                 }
 
                 await SaveAsync(job, progress with { LastAttemptAt = time.GetUtcNow() }, token).ConfigureAwait(false);
+                if (progress.Failure is null)
+                {
+                    _pending.Verified(job.Database.DatabaseId!);
+                    var hours = Math.Round((time.GetUtcNow() - job.RequestedAt).TotalHours, 1);
+                    logger.ZLogInformation($"Backup erasure of database {job.Database.DatabaseId:@Database} is verified, {hours:@Hours} h after its deletion");
+                }
+                else
+                {
+                    _pending.Pending(job.Database.DatabaseId!, job.RequestedAt);
+                }
+            }
+
+            foreach (var job in page.Items.Where(job => job.BackupVerifiedAt is not null))
+            {
+                _pending.Verified(job.Database.DatabaseId!);
             }
 
             _after = page.Next;
+            if (_after is null)
+            {
+                _pending.Wrapped();
+            }
         }
         finally
         {
@@ -163,13 +187,21 @@ internal sealed class DatabaseBackupPurge(
             _failures.Add(1, new KeyValuePair<string, object?>("reason", "storage_unavailable"));
             // Provider messages can hold credentials: only the error's type, HTTP status and bucket kind. Without them 31
             // erasures failed every pass for two days on every node with nothing saying why (2026-10-27).
+            // One warning per erasure and cause, not per attempt: every pass retries, so the gauges show how long it stays stuck.
             var status = error switch
             {
                 HttpRequestException { StatusCode: { } code } => (int)code,
                 AmazonServiceException service => (int)service.StatusCode,
                 _ => 0,
             };
-            logger.ZLogWarning($"Backup erasure destination remains pending after a storage failure: {error.GetType().Name:@Error}, HTTP status {status:@Status}, {(destination is null ? "platform" : "customer"):@Bucket} bucket");
+            var bucket = destination is null ? "platform" : "customer";
+            // TerraBase's own InvalidDataException messages are fixed text naming the failed validation.
+            var reason = error is InvalidDataException ? error.Message : "";
+            if (_pending.Report(job.Database.DatabaseId!, destinationId, $"{error.GetType().Name} {status} {reason}"))
+            {
+                logger.ZLogWarning($"Backup erasure of database {job.Database.DatabaseId:@Database} remains pending after a storage failure: {error.GetType().Name:@Error} {reason:@Reason}, HTTP status {status:@Status}, {bucket:@Bucket} bucket; every pass retries");
+            }
+
             return false;
         }
     }
@@ -182,6 +214,63 @@ internal sealed class DatabaseBackupPurge(
                 BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
             return true;
         }, static _ => false, token).ConfigureAwait(false);
+    }
+
+    // Erasures still unverified at their last attempt, with their request times; written only under _pass.
+    private sealed class PendingErasures
+    {
+        private readonly ConcurrentDictionary<string, DateTimeOffset> _requested = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _swept = [with(StringComparer.Ordinal)];
+        private readonly Dictionary<(string Database, string Slot), string> _reported = [];
+
+        public PendingErasures(Meter meter, TimeProvider time)
+        {
+            meter.CreateObservableGauge("terrabase.backup.purge_pending", () => _requested.Count,
+                description: "Deleted databases whose backup erasure is not verified yet.");
+            meter.CreateObservableGauge("terrabase.backup.purge_oldest_age", () =>
+            {
+                var now = time.GetUtcNow();
+                return (now - _requested.Values.DefaultIfEmpty(now).Min()).TotalSeconds;
+            }, "s", "Time since the oldest unverified backup erasure was requested.");
+        }
+
+        public void Pending(string database, DateTimeOffset requestedAt)
+        {
+            _requested[database] = requestedAt;
+            _swept.Add(database);
+        }
+
+        public void Verified(string database)
+        {
+            _requested.TryRemove(database, out _);
+            foreach (var key in _reported.Keys.Where(key => key.Database == database).ToArray())
+            {
+                _reported.Remove(key);
+            }
+        }
+
+        /// <summary>Whether this cause is new for the erasure's step (its inventory or one destination): worth one log line.</summary>
+        public bool Report(string database, string slot, string cause)
+        {
+            if (_reported.TryGetValue((database, slot), out var last) && last == cause)
+            {
+                return false;
+            }
+
+            _reported[(database, slot)] = cause;
+            return true;
+        }
+
+        // The purge listing wrapped: an erasure not seen since it started is no longer listed.
+        public void Wrapped()
+        {
+            foreach (var database in _requested.Keys.Where(database => !_swept.Contains(database)))
+            {
+                Verified(database);
+            }
+
+            _swept.Clear();
+        }
     }
 
     public override void Dispose()

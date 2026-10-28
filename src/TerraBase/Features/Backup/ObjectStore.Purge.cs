@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using System.Text;
+using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
 
@@ -11,6 +13,10 @@ internal sealed record PrefixPurgeResult(PrefixPurgeProgress Progress, bool Abse
 
 internal sealed partial class S3ObjectStore
 {
+    // Tigris answers 408 under load (gru, 2026-10-27): each purge request retries transient statuses, jittered and bounded.
+    private const int PurgeAttempts = 4;
+    private static readonly TimeSpan PurgeBackoff = TimeSpan.FromMilliseconds(250);
+
     // Called only after durable deletion authority has stopped every writer to this database prefix.
     // A fresh empty versions AND uploads inventory is the proof; DELETE acknowledgements alone are insufficient.
     public async Task<PrefixPurgeResult> PurgePrefixAsync(string prefix, PrefixPurgeProgress progress, CancellationToken cancellationToken)
@@ -23,14 +29,14 @@ internal sealed partial class S3ObjectStore
         }
 
         const int batch = 128;
-        var versions = await SafeAsync(_s3.ListVersionsAsync(new ListVersionsRequest
+        var versions = await RetriedAsync(() => _s3.ListVersionsAsync(new ListVersionsRequest
         {
             BucketName = _bucket,
             Prefix = prefix,
             MaxKeys = batch,
             KeyMarker = progress.VersionKey,
             VersionIdMarker = progress.VersionId,
-        }, cancellationToken)).ConfigureAwait(false);
+        }, cancellationToken), cancellationToken).ConfigureAwait(false);
         var objects = versions.Versions ?? [];
         if (objects.Count > batch || objects.Any(item => !ValidKey(item.Key, prefix)
             || string.IsNullOrEmpty(item.VersionId) || item.VersionId.Length > 1024))
@@ -38,14 +44,14 @@ internal sealed partial class S3ObjectStore
             throw new InvalidDataException("backup version inventory is invalid");
         }
 
-        var uploads = await SafeAsync(_s3.ListMultipartUploadsAsync(new ListMultipartUploadsRequest
+        var uploads = await RetriedAsync(() => _s3.ListMultipartUploadsAsync(new ListMultipartUploadsRequest
         {
             BucketName = _bucket,
             Prefix = prefix,
             MaxUploads = batch,
             KeyMarker = progress.UploadKey,
             UploadIdMarker = progress.UploadId,
-        }, cancellationToken)).ConfigureAwait(false);
+        }, cancellationToken), cancellationToken).ConfigureAwait(false);
         var pending = uploads.MultipartUploads ?? [];
         if (pending.Count > batch || pending.Any(item => !ValidKey(item.Key, prefix)
             || string.IsNullOrEmpty(item.UploadId) || item.UploadId.Length > 1024))
@@ -53,9 +59,11 @@ internal sealed partial class S3ObjectStore
             throw new InvalidDataException("backup multipart inventory is invalid");
         }
 
-        if (versions.IsTruncated == true && (!ValidKey(versions.NextKeyMarker, prefix)
-            || string.IsNullOrEmpty(versions.NextVersionIdMarker) || versions.NextVersionIdMarker.Length > 1024
-            || (versions.NextKeyMarker == progress.VersionKey && versions.NextVersionIdMarker == progress.VersionId))
+        // An unversioned Tigris bucket truncates with only NextKeyMarker (its versions are all "null") and rejects
+        // version-id-marker=null: the next page then resumes after that key. 31 erasures failed here for two days (2026-10-28).
+        var versionMarker = string.IsNullOrEmpty(versions.NextVersionIdMarker) ? null : versions.NextVersionIdMarker;
+        if (versions.IsTruncated == true && (!ValidKey(versions.NextKeyMarker, prefix) || versionMarker?.Length > 1024
+            || (versions.NextKeyMarker == progress.VersionKey && versionMarker == progress.VersionId))
             || uploads.IsTruncated == true && (!ValidKey(uploads.NextKeyMarker, prefix)
             || string.IsNullOrEmpty(uploads.NextUploadIdMarker) || uploads.NextUploadIdMarker.Length > 1024
             || (uploads.NextKeyMarker == progress.UploadKey && uploads.NextUploadIdMarker == progress.UploadId)))
@@ -68,12 +76,12 @@ internal sealed partial class S3ObjectStore
         {
             try
             {
-                await SafeAsync(_s3.DeleteObjectAsync(new DeleteObjectRequest
+                await RetriedAsync(() => _s3.DeleteObjectAsync(new DeleteObjectRequest
                 {
                     BucketName = _bucket,
                     Key = item.Key,
                     VersionId = item.VersionId,
-                }, cancellationToken)).ConfigureAwait(false);
+                }, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -96,12 +104,12 @@ internal sealed partial class S3ObjectStore
 
             try
             {
-                await SafeAsync(_s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+                await RetriedAsync(() => _s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
                 {
                     BucketName = _bucket,
                     Key = upload.Key,
                     UploadId = upload.UploadId,
-                }, cancellationToken)).ConfigureAwait(false);
+                }, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -118,7 +126,7 @@ internal sealed partial class S3ObjectStore
         var uploadsDirty = progress.UploadsDirty || pending.Count > 0;
         var next = new PrefixPurgeProgress(
             versions.IsTruncated == true ? versions.NextKeyMarker : null,
-            versions.IsTruncated == true ? versions.NextVersionIdMarker : null,
+            versions.IsTruncated == true ? versionMarker : null,
             versions.IsTruncated == true && versionsDirty,
             uploads.IsTruncated == true ? uploads.NextKeyMarker : null,
             uploads.IsTruncated == true ? uploads.NextUploadIdMarker : null,
@@ -132,6 +140,31 @@ internal sealed partial class S3ObjectStore
         await using var listed = ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken);
         return new(next, !await listed.MoveNextAsync().ConfigureAwait(false));
     }
+
+    private async Task<T> RetriedAsync<T>(Func<Task<T>> request, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await SafeAsync(request()).ConfigureAwait(false);
+            }
+            catch (Exception error) when (attempt < PurgeAttempts && !cancellationToken.IsCancellationRequested && Transient(error))
+            {
+                var backoff = PurgeBackoff * (1 << (attempt - 1)) * (RandomNumberGenerator.GetInt32(500, 1001) / 1000.0);
+                // Wall time, like the SDK's own retry backoff: the bucket recovers in real time whatever the injected clock says.
+                await Task.Delay(backoff, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    // Customer errors arrive sanitized as HttpRequestException with only the status (SafeAsync).
+    private static bool Transient(Exception error) => (error switch
+    {
+        AmazonServiceException service => (int?)service.StatusCode,
+        HttpRequestException { StatusCode: { } code } => (int)code,
+        _ => null,
+    }) is 408 or 429 or >= 500;
 
     private static bool ValidKey(string? key, string prefix) =>
         key is { Length: > 0 and <= 1024 } && Encoding.UTF8.GetByteCount(key) <= 1024 && key.StartsWith(prefix, StringComparison.Ordinal)

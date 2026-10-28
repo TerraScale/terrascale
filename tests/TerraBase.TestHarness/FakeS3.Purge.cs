@@ -53,6 +53,11 @@ public sealed partial class FakeS3
 
         var keyMarker = query["key-marker"];
         var versionMarker = query["version-id-marker"];
+        if (versionMarker == "null")
+        {
+            return S3Error(HttpStatusCode.BadRequest, "InvalidArgument"); // Tigris: "Version ID is invalid."
+        }
+
         PurgeVersionListed?.Invoke(customer, keyMarker, versionMarker);
         var objects = customer ? _customerObjects : _objects;
         var prefix = query["prefix"] ?? "";
@@ -60,13 +65,14 @@ public sealed partial class FakeS3
         var entries = _oldVersions.Keys.Where(item => item.Customer == customer && item.Bucket == bucket && item.Key.StartsWith(prefix, StringComparison.Ordinal))
             .Select(item => (item.Key, item.Version)).Concat(objects.Keys.Where(item => item.StartsWith(prefix, StringComparison.Ordinal)).Select(item => (Key: item, Version: "null")))
             .Where(item => keyMarker is null || string.CompareOrdinal(item.Key, keyMarker) > 0
-                || item.Key == keyMarker && string.CompareOrdinal(item.Version, versionMarker) > 0)
+                || item.Key == keyMarker && versionMarker is not null && string.CompareOrdinal(item.Version, versionMarker) > 0)
             .OrderBy(item => item.Key, StringComparer.Ordinal).ThenBy(item => item.Version, StringComparer.Ordinal).Take(max + 1).ToArray();
         return Xml(HttpStatusCode.OK, new XElement(S3 + "ListVersionsResult",
             new XElement(S3 + "Name", bucket), new XElement(S3 + "Prefix", prefix), new XElement(S3 + "MaxKeys", max),
             new XElement(S3 + "IsTruncated", entries.Length > max ? "true" : "false"),
             entries.Length > max ? new XElement(S3 + "NextKeyMarker", entries[max - 1].Key) : null,
-            entries.Length > max ? new XElement(S3 + "NextVersionIdMarker", entries[max - 1].Version) : null,
+            // Like Tigris, a page ending on an unversioned object ("null") names no version marker: the next resumes after its key.
+            entries.Length > max && entries[max - 1].Version != "null" ? new XElement(S3 + "NextVersionIdMarker", entries[max - 1].Version) : null,
             entries.Take(max).Select(item => new XElement(S3 + "Version", new XElement(S3 + "Key", item.Key),
                 new XElement(S3 + "VersionId", item.Version), new XElement(S3 + "IsLatest", item.Version == "null" ? "true" : "false"),
                 new XElement(S3 + "LastModified", "2026-10-07T00:00:00.000Z"), new XElement(S3 + "Size", 1)))));
