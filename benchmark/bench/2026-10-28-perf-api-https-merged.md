@@ -96,6 +96,11 @@ Executed through `TS_HEAVY_HOST=beta ts-heavy-any nice -n 19 ... --repo terrasca
 `benchmark/scripts/api-https-reserved-20261028.sh` verifies the same DLL hashes and reuses them without rebuilding.
 Both scripts retain all host evidence and reserve the remaining three heavy-admission slots only during timing.
 Slots are released on exit. The control uses public JWKS, no tenant or credentials; no cleanup was required.
+The archived scripts now accept fresh run labels so reruns preserve existing evidence. For example, on the
+same admitted host, use `api-https-merged-20261028.sh replay-build` and then
+`api-https-reserved-20261028.sh benchmark/bench/https-merged-0018-replay-build replay-timed`.
+They refuse an existing output path; reuse also verifies the prior DLL hashes. Argument/guard edits were
+syntax-checked after measurement; the reported cells are from the original scripts and were not rerun.
 
 | Artifact | SHA-256 |
 | --- | --- |

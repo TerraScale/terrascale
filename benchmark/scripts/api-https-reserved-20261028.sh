@@ -2,8 +2,10 @@
 # Frozen-source HTTPS control; run through ts-heavy-any nice -n 19.
 cd -- "$(dirname -- "$0")/../.."
 set -euo pipefail
-previous=$PWD/benchmark/bench/https-merged-0018-quiet-2
-out=$PWD/benchmark/bench/https-merged-0018-reserved
+previous=$(realpath "${1:?usage: api-https-reserved-20261028.sh <prior artifact directory> <fresh run label>}")
+label=${2:?fresh run label}
+[[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid run label.' >&2; exit 2; }
+out=$PWD/benchmark/bench/https-merged-0018-$label
 mkdir "$out"
 bin=$PWD/benchmark/dotnet/VsTurso/bin/https
 prefix=$out/control

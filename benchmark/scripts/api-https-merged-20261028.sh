@@ -2,18 +2,22 @@
 # Frozen-source HTTPS control; run through ts-heavy-any nice -n 19.
 cd -- "$(dirname -- "$0")/../.."
 set -euo pipefail
-sdk=$HOME/remote-builds/ts-dotnet/https-merged-0018
+label=${1:?usage: api-https-merged-20261028.sh <fresh run label>}
+[[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid run label.' >&2; exit 2; }
+sdk=$HOME/remote-builds/ts-dotnet/https-merged-0018-$label
 mkdir -p "$(dirname "$sdk")"
 test ! -e "$sdk"
 git clone --quiet --no-checkout https://github.com/TerraScale/ts-dotnet.git "$sdk"
 git -C "$sdk" checkout --quiet --detach 36d114877a69d18fba33b27ad362bd3e68e9e7ff
-out=$PWD/benchmark/bench/https-merged-0018-quiet-2
+out=$PWD/benchmark/bench/https-merged-0018-$label
 mkdir "$out"
 python3 - "$out" <<'PY'
 from pathlib import Path
 import sys
 source=Path('benchmark/dotnet/VsTurso/run-https.sh').read_text()
-source=source.replace('src/TerraScale.DotNet/AuthService/TerraScaleAuthClient.cs)', 'src/TerraScale.DotNet/AuthService/TerraScaleAuthClient.cs src/TerraScale.DotNet/TerraScale.DotNet.csproj)')
+restore='src/TerraScale.DotNet/AuthService/TerraScaleAuthClient.cs)'
+if source.count(restore)!=1:raise SystemExit('Runner restore list changed; inspect before reproducing')
+source=source.replace(restore, 'src/TerraScale.DotNet/AuthService/TerraScaleAuthClient.cs src/TerraScale.DotNet/TerraScale.DotNet.csproj)')
 hook='''
 # Builds are complete. Reserve other admitted heavy slots without stopping work.
 reserve_fds=()
@@ -30,7 +34,9 @@ python3 -u "$out/cpu-monitor.py" "$$" > "$out/cpu-processes.jsonl" &
 observer=$!
 trap 'kill "$observer" 2>/dev/null || true; restore' EXIT
 '''
-source=source.replace('for repeat in 1 2 3; do',hook+'\nfor repeat in 1 2 3; do')
+loop='for repeat in 1 2 3; do'
+if source.count(loop)!=1:raise SystemExit('Runner loop changed; inspect before reproducing')
+source=source.replace(loop,hook+'\n'+loop)
 Path('benchmark/dotnet/VsTurso/run-https-merged.sh').write_text(source)
 PY
 cat > "$out/cpu-monitor.py" <<'PY'
