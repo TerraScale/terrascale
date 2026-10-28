@@ -213,10 +213,12 @@ internal static class ParityCell
             }
         }, plan.Window, clock, interrupt);
         var after = lane.Attempts.Snapshot;
-        var rejection = window.Rejection == "operation" ? failure : window.Rejection;
-        rejection ??= after.RejectionSince(before, window.Starts);
+        var rejection = Rejection(window, failure, before, after);
         return Row(readiness, window, after.Since(before), Connects(connects), rejection);
     }
+
+    internal static string? Rejection(ParityWindowResult window, string? failure, ParityAttemptSnapshot before, ParityAttemptSnapshot after) =>
+        (window.Rejection == "operation" ? failure ?? "operation" : window.Rejection) ?? after.RejectionSince(before, window.Starts);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]

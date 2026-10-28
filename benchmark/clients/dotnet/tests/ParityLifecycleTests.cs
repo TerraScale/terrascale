@@ -88,6 +88,6 @@ public sealed class ParityLifecycleTests
         await Assert.That(Text(rows[^3], "type")).IsEqualTo("cell");
         await Assert.That(Text(rows[^3], "rejection")).IsEqualTo("interrupted");
         await Assert.That(Text(rows[^2], "deletion")).IsEqualTo("logical_accepted");
-        await Assert.That(rows[^1].GetProperty("reason").GetString()).IsEqualTo("rejected:interrupted");
+        await Assert.That(rows[^1].GetProperty("reason").GetString()).IsEqualTo("cells:interrupted");
     }
 }

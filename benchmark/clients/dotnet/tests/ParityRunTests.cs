@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -84,6 +85,10 @@ public sealed class ParityRunTests
 
     [Test]
     [Arguments("unknown-member")]
+    [Arguments("duplicate-member")]
+    [Arguments("empty")]
+    [Arguments("oversize")]
+    [Arguments("fifo")]
     [Arguments("missing-member")]
     [Arguments("bad-key")]
     [Arguments("group-readable")]
@@ -97,11 +102,21 @@ public sealed class ParityRunTests
         using var run = new Run(variant switch
         {
             "unknown-member" => valid[..^1] + ""","secret":"do-not-print"}""",
+            "duplicate-member" => valid[..^1] + $$""","project":"{{Project}}"}""",
+            "empty" => "",
+            "oversize" => valid + new string(' ', 4096),
             "missing-member" => $$"""{"api_key":"{{FakeAuth.Key}}"}""",
             "bad-key" => valid.Replace(FakeAuth.Key, "do-not-print", StringComparison.Ordinal),
             _ => valid,
         });
         var elsewhere = Path.Combine(run.Directory.FullName, "elsewhere");
+        if (variant == "fifo")
+        {
+            File.Delete(run.Credentials);
+            using var fifo = Process.Start(new ProcessStartInfo("mkfifo") { ArgumentList = { "-m", "600", run.Credentials } })!;
+            await fifo.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(fifo.ExitCode).IsEqualTo(0);
+        }
         if (variant == "group-readable") File.SetUnixFileMode(run.Credentials, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
         if (variant == "symlink")
         {
@@ -117,7 +132,8 @@ public sealed class ParityRunTests
             Data = connections => { Interlocked.Increment(ref factories); return server; },
             Auth = () => { Interlocked.Increment(ref factories); return new FakeAuth(3600); },
         };
-        var code = await run.StartAsync(server, rig, variant == "peers" ? "ts-gru-1 gru 100.64.0.1\nts-sjc-1 sjc 100.64.0.2\n" : Peers);
+        var code = await Task.Run(() => run.StartAsync(server, rig, variant == "peers" ? "ts-gru-1 gru 100.64.0.1\nts-sjc-1 sjc 100.64.0.2\n" : Peers))
+            .WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(code).IsEqualTo(2);
         await Assert.That(factories + server.Requests).IsEqualTo(0);
         await Assert.That(run.Error.ToString().Contains("do-not-print", StringComparison.Ordinal)).IsFalse();

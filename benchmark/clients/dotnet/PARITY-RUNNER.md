@@ -13,10 +13,12 @@ and the workload preflight's closed `SDK_BLOCKED` result are unchanged.
 
 - Regions come only from `TS_PEERS_FILE`; every discovered region is measured and
   gru, sjc and fra must be present.
-- Credentials must be a regular, non-symlinked file without group or other
-  permissions, holding exactly the snake_case members `api_key` and `project`.
-  Refusals never echo file content. The link check precedes the read, so a link
-  swapped in between is not detected.
+- Credentials must be a non-symlinked file of 1–4096 bytes without group or
+  other permissions, holding exactly the snake_case members `api_key` and
+  `project` with no duplicates. Empty files and zero-length special files,
+  including FIFOs, are rejected before opening; reads are size-bounded.
+  Refusals never echo file content. The path checks precede the open, so a file
+  or link swapped in between is not detected.
 - The output is created new with mode 0600; an existing file or link is refused.
 
 ## Lifecycle
@@ -57,6 +59,8 @@ redirect, cookie, pool, connect-timeout, TLS and proxy settings unchanged.
   state or document differs, a token exchange inside the cell, any pinned auth
   request, an interrupt or a drain timeout. The run stops after emitting the
   first rejected cell. The whole run is limited to 30 minutes.
+- The outcome distinguishes `cells:run_limit` from `cells:interrupted` and
+  refuses acceptance after a late cancellation, even after the final cell.
 - Unknown values are `null`: connects without a counted handler, and
   `wire_replays` always.
 

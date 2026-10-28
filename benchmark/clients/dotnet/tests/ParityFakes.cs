@@ -90,6 +90,8 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
 
     internal bool DeleteCanceled { get; private set; }
 
+    internal Action? OnDelete { get; set; }
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref requests);
@@ -124,6 +126,7 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
             return FakeReads.Reply(HttpStatusCode.Created, $$"""{"id":"{{id}}","version":"v-{{id}}","offset":1,"durability":"replicated"}""");
         }
         DeleteEntered.TrySetResult();
+        OnDelete?.Invoke();
         if (modes.Contains("delete-block")) await DeleteRelease.Task;
         DeleteCanceled = cancellationToken.IsCancellationRequested;
         return modes.Contains("delete-404") ? FakeReads.Reply(HttpStatusCode.NotFound, """{"error":{"code":"not_found","message":"control"}}""")

@@ -60,7 +60,7 @@ internal static class ParityRun
         }
         if (Load(credentialsPath) is not { } credentials)
         {
-            error.WriteLine("api-bench: parity credentials must be a private (0600) regular file holding exactly {api_key, project}");
+            error.WriteLine("api-bench: parity credentials must be a private non-link file of 1-4096 bytes holding exactly {api_key, project}");
             return 2;
         }
         FileStream file;
@@ -123,6 +123,9 @@ internal static class ParityRun
             Emit(cleanup, ParityJson.Default.ParityCleanup);
         }
 
+        // A late cancellation, including one after the final cell, cannot produce an accepted outcome.
+        if (run.IsCancellationRequested)
+            reason = $"{phase}:{(interrupt.IsCancellationRequested ? "interrupted" : "run_limit")}";
         var accepted = reason is null && cleanup.Deletion == "logical_accepted";
         Emit(new ParityOutcome("outcome", accepted, reason), ParityJson.Default.ParityOutcome);
         if (reason is not null) error.WriteLine($"api-bench: parity stopped ({reason}); evidence retained in the output");
@@ -135,8 +138,18 @@ internal static class ParityRun
         try
         {
             var info = new FileInfo(path);
-            if (!info.Exists || info.LinkTarget is not null || (info.UnixFileMode & GroupOrOther) != 0) return null;
-            var credentials = JsonSerializer.Deserialize(File.ReadAllBytes(path), ParityCredentialsJson.Default.ParityCredentials);
+            // Reject zero-length special files (including FIFOs) before opening; a path swap remains outside this guard.
+            if (!info.Exists || info.LinkTarget is not null || (info.UnixFileMode & GroupOrOther) != 0 || info.Length is < 1 or > 4096) return null;
+            using var file = File.OpenRead(path);
+            var buffer = new byte[4097];
+            var length = 0;
+            int read;
+            while (length < buffer.Length && (read = file.Read(buffer, length, buffer.Length - length)) > 0) length += read;
+            if (length is < 1 or > 4096) return null;
+            var bytes = buffer.AsMemory(0, length);
+            using var json = JsonDocument.Parse(bytes);
+            if (json.RootElement.ValueKind != JsonValueKind.Object || json.RootElement.EnumerateObject().Count() != 2) return null;
+            var credentials = JsonSerializer.Deserialize(bytes.Span, ParityCredentialsJson.Default.ParityCredentials);
             if (credentials is null || !TerraScaleIds.IsValid(credentials.Project)) return null;
             Tokens.ClientId(credentials.ApiKey);
             return credentials;
