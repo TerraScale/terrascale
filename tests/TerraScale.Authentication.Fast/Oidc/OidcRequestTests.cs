@@ -117,6 +117,58 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Authorize_logout_and_userinfo_accept_form_posts()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, session, tokens) = await oidc.SignInAndRedeemAsync();
+        var (_, challenge) = OidcHarness.Pkce();
+        var path = OidcHarness.AuthorizePath(challenge);
+        var parameters = OidcHarness.Query(new Uri(OidcHarness.PublicOrigin + path)).ToDictionary(pair => pair.Key, pair => pair.Value!);
+        var authorize = $"/{OidcIssuer.Slug}/oauth/authorize";
+
+        // Without a session the sign-in page resumes the posted request as a GET with the same parameters.
+        using var signIn = await Post(authorize, parameters, cookie: null);
+        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        var next = OidcHarness.Query(new Uri(OidcHarness.PublicOrigin + signIn.Headers.Location!.OriginalString))["next"]!;
+        await Assert.That(next).StartsWith(authorize + "?");
+        await Assert.That(OidcHarness.Query(new Uri(OidcHarness.PublicOrigin + next))).IsEquivalentTo(OidcHarness.Query(new Uri(OidcHarness.PublicOrigin + path)));
+
+        using var code = await Post(authorize, parameters, session);
+        await Assert.That(code.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        await Assert.That(code.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
+        await Assert.That(OidcHarness.Query(code.Headers.Location!)["code"]).IsNotNull();
+
+        // A posted redirect URI is validated exactly, as by GET.
+        using var evil = await Post(authorize, new(parameters) { ["redirect_uri"] = "https://evil.example/callback" }, session);
+        await Assert.That(evil.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(evil.Headers.Location).IsNull();
+
+        using var userInfoRequest = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/oauth/userinfo") { Content = new FormUrlEncodedContent([]) };
+        userInfoRequest.Headers.Authorization = new("Bearer", tokens.GetProperty("access_token").GetString());
+        using var userInfo = await oidc.Client.SendAsync(userInfoRequest);
+        await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(userInfo.Headers.CacheControl?.NoStore).IsTrue();
+
+        using var logout = await Post($"/{OidcIssuer.Slug}/oauth/logout", new() { ["client_id"] = OidcIssuer.DashboardClientId, ["state"] = "x", ["post_logout_redirect_uri"] = OidcHarness.PostLogoutRedirectUri }, session);
+        await Assert.That(logout.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await logout.Content.ReadAsStringAsync()).Contains($"href=\"{OidcHarness.PostLogoutRedirectUri}?state=x\"");
+        await Assert.That(ClearsSessionCookie(logout)).IsTrue();
+        using var after = await oidc.AuthorizeAsync(path, session);
+        await Assert.That(after.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
+
+        async Task<HttpResponseMessage> Post(string target, Dictionary<string, string> fields, string? cookie)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, target) { Content = new FormUrlEncodedContent(fields) };
+            if (cookie is not null)
+            {
+                request.Headers.Add("Cookie", $"tsauth_session={cookie}");
+            }
+
+            return await oidc.Client.SendAsync(request);
+        }
+    }
+
+    [Test]
     public async Task Only_the_terrascale_issuer_exists()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);

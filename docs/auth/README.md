@@ -427,9 +427,11 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
 
 - `GET /terrascale/.well-known/openid-configuration` and
   `GET /terrascale/.well-known/jwks.json`
-- `GET /terrascale/oauth/authorize`, `POST /terrascale/oauth/token`,
-  `GET /terrascale/oauth/userinfo`, `GET /terrascale/oauth/logout`
-  (RP-initiated logout: always the hosted Signed out page, which continues to a
+- `GET|POST /terrascale/oauth/authorize`, `POST /terrascale/oauth/token`,
+  `GET|POST /terrascale/oauth/userinfo`, `GET|POST /terrascale/oauth/logout`
+  (POST takes the same parameters form-encoded, per OpenID Connect; an
+  authorize POST that needs sign-in resumes as a GET with those parameters;
+  RP-initiated logout: always the hosted Signed out page, which continues to a
   validated `post_logout_redirect_uri` by link and a 2-second meta refresh) and
   `POST /terrascale/oauth/revoke` (RFC 7009)
 - `POST /terrascale/oauth/device` (RFC 8628 device authorization for `ts-cli`;
