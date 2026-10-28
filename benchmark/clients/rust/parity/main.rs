@@ -39,6 +39,7 @@ const LIMITATIONS: [&str; 5] = [
 
 struct Run {
     out: File,
+    output_failed: bool,
     key: String,
     project: String,
     db: String,
@@ -47,8 +48,8 @@ struct Run {
 
 impl Run {
     fn emit(&mut self, row: Value) {
-        // A lost row must not abort cleanup; the exit status still reports the run.
-        let _ = writeln!(self.out, "{row}");
+        // Preserve cleanup after a lost row, but reject the run.
+        self.output_failed |= writeln!(self.out, "{row}").is_err();
     }
 
     /// The shipped SDK with API-key exchange, background refresh and retry policy unchanged.
@@ -134,6 +135,9 @@ impl Run {
             "protocol": raw.then_some(if lane == "raw-h1" { "HTTP/1.1" } else { "HTTP/2" }),
             "attempts": raw.then_some(m.started), "tcp_connects": null, "reject": reject,
         }));
+        if self.output_failed {
+            return Err(Failure::Rejected("output write failed"));
+        }
         reject.map_or(Ok(()), |_| Err(Failure::Rejected("cell rejected")))
     }
 
@@ -273,6 +277,7 @@ async fn session(credentials: &str, out_path: &str, stop: Stop) -> Result<(), Fa
     );
     let mut run = Run {
         out,
+        output_failed: false,
         key,
         project,
         db,
@@ -299,11 +304,18 @@ async fn session(credentials: &str, out_path: &str, stop: Stop) -> Result<(), Fa
         "warmup_s": support::WARMUP.as_secs(), "window_s": support::MEASURE.as_secs(),
         "drain_s": support::DRAIN.as_secs(), "reservoir": support::RESERVOIR, "limitations": LIMITATIONS,
     }));
+    if run.output_failed {
+        return Err(Failure::Rejected("database identity could not be recorded"));
+    }
     let mut created = None;
     let result = run.measured(&regions, &home, &admin, &mut created).await;
     let selector = created.clone().unwrap_or_else(|| run.db.clone());
     if run.cleanup(&admin, &selector).await {
-        return result;
+        return if run.output_failed {
+            Err(Failure::Rejected("output write failed"))
+        } else {
+            result
+        };
     }
     // Retained for manual reconciliation: identity only, never credentials.
     let recovery = json!({"project": run.project, "database": run.db, "id": created, "home": home});
