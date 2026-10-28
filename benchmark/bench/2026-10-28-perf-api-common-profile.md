@@ -17,7 +17,7 @@ remains unmet by more than two orders of magnitude. No production request, crede
   Between `93b873792` and main `427ddf231`, `src` changed only in Turso write-intent retirement (`StorageBusyException`) and
   ts-auth `PlatformGrants`. Neither is on the read path, but this is still not a profile of main's binary.
 - **Workload.** Unchanged from the keyed-keyless run: lane `api`, read workload, CONCURRENCY=1,16 and a 45 s window after the
-  fixed 10 s warmup. The run used `taskset -c 2-11`, workstation concurrent GC and TieredPGO. Production `terrabase` uses the
+  fixed 10 s warmup. The run used `taskset -c 2-11`, workstation concurrent GC and TieredPGO. The production project is configured for the
   same GC mode (`src/TerraBase/TerraBase.csproj`). The attribution semantics and the engine denominator are unchanged.
   Two fresh processes per run: p1 (harness `5439abd38`) and p2 (harness `dede8f8bc`). Each profiled small c=1 and small c=16;
   the medium cells ran untraced.
@@ -82,8 +82,8 @@ run-queue wait. The overhead p50 rises by +20–24 µs from c=1 to c=16. The two
 - Pauses are GC work, not thread suspension, and they grow with gen0 survivors. Survivors roughly double at c=16, which fits
   in-flight request state.
 - About 18% of wall time is world-stopped. The c=16 overhead p99 (1.56–1.73 ms) sits at pause p50 plus one request.
-- An inference, not a per-request join: ~(0.11 + 1.5)/8.2 ≈ 20% of requests overlap a pause. That explains the c=16 tail but
-  not the median. At c=1, pauses cover 1.6% of wall time and the p99 stays at ~170 µs.
+- An inference, not a per-request join: ~(0.11 + 1.5)/8.2 ≈ 20% of requests overlap a pause. This is consistent with GC contributing substantially to the c=16 tail; it does not identify
+  which requests paused, and it does not explain the median. At c=1, pauses cover 1.6% of wall time and the p99 stays at ~170 µs.
 
 ## CPU: server request-path stage chain (sampled thread-µs per request, inclusive)
 
@@ -160,11 +160,12 @@ allocation reports, should not be trusted for small types.
 
 ## Ranked mechanisms
 
-1. **c=16 tail (p99 overhead ~1.6 ms): blocking gen0 GC pauses, 16–20% of wall time.** They come from ~30 KB/request spread
+1. **c=16 tail (p99 overhead ~1.6 ms): consistent with blocking gen0 GC pauses, 16–20% of wall time.** The pauses occur with ~30 KB/request spread
    across about 40 owners, and per-pause cost grows with in-flight survivors.
-2. **Median overhead at c=1 (~86 µs): CPU path work across ~17 middleware stages, about 10–24 thread-µs each.** No stage is
-   above ~25%. The largest slices are hosting/identity, catalog gate plus authentication, and the endpoint.
-3. **c=16 median increment (~+21 µs): scheduler run-queue wait.** That is ~0.7 thread-equivalents with 12 TP workers on 10
+2. **Median overhead at c=1 (~86 µs): request-path work across the middleware pipeline.** The six broad slices between the
+   inclusive frames above are about 10–24 sampled thread-µs each; a slice can contain several middleware stages. No single
+   owner is above ~25%. The largest slices are hosting/identity, catalog gate plus authentication, and the endpoint.
+3. **c=16 median increment (~+21 µs): consistent with scheduler run-queue wait.** The process has ~0.7 thread-equivalents waiting with 12 TP workers on 10
    CPUs and ~17k involuntary switches/s, plus inflation from GC catch-up.
 4. **The key path:** ~2.5–4.4 µs and ~1.65 KB/op (keyed-keyless). It is real but small.
 
@@ -183,10 +184,10 @@ allocation reports, should not be trusted for small types.
   sampling disables ticks. In p2 the analyzer rejects the empty tick view; this is recorded in `rejected.txt`.
 - **Scope.** Single host (beta, 10 pinned CPUs, nice 19), not live gru/sjc/fra. The binary is the frozen `93b873792` build, not
   main `427ddf231`. The link from pauses to latency is inferred from coincident magnitudes, not joined per request.
-- **The target.** No mechanism here can bring overhead to <10% of a ~5 µs engine. That needs a per-request path of about
-  0.5 µs.
+- **The target.** These profiles establish no change that reaches <10% of a ~5 µs engine. That target requires per-request
+  overhead of about 0.5 µs on the same denominator.
 
-## Next narrow production candidate (not implemented)
+## Candidates proposed at profile time (not implemented in this experiment)
 
 1. **Make `ClientCors.IsDataPath` allocation-free.** Use span segment matching with the same predicate: ≥7 segments, empty
    first segment, non-empty segments 3 and 5, case-insensitive `v1/projects/*/databases/*/(collections|transactions|changes)`.
@@ -222,8 +223,9 @@ Reproduce with:
 
 ## Publication provenance
 
-This report is copied from experiment commit `c400ebc63a77db88c0a199e010b230818f2615ec`.
-The measured artifacts and historical source hashes above are unchanged. The publication
+This report preserves the data from experiment commit `c400ebc63a77db88c0a199e010b230818f2615ec`.
+The measured artifacts and historical source hashes above are unchanged. Publication edits clarify that GC and scheduler
+causality were inferred, and that the inclusive slices each contain multiple middleware stages. The publication
 branch contains only this report; it does not integrate the experimental profiling tools.
 Their exact sources remain available for review and reproduction:
 
