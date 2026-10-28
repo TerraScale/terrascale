@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using TerraBase.Engine;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
