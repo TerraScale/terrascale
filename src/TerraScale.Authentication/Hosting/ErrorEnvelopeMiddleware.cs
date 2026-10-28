@@ -1,12 +1,14 @@
 using System.Globalization;
 using TerraScale.Authentication.Contracts;
+using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
 namespace TerraScale.Authentication.Hosting;
 
 /// <summary>
-/// Turns <see cref="ApiException"/> into its JSON envelope and any other unhandled exception into
-/// the generic 500 envelope, so internal details never reach the client.
+/// Turns <see cref="ApiException"/> into its JSON envelope, storage that TerraBase reports unavailable into the
+/// retryable 503 envelope, and any other unhandled exception into the generic 500 envelope, so internal details never
+/// reach the client.
 /// </summary>
 public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorEnvelopeMiddleware> logger)
 {
@@ -28,6 +30,13 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
         }
         catch (ApiException error) when (!context.Response.HasStarted)
         {
+            Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
+            await WriteAsync(context, error);
+        }
+        catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)
+        {
+            // A storage outage is temporary: answer the retryable 503 every handler documents, never a 500.
+            var error = ApiException.Unavailable(unavailable);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }

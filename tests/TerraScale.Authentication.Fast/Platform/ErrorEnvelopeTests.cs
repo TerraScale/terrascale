@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Platform;
 
@@ -18,6 +19,14 @@ public sealed class ErrorEnvelopeTests
         app.MapGet("/__test/conflict", (HttpContext _) => throw new ApiException(409, "conflict", "The resource changed."));
         app.MapGet("/__test/unavailable", (HttpContext _) => throw ApiException.Unavailable());
         app.MapGet("/__test/cancelled-work", (HttpContext _) => throw new OperationCanceledException("not the client"));
+        // The real SDK against storage that answers 503, as gru's TerraBase did during a writer storm.
+        app.MapGet("/__test/storage-unavailable", async (HttpContext _) =>
+        {
+            using var http = new HttpClient(new StorageUnavailable());
+            await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://storage.invalid/") })
+                .Database(TerraScale.Authentication.Store.AuthStore.NewId(), "auth").ListCollectionsAsync();
+            return Results.Ok();
+        });
         app.MapGet("/__test/slow", async (HttpContext context) =>
         {
             var signals = context.RequestServices.GetRequiredService<DisconnectSignals>();
@@ -75,6 +84,18 @@ public sealed class ErrorEnvelopeTests
     }
 
     [Test]
+    public async Task Storage_that_terrabase_reports_unavailable_answers_a_retryable_503()
+    {
+        await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
+        using var response = await server.Client.GetAsync(new Uri("/__test/storage-unavailable", UriKind.Relative));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+        await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+    }
+
+    [Test]
     public async Task A_cancellation_that_is_not_the_client_leaving_is_a_server_error()
     {
         await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
@@ -115,5 +136,14 @@ public sealed class ErrorEnvelopeTests
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class StorageUnavailable : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("""{"error":{"code":"capacity","message":"the writer is busy"}}""", System.Text.Encoding.UTF8, "application/json"),
+            });
     }
 }
