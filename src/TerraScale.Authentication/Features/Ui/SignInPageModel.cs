@@ -23,6 +23,9 @@ public enum SignInStep
     /// <summary>Signed out, optionally continuing to the client's validated post-logout URI.</summary>
     SignedOut,
 
+    /// <summary>Ask before ending the session for a logout request without a matching ID token hint.</summary>
+    SignOutConfirm,
+
     /// <summary>A cross-origin form post, or an authorization or end-session request that cannot be answered to its client, was refused.</summary>
     Rejected,
 
@@ -111,6 +114,9 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The client's validated post-logout redirect URI the signed-out page continues to.</summary>
     public string? ReturnTo { get; init; }
 
+    /// <summary>The end-session parameters the sign-out confirmation posts back (<see cref="SignInStep.SignOutConfirm"/>).</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> LogoutFields { get; init; } = [];
+
     /// <summary>The same-origin page that starts the single sign-on (<see cref="SignInStep.Sso"/>).</summary>
     public string? SsoUrl { get; init; }
 
@@ -141,6 +147,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.Password => "Enter your password",
         SignInStep.Code => "Check your email",
         SignInStep.SignedOut => "Signed out",
+        SignInStep.SignOutConfirm => "Sign out?",
         SignInStep.Rejected => "Request refused",
         SignInStep.Continue or SignInStep.SignedIn => "Signed in",
         SignInStep.SignUp => "Create your account",

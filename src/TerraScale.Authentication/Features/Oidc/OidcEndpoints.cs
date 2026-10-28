@@ -11,6 +11,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
@@ -436,7 +437,7 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
 }
 
 /// <summary><c>GET /{slug}/oauth/logout</c>: RP-initiated logout with its parameters in the query string.</summary>
-public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings settings) : LogoutEndpoint(sessions, settings)
+public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(sessions, settings, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -448,7 +449,7 @@ public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings set
 }
 
 /// <summary><c>POST /{slug}/oauth/logout</c>: RP-initiated logout with its parameters form-encoded (RP-Initiated Logout 1.0 section 2).</summary>
-public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings settings) : LogoutEndpoint(sessions, settings)
+public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(sessions, settings, options)
 {
     /// <inheritdoc />
     public override void Configure()
@@ -462,12 +463,20 @@ public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings se
 
 /// <summary>
 /// RP-initiated logout, by GET or form POST. Revokes the hosted session and clears its cookie, then shows the signed-out
-/// page, which continues to the client's registered <c>post_logout_redirect_uri</c> when there is one.
+/// page, which continues to the client's registered <c>post_logout_redirect_uri</c> when there is one. A live session
+/// is ended only for an <c>id_token_hint</c> issued to its user or once the user confirms on the hosted page
+/// (RP-Initiated Logout 1.0 section 2): anything else shows the confirmation and changes nothing.
 /// </summary>
-public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings settings) : EndpointWithoutRequest<IResult>
+public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/logout";
+
+    /// <summary>The form field the hosted confirmation posts back; honored only from a same-origin POST.</summary>
+    public const string ConfirmField = "confirm";
+
+    /// <summary>The request parameters the confirmation carries back, so the confirmed request is validated as the first.</summary>
+    private static readonly string[] Carried = [Parameters.IdTokenHint, Parameters.ClientId, Parameters.PostLogoutRedirectUri, Parameters.State, Parameters.UiLocales, "logout_hint"];
 
     /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
@@ -478,7 +487,7 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
     protected void Describe()
     {
         Summary("End-session endpoint");
-        Description("OpenID Connect RP-Initiated Logout 1.0, by GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. post_logout_redirect_uri must exactly match one registered for the client identified by client_id or id_token_hint and, for a project with a nonempty redirect allowlist, an entry in that list. A disallowed project URI answers a local error without navigation. The answer is otherwise the hosted Signed out page; with a validated post_logout_redirect_uri it continues there (with state, if sent) through a Continue link and a 2-second meta refresh. Access and refresh tokens already issued stay valid until they expire or are revoked.");
+        Description("OpenID Connect RP-Initiated Logout 1.0, by GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. post_logout_redirect_uri must exactly match one registered for the client identified by client_id or id_token_hint and, for a project with a nonempty redirect allowlist, an entry in that list. A disallowed project URI answers a local error without navigation. The answer is otherwise the hosted Signed out page; with a validated post_logout_redirect_uri it continues there (with state, if sent) through a Continue link and a 2-second meta refresh. A live hosted session ends only when id_token_hint was issued to its user or the user confirms: otherwise the answer is a Sign out? page whose same-origin form POST (confirm=1, carrying the request's parameters) ends it, and the request itself changes nothing. Access and refresh tokens already issued stay valid until they expire or are revoked.");
         Tags("OAuth");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -499,7 +508,18 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
             return OidcResults.DisallowedRedirect();
         }
 
-        await sessions.RevokeAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        var cookie = this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)];
+        if (await sessions.ResolveAsync(tenant, cookie, cancellationToken) is { } live && !await this.ConfirmedAsync(request, live.User.Id))
+        {
+            // Names no account, so a page opened by another site learns nothing it could not already.
+            var fields = Carried.Select(name => (Name: name, Value: (string?)request[name]))
+                .Where(field => !string.IsNullOrEmpty(field.Value))
+                .Select(field => KeyValuePair.Create(field.Name, field.Value!))
+                .ToList();
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignOutConfirm, tenant) { LogoutFields = fields });
+        }
+
+        await sessions.RevokeAsync(tenant, cookie, cancellationToken);
         BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
         // OpenIddict has validated post_logout_redirect_uri against the client's registration before this runs. The page
         // navigates there itself, so the user sees that the sign-out happened.
@@ -507,6 +527,24 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
             ? (string.IsNullOrEmpty(request.State) ? uri : Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri, Parameters.State, request.State))
             : null;
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignedOut, tenant) { ReturnTo = returnTo });
+    }
+
+    /// <summary>
+    /// Whether the request may end the session of <paramref name="userId"/>: its <c>id_token_hint</c>, which OpenIddict
+    /// has validated for this issuer and client, names that user, or it is the hosted confirmation posted from the public
+    /// origin. A cross-site page can make the browser post, but not with this origin.
+    /// </summary>
+    private async Task<bool> ConfirmedAsync(OpenIddictRequest request, string userId)
+    {
+        var context = this.HttpContext;
+        if (HttpMethods.IsPost(context.Request.Method) && (string?)request[ConfirmField] == "1"
+            && context.Request.Headers.Origin is [{ } origin] && SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))
+        {
+            return true;
+        }
+
+        return request.IdTokenHint is not null
+            && (await context.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal?.GetClaim(Claims.Subject) == userId;
     }
 }
 

@@ -431,8 +431,12 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
   `GET|POST /terrascale/oauth/userinfo`, `GET|POST /terrascale/oauth/logout`
   (POST takes the same parameters form-encoded, per OpenID Connect; an
   authorize POST that needs sign-in resumes as a GET with those parameters;
-  RP-initiated logout: always the hosted Signed out page, which continues to a
-  validated `post_logout_redirect_uri` by link and a 2-second meta refresh) and
+  RP-initiated logout: a live session ends only for an `id_token_hint` issued
+  to its user or after the hosted "Sign out?" confirmation, a same-origin form
+  POST of the request's parameters with `confirm=1`; any other request shows
+  that confirmation and changes nothing. Then the hosted Signed out page
+  continues to a validated `post_logout_redirect_uri` by link and a 2-second
+  meta refresh) and
   `POST /terrascale/oauth/revoke` (RFC 7009)
 - `POST /terrascale/oauth/device` (RFC 8628 device authorization for `ts-cli`;
   `verification_uri` is `{public origin}/ui/terrascale/device`, codes live 10

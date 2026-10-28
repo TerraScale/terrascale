@@ -30,6 +30,9 @@ break;
 case SignInStep.SignedOut:
 <p class="sub">@(Model.ReturnTo is null ? "You can close this page." : "Returning to the application…")</p>
 break;
+case SignInStep.SignOutConfirm:
+<p class="sub">An application asked to sign you out of @Model.Brand. To stay signed in, close this page.</p>
+break;
 case SignInStep.Rejected:
 <p class="sub">Start again from the application you were signing in to.</p>
 break;
@@ -203,6 +206,15 @@ case SignInStep.SignedOut:
 {
 <a class="btn" href="@returnTo">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 }
+break;
+case SignInStep.SignOutConfirm:
+<form method="post" action="/@Model.Slug/oauth/logout">
+@foreach (var field in Model.LogoutFields)
+{
+<input type="hidden" name="@field.Key" value="@field.Value">
+}
+<button type="submit" name="confirm" value="1"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg>Sign out</button>
+</form>
 break;
 case SignInStep.Rejected:
 @if (Model.Detail is { } detail)
