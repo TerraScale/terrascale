@@ -1,5 +1,6 @@
 using Turso.Data.Sqlite;
 using Turso.Raw.Public;
+using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
@@ -70,17 +71,27 @@ internal sealed partial class TursoDatabaseStore
 
             if (intent && _activeOperations == 0 && CopyFault is null && Ledger!.FailedClosed is null)
             {
-                if (admitted)
+                try
                 {
-                    _ = await io.WithAdmissionAsync(async () =>
+                    if (admitted)
+                    {
+                        _ = await io.WithAdmissionAsync(async () =>
+                        {
+                            await Ledger.RetireIntentAsync(this).ConfigureAwait(false);
+                            return true;
+                        }).ConfigureAwait(false);
+                    }
+                    else
                     {
                         await Ledger.RetireIntentAsync(this).ConfigureAwait(false);
-                        return true;
-                    }).ConfigureAwait(false);
+                    }
                 }
-                else
+                catch (StorageBusyException)
                 {
-                    await Ledger.RetireIntentAsync(this).ConfigureAwait(false);
+                    // The operation finished; only its intent stays, which is conservative: the next operation records it again
+                    // and retires it, a clean stop drops it at the next start, and after an unclean one it faults the copy unless
+                    // the restart proof passes. Failing the node closed instead refused every write until a restart.
+                    logger?.ZLogWarning($"Retiring the write intent of database {Tenant!.DatabaseId:@Database} found storage busy; the intent stays until its next operation ends");
                 }
             }
         }
