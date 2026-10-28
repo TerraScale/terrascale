@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.19 — Node HTTP/2 connection pooling
+
+Default Node transports share an Undici connection pool and negotiate HTTP/2
+with HTTP/1.1 fallback. Browser transport and explicit custom fetch remain
+unchanged. Native browser module consumers must map `#sdk-fetch` to
+`src/default-fetch.js`; bundlers use the package browser condition.
+
 ## 0.0.17 — read deadline and transient retries
 
 Replay-safe v1 reads (GETs and read-only query/SQL POSTs) now have one fixed

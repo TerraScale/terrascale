@@ -1,3 +1,4 @@
+import { defaultFetch } from "#sdk-fetch";
 import { resolveAccessToken, resolveTsAuthRuntimeConfig } from "./config.js";
 import { err, ok, sanitizeDiagnostic } from "./result.js";
 import { parseStrictJson } from "./strict-json.js";
@@ -40,7 +41,7 @@ export class TsAuthHttp {
   /** @param {TsAuthRuntimeConfig} config */
   constructor(config) {
     this.config = Object.freeze(resolveTsAuthRuntimeConfig(config));
-    const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
+    const fetchHandler = config.fetch ?? defaultFetch();
     if (fetchHandler === undefined)
       throw new TypeError("TsAuthClient requires a fetch implementation.");
     this.#fetch = fetchHandler;

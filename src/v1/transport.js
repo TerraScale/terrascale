@@ -1,3 +1,4 @@
+import { defaultFetch } from "#sdk-fetch";
 // Internal typed transport for the TerraBase v1 client. It is not exported
 // from any package entrypoint: callers reach it only through named operations.
 import { parseV1Error } from "./errors.js";
@@ -181,7 +182,7 @@ export class V1Transport {
       requireToken(config.token);
     if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
       throw new TypeError("Unsupported client configuration member.");
-    const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
+    const fetchHandler = config.fetch ?? defaultFetch();
     if (typeof fetchHandler !== "function") throw new TypeError("TerraBase v1 client requires a fetch implementation.");
     const maxResponseBytes = config.maxResponseBytes ?? defaultMaximumResponseBytes;
     if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1)
