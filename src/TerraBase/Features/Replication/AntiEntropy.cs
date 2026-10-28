@@ -240,8 +240,10 @@ internal sealed class AntiEntropy : BackgroundService
     {
         // Taken before either digest: whatever the peer held when this began is held here once the comparison completes.
         var began = _time.GetTimestamp();
-        if (await (maintained ? _states.MaintainedDigestAsync(database, expected: null, cancellationToken) : _states.DigestAsync(database, expected: null, cancellationToken))
-            .ConfigureAwait(false) is not { } local)
+        var digest = maintained
+            ? await _states.MaintainedDigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false)
+            : await _states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false);
+        if (digest is not { } local)
         {
             return null;
         }
