@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -23,7 +24,7 @@ namespace TerraScale.Authentication.Fast.SignIn;
 
 /// <summary>Hosted provider sign-in through HTTP, real TerraBase and a controlled provider backchannel.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
-public sealed class SocialSignInTests(TerraBaseFixture fixture)
+public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 {
     [Test]
     [Arguments("github", false)]
@@ -62,7 +63,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         using var userInfo = await oidc.UserInfoAsync((await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!);
         var profile = await OidcHarness.JsonAsync(userInfo);
         await Assert.That(profile.GetProperty("sub").GetString()).IsEqualTo(user.Id);
-        await Assert.That(profile.GetProperty("email").GetString()).IsEqualTo(originalEmail);
+        await Assert.That(profile.GetProperty("email").GetString()).IsEqualTo(Users.NormalizeEmail(originalEmail));
         await UnchangedAsync(users, user);
         await Assert.That((await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))?.Id).IsEqualTo(other?.Id);
         if (other is not null)
@@ -98,6 +99,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
             ?? await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!;
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var sessions = await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId);
+        var accounts = await store.CountAsync(AuthStore.UserCollection, OidcIssuer.InstanceId);
         var start = await StartAsync(oidc.Client, provider);
         using var response = await CompleteAsync(oidc.Client, provider, start);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -105,7 +107,7 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(await response.Content.ReadAsStringAsync()).Contains("use your existing sign-in method");
         await UnchangedAsync(users, existing);
         await Assert.That((await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!.Id).IsEqualTo(existing.Id);
-        await Assert.That(await store.CountAsync(AuthStore.UserCollection, OidcIssuer.InstanceId)).IsEqualTo(1);
+        await Assert.That(await store.CountAsync(AuthStore.UserCollection, OidcIssuer.InstanceId)).IsEqualTo(accounts);
         await Assert.That(await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId)).IsEqualTo(sessions);
         // A refused attempt must not reserve the subject for the existing account or an orphan account.
         fake.Email = new Faker().Internet.Email();
@@ -299,40 +301,79 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("github", false)]
-    [Arguments("google", false)]
-    [Arguments("github", true)]
-    [Arguments("google", true)]
-    public async Task Active_local_factor_refuses_provider_sign_in_without_account_or_session_mutation(string provider, bool bound)
+    [Arguments("github")]
+    [Arguments("google")]
+    public async Task Unbound_subject_cannot_sign_in_to_an_existing_account_with_an_active_factor(string provider)
     {
         using var fake = new Provider(provider);
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, clock: clock, services: fake.Route);
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
-        UserRecord user;
-        if (bound)
-        {
-            using var initial = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
-            await Assert.That(initial.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            user = (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!;
-            fake.Email = new Faker().Internet.Email();
-        }
-        else
-        {
-            user = (await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!;
-        }
-
-        user = await ActivateAsync(oidc, user);
+        var (user, _) = await ActivateWithSecretAsync(oidc, (await users.CreateAsync(OidcIssuer.InstanceId, fake.Email))!);
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var sessions = await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId);
         var factor = (await store.GetAsync(AuthStore.MfaCollection, OidcIssuer.InstanceId, user.Id))!;
         using var refused = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+        await Assert.That(await refused.Content.ReadAsStringAsync()).DoesNotContain("name=\"challenge\"");
         await UnchangedAsync(users, user);
         await Assert.That((await store.GetAsync(AuthStore.MfaCollection, OidcIssuer.InstanceId, user.Id))!.Version).IsEqualTo(factor.Version);
         await Assert.That(await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId)).IsEqualTo(sessions);
-        await Assert.That(await store.CountAsync(AuthStore.OidcTokenCollection, OidcIssuer.InstanceId)).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("github")]
+    [Arguments("google")]
+    public async Task Bound_subject_with_an_active_factor_completes_through_the_hosted_second_step(string provider)
+    {
+        using var fake = new Provider(provider);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, Credentials, clock: clock, services: fake.Route);
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        using (var initial = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider)))
+        {
+            await Assert.That(initial.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var (user, secret) = await ActivateWithSecretAsync(oidc, (await users.FindByEmailAsync(OidcIssuer.InstanceId, fake.Email))!);
+        var originalEmail = fake.Email;
+        fake.Email = new Faker().Internet.Email();
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var sessions = await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId);
+
+        // The callback stops at the factor: no cookie, no session, no account change.
+        using var step = await CompleteAsync(oidc.Client, provider, await StartAsync(oidc.Client, provider));
+        await Assert.That(step.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(OidcHarness.SessionCookie(step)).IsNull();
+        await Assert.That(await store.CountAsync(AuthStore.SessionCollection, OidcIssuer.InstanceId)).IsEqualTo(sessions);
+        await UnchangedAsync(users, user);
+        var challenge = WebUtility.HtmlDecode(ChallengePattern().Match(await step.Content.ReadAsStringAsync()).Groups[1].Value);
+        await Assert.That(challenge).IsNotEmpty();
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+        using (var wrong = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = Code(secret, clock.GetUtcNow().AddHours(1)) }))
+        {
+            await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
+        }
+
+        using var right = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = Code(secret, clock.GetUtcNow()) });
+        var cookie = OidcHarness.SessionCookie(right);
+        await Assert.That(cookie).IsNotNull();
+        var (verifier, pkce) = OidcHarness.Pkce();
+        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(cookie!, pkce), verifier);
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var userInfo = await oidc.UserInfoAsync((await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!);
+        var profile = await OidcHarness.JsonAsync(userInfo);
+        await Assert.That(profile.GetProperty("sub").GetString()).IsEqualTo(user.Id);
+        await Assert.That(profile.GetProperty("email").GetString()).IsEqualTo(Users.NormalizeEmail(originalEmail));
+
+        // The challenge completes once.
+        clock.Advance(TimeSpan.FromSeconds(31));
+        using var replay = await oidc.PostFormAsync("/ui/terrascale/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = Code(secret, clock.GetUtcNow()) });
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(replay)).IsNull();
     }
 
     [Test]
@@ -346,7 +387,9 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().FindByEmailAsync(OidcIssuer.InstanceId, fake.Email)).IsNull();
     }
 
-    private static async Task<UserRecord> ActivateAsync(OidcHarness oidc, UserRecord user)
+    private static async Task<UserRecord> ActivateAsync(OidcHarness oidc, UserRecord user) => (await ActivateWithSecretAsync(oidc, user)).User;
+
+    private static async Task<(UserRecord User, string Secret)> ActivateWithSecretAsync(OidcHarness oidc, UserRecord user)
     {
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         var enrollment = (await mfa.BeginAsync(user))!;
@@ -356,13 +399,18 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
             var clock = oidc.Server.App.Services.GetRequiredService<TimeProvider>();
             var active = await mfa.ConfirmAsync(user, new Totp(secret).ComputeTotp(clock.GetUtcNow().UtcDateTime));
             await Assert.That(active).IsNotNull();
-            return active!.User;
+            return (active!.User, enrollment.Secret);
         }
         finally
         {
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret);
         }
     }
+
+    private static string Code(string secret, DateTimeOffset at) => new Totp(Base32Encoding.ToBytes(secret)).ComputeTotp(at.UtcDateTime);
+
+    [GeneratedRegex("name=\"challenge\" value=\"([^\"]+)\"")]
+    private static partial Regex ChallengePattern();
 
     private static async Task UnchangedAsync(Users users, UserRecord expected) =>
         await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))

@@ -27,10 +27,15 @@ linking requires deliberate local-account proof; that ceremony is not implemente
 in this slice. An existing or unlinked account must use its existing sign-in method.
 
 Browser/state/tenant/client/secret binding, durable callback consumption and session
-credential ancestry remain enforced. Local MFA is checked against the bound account
-first, with the existing email gate retained for unknown subjects. Active MFA still
-refuses provider sign-in; hosted trusted factor continuation is pending. No primary
-session should be issued while that factor is required.
+credential ancestry remain enforced. When the bound account has an active
+authenticator app, the callback opens no session: it answers the hosted second-factor
+page with a sealed challenge, exactly like password or email-code sign-in. That
+challenge carries the account epoch/stamp and the consumed callback binding, lasts 5
+minutes and completes once with a TOTP step or recovery code. Unlinking the provider,
+a sign-out everywhere or a factor change kills it. Upstream `amr`/`acr` never count
+as a second factor. An unknown subject never reaches the factor step: an email
+collision is refused before any challenge, so the incoming email cannot choose the
+account whose factor is asked for.
 
 This is an explicit greenfield auth storage change: persisted links now require an
 authority and provider claim keys use structured JSON. Old links/claim keys are not
@@ -44,8 +49,9 @@ callbacks through the existing credential hash check.
 No public HTTP/SDK shape changes: platform provider responses remain names only;
 project exports retain their explicit DTO mapping without the new authority field.
 Fast HTTP regressions cover changed email, collisions, case-sensitive subject
-replacement refusal, namespace separation, active-MFA refusal and account-state
+replacement refusal, namespace separation, collision refusal with an active factor,
+bound-account TOTP completion through the OAuth code flow, single-use challenges and account-state
 preservation using real TerraBase storage and controlled provider transports.
 Execution evidence belongs to CI; these cases do not establish live-provider or
-multi-region race/convergence qualification. Those checks, project/SSO bindings,
-trusted MFA completion and deliberate linking remain follow-up work.
+multi-region race/convergence qualification. Those checks, project/SSO bindings
+and their MFA completion, and deliberate linking remain follow-up work.

@@ -111,22 +111,26 @@ public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, U
 
         // The authority comes from these fixed, trusted backchannels, never from user-supplied claims.
         var providerIdentity = new LinkedProvider(provider, provider == SocialProviders.Google ? "https://accounts.google.com" : "https://github.com", credential.ClientId, verified.Subject);
-        // Preserve the fail-closed local MFA gate until trusted hosted continuation is implemented.
-        var existing = await users.FindByProviderAsync(tenant, providerIdentity, cancellationToken)
-            ?? await users.FindByEmailAsync(tenant, email, cancellationToken);
-        if (existing is not null
-            && !await mfa.AllowsPrimaryAuthenticationAsync(existing, cancellationToken))
+        // Only a bound subject or a new account resolves; an email collision refuses without touching that account.
+        if (await users.FromProviderAsync(tenant, providerIdentity, email, allowCreation: true, cancellationToken) is not { } resolved)
         {
             return Refused(context, tenant);
         }
 
-        var user = await users.FromProviderAsync(tenant, providerIdentity, email, allowCreation: true, cancellationToken);
-        if (user is null || await SignInFlow.OpenSessionAsync(sessions, user with { AuthenticationBindings = [.. user.AuthenticationBindings, binding] }, cancellationToken) is not { } session)
+        // An active local factor gets the hosted second step; its sealed challenge carries the consumed callback binding.
+        var user = resolved with { AuthenticationBindings = [.. resolved.AuthenticationBindings, binding] };
+        var next = SignInFlow.SafeNext(context, payload.Next);
+        if (await SignInFlow.SecondFactorAsync(context, mfa, user, next, cancellationToken) is { } factor)
+        {
+            return factor;
+        }
+
+        if (await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             return Refused(context, tenant);
         }
 
-        return await SignInFlow.SignedInAsync(context, sessions, session, SignInFlow.SafeNext(context, payload.Next), cancellationToken);
+        return await SignInFlow.SignedInAsync(context, sessions, session, next, cancellationToken);
     }
 
     private SocialProviderRecord? Credentials(string tenant, string provider) =>
