@@ -7,6 +7,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
@@ -77,6 +78,27 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(body.TryGetProperty("access_token", out _)).IsFalse();
         await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
         await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task A_key_stored_narrowed_by_database_name_never_mints_a_token()
+    {
+        await using var oidc = await StartAsync();
+        var (_, token) = await oidc.SignInUserAsync("alice@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Production");
+        var created = await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
+            new { name = "legacy", scopes = ReadOnly, database = await oidc.CreateDatabaseIdAsync("app") }, HttpStatusCode.Created);
+        var key = created.GetProperty("key").GetString()!;
+        var id = created.GetProperty("api_key").GetProperty("id").GetString()!;
+        // Keys created before narrowing by ULID hold the database's name, which can move to another database.
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var stored = (await store.GetAsync(AuthStore.ApiKeyCollection, PlatformDirectory.Instance, id))!;
+        var legacy = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
+        legacy["database"] = "app";
+        await Assert.That(await store.ReplaceAsync(AuthStore.ApiKeyCollection, PlatformDirectory.Instance, id,
+            JsonSerializer.SerializeToElement(legacy), stored.Version)).IsNotNull();
+        await Assert.That(await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).IsEqualTo((401, "invalid_client"));
     }
 
     [Test]
