@@ -2,8 +2,8 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 
 // Readiness names each dependency a signed-in request needs: ts-auth (its own unauthenticated /readyz) and the
 // TerraBase state. Public bodies carry the region and never the build revision.
-public sealed class DependencyReadiness(IDashboardState state, IHttpClientFactory http, IConfiguration configuration, TimeProvider time,
-    ILogger<DependencyReadiness> logger)
+public sealed class DependencyReadiness(IDashboardState state, DashboardStateInitializer initializer, IHttpClientFactory http, IConfiguration configuration,
+    TimeProvider time, ILogger<DependencyReadiness> logger)
 {
     private static readonly Uri AuthReady = new("https://auth.terrascale.tech/readyz");
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(2);
@@ -58,6 +58,8 @@ public sealed class DependencyReadiness(IDashboardState state, IHttpClientFactor
 
     private async Task<bool> TerraBaseAsync(CancellationToken cancellationToken)
     {
+        // Startup keeps retrying the schema while TerraBase is unreachable; until it succeeds, the state is not ready.
+        if (!initializer.Initialized) return false;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(Deadline);
         try

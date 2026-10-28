@@ -71,7 +71,8 @@ public static class DashboardApplication
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
         builder.Services.AddSingleton<IDashboardState, TerraBaseDashboardState>();
         builder.Services.AddSingleton<TerraBasePlanSync>();
-        builder.Services.AddHostedService<DashboardStateInitializer>();
+        builder.Services.AddSingleton<DashboardStateInitializer>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<DashboardStateInitializer>());
         builder.Services.AddSingleton<DependencyReadiness>();
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
@@ -243,6 +244,12 @@ public static class DashboardApplication
                         : "public,max-age=0,must-revalidate";
             }
         });
+        // Until the state schema is initialized only health probes and assets answer; every other request is the
+        // dependency 503 above, so nothing is admitted against a store that is not there yet.
+        var stateInitializer = app.Services.GetService<DashboardStateInitializer>();
+        app.Use((context, next) => stateInitializer is null or { Initialized: true } || context.Request.Path.StartsWithSegments("/healthz") ||
+            context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
+            ? next(context) : throw new IOException("Dashboard state is initializing."));
         app.MapGet("/healthz", () => Results.Text("ok"));
         // ts-orch probes /readyz and ts-status probes /health/ready; both name the failing dependency. Public
         // bodies never carry the build revision.

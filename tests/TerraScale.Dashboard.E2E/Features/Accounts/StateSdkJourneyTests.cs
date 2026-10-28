@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using TUnit.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts;
@@ -156,11 +157,21 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
         using var controls = scenario.CreateProviderClient();
         await ControlAsync(controls, new { command = "mode", value = "interrupted" });
-        Check(!await scenario.StartHostsAsync(), "A producer outage during creation prevents the actual app from admitting traffic.");
+        Check(!await scenario.StartHostsAsync(), "A producer outage during creation leaves the app running but not initialized.");
         var partial = await ObserveAsync(controls);
         Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 16, "The interrupted cold start leaves real, partial producer metadata.");
+        using (var waiting = scenario.CreateClient())
+        {
+            // Started, not exited: readiness names TerraBase and no request is admitted against the missing store.
+            using (var readiness = await waiting.GetAsync("/readyz"))
+                Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable && (await readiness.Content.ReadAsStringAsync()).Contains("\"terrabase\":\"unavailable\"", StringComparison.Ordinal),
+                    "An app that could not reach TerraBase at startup runs and reports not ready.");
+            using (var live = await waiting.GetAsync("/healthz")) Check(live.StatusCode == HttpStatusCode.OK, "Liveness stays up while TerraBase is unreachable, so it is never restarted for it.");
+            using (var login = await HttpJourney.LoginAsync(waiting)) Check(login.StatusCode == HttpStatusCode.ServiceUnavailable, "Requests answer 503 until the state initializes.");
+        }
         await ControlAsync(controls, new { command = "mode", value = "" });
-        Check(await scenario.StartHostsAsync(), "The next actual app startup resumes existing collections and establishes the remainder.");
+        Check(await scenario.WaitInitializedAsync(TimeSpan.FromSeconds(20)),
+            "Once TerraBase answers, the same running replicas resume existing collections and establish the remainder without a restart.");
         var recovered = await ObserveAsync(controls);
         CheckSchema(recovered);
         foreach (var previous in partial.GetProperty("collections").EnumerateArray())
@@ -188,6 +199,41 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task AnUnreachableTerraBaseAtStartupNeverStopsTheAppAndItBecomesReadyWithoutARestart()
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        await ControlAsync(controls, new { command = "mode", value = "unreachable" });
+        Check(!await scenario.StartHostsAsync() && scenario.StartupError == "not-initialized",
+            "Startup completes while TerraBase drops every connection; the app is running, not initialized: " + scenario.StartupError);
+        using var client = scenario.CreateClient();
+        using (var live = await client.GetAsync("/healthz")) Check(live.StatusCode == HttpStatusCode.OK, "The process serves liveness while TerraBase is unreachable.");
+        using (var readiness = await client.GetAsync("/readyz"))
+            Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable && (await readiness.Content.ReadAsStringAsync()).Contains("\"terrabase\":\"unavailable\"", StringComparison.Ordinal),
+                "Readiness reports TerraBase as the reason it is not ready.");
+        using (var page = await client.GetAsync("/")) Check(page.StatusCode == HttpStatusCode.ServiceUnavailable, "A page answers 503 while the state is uninitialized.");
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        Check(!scenario.Initialized, "It keeps retrying, without exiting, while TerraBase stays unreachable.");
+
+        await ControlAsync(controls, new { command = "mode", value = "" });
+        Check(await scenario.WaitInitializedAsync(TimeSpan.FromSeconds(40)), "Once TerraBase answers, the same processes initialize the state on their own.");
+        await ReadyAsync(client);
+        await NativeAccountAsync(client);
+        Check((await MeAsync(client)).GetProperty("email").GetString() is { Length: > 0 }, "A signed-in request works on the replica that started without TerraBase.");
+        CheckProtocol(await ObserveAsync(controls));
+    }
+
+    [Test]
+    public async Task StartupRetriesBackOffWithJitterUpToThirtySeconds()
+    {
+        Check(DashboardStateInitializer.Backoff(0, 1) == TimeSpan.FromSeconds(1) && DashboardStateInitializer.Backoff(0, 0) == TimeSpan.FromSeconds(0.5), "The first retry waits 0.5-1 s.");
+        Check(DashboardStateInitializer.Backoff(3, 1) == TimeSpan.FromSeconds(8), "Each retry doubles the wait.");
+        Check(DashboardStateInitializer.Backoff(9, 1) == TimeSpan.FromSeconds(30) && DashboardStateInitializer.Backoff(60, 0) == TimeSpan.FromSeconds(15),
+            "The wait is capped at 30 s and jittered down to half of it.");
+        await Task.CompletedTask;
+    }
+
+    [Test]
     [Arguments("authorization")]
     [Arguments("forbidden")]
     [Arguments("project-missing")]
@@ -207,6 +253,13 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         using var controls = scenario.CreateProviderClient();
         await ControlAsync(controls, new { command = "mode", value = failure });
         Check(!await scenario.StartHostsAsync(), "Actual hosted startup must fail closed for " + failure);
+        if (scenario.StartupError == "not-initialized")
+        {
+            // A TerraBase refusal keeps the app running and retrying, but nothing is admitted.
+            using var waiting = scenario.CreateClient();
+            using (var readiness = await waiting.GetAsync("/readyz")) Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable, "Not ready while TerraBase refuses: " + failure);
+            using (var login = await HttpJourney.LoginAsync(waiting)) Check(login.StatusCode == HttpStatusCode.ServiceUnavailable, "No request is admitted while TerraBase refuses: " + failure);
+        }
         var observation = await ObserveAsync(controls);
         Check(observation.GetProperty("documentWrites").GetInt32() == 0 && scenario.StartupError is not null,
             "Bootstrap failure cannot write user state, select a fallback store or silently admit traffic: " + failure);
