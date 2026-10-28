@@ -16,7 +16,7 @@ counts and sums, fixed log templates and timestamps. Deployed revision in every 
 | Question | Answer |
 |---|---|
 | Owned database `api-perf-01m610ttq4n8ew5y4q25aj5sc2` reconciled? | **Unresolved** |
-| Server-side timeout reason | **Unknown.** The fra create handler was still running after 29.04 s, when the client closed the request (499). Which step it was waiting on is not observable |
+| Server-side timeout reason | **Unknown.** fra recorded one canceled create lasting 29.04 s (499). Its correlation to run d is an inference below; the blocked step is not observable |
 | Local CPU contention as the cause | **Unlikely** (inference). The 29 s were spent inside the fra server, after the request arrived |
 | Builder CPU provenance | Not established beyond the existing summary. All builder pids have exited |
 
@@ -80,16 +80,18 @@ database name. It logs only database ids, and only on later convergence or audit
    30 s operation deadline. The three `edge proxy error ... canceled` records at
    10:28:29.9–10:28:30.6 match a client-side cancellation. The 499 is the server's record of
    a client abort, not a server timeout code.
-2. The delay was server-side, not local. Kestrel timed 29.04 s from the request's arrival
-   at fra. Local CPU during setup (10:28:00–10:28:33) averaged 45% of one CPU on a 16-CPU
-   host, of which builders accounted for 4.1%. That cannot explain the 29 s.
+2. The matched server duration weakens the local-CPU explanation. Kestrel timed
+   29.04 s after a create arrived at fra. Local CPU during setup
+   (10:28:00–10:28:33) averaged 45% of one CPU on a 16-CPU host, of which builders
+   accounted for 4.1%. These aggregates neither identify the server's blocked step
+   nor exclude client scheduling or network effects on an individual request.
 3. The database was probably not registered. Cancellation inside `AddDatabaseAsync` abandons
    storage, and fra, the home region, answered the exact-name DELETE with 404 in 2 ms. But a
    404 can also come from project resolution, and a commit that landed just before
    cancellation would not abandon. **Not proven.**
 4. The stalled step (allowance, storage preparation, admission or registration) is unknown.
-   Busy-storage rejections were rising on fra at the time. That is a candidate cause, not
-   one shown for this request.
+   Busy-storage rejections rose during the later 10:40–10:42 observation, about
+   12 minutes after the create. That does not establish pressure during this request.
 
 ## CPU provenance (delta, run-private summary, process names only)
 
@@ -105,7 +107,7 @@ The builder pids (2 VBCSCompiler, 1 MSBuild, several dotnet) had all exited by
 ## Minimal missing evidence and safe next step
 
 - To reconcile, one of the following is needed:
-  - a `databases:read` token for the owning project, which no longer exists after tenant cleanup;
+  - a usable `databases:read` token for the owning project, unavailable from the cleaned-up helper;
   - a reviewed operator surface that resolves one exact name to present or absent, without
     listing catalogs. It does not exist and is not invented here.
 
