@@ -58,6 +58,11 @@ public sealed class LogDrainJourneyTests(DashboardRootFixture fixture)
         await Assert.That(scenario.Delivery.Requests.Count).IsEqualTo(3);
         await Assert.That(scenario.Delivery.Requests.Last().Body).Contains("\"severityText\":\"ERROR\"");
         await Assert.That(scenario.Delivery.Requests.Last().Body.Contains("\"intValue\":\"404\"", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(await LogsPageAsync(scenario)).Contains("data-drain-gap=\"False\"");
+        // TerraBase reporting requests discarded unread is shown, not silently skipped.
+        scenario.Logs.Gap = true;
+        await scenario.RunDrainsAsync();
+        await Assert.That(await LogsPageAsync(scenario)).Contains("data-drain-gap=\"True\"").And.Contains("left the 100-entry log window");
     }
 
     [Test]
