@@ -36,7 +36,7 @@ public sealed class InboxAuditUsageJourneyTests(DashboardRootFixture fixture)
             using var marked = await HttpJourney.PostFormAsync(client, "/api/v1/notifications/" + id + "/read", new()
             { ["_csrf"] = csrf, ["status"] = "unread", ["page"] = "2" });
             await Assert.That(marked.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(marked.Headers.Location?.OriginalString).IsEqualTo(expected);
+            await Assert.That(marked.Headers.Location?.OriginalString).StartsWith(expected + "&organizationId=");
         }
         var observed = await replica.GetStringAsync("/notifications?status=unread&page=2");
         await Assert.That(Regex.Matches(observed, "<article class=\"ts-notification ").Count).IsEqualTo(10);
@@ -46,7 +46,7 @@ public sealed class InboxAuditUsageJourneyTests(DashboardRootFixture fixture)
             using var marked = await HttpJourney.PostFormAsync(client, "/api/v1/notifications/read-all", new()
             { ["_csrf"] = csrf, ["status"] = "unread", ["page"] = "2" });
             await Assert.That(marked.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(marked.Headers.Location?.OriginalString).IsEqualTo("/notifications?status=unread");
+            await Assert.That(marked.Headers.Location?.OriginalString).StartsWith("/notifications?status=unread&organizationId=");
         }
         await Assert.That(await replica.GetStringAsync("/notifications?status=unread")).Contains("No unread notifications in this scope.");
         using var statuses = JsonDocument.Parse(await replica.GetStringAsync("/__test/oct13/page-audit/notifications"));
