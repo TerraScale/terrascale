@@ -33,6 +33,14 @@ public static class BrowserAudit
         return completed;
     }
 
+    // A protected native form redirects to ts-auth's hosted step-up page. Playwright cannot route a redirected
+    // request, so read the challenge from it and approve through the test host as a confirming user would.
+    public static async Task SubmitConfirmedAsync(IPage page, Uri origin, Func<Task> submit)
+    {
+        var hosted = await page.RunAndWaitForRequestAsync(submit, request => new Uri(request.Url).AbsolutePath.StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal));
+        await page.GotoAsync(new Uri(origin, "/__test/step-up/" + new Uri(hosted.Url).Segments.Last() + "?approve=yes").ToString());
+    }
+
     private static readonly AxeRunOptions Wcag22AA = new()
     {
         RunOnly = new RunOnlyOptions { Type = "tag", Values = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },

@@ -28,6 +28,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         var signedUp = await BrowserAudit.SignInAsync(page, fixture.Origin, "/onboarding?plan=starter", email, password, signUp: true);
         await Assert.That(signedUp!.Status).IsEqualTo(200);
         await page.GetByRole(AriaRole.Heading, new() { Name = "Review your account information", Exact = true }).WaitForAsync();
+        await page.Locator("#displayName").FillAsync("Billing " + suffix);
         await SubmitAsync("/onboarding/step", "Save and continue →");
         await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan", Exact = true }).WaitForAsync();
         await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).ClickAsync();

@@ -130,6 +130,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await context.ClearCookiesAsync();
             var signedUp = await BrowserAudit.SignInAsync(page, new Uri(origin), "/onboarding", "audit-browser-" + size + "@example.test", "Audit-browser-password-123", signUp: true);
             await Assert.That(signedUp!.Status).IsEqualTo(200);
+            await page.Locator("#displayName").FillAsync("Audit browser " + size);
             await page.GetByRole(AriaRole.Button, new() { Name = "Save and continue" }).ClickAsync();
             await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan" }).WaitForAsync();
             await ShotAsync("optional-plan");

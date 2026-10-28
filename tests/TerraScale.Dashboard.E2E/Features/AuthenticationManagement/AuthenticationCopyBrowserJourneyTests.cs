@@ -72,7 +72,7 @@ public sealed class AuthenticationCopyBrowserJourneyTests(DashboardRootFixture f
         await page.Locator("#auth-client-name").FillAsync("Copy journey app");
         await page.Locator("#auth-client-type").SelectOptionAsync("confidential");
         await page.Locator("#auth-client-uris").FillAsync("https://example.com/callback");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Add application", Exact = true }).ClickAsync();
+        await BrowserAudit.SubmitConfirmedAsync(page, scenario.Origin, () => page.GetByRole(AriaRole.Button, new() { Name = "Add application", Exact = true }).ClickAsync());
         await Expect(page.Locator("#auth-client-secret")).ToBeVisibleAsync();
         await Copy("auth-created-client-id", "new client ID", "Enter");
         await Copy("auth-client-secret", "client secret", "Space");

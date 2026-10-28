@@ -170,7 +170,7 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         await tabA.GotoAsync(new Uri(origin, "/api-keys?projectId=" + first + "&create=key").ToString());
         await tabB.GotoAsync(new Uri(origin, "/api-keys?projectId=" + second).ToString());
         await tabA.Locator("#key-name").FillAsync("First tab key");
-        await tabA.Locator("#create-key form").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync();
+        await BrowserAudit.SubmitConfirmedAsync(tabA, origin, () => tabA.Locator("#create-key form").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync());
         await tabA.Locator(".ts-apikeys-secret-value").WaitForAsync();
         await Assert.That(await tabA.EvaluateAsync<string>("async () => (await (await fetch('/api/v1/auth/me')).json()).projectId")).IsEqualTo(first);
         await Assert.That(await tabB.EvaluateAsync<string>("async () => (await (await fetch('/api/v1/auth/me')).json()).projectId")).IsEqualTo(second);

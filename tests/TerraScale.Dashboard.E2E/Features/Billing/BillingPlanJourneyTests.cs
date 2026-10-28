@@ -32,6 +32,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             var password = "E2E-plan-" + Guid.NewGuid();
             var signedUp = await BrowserAudit.SignInAsync(page, fixture.Origin, "/onboarding?plan=starter", "plan-owner-" + suffix + "@example.test", password, signUp: true);
             await Assert.That(signedUp!.Status).IsEqualTo(200);
+            await page.Locator("#displayName").FillAsync("Plan owner " + suffix);
             await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue");
             var starter = page.Locator("input[name=plan][value=starter]");
             await page.Locator("label").Filter(new() { Has = starter }).ClickAsync();
@@ -149,6 +150,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             guestPage.PageError += (_, error) => errors.Enqueue(error);
             var email = "plan-member-" + suffix + "@example.test";
             await BrowserAudit.SignInAsync(guestPage, fixture.Origin, "/onboarding", email, password, signUp: true);
+            await guestPage.Locator("#displayName").FillAsync("Plan member " + suffix);
             await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue", null);
             await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Free", null);
             await guestPage.Locator("#projectName").FillAsync("Member project " + suffix);
