@@ -31,7 +31,7 @@ The <10% target is unproven. Qualification requires three before/after repeats o
 `ts-heavy-any nice -n 19`, plus live gru/sjc/fra evidence. Hosting attribution excludes some Kestrel cost, so it
 cannot by itself prove the complete transport-inclusive target. Preserve client round-trip and wire controls.
 
-Only the point-document `api`, `api-exceptions`, `api-json` and `sdk` lanes receive attribution.
+Only the point-document `api`, `api-exceptions`, `api-keyless`, `api-json` and `sdk` lanes receive attribution.
 Query, batch, SQL and wire lanes do not time equivalent engine work through
 this decorator and report no attribution.
 
