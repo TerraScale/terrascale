@@ -1,0 +1,1 @@
+[{"mode": "group-term", "exit": 143, "credential_directory_removed": true, "resources_absent_all_regions": true}, {"mode": "crash", "exit": -9, "credential_directory_removed": true, "resources_absent_all_regions": true}, {"mode": "lost-organization-response", "failed_run": true, "organization_absent_all_regions": true}]
