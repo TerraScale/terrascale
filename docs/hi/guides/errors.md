@@ -36,8 +36,8 @@ The snippet assumes a collection handle, ID, observed version and deadline signa
 | Response | Recovery |
 | --- | --- |
 | `400` / `413` / `415` | Correct the filter, payload, size or media type. A document id that is not a canonical ULID answers `400 invalid_document_id`. |
-| `401` / `403` | Obtain valid authorized access; do not auto-retry |
-| `404` | Check the selected resource; absence differs from denied access |
+| `401` / `403` | Obtain valid authorized access; do not auto-retry. `403` means the resource is yours but the key lacks a scope (`forbidden_scope`) or the client is outside its IP allowlist (`ip_not_allowed`) |
+| `404` | The resource does not exist **or your credential cannot reach it**; both answer the same, so another project's resources stay invisible. For `unknown_database`, check the project ID and database name and the key's project and database restriction. PostgreSQL answers both as SQLSTATE `28P01` |
 | `409` / `412` | Resolve the deterministic conflict or stale version |
 | `421 wrong_region` / `421 misdirected_request` | Check placement, home region and any explicit region pin; see the routing guidance below |
 | `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline |
