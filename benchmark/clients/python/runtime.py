@@ -111,5 +111,3 @@ async def run_session(work: Awaitable[None], run_s: float) -> None:
         deadline.cancel()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.remove_signal_handler(sig)
-
-
