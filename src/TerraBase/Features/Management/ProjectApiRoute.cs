@@ -19,7 +19,6 @@ internal static class ProjectApiRoute
     public const string Sql = Database + "/sql";
     public const string Indexes = Database + "/indexes";
     public const string Index = Indexes + "/{index}";
-    public const string AutoIndexPolicy = Database + "/auto-index/{collection}";
     public const string IndexRecommendations = Database + "/index-recommendations";
     public const string IdentityDescription =
         "Authorization: Bearer <ts-auth project access token>. project_id must equal {project}; scope must grant the operation. "

@@ -736,35 +736,6 @@ public sealed class CommitApiTests
     }
 
     [Test]
-    public async Task Auto_index_policy_changes_advance_the_organization_version_but_repeats_do_not()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        var policy = Uri($"/v1/projects/{database.Project}/databases/{database.Name}/auto-index/people");
-        using var policyClient = api.WithToken(api.Issuer.Mint(api.User, token =>
-        {
-            token.Claims["project_id"] = database.Project;
-            token.Claims["scope"] = "databases:read databases:write";
-        }));
-        var before = await VersionAsync(api.Client, database.Organization);
-
-        using var defaultPolicy = await policyClient.PutAsJsonAsync(policy, new { enabled = true });
-        defaultPolicy.EnsureSuccessStatusCode();
-        await Assert.That(await VersionAsync(api.Client, database.Organization)).IsEqualTo(before);
-        using var disabled = await policyClient.PutAsJsonAsync(policy, new { enabled = false });
-        disabled.EnsureSuccessStatusCode();
-        var changed = await VersionAsync(api.Client, database.Organization);
-        await Assert.That(changed).IsNotEqualTo(before);
-        using var repeated = await policyClient.PutAsJsonAsync(policy, new { enabled = false });
-        repeated.EnsureSuccessStatusCode();
-        await Assert.That(await VersionAsync(api.Client, database.Organization)).IsEqualTo(changed);
-        using var enabled = await policyClient.PutAsJsonAsync(policy, new { enabled = true });
-        enabled.EnsureSuccessStatusCode();
-        await Assert.That(await VersionAsync(api.Client, database.Organization)).IsNotEqualTo(changed);
-    }
-
-    [Test]
     public async Task Project_ids_stay_reserved_across_a_catalog_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-catalog-").FullName;

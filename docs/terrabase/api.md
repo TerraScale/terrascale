@@ -164,8 +164,6 @@ region (`421 wrong_region` elsewhere).
 | POST | `D/indexes` | `createIndex` | `databases:write` | `MD/indexes` |
 | GET | `D/indexes` | `listIndexes` | `databases:read` | `MD/indexes` |
 | DELETE | `D/indexes/{index}` | `dropIndex` | `databases:write` | `MD/indexes/{index}` |
-| GET | `D/auto-index/{collection}` | `getAutoIndexPolicy` | `databases:read` | — |
-| PUT | `D/auto-index/{collection}` | `setAutoIndexPolicy` | `databases:write` | — |
 | GET | `D/index-recommendations` | `listIndexRecommendations` | `databases:read` | `MD/index-recommendations` |
 | POST | `D/index-recommendations/{recommendation}/apply` | `applyIndexRecommendation` | `databases:write` | `MD/index-recommendations/{recommendation}/apply` |
 
