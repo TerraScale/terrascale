@@ -140,6 +140,17 @@ internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
     }
 
     internal ParityRig Rig(TimeSpan? setup = null) => new(_ => this, () => new FakeAuth(3600),
-        concurrency => new ParityCellPlan(new ParityWindowPlan(concurrency, TimeSpan.Zero, TimeSpan.FromMilliseconds(2), TimeSpan.FromSeconds(10)), TimeSpan.FromSeconds(10), TimeSpan.Zero),
-        setup ?? TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(5), TimeProvider.System);
+        concurrency => new ParityCellPlan(new ParityWindowPlan(concurrency, TimeSpan.Zero, TimeSpan.FromTicks(64), TimeSpan.FromSeconds(10)), TimeSpan.FromSeconds(10), TimeSpan.Zero),
+        setup ?? TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(5), new RequestClock());
+}
+
+// Whole-run controls check orchestration, not timing. Advancing per observation ensures workers get a nonempty
+// window regardless of thread-pool scheduling; separate manual-clock controls verify the timing contract.
+internal class RequestClock : TimeProvider
+{
+    private long ticks;
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override long GetTimestamp() => Interlocked.Increment(ref ticks);
 }

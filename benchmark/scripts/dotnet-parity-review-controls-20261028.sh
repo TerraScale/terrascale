@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
-out=$PWD/benchmark/bench/dotnet-parity-review-controls-a
+label=${1:?usage: dotnet-parity-review-controls-20261028.sh FRESH-LABEL}
+[[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
+out=$PWD/benchmark/bench/dotnet-parity-review-controls-$label
 mkdir "$out"
 git rev-parse HEAD > "$out/source-sha.txt"
 cd benchmark/clients/dotnet

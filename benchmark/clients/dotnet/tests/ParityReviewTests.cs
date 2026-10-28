@@ -41,7 +41,7 @@ public sealed class ParityReviewTests
     }
 
     // Trigger only the run-limit timer after the final cell; other timers retain their normal behavior.
-    private sealed class ExpiringClock : TimeProvider
+    private sealed class ExpiringClock : RequestClock
     {
         internal static readonly TimeSpan Limit = TimeSpan.FromMinutes(30);
         private Action? expire;
