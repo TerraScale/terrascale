@@ -58,7 +58,8 @@ public static class EmailChange
         async Task<IResult> ViewAsync(string error, int statusCode)
         {
             var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error, Status: status,
-                Sessions: await sessions.ListAsync(http, context.Session)) { PendingEmail = pendingEmail, EmailCodeEntry = confirm || pendingEmail is not null });
+                Sessions: await sessions.ListAsync(http, context.Session))
+            { PendingEmail = pendingEmail, EmailCodeEntry = confirm || pendingEmail is not null });
             view.StatusCode = statusCode;
             return view;
         }

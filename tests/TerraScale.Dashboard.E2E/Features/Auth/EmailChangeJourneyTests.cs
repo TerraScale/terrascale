@@ -118,9 +118,12 @@ public sealed class EmailChangeJourneyTests
                 await Scenario.Gateway.ConsumeAsync(new(actor.UserId, "Synthetic", actor.Email, token, null, DateTimeOffset.UtcNow.AddHours(1)),
                     request.Headers.GetValues("X-TerraScale-Step-Up-Proof").Single(), "change_email", "ts-auth", null, cancellationToken);
             }
-            return new(Status) { Content = new StringContent(Status == HttpStatusCode.Accepted
+            return new(Status)
+            {
+                Content = new StringContent(Status == HttpStatusCode.Accepted
                 ? "{\"new_email\":\"new@example.test\",\"expires_at\":\"2026-10-28T12:10:00Z\"}"
-                : JsonSerializer.Serialize(new { error = new { code = Code } }), Encoding.UTF8, "application/json") };
+                : JsonSerializer.Serialize(new { error = new { code = Code } }), Encoding.UTF8, "application/json")
+            };
         }
     }
 }
