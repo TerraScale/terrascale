@@ -224,7 +224,8 @@ public sealed class WireProtocolTests
             ManagedDatabaseRef database;
             string key;
             var id = Ulid.NewUlid().ToString();
-            var json = JsonSerializer.Serialize(new { city = Faker.Address.City() });
+            // The server answers raw UTF-8; a generated "O'Hara" would serialize as \u0027 here and never compare equal.
+            var json = JsonSerializer.Serialize(new { city = Faker.Address.City().Replace("'", "", StringComparison.Ordinal) });
             WireAnswer put, unknownDurability;
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
