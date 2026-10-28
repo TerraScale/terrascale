@@ -35,7 +35,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
     // An idle database's frontier only moves the peer's stable stamp, which collection trails by a minute anyway: every frontier
-    // with nothing shipped since the last one doubles the wait, up to this. Each one costs the peer a durable write and this
+    // with nothing shipped since the last one, and the last one answered, doubles the wait, up to this. Each one costs the peer a durable write and this
     // node a bookkeeping write, for every idle database and peer.
     private static readonly TimeSpan IdleFrontierEvery = TimeSpan.FromSeconds(60);
     // Timers count coarse clock ticks and may fire a few milliseconds before a deadline: an item (and the retry or frontier
@@ -434,6 +434,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                             else
                             {
                                 cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, report.Stable));
+                                cursor.FrontierAnswered = true;
                             }
                         }
                     }
@@ -974,7 +975,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value, Expect = cursor.Stable.Value } }, cancellationToken)
                         .ConfigureAwait(false);
-                    cursor.FrontierEvery = cursor.FrontierAt == 0 ? FrontierEvery : TimeSpan.FromTicks(Math.Min(2 * cursor.FrontierEvery.Ticks, IdleFrontierEvery.Ticks));
+                    // Only an answered frontier backs off: one the peer dropped behind its work is repeated at the base cadence.
+                    cursor.FrontierEvery = cursor.FrontierAt == 0 || !cursor.FrontierAnswered
+                        ? FrontierEvery : TimeSpan.FromTicks(Math.Min(2 * cursor.FrontierEvery.Ticks, IdleFrontierEvery.Ticks));
+                    cursor.FrontierAnswered = false;
                     cursor.FrontierAt = _time.GetTimestamp();
                 }
 
@@ -1799,6 +1803,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // The wait from FrontierAt to the next frontier: FrontierEvery after a batch, doubling while idle (IdleFrontierEvery).
         public TimeSpan FrontierEvery { get; set; } = PeerStreams.FrontierEvery;
+
+        // Whether a stable report arrived since the last frontier went.
+        public bool FrontierAnswered { get; set; }
 
         public long RetryAt { get; set; }
 

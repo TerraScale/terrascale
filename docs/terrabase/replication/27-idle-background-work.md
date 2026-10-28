@@ -15,7 +15,9 @@ it was. Client writes and replicated batches queued behind all of it on 2-CPU ho
 **Rules.**
 
 - **Frontiers back off.** A database's first frontier after a batch goes 5 s after the last one, as before; each further
-  frontier with nothing shipped in between doubles the wait, up to 60 s. Shipping a batch, or a reset cursor, starts again
+  frontier with nothing shipped in between, after the peer answered the last one with its stable report, doubles the wait,
+  up to 60 s. A frontier the peer dropped (behind its database's work, or past its 32 databases in progress) is repeated
+  at 5 s, as before. Shipping a batch, or a reset cursor, starts again
   at 5 s. A frontier only raises the peer's `applied` stamp for that origin, which feeds `stable`, the collection horizon
   (stable minus 60 s) and snapshot coverage: an idle origin's stable stamp now trails by at most 60 s instead of 5 s.
   Acks of batches carry `stable` as before, so a database being written keeps its 5 s cadence.
