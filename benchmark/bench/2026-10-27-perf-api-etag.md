@@ -150,3 +150,79 @@ and labeled CONTENDED.txt. Their partial files were retained. The runner now exp
 | after | 3 | medium | 1 | api | 6927 | 119.6/341.6 | 34637 (16384) | 80.5/240.9 | 4.1/10.8 | 76.3/230.5 | 221.3 | 45711 | 0 |
 | after | 3 | medium | 16 | engine | 422858 | 5.0/1087.9 | — | — | — | — | 8.1 | 4833 | 0 |
 | after | 3 | medium | 16 | api | 38473 | 239.4/2796.2 | 192373 (16384) | 93.7/2424.3 | 4.8/12.3 | 88.5/2351.0 | 176.7 | 45759 | 0 |
+
+## Lower-load fixed-core verification, 2026-10-28 UTC
+
+Three additional alternating pairs reused the exact verified before/after server and identical SDK artifacts above,
+through `TS_HEAVY_HOST=delta ts-heavy-any nice -n 19 bash -c ... --repo terrascale --branch fix/api-etag-reuse`.
+Each benchmark process used taskset 0-11, the same keyed auth, 1 s warmup and 5 s cells. All six arms passed;
+48 cells, zero operation errors. SHA-256 checks passed before execution. No arm or cell was discarded.
+Raw cells, logs, artifact hashes, per-arm process CPU snapshots, topology and one-second vmstat are retained in the
+managed delta checkout at `benchmark/bench/etag-pairs-delta-quiet/`. These are another controlled artifact comparison,
+not measurements of a deployed server. The branch at launch was `2d81a3a65`; source/artifact identities remain as above.
+
+Window 00:30:39–00:36:50 UTC; initial load1 1.03/16 CPUs and CPU pressure avg10 0.07%.
+Arm-boundary load1 reached 5.20 and CPU pressure avg10 3.99%, including the benchmark itself.
+vmstat idle median 85% (range 47–93%), I/O wait maximum 9%. The existing compiler accumulated about one CPU second
+in the first arm. This was a lightly loaded shared host, without exclusive-host isolation.
+Latency ranges still overlap. Small c=1 median p50 increased, while median allocation fell in all four configurations;
+there is no uniform latency speedup. The first API size still runs slower than the later medium size at c=1.
+The 1 s warmup and fixed size order do not rule out startup/tiering effects; no attribution of that difference is claimed.
+
+| Size | c | Before p50 µs | After p50 µs | Before p99 µs | After p99 µs | Before/after CPU µs/op | Before/after alloc B/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| small | 1 | 268.9 (247.1–310.1) | 276.0 (274.3–277.5) | 905.0 (874.3–938.3) | 868.9 (503.8–878.7) | 631.3/605.7 | 31659/31567 |
+| small | 16 | 217.9 (193.2–218.6) | 217.0 (193.6–222.9) | 2255.0 (2178.6–2267.0) | 2198.6 (2149.4–2256.3) | 142.6/143.2 | 30381/30295 |
+| medium | 1 | 127.5 (120.3–164.9) | 121.0 (104.4–121.0) | 390.8 (347.6–393.4) | 334.9 (248.2–360.6) | 239.5/219.6 | 45809/45718 |
+| medium | 16 | 260.9 (239.1–265.5) | 254.8 (252.1–265.9) | 2621.4 (2294.0–2665.3) | 2603.1 (2550.2–2754.2) | 171.5/166.3 | 45867/45749 |
+
+| Arm | Pair | Size | c | Lane | ops/s | Client p50/p99 µs | Requests (sampled) | Server p50/p99 µs | Engine p50/p99 µs | Overhead p50/p99 µs | CPU µs/op | Alloc B/op | Errors |
+| --- | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before | 1 | small | 1 | engine | 1045245 | 0.7/1.7 | — | — | — | — | 1.0 | 969 | 0 |
+| before | 1 | small | 1 | api | 2784 | 310.1/905.0 | 13921 (13921) | 216.9/638.7 | 4.4/152.6 | 210.8/619.8 | 655.8 | 31778 | 0 |
+| before | 1 | small | 16 | engine | 2000416 | 1.5/7.8 | — | — | — | — | 2.4 | 970 | 0 |
+| before | 1 | small | 16 | api | 52847 | 193.2/2255.0 | 264242 (16384) | 81.7/1892.9 | 3.6/8.2 | 77.8/1851.3 | 143.6 | 30401 | 0 |
+| before | 1 | medium | 1 | engine | 483308 | 1.7/3.4 | — | — | — | — | 2.2 | 4840 | 0 |
+| before | 1 | medium | 1 | api | 6229 | 127.5/390.8 | 31147 (16384) | 86.4/273.3 | 4.0/11.0 | 82.4/262.3 | 239.5 | 45785 | 0 |
+| before | 1 | medium | 16 | engine | 447686 | 4.8/888.0 | — | — | — | — | 7.7 | 4829 | 0 |
+| before | 1 | medium | 16 | api | 37296 | 260.9/2665.3 | 186490 (16384) | 93.4/2206.0 | 4.3/10.8 | 88.8/2164.5 | 171.5 | 45799 | 0 |
+| after | 1 | small | 1 | engine | 1056415 | 0.7/1.7 | — | — | — | — | 1.0 | 969 | 0 |
+| after | 1 | small | 1 | api | 3073 | 277.5/868.9 | 15363 (15363) | 196.2/622.4 | 4.5/159.9 | 190.4/595.8 | 605.7 | 31567 | 0 |
+| after | 1 | small | 16 | engine | 2022261 | 1.4/8.4 | — | — | — | — | 2.3 | 969 | 0 |
+| after | 1 | small | 16 | api | 49527 | 217.0/2149.4 | 247640 (16384) | 78.9/1705.2 | 3.9/9.4 | 74.8/1653.2 | 139.5 | 30241 | 0 |
+| after | 1 | medium | 1 | engine | 513132 | 1.6/3.2 | — | — | — | — | 2.0 | 4824 | 0 |
+| after | 1 | medium | 1 | api | 6995 | 121.0/334.9 | 34976 (16384) | 80.7/226.9 | 4.0/10.1 | 76.7/217.2 | 219.6 | 45718 | 0 |
+| after | 1 | medium | 16 | engine | 413402 | 5.1/1269.2 | — | — | — | — | 8.0 | 4805 | 0 |
+| after | 1 | medium | 16 | api | 36299 | 265.9/2754.2 | 181506 (16384) | 92.3/2240.7 | 4.8/15.1 | 87.1/2173.6 | 179.2 | 45885 | 0 |
+| after | 2 | small | 1 | engine | 1090962 | 0.7/1.5 | — | — | — | — | 0.9 | 968 | 0 |
+| after | 2 | small | 1 | api | 2970 | 274.3/878.7 | 14851 (14851) | 196.6/646.1 | 4.4/167.0 | 190.4/624.1 | 625.8 | 31572 | 0 |
+| after | 2 | small | 16 | engine | 2079250 | 1.4/7.8 | — | — | — | — | 2.2 | 969 | 0 |
+| after | 2 | small | 16 | api | 52859 | 193.6/2256.3 | 264297 (16384) | 81.0/1926.1 | 3.7/8.7 | 77.1/1905.6 | 143.2 | 30353 | 0 |
+| after | 2 | medium | 1 | engine | 506367 | 1.6/3.1 | — | — | — | — | 2.1 | 4832 | 0 |
+| after | 2 | medium | 1 | api | 6531 | 121.0/360.6 | 32653 (16384) | 82.1/251.6 | 3.8/10.1 | 78.4/241.5 | 235.2 | 45706 | 0 |
+| after | 2 | medium | 16 | engine | 453826 | 4.8/786.9 | — | — | — | — | 7.6 | 4830 | 0 |
+| after | 2 | medium | 16 | api | 39000 | 252.1/2550.2 | 195012 (16384) | 89.6/2143.9 | 4.3/10.9 | 85.0/2096.8 | 166.0 | 45747 | 0 |
+| before | 2 | small | 1 | engine | 1076890 | 0.7/1.6 | — | — | — | — | 0.9 | 969 | 0 |
+| before | 2 | small | 1 | api | 3195 | 247.1/874.3 | 15977 (15977) | 176.8/630.4 | 4.4/149.3 | 170.3/612.6 | 590.0 | 31588 | 0 |
+| before | 2 | small | 16 | engine | 2101965 | 1.4/7.9 | — | — | — | — | 2.2 | 966 | 0 |
+| before | 2 | small | 16 | api | 49891 | 217.9/2178.6 | 249467 (16384) | 81.2/1842.1 | 3.6/8.7 | 77.4/1799.6 | 141.7 | 30381 | 0 |
+| before | 2 | medium | 1 | engine | 515069 | 1.6/2.6 | — | — | — | — | 2.1 | 4854 | 0 |
+| before | 2 | medium | 1 | api | 5455 | 164.9/393.4 | 27273 (16384) | 109.8/274.3 | 4.8/11.5 | 105.0/262.9 | 282.7 | 45809 | 0 |
+| before | 2 | medium | 16 | engine | 420800 | 4.9/1140.5 | — | — | — | — | 8.0 | 4828 | 0 |
+| before | 2 | medium | 16 | api | 39256 | 265.5/2294.0 | 196293 (16384) | 89.7/1853.3 | 4.1/9.9 | 85.3/1802.6 | 157.3 | 45867 | 0 |
+| before | 3 | small | 1 | engine | 1076595 | 0.7/1.6 | — | — | — | — | 0.9 | 969 | 0 |
+| before | 3 | small | 1 | api | 2939 | 268.9/938.3 | 14696 (14696) | 192.5/668.6 | 4.4/150.8 | 185.7/643.3 | 631.3 | 31659 | 0 |
+| before | 3 | small | 16 | engine | 2095447 | 1.4/8.1 | — | — | — | — | 2.3 | 968 | 0 |
+| before | 3 | small | 16 | api | 49290 | 218.6/2267.0 | 246458 (16384) | 80.6/1881.3 | 3.6/8.6 | 76.7/1826.7 | 142.6 | 30357 | 0 |
+| before | 3 | medium | 1 | engine | 503041 | 1.6/3.3 | — | — | — | — | 2.1 | 4835 | 0 |
+| before | 3 | medium | 1 | api | 6906 | 120.3/347.6 | 34530 (16384) | 81.4/239.5 | 3.7/9.7 | 77.7/229.2 | 219.0 | 45815 | 0 |
+| before | 3 | medium | 16 | engine | 451535 | 4.9/1149.3 | — | — | — | — | 7.8 | 4834 | 0 |
+| before | 3 | medium | 16 | api | 39620 | 239.1/2621.4 | 198118 (16384) | 96.5/2170.2 | 4.6/12.2 | 91.5/2147.2 | 179.2 | 45894 | 0 |
+| after | 3 | small | 1 | engine | 1060843 | 0.8/1.6 | — | — | — | — | 1.0 | 969 | 0 |
+| after | 3 | small | 1 | api | 3650 | 276.0/503.8 | 18250 (16384) | 195.6/383.1 | 4.5/140.5 | 190.3/317.2 | 515.6 | 31554 | 0 |
+| after | 3 | small | 16 | engine | 2028376 | 1.6/7.8 | — | — | — | — | 2.4 | 970 | 0 |
+| after | 3 | small | 16 | api | 49068 | 222.9/2198.6 | 245351 (16384) | 81.2/1790.4 | 3.7/8.7 | 77.3/1755.3 | 143.8 | 30295 | 0 |
+| after | 3 | medium | 1 | engine | 531084 | 1.6/2.6 | — | — | — | — | 2.0 | 4821 | 0 |
+| after | 3 | medium | 1 | api | 8815 | 104.4/248.2 | 44077 (16384) | 69.4/165.2 | 3.4/7.3 | 65.9/158.0 | 173.7 | 45770 | 0 |
+| after | 3 | medium | 16 | engine | 416683 | 4.9/1210.0 | — | — | — | — | 7.9 | 4826 | 0 |
+| after | 3 | medium | 16 | api | 38129 | 254.8/2603.1 | 190646 (16384) | 91.0/2203.2 | 4.6/11.0 | 86.1/2167.4 | 166.3 | 45749 | 0 |
