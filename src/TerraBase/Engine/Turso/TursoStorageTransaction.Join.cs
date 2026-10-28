@@ -22,6 +22,39 @@ internal sealed partial class TursoStorageTransaction
     public ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
         RunAsync(() => Join(collection, id, state, at, cancellationToken, baseline: true), cancellationToken, mutation: true);
 
+    // Join's own decision, without its writes: the same reads, the drop and collected-floor clears, then whether the join moves
+    // the state. A collection this database has no table for always changes it (Join creates the collection).
+    public ValueTask<bool> WouldJoinAsync(string collection, string id, DocumentState delta, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(delta);
+        return RunAsync(() =>
+        {
+            var metadata = IsClient && !IsMetadata(collection) ? ReadState(DocumentDelta.Collections, collection) : DocumentState.Bottom;
+            if (metadata.Clear is { Deleted: true } dropped)
+            {
+                var clear = new DocumentState(dropped, DocumentState.Bottom.Fields);
+                delta = clear.Join(delta);
+                if (delta.Equals(clear))
+                {
+                    return false;
+                }
+            }
+
+            var state = ReadState(collection, id);
+            if (state.MaxStamp.Value == 0 && CollectedBefore() is { Value: > 0 } floor)
+            {
+                var clear = new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields);
+                delta = clear.Join(delta);
+                if (delta.Equals(clear))
+                {
+                    return false;
+                }
+            }
+
+            return !HasTable(collection) || !state.Join(delta).Equals(state);
+        }, cancellationToken);
+    }
+
     internal ValueTask<bool> CanSalvageAsync(string collection, string id, DocumentState state, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {

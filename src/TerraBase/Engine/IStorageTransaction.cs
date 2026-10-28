@@ -185,6 +185,12 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Whether <see cref="JoinAsync"/> would change the document, read without writing. False stays false: the stored state
+    /// only grows by joins, and a collection's drop and the collected floor only grow what they clear.
+    /// </summary>
+    ValueTask<bool> WouldJoinAsync(string collection, string id, DocumentState delta, CancellationToken cancellationToken);
+
     /// <summary>Joins a certified source baseline, including retained survivors below the local collected-state floor.</summary>
     ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken);
 
