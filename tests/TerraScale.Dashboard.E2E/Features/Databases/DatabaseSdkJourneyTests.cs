@@ -75,7 +75,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
                 "The revealed key keeps its ts-auth identity, database restriction and documents:* scopes");
         }
         var issued = (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single();
-        Check(issued.GetProperty("id").GetString() == keyId && issued.GetProperty("database").GetString() == "customer-sdk" &&
+        Check(issued.GetProperty("id").GetString() == keyId && issued.GetProperty("database").GetString() == databaseId &&
             string.Join(',', issued.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal)) == "documents:read,documents:write",
             "ts-auth holds exactly the requested restrictions; the dashboard did not broaden them");
         await RunCustomerSdkAsync(fixture.Root, scenario, controls, auth, account, organizationId, projectId, "customer-sdk", secret);
@@ -174,7 +174,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         var publicId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
         var publicSecret = issued.GetProperty("secret").GetString()!;
         var held = (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single();
-        Check(held.GetProperty("id").GetString() == publicId && held.GetProperty("database").GetString() == "sdk-credentials" &&
+        Check(held.GetProperty("id").GetString() == publicId && held.GetProperty("database").GetString() == id &&
             held.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()).SequenceEqual(["documents:read"]),
             "ts-auth issues the explicit key with exactly its read scope and database restriction");
         var keys = await journey.CallAsync(replica, "list_api_keys");

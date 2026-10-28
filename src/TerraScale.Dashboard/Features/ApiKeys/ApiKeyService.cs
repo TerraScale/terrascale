@@ -45,7 +45,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         var result = await ProtectedAsync(() => Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
             request, stepUpProof, cancellationToken));
         var key = Map(context, result.ApiKey);
-        if (key.Name != request.Name || key.DatabaseName != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
+        if (key.Name != request.Name || key.DatabaseId != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
             (request.AllowedCidrs!.Count == 0) != (key.AllowedCidrs!.Count == 0) || string.IsNullOrEmpty(result.Key))
             throw new HttpRequestException("Credential issuance returned different restrictions.");
         return new(key, result.Key);
@@ -65,7 +65,8 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
         _ = DatabaseService.Scope(context);
         var cidrs = CheckCidrs(allowedCidrs);
-        return new(name, permissions, database?.Name, expiresAt, cidrs);
+        // ts-auth narrows by the database ULID only: a name could later reach a re-created database of that name.
+        return new(name, permissions, database?.Id, expiresAt, cidrs);
     }
 
     // Replaces the key's allowlist at ts-auth (same role as creating a key); an empty list allows any IP.
@@ -139,7 +140,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
         }
         var key = Map(context, result.ApiKey);
-        if (key.Id != keyId || key.Name != current.Name || key.DatabaseName != current.DatabaseName || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
+        if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
             throw new HttpRequestException("Credential rotation returned different restrictions.");
         return new(key, result.Key);
     }
@@ -223,12 +224,17 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             string.IsNullOrWhiteSpace(key.Name) || key.Name.Any(char.IsControl) || key.Scopes.Count == 0 ||
             key.Scopes.Any(string.IsNullOrWhiteSpace) || key.Scopes.Distinct(StringComparer.Ordinal).Count() != key.Scopes.Count)
             throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
-        var database = context.Project!.Databases.Values.SingleOrDefault(item => item.Name == key.Database);
-        return new(key.Id, scope.ProjectId, key.Name, key.Scopes, database?.Id, "", key.CreatedAt)
+        // The restriction is the database ULID; the name is looked up for display. A key stored narrowed by name (before
+        // narrowing by ULID) mints no token at ts-auth, and an ID no longer in the project is a deleted database.
+        var narrowed = key.Database;
+        var byId = narrowed is not null && TerraScaleIds.IsValid(narrowed);
+        var name = narrowed is null ? null : byId ? context.Project!.Databases.GetValueOrDefault(narrowed)?.Name ?? "Deleted database"
+            : narrowed + " (narrowed by name, unusable: create a new key)";
+        return new(key.Id, scope.ProjectId, key.Name, key.Scopes, byId ? narrowed : null, "", key.CreatedAt)
         {
             CreatedByUserId = key.CreatedBy ?? "",
             CreatedByEmail = context.Organization?.Members.GetValueOrDefault(key.CreatedBy ?? "")?.Email ?? "",
-            DatabaseName = key.Database,
+            DatabaseName = name,
             AllowedCidrs = ValidCidrs(key.AllowedCidrs),
             ExpiresAt = key.ExpiresAt,
             LastUsedAt = key.LastUsedAt,

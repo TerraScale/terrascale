@@ -238,7 +238,7 @@
           "Credentials"
         ],
         "summary": "List ts-auth project keys without secrets",
-        "description": "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Ordinal immutable-ID order. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseName is the canonical restriction; missing local DatabaseId does not mean unrestricted access. LastUsedAt is the last token exchange (up to five minutes stale).",
+        "description": "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Ordinal immutable-ID order. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale).",
         "operationId": "listDashboardCredentials",
         "parameters": [
           {

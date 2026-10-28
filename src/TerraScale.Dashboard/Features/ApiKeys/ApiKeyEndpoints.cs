@@ -27,7 +27,7 @@ public static class ApiKeyEndpoints
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return DatabaseEndpoints.Failure(error); }
         }).WithGroupName("integration").WithName("listDashboardCredentials").WithTags("Credentials")
             .WithSummary("List ts-auth project keys without secrets")
-            .WithDescription(CursorPaging.Description + " Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseName is the canonical restriction; missing local DatabaseId does not mean unrestricted access. LastUsedAt is the last token exchange (up to five minutes stale).")
+            .WithDescription(CursorPaging.Description + " Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale).")
             .WithCursorContract().Produces<CursorPage<ProjectCredentialMetadata>>().Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", CreateAsync).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
             .WithSummary("Create a project key and reveal its secret once")
