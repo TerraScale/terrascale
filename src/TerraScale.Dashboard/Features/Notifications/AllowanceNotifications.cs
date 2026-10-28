@@ -78,7 +78,8 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
     private async Task ObserveAsync(AllowanceUsageObservation item, DateTimeOffset month, CancellationToken cancellationToken)
     {
         var organizationDocument = await state.GetAsync(AccountService.OrganizationsCollection, item.OrganizationId, cancellationToken);
-        if (organizationDocument is null) return;
+        // A deleted organization stays in the usage feed for the month; it has no owners to notify.
+        if (organizationDocument is null || AccountService.IsDeletionFence(organizationDocument)) return;
         var organization = AccountService.Read<OrganizationRecord>(organizationDocument);
         if (organizationDocument.Id != item.OrganizationId || organization.Id != item.OrganizationId) throw new IOException("Allowance organization identity is invalid.");
         if (organization.Status != "active" || organization.Archived || organization.DeletionRequested || PlanCatalog.For(organization) is null) return;
