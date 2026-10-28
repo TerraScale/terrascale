@@ -72,7 +72,7 @@ Download the complete [typed-model fixture](/examples/typed-models/README.txt), 
 
 For a local declaration, run `npx terrascale-models schema.json Order models.ts`. The input is the JSON Schema itself, without the API response wrapper. The equivalent API is `await generateDocumentModels(schema, 'Order')`. It returns a deterministic TypeScript string; regenerate after every schema change.
 
-To fetch an owned collection's declaration, save this as `generate-models.mjs` and run `node generate-models.mjs`. Use your existing authorized endpoint, project, database and token configuration; never pass secrets as CLI arguments. Automatic region discovery has not shipped, so the SDK currently requires `baseUrl` or an endpoint resolver.
+To fetch an owned collection's declaration, save this as `generate-models.mjs` and run `node generate-models.mjs`. The collection needs an attached schema: if you removed it in the previous section, attach it again first, or the generator throws `collection has no declared JSON Schema`. Use your existing authorized endpoint, project, database and token configuration; never pass secrets as CLI arguments. Automatic region discovery has not shipped, so the SDK currently requires `baseUrl` or an endpoint resolver.
 
 ```js
 import { writeFile } from 'node:fs/promises'

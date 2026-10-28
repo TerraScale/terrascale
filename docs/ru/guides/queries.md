@@ -64,7 +64,7 @@ JavaScript's `database.transaction()` and C#'s `TransactAsync` expose database-s
 
 ## Aggregations
 
-The HTTP examples below use the query route with `curl` and `jq`, and the `api` helper and `$DB` from the [vector search shell setup](/ru/guides/vector-search#set-up-the-shell). Each section ends with the same query from every SDK. The Go SDK ships aggregates and geo queries in `terrascale.tech/sdk` v0.0.4. The JavaScript, C#, Rust and Python SDKs have them on their `main` branches, but no tagged release includes them yet: JavaScript 0.0.6, C# 0.0.6, Rust v0.0.2 and Python v0.0.1 don't have them.
+The HTTP examples below use the query route with `curl` and `jq`, and the `api` helper and `$DB` from the [vector search shell setup](/ru/guides/vector-search#set-up-the-shell). Each section ends with the same query from every SDK. Aggregates and geo queries need `@terrascale/sdk` 0.0.17, Go `terrascale.tech/sdk` v0.0.4, C# `TerraScale.DotNet` v0.0.18, Rust `terrascale` v0.0.5 or Python `terrascale` v0.0.5 or newer. Older pins such as Rust v0.0.2 and Python v0.0.1 don't have them.
 
 Add `aggregate` to a query to get per-group counts and numeric summaries instead of documents:
 

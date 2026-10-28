@@ -135,6 +135,8 @@ tx.commit().await?;
 pip install libsql
 ```
 
+`libsql` 0.1.11 ships wheels for CPython 3.8 to 3.14. On a newer Python, pip builds it from source and needs a Rust toolchain.
+
 ```python
 import os
 import libsql

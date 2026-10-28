@@ -143,8 +143,8 @@ rows, err := db.QuerySQL(ctx, "SELECT id, name FROM sql_customers WHERE id > :id
 
 _, err = db.ExecuteSQL(ctx, "INSERT INTO sql_customers (id, name) VALUES (?, ?)", 1, "Ada")
 var sqlErr *v1.SQLError
-if errors.As(err, &sqlErr) {
-	log.Println(sqlErr.Statement, sqlErr.SQLiteCode) // 0 SQLITE_CONSTRAINT_PRIMARYKEY
+if errors.As(err, &sqlErr) && sqlErr.Statement != nil {
+	log.Println(*sqlErr.Statement, sqlErr.SQLiteCode) // 0 SQLITE_CONSTRAINT_PRIMARYKEY
 }
 ```
 
