@@ -740,25 +740,18 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
             return false;
         }
 
-        // Reject malformed lineage before issuing reads. Independent ancestors have no ordering dependency;
-        // bound the fan-out and retain every check, including user-state/email and device authorization checks.
+        // Reject malformed lineage before issuing reads. Independent ancestors have no ordering dependency, so every check
+        // (including user-state/email and device authorization checks) runs in one round, bounded by MaxCredentialBindings.
+        // Every refresh adds an ancestor, and sequential rounds of 8 made each bearer call of a long dashboard session one
+        // storage round trip slower per 8 rotations (QA4 dashui:26/36).
         if (bindings.Any(binding => binding is null || string.IsNullOrEmpty(binding.Kind)
             || string.IsNullOrEmpty(binding.Key) || string.IsNullOrEmpty(binding.OwnerId)))
         {
             return false;
         }
 
-        var distinct = bindings.Distinct().ToArray();
-        for (var offset = 0; offset < distinct.Length; offset += 8)
-        {
-            var checks = distinct.Skip(offset).Take(8).Select(binding => this.IsCredentialCurrentAsync(instanceId, binding, cancellationToken));
-            if ((await Task.WhenAll(checks).ConfigureAwait(false)).Any(current => !current))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        var checks = bindings.Distinct().Select(binding => this.IsCredentialCurrentAsync(instanceId, binding, cancellationToken));
+        return (await Task.WhenAll(checks).ConfigureAwait(false)).All(current => current);
     }
 
     private async Task<bool> IsCredentialCurrentAsync(string instanceId, CredentialBinding binding, CancellationToken cancellationToken)

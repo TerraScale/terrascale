@@ -53,7 +53,7 @@ public sealed class DeletionCleanup(
                 failure = error is HttpRequestException or TimeoutException ? "storage_unavailable" : "cleanup_failed";
                 try
                 {
-                    logger.ZLogWarning($"Auth logical deletion cleanup failed; the durable job remains pending");
+                    logger.ZLogWarning(error, $"Auth logical deletion cleanup failed; the durable job remains pending");
                 }
                 catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                 {
@@ -186,11 +186,12 @@ public sealed class DeletionCleanup(
                     await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
                     await this.RunHistoryOnceAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception) when (!stoppingToken.IsCancellationRequested)
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
                     try
                     {
-                        logger.ZLogWarning($"Auth deletion retry pass failed; retrying at the next interval");
+                        // Safe logging keeps only the exception's types and frames, never its message.
+                        logger.ZLogWarning(error, $"Auth deletion retry pass failed; retrying at the next interval");
                     }
                     catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                     {
