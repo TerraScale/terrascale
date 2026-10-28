@@ -147,28 +147,27 @@ public sealed class KeyRevocationTests
         await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        using var writer = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await ManagementApi.CreateCollectionAsync(writer, database, "held", cancellationToken);
         var (_, token) = Grant(api, database, scope: "documents:read documents:write");
         using var client = api.WithToken(token);
-        var path = ManagementApi.Uri(ManagementApi.DocumentPath(database, "held", "waiting"));
+        var sql = ManagementApi.Uri(database.Data + "/sql/execute");
+        var create = new { statements = new[] { new { sql = "CREATE TABLE waiting (id INTEGER PRIMARY KEY)" } } };
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>()
             .OpenDatabaseAsync(new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), cancellationToken))!;
         var asked = api.Issuer.StatusRequests;
         HttpResponseMessage response;
         await using (var held = await store.BeginTransactionAsync(write: true, cancellationToken))
         {
-            // Admitted with a fresh yes, the write then waits for the writer this test holds: no response has started.
-            var put = client.PutAsJsonAsync(path, new { waiting = true }, cancellationToken);
+            // Admitted with a fresh yes, the statement then waits for the writer this test holds: no response has started.
+            var waiting = client.PostAsJsonAsync(sql, create, cancellationToken);
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(api.Issuer.StatusRequests > asked), TimeSpan.FromSeconds(10));
             api.Issuer.StatusAvailable = false;
             // Past the last yes plus one poll without a wall-clock sleep: each step gives the watch one tick.
             await TerraBaseTestServer.EventuallyAsync(_ =>
             {
                 time.Advance(TimeSpan.FromMilliseconds(250));
-                return Task.FromResult(put.IsCompleted);
+                return Task.FromResult(waiting.IsCompleted);
             }, TimeSpan.FromSeconds(10));
-            response = await put;
+            response = await waiting;
         }
 
         using (response)
@@ -180,10 +179,10 @@ public sealed class KeyRevocationTests
             await Assert.That(response.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
         }
 
-        // The cut-off write never ran.
+        // The cut-off statement never ran: the same table can still be created.
         api.Issuer.StatusAvailable = true;
-        using var read = await writer.GetAsync(path, cancellationToken);
-        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var retried = await client.PostAsJsonAsync(sql, create, cancellationToken);
+        await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
