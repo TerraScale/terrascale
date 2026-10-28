@@ -72,7 +72,7 @@
 {
     var item = pages[index];
     <a class="ts-menu-item" href="@item.Url" aria-label="@item.Label" aria-describedby="@("ts-page-context-" + index)" data-search-label="@item.SearchLabel" data-show="$pageSearch === '' || el.dataset.searchLabel.toLowerCase().includes($pageSearch.toLowerCase())">@ShellIcons.Svg(item.Icon)<span class="ts-menu-label"><span>@item.Label</span><small class="ts-search-context" id="@("ts-page-context-" + index)">@item.Context</small></span></a>
-}<p class="ts-empty" role="status" aria-live="polite" data-show="@NoMatches(pages.Select(item => item.SearchLabel), "$pageSearch")">No pages match</p></div></div></dialog>
+}<p class="ts-empty" role="status" aria-live="polite" hidden data-attr:hidden="@("!(" + NoMatches(pages.Select(item => item.SearchLabel), "$pageSearch") + ")")">No pages match</p></div></div></dialog>
 @functions {
     private bool Active(string url) => url == "/" ? Model.ReturnUrl == "/" || Model.ReturnUrl.StartsWith("/?") : Model.ReturnUrl.StartsWith(url, StringComparison.Ordinal);
     private sealed record Item(string Label, string Url, string Icon);

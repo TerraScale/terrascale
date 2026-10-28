@@ -16,10 +16,14 @@ public static class StripeWebhookEndpoints
     {
         const int bodyLimit = 1 << 20;
         const int rejectionDrainAllowance = 64 * 1024;
+        const int lingeringDiscardLimit = 4 << 20;
         // Raise the limit before any early 413 so Kestrel can drain a slightly
         // oversized known-length upload instead of resetting the sender mid-write.
         if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
             limit.MaxRequestBodySize = bodyLimit + rejectionDrainAllowance;
+        if (http.Request.ContentLength is > bodyLimit + rejectionDrainAllowance and <= lingeringDiscardLimit
+            && http.Request.Protocol is "HTTP/1.0" or "HTTP/1.1")
+            return await RejectAfterLingeringDiscardAsync(http, http.Request.ContentLength.Value);
         if (http.Request.ContentLength > bodyLimit + rejectionDrainAllowance) return RejectUndrainedBody(http);
         if (http.Request.ContentLength > bodyLimit) return Results.StatusCode(413);
         using var payload = new MemoryStream();
@@ -45,6 +49,24 @@ public static class StripeWebhookEndpoints
         var body = Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
         try { await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted); return Results.Ok(); }
         catch (StripeWebhookRejectedException) { return Results.BadRequest(); }
+    }
+
+    private static async Task<IResult> RejectAfterLingeringDiscardAsync(HttpContext http, long length)
+    {
+        // Closing with unread upload bytes makes TCP reset the sender, which can
+        // then lose the 413 to Broken pipe. Send the 413 first, then discard the
+        // bounded remainder for a short time so the close is graceful.
+        if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+            limit.MaxRequestBodySize = length;
+        http.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+        http.Response.Headers.Connection = "close";
+        await http.Response.CompleteAsync();
+        using var linger = CancellationTokenSource.CreateLinkedTokenSource(http.RequestAborted);
+        linger.CancelAfter(TimeSpan.FromSeconds(5));
+        var buffer = new byte[8192];
+        try { while (await http.Request.Body.ReadAsync(buffer, linger.Token) != 0) { } }
+        catch (Exception error) when (error is OperationCanceledException or IOException or BadHttpRequestException) { }
+        return Results.Empty;
     }
 
     private static IResult RejectUndrainedBody(HttpContext http)

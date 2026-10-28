@@ -38,6 +38,10 @@ public sealed class NotificationLoadingJourneyTests(DashboardE2EFixture fixture)
             await requests.Writer.WriteAsync((route, release));
             await release.Task;
         });
+        var idle = page.Locator("#ts-notifications-dialog");
+        await Assert.That((await idle.Locator("p[role=status]").TextContentAsync() ?? "").Trim()).IsEmpty()
+            .Because("No notifications fetch has failed yet, so the page carries no error text (QA dbs:11).");
+        await Assert.That(await idle.Locator(".ts-row:has(button:text-is('Retry'))").GetAttributeAsync("hidden")).IsNotNull();
         await OpenAsync();
         var failed = await NextAsync();
         await AssertLoadingAsync();
