@@ -101,14 +101,13 @@ internal sealed partial class HistoryErasures
         {
             if (!cancellationToken.IsCancellationRequested)
             {
-                if (completed)
-                {
-                    // A pull that moved this erasure on may move others too: their next pass looks without pulling.
-                    var wait = progressed ? TimeSpan.Zero
-                        : _peerPulls.TryGetValue(peer.Name, out var last) && last.Delay > TimeSpan.Zero
-                            ? TimeSpan.FromTicks(Math.Min(last.Delay.Ticks * 2, MaxBackoff.Ticks)) : TimeSpan.FromMinutes(1);
-                    _peerPulls[peer.Name] = (time.GetUtcNow() + wait, wait);
-                }
+                // A pull that moved this erasure on may move others too: their next pass looks without pulling. A failed
+                // pull backs off like a no-progress one: an import refused late had still held SYSTEM's writer (sjc,
+                // 2026-10-28: 108-158 s every 5 minutes, each attempt ending in the same memory refusal).
+                var wait = progressed ? TimeSpan.Zero
+                    : _peerPulls.TryGetValue(peer.Name, out var last) && last.Delay > TimeSpan.Zero
+                        ? TimeSpan.FromTicks(Math.Min(last.Delay.Ticks * 2, MaxBackoff.Ticks)) : TimeSpan.FromMinutes(1);
+                _peerPulls[peer.Name] = (time.GetUtcNow() + wait, wait);
 
                 if (progressed)
                 {

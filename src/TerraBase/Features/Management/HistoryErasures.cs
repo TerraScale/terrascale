@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
@@ -283,9 +284,11 @@ internal sealed partial class HistoryErasures(
             {
                 await RunOnceAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (ObjectDisposedException) when (stoppingToken.IsCancellationRequested)
+            catch (Exception error) when (stoppingToken.IsCancellationRequested
+                && error is ObjectDisposedException or RpcException { StatusCode: StatusCode.Cancelled })
             {
-                // Storage can already be closed when a failed pass races the worker's stop request.
+                // Storage can already be closed when a failed pass races the worker's stop request, and a snapshot pull
+                // ends as a cancelled call: either faulted the worker, so every redeploy exited unhandled (2026-10-28).
                 break;
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)

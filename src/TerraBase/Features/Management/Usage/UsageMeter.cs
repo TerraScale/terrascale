@@ -150,11 +150,20 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // Adds hold it shared; dropping emptied databases' maps holds it exclusively, so no Add writes to a dropped map.
     private readonly ReaderWriterLockSlim _maps = new();
 
-    // Makes a flush (catalog commit plus removal from memory) atomic for readers, so totals never count twice or miss.
+    // Serializes flushes (and the reads that settle one in doubt). Readers do not wait for it: see _publication.
     private readonly SemaphoreSlim _flush = new(1, 1);
 
+    // A flush commits, then subtracts what it saved from memory under this lock and bumps _published; _writing names the
+    // chunk committing meanwhile. A read takes its saved counts and this node's last flush id in one catalog snapshot,
+    // then merges memory under the lock: it leaves out a committed chunk not yet subtracted and retries if a subtraction
+    // happened during its read, so totals never count twice or miss without waiting for SYSTEM's writer. Waiting on
+    // _flush instead put every analytics read behind each flush's writer wait (gru, 2026-10-28: p99 4.4 s).
+    private readonly Lock _publication = new();
+    private long _published;
+    private (string Id, KeyValuePair<UsageKey, OpCounts>[] Batch)? _writing;
+
     // A flush whose write threw may still have committed (the catalog commits before it disposes the transaction): its
-    // counts stay pending until its id, saved with them, shows whether they were saved. Guarded by _flush.
+    // counts stay pending until its id, saved with them, shows whether they were saved. Set under _flush and _publication.
     private (string Id, KeyValuePair<UsageKey, OpCounts>[] Batch)? _inDoubt;
 
     public void RecordRead(TenantContext database, long units)
@@ -254,6 +263,43 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
 
         var owner = DatabaseOwner.Of(database);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            Publish();
+            proceed?.Invoke();
+            long published;
+            lock (_publication)
+            {
+                if (_inDoubt is not null)
+                {
+                    break;
+                }
+
+                published = _published;
+            }
+
+            var read = await ReadSavedAsync(owner, window, Parse, proceed, cancellationToken).ConfigureAwait(false);
+            if (read is not SavedCounts { Saved: var saved, Flushed: var flushed })
+            {
+                return read switch
+                {
+                    Unavailable error => error,
+                    SavedCounts => throw new UnreachableException(),
+                };
+            }
+
+            lock (_publication)
+            {
+                if (_inDoubt is null && _published == published)
+                {
+                    // A chunk whose commit this snapshot holds but whose counts memory still has.
+                    var committed = _writing is { } writing && writing.Id == flushed ? writing.Batch : null;
+                    return Merge(saved, committed);
+                }
+            }
+        }
+
+        // A flush in doubt (or flushes committing back to back): settle it and read with no flush in between.
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -268,24 +314,42 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 proceed?.Invoke();
             }
 
-            var read = await catalog.ReadAsync<UsageCountsResult>(
-                async transaction => new UsageCounts(
-                    await ReadLifetimeAsync(transaction, owner.DatabaseId, Parse, cancellationToken).ConfigureAwait(false),
-                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, Parse, proceed, cancellationToken).ConfigureAwait(false)),
-                static error => error, cancellationToken).ConfigureAwait(false);
-            if (read is not UsageCounts saved)
+            var read = await ReadSavedAsync(owner, window, Parse, proceed, cancellationToken).ConfigureAwait(false);
+            if (read is not SavedCounts { Saved: var saved })
             {
                 return read switch
                 {
                     Unavailable error => error,
-                    UsageCounts or null => throw new UnreachableException(),
+                    SavedCounts => throw new UnreachableException(),
                 };
             }
 
+            lock (_publication)
+            {
+                return Merge(saved, null);
+            }
+        }
+        finally
+        {
+            _flush.Release();
+        }
+
+        // Under _publication: saved plus this node's counts in memory, less a committed chunk's.
+        UsageCounts Merge(UsageCounts saved, KeyValuePair<UsageKey, OpCounts>[]? committed)
+        {
             var (lifetime, series) = saved;
             foreach (var (key, entry) in _pending.TryGetValue(owner, out var pending) ? pending : [])
             {
-                var counts = Shape(entry);
+                var counts = entry;
+                foreach (var (savedKey, savedCounts) in committed ?? [])
+                {
+                    if (savedKey == key)
+                    {
+                        counts -= savedCounts;
+                    }
+                }
+
+                counts = Shape(counts);
                 lifetime += counts;
                 if (key.In(window.Granularity) && window.IndexOf(key.Hour, key.Minute) is { } index)
                 {
@@ -302,11 +366,22 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             return new UsageCounts(lifetime, series);
         }
-        finally
-        {
-            _flush.Release();
-        }
     }
+
+    // One catalog snapshot: the saved lifetime and series, and the id of this node's last flush they include.
+    private async ValueTask<SavedRead> ReadSavedAsync(DatabaseOwner owner, UsageWindow window, Func<StoredDocument, OpCounts> parse,
+        Action? proceed, CancellationToken cancellationToken) =>
+        await catalog.ReadAsync<SavedRead>(async transaction => new SavedCounts(
+            new UsageCounts(
+                await ReadLifetimeAsync(transaction, owner.DatabaseId, parse, cancellationToken).ConfigureAwait(false),
+                await ReadSeriesAsync(transaction, owner.DatabaseId, window, parse, proceed, cancellationToken).ConfigureAwait(false)),
+            await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Own(LastFlush), TerraBaseJsonContext.Default.String,
+                cancellationToken).ConfigureAwait(false)),
+            static error => error, cancellationToken).ConfigureAwait(false);
+
+    private sealed record SavedCounts(UsageCounts Saved, string? Flushed);
+
+    private readonly union SavedRead(SavedCounts, Unavailable);
 
     /// <summary>Adds pending counts to the catalog in one transaction. On failure the counts stay pending.</summary>
     public async ValueTask FlushAsync(CancellationToken cancellationToken)
@@ -350,25 +425,46 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             KeyValuePair<UsageKey, OpCounts>[] chunk = [.. databases.SelectMany(entries => entries)];
             var id = EntityIds.New().ToString();
+            lock (_publication)
+            {
+                _writing = (id, chunk);
+            }
+
+            FlushResult written;
             try
             {
-                if (await WriteAsync(id, chunk, cancellationToken).ConfigureAwait(false) is not int saved)
-                {
-                    break;
-                }
-
-                dropped += saved;
+                written = await WriteAsync(id, chunk, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                _inDoubt = (id, chunk);
+                lock (_publication)
+                {
+                    (_inDoubt, _writing) = ((id, chunk), null);
+                }
+
                 throw;
             }
 
-            foreach (var (key, counts) in chunk)
+            lock (_publication)
             {
-                Subtract(key, counts);
+                _writing = null;
+                if (written is int)
+                {
+                    foreach (var (key, counts) in chunk)
+                    {
+                        Subtract(key, counts);
+                    }
+
+                    _published++;
+                }
             }
+
+            if (written is not int saved)
+            {
+                break;
+            }
+
+            dropped += saved;
         }
 
         DropEmptied();
@@ -411,15 +507,21 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             };
         }
 
-        if (settled)
+        lock (_publication)
         {
-            foreach (var (key, counts) in doubt.Batch)
+            if (settled)
             {
-                Subtract(key, counts);
+                foreach (var (key, counts) in doubt.Batch)
+                {
+                    Subtract(key, counts);
+                }
+
+                _published++;
             }
+
+            _inDoubt = null;
         }
 
-        _inDoubt = null;
         return new Done();
     }
 
@@ -612,6 +714,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         var minute = CurrentMinute();
         var hour = minute / 60;
         var held = (_inDoubt?.Batch ?? []).Select(entry => entry.Key).ToHashSet();
+        // A fold moves counts between keys; a read merging memory meanwhile would see them under both or neither.
+        using var publication = _publication.EnterScope();
         foreach (var pending in _pending.Values)
         {
             foreach (var (key, counts) in pending)
