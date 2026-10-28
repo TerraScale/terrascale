@@ -1,7 +1,11 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 using Cell = TerraBase.Fast.Replication.SqlWriteReplicationTests.Cell;
@@ -12,7 +16,7 @@ namespace TerraBase.Fast.Replication;
 /// <summary>Real HTTP and socket clients of three regions; every source is checked through every reader.</summary>
 public sealed class EndpointReplicationTests
 {
-    private static readonly string[] Endpoints = ["documents", "sql", "postgres", "hrana", "wire"];
+    private static readonly string[] Endpoints = ["documents", "sql", "postgres", "hrana", "wire", "query"];
 
     [Test]
     [Arguments("documents")]
@@ -20,7 +24,7 @@ public sealed class EndpointReplicationTests
     [Arguments("postgres")]
     [Arguments("hrana")]
     [Arguments("wire")]
-    public async Task Every_region_originates_crud_read_through_all_five_endpoints(string endpoint)
+    public async Task Every_region_originates_crud_read_through_all_six_readers(string endpoint)
     {
         await using var cell = await Cell.StartAsync();
         var readers = new List<Clients>();
@@ -68,6 +72,68 @@ public sealed class EndpointReplicationTests
         }
     }
 
+    [Test]
+    [Arguments("documents")]
+    [Arguments("sql")]
+    [Arguments("postgres")]
+    public async Task Concurrent_writes_in_every_region_converge_through_all_readers_and_a_later_write_wins(string endpoint)
+    {
+        await using var cell = await Cell.StartAsync();
+        var readers = new List<Clients>();
+        try
+        {
+            foreach (var machine in cell.Machines)
+            {
+                readers.Add(await Clients.OpenAsync(machine));
+            }
+
+            const string table = "conflicts";
+            await readers[0].SqlAsync("sql", $"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)");
+            await EverywhereAsync(readers, table, EntityIds.New().ToString(), null);
+            for (var round = 0; round < 3; round++)
+            {
+                var id = EntityIds.New().ToString();
+                await readers[0].WriteAsync(endpoint, table, id, "base", insert: true);
+                await EverywhereAsync(readers, table, id, "base");
+                var values = readers.Select(reader => $"{reader.Machine.Region}-{round}").ToArray();
+                var feeds = new List<VersionFeed>();
+                try
+                {
+                    foreach (var reader in readers)
+                    {
+                        feeds.Add(await VersionFeed.OpenAsync(reader.Machine, table));
+                    }
+
+                    await Task.WhenAll(readers.Select((reader, index) =>
+                        reader.WriteAsync(endpoint, table, id, values[index], insert: false)));
+                    var versions = await Task.WhenAll(feeds.Select(feed => feed.OwnVersionAsync(id)));
+                    var winner = Enumerable.Range(0, versions.Length).MaxBy(index => versions[index]);
+                    // Feed documents are current snapshots; the operation's stamp and origin identify the exact winner.
+                    await EverywhereAsync(readers, table, id, values[winner]);
+                }
+                finally
+                {
+                    foreach (var feed in feeds)
+                    {
+                        feed.Dispose();
+                    }
+                }
+
+                // This writer observed the converged version, so its causal overwrite must win everywhere.
+                var later = $"later-{round}";
+                await readers[(round + 1) % readers.Count].WriteAsync(endpoint, table, id, later, insert: false);
+                await EverywhereAsync(readers, table, id, later);
+            }
+        }
+        finally
+        {
+            foreach (var reader in readers)
+            {
+                await reader.DisposeAsync();
+            }
+        }
+    }
+
     private static Task EverywhereAsync(List<Clients> readers, string table, string id, string? expected) =>
         TerraBaseTestServer.EventuallyAsync(async _ =>
         {
@@ -75,6 +141,61 @@ public sealed class EndpointReplicationTests
                 .Select(endpoint => reader.ReadAsync(endpoint, table, id))));
             return copies.All(copy => copy.Ready && copy.Value == expected);
         }, timeout: TimeSpan.FromSeconds(30));
+
+    private sealed class VersionFeed(HttpResponseMessage response, StreamReader reader, ReplicaId local) : IDisposable
+    {
+        public static async Task<VersionFeed> OpenAsync(Machine machine, string table)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                ManagementApi.Uri($"{machine.Cell.Managed.Data}/changes?cursor=now&collections={table}"));
+            request.Headers.Accept.ParseAdd("text/event-stream");
+            var response = await machine.Data.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            try
+            {
+                response.EnsureSuccessStatusCode();
+                var local = machine.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+                return new VersionFeed(response, new StreamReader(await response.Content.ReadAsStreamAsync()), local);
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
+        }
+
+        public async Task<EntryVersion> OwnVersionAsync(string id)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while (await reader.ReadLineAsync(timeout.Token) is { } line)
+            {
+                if (!line.StartsWith("data: ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var data = JsonElement.Parse(line[6..]);
+                if (!data.TryGetProperty("id", out var documentId) || documentId.GetString() != id)
+                {
+                    continue;
+                }
+
+                var node = new ReplicaId(ulong.Parse(data.GetProperty("origin").GetString()!, NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+                // Actors use different epoch bits; the member and region still identify this writer.
+                if (node.Region == local.Region && node.Member == local.Member)
+                {
+                    return new EntryVersion(new Hlc(ulong.Parse(data.GetProperty("version").GetString()!, CultureInfo.InvariantCulture)), node);
+                }
+            }
+
+            throw new EndOfStreamException("the change feed ended before the local write");
+        }
+
+        public void Dispose()
+        {
+            reader.Dispose();
+            response.Dispose();
+        }
+    }
 
     private sealed class Clients(Machine machine, NpgsqlDataSource postgres, WireClient wire) : IAsyncDisposable
     {
@@ -222,6 +343,22 @@ public sealed class EndpointReplicationTests
 
         private async Task<(bool Ready, string? Value)> ReadOnceAsync(string endpoint, string table, string id)
         {
+            if (endpoint == "query")
+            {
+                // /sql is the read-only document query API; /sql/execute accepts relational writes.
+                using var response = await machine.Api.Client.PostAsJsonAsync(
+                    ManagementApi.Uri(machine.Cell.Managed.Path + "/sql"),
+                    new { sql = $"SELECT value FROM {table} WHERE _id = '{id}'" });
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return (false, null);
+                }
+
+                response.EnsureSuccessStatusCode();
+                var rows = JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("rows");
+                return (true, rows.GetArrayLength() == 0 ? null : rows[0].GetProperty("value").GetProperty("value").GetString());
+            }
+
             if (endpoint == "wire")
             {
                 var answer = await wire.GetAsync(table, id);
