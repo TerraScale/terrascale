@@ -25,6 +25,8 @@ namespace TerraScale.Authentication.Fast.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class ProjectClosureTests(TerraBaseFixture fixture)
 {
+    private static readonly string[] DocumentsRead = ["documents:read"];
+
     [Test]
     public async Task A_project_is_removed_only_after_terrabase_accepts_and_a_lost_answer_is_retried_with_the_same_closure()
     {
@@ -471,7 +473,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var organization = await oidc.CreateOrganizationAsync(token, "Solo");
         var project = await oidc.CreateProjectAsync(token, organization, "Keys");
         var key = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
-            new { name = "backend", scopes = new[] { "documents:read" } }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
+            new { name = "backend", scopes = DocumentsRead }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
         using (var before = await oidc.ApiKeyTokenAsync(key))
         {
             await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
