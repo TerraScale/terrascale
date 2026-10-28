@@ -43,8 +43,7 @@ public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset Ex
 /// Six-digit email passcodes: sign-in codes, password-reset codes and sign-up verification codes. Each user has one
 /// current code, whatever its purpose, and each pending sign-up (an email without an account) has its own: it expires
 /// after <see cref="Lifetime"/>, works once, for its purpose only, and dies after <see cref="MaxAttempts"/> wrong
-/// guesses. A new code of the same purpose keeps the live code it replaces redeemable until that code expires, so an
-/// email that arrives after a resend still works; the two share one attempt count and one redemption; at most <see cref="MaxIssuesPerWindow"/> codes are issued per user (or pending sign-up) per
+/// guesses. A new code replaces the previous one, which never redeems again; at most <see cref="MaxIssuesPerWindow"/> codes are issued per user (or pending sign-up) per
 /// fixed UTC clock hour. Only an HMAC of the code, keyed from the master key and bound to its instance and user, is
 /// stored, so a database copy alone cannot be brute-forced offline. A guess at a live code is answered only after the
 /// conditional write that charges it (or consumes the code) wins, so concurrent guesses cannot exceed the attempt limit
