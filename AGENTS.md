@@ -18,6 +18,10 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - Prefix every local build, test, lint, benchmark, dev server, and watcher with `nice -n 19`, for example `nice -n 19 make test-fast`.
 - In CI (`CI=true`), use full CPU priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts, or Containerfiles.
 
+## Pull requests
+
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
+
 ## Zero configuration (user decision 2026-10-09, do not revert)
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
