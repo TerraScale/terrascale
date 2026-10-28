@@ -69,7 +69,9 @@ public sealed class UserAuthTests
     }
 
     [Test]
-    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer()
+    [Arguments(0)]
+    [Arguments(4096)]
+    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer(int padding)
     {
         var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         var clock = new FakeTimeProvider(now);
@@ -79,7 +81,13 @@ public sealed class UserAuthTests
         string Mint()
         {
             return api.Issuer.Mint(EntityIds.New().ToString(), token =>
-                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
+            {
+                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime);
+                if (padding > 0)
+                {
+                    token.Claims["padding"] = new string('p', padding);
+                }
+            });
         }
         using var warm = api.WithToken(Mint());
         using var cold = api.WithToken(Mint());
