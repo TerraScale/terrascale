@@ -1,6 +1,9 @@
+using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Claims;
 using System.Text.Json;
 using Bogus;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
@@ -34,6 +37,46 @@ public sealed class UserAuthTests
         await Assert.That(organization.GetProperty("createdBy").GetString()).IsEqualTo(user);
         await Assert.That(listed.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()))
             .IsEquivalentTo([organization.GetProperty("id").GetString()]);
+    }
+
+    [Test]
+    public async Task Cached_tokens_materialize_owned_claims_without_sharing_request_mutations()
+    {
+        var user = EntityIds.New().ToString();
+        var observer = new MutatingClaims(user);
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddSingleton<IClaimsTransformation>(observer));
+        using var client = api.WithToken(api.Issuer.Mint(user));
+
+        await Assert.That(await StatusAsync(client)).IsEqualTo(HttpStatusCode.OK);
+        var cached = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => StatusAsync(client)));
+
+        await Assert.That(cached).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.OK));
+        await Assert.That(observer.Valid.Count).IsEqualTo(17);
+        await Assert.That(observer.Valid).All().Satisfy(valid => valid.IsTrue());
+    }
+
+    private sealed class MutatingClaims(string user) : IClaimsTransformation
+    {
+        public ConcurrentQueue<bool> Valid { get; } = new();
+
+        public Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
+        {
+            if (principal.Identity is ClaimsIdentity identity && identity.FindFirst(ClaimTypes.NameIdentifier)?.Value == user)
+            {
+                var claims = identity.Claims.ToArray();
+                Valid.Enqueue(identity.AuthenticationType == UserAuthenticationHandler.SchemeName
+                    && identity.NameClaimType == ClaimTypes.Name && identity.RoleClaimType == ClaimTypes.Role
+                    && !identity.HasClaim("request-probe", "mutated")
+                    && claims.All(claim => ReferenceEquals(claim.Subject, identity)
+                        && claim.ValueType == ClaimValueTypes.String && claim.Issuer == ClaimsIdentity.DefaultIssuer
+                        && claim.OriginalIssuer == ClaimsIdentity.DefaultIssuer && !claim.Properties.ContainsKey("request-probe")));
+                claims[0].Properties["request-probe"] = "mutated";
+                identity.AddClaim(new Claim("request-probe", "mutated"));
+            }
+
+            return Task.FromResult(principal);
+        }
     }
 
     [Test]

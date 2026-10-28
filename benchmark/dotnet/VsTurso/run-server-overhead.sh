@@ -21,7 +21,7 @@ mkdir "$out"
 scripts/vendor/download-turso-native.sh
 build() {
   # Explicit propagation: callers capturing build logs must never turn a failed build into a stale-artifact run.
-  dotnet build tests/TerraBase.E2E --configuration Release -p:TsDotnetRoot="$sdk" || return $?
+  dotnet build tests/TerraBase.E2E --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:TsDotnetRoot="$sdk" || return $?
   mkdir -p "$out/$1"
   cp -a tests/TerraBase.E2E/bin/Release/net11.0/. "$out/$1/"
   config=$out/$1/TerraBase.E2E.runtimeconfig.json
