@@ -139,7 +139,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 	for _, name := range names {
 		entries = append(entries, "  "+name+"  "+options[name])
 	}
-	_, err := fmt.Fprintf(out, "%s\n\nGlobal options (before the command): -project <name|id>, -org <name|id>.\n--json selects typed output. Exit status: 0 success, 1 failure, 2 invalid arguments.\n", strings.Join(entries, "\n"))
+	_, err := fmt.Fprintf(out, "%s\n\nGlobal options (before or after the command; -- ends options): -project <name|id>, -org <name|id>.\n--json selects typed output. Exit status: 0 success, 1 failure, 2 invalid arguments.\n", strings.Join(entries, "\n"))
 	return true, err
 }
 
@@ -191,12 +191,13 @@ func helpOptions(name string) map[string]string {
 	case name == "import":
 		options["-collection <name>"] = "destination collection for plain document NDJSON"
 		options["-yes"] = "consent to the inspected preview; database creation/upload happen before consent"
-	case name == "db delete" || name == "collection drop" || name == "functions delete" || name == "orgs delete" || name == "projects delete":
+	case name == "db delete" || name == "collection drop" || name == "functions delete" || name == "orgs delete" || name == "projects delete" || name == "keys revoke":
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"
 	case name == "functions deploy":
 		options["-name <name>"] = "function name, default file/directory name"
 		options["-trigger-collection <name> -events upsert,delete"] = "collection event trigger"
 		options["-cron <expression>"] = "function schedule"
+		options["<file.js>"] = "plain script defining function handler(event); ES module syntax (import, export) is rejected"
 	case name == "functions invoke":
 		options["-data <json|->"] = "invocation body; - reads stdin"
 	case name == "functions logs":

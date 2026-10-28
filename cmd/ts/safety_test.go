@@ -44,7 +44,7 @@ func TestDeleteConsent(t *testing.T) {
 			if tc.tty && (!strings.Contains(out.String(), "app") || !strings.Contains(out.String(), "Project selector:") || !strings.Contains(out.String(), tc.project)) {
 				t.Fatalf("missing context: %s", &out)
 			}
-			if !tc.tty && !tc.yes && !strings.Contains(err.Error(), "-yes before db delete") {
+			if !tc.tty && !tc.yes && !strings.Contains(err.Error(), "pass -yes") {
 				t.Fatal(err)
 			}
 		})
@@ -57,10 +57,10 @@ func TestDeleteConsent(t *testing.T) {
 func TestDeleteGuardBeforeAuthentication(t *testing.T) {
 	t.Parallel()
 	err := runWithInput(t.Context(), []string{"db", "delete", "app"}, io.Discard, forbiddenInput{}, io.Discard, false)
-	if err == nil || !strings.Contains(err.Error(), "-yes before db delete") {
+	if err == nil || !strings.Contains(err.Error(), "pass -yes") {
 		t.Fatalf("pre-auth guard: %v", err)
 	}
-	for _, args := range [][]string{{"-yes", "db", "list"}, {"-yes=false", "auth", "login"}, {"-yes", "completion", "bash"}, {"db", "delete", "app", "-yes"}} {
+	for _, args := range [][]string{{"-yes", "db", "list"}, {"-yes=false", "auth", "login"}, {"-yes", "completion", "bash"}, {"db", "list", "-yes"}} {
 		if err := runWithInput(t.Context(), args, io.Discard, forbiddenInput{}, io.Discard, false); !errors.Is(err, errUsage) {
 			t.Fatalf("run(%v) = %v", args, err)
 		}

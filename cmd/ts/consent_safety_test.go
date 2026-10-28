@@ -56,7 +56,7 @@ func TestImportPreviewConsent(t *testing.T) {
 	if err := confirmImport(job, false, strings.NewReader("yes\n"), io.Discard, true); err == nil {
 		t.Fatal("wrong database name accepted")
 	}
-	if err := confirmImport(job, false, forbiddenInput{}, io.Discard, false); err == nil || !strings.Contains(err.Error(), "-yes before import") {
+	if err := confirmImport(job, false, forbiddenInput{}, io.Discard, false); err == nil || !strings.Contains(err.Error(), "consent to import") {
 		t.Fatalf("unattended import=%v", err)
 	}
 	if err := confirmImport(job, true, forbiddenInput{}, brokenPrompt{}, false); err != nil {

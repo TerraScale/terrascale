@@ -34,6 +34,8 @@ var version = "dev" // Set by release builds with -ldflags.
 
 const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-yes] <command>
 
+Options go before or after the command and its operands; -- ends options.
+
   version                                 print the CLI version
   help                                    print this help
   auth login | logout                     sign in with your browser, or sign out
@@ -114,7 +116,10 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           -collection <name> before import
   import status | cancel <db>             print or cancel the database's import
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
-                                          (a dir deploys its index.js); flags:
+                                          (a dir deploys its index.js); the file
+                                          is a plain script, not an ES module
+                                          (no import or export), that defines
+                                          function handler(event); flags:
                                           -name <name> (default: file or dir
                                           name), -trigger-collection <name>,
                                           -events upsert,delete, -cron <expr>
@@ -144,7 +149,8 @@ const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-
                                           never) and -allow-cidr <cidr>,... (both
                                           go before the command)
   keys rotate <id> <grace>                rotate once; required whole-second grace 0s..24h
-  keys revoke <id>                        revoke an API key
+  keys revoke <id>                        revoke an API key; requires typing
+                                          the ID or explicit -yes
 
 Sign-in is stored in the user config directory (terrascale/cli.json, mode 0600).
 With TERRASCALE_API_KEY set, database commands act as that API key instead,
@@ -165,6 +171,30 @@ func main() {
 }
 
 var errUsage = errors.New("invalid arguments: run ts help")
+
+// parseOptions accepts the global options before, between and after the
+// command words and operands. After the command only defined option names are
+// options, so - (stdin) and other dash operands stay operands; -- ends options.
+func parseOptions(fs *flag.FlagSet, args []string) ([]string, error) {
+	var operands []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, parserError(err)
+		}
+		if n := len(args) - fs.NArg(); n > 0 && args[n-1] == "--" {
+			return append(operands, fs.Args()...), nil
+		}
+		args = fs.Args()
+		i := slices.IndexFunc(args, func(a string) bool {
+			name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+			return a == "--" || len(a) > 1 && a[0] == '-' && fs.Lookup(name) != nil
+		})
+		if i < 0 {
+			return append(operands, args...), nil
+		}
+		operands, args = append(operands, args[:i]...), args[i:]
+	}
+}
 
 // commands maps each command to its accepted operand counts.
 var commands = map[string][]int{
@@ -296,10 +326,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	placementMode := fs.String("placement", "", "db create: all for every serving region")
 	cursor := fs.String("cursor", "now", "db changes: server cursor, now, or empty for retained history")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
-	if err := fs.Parse(args); err != nil {
-		return parserError(err)
+	args, err := parseOptions(fs, args)
+	if err != nil {
+		return err
 	}
-	args = fs.Args()
 	name, operands := "", args
 	for n := min(2, len(args)); n > 0 && name == ""; n-- {
 		if _, ok := commands[strings.Join(args[:n], " ")]; ok {
@@ -394,14 +424,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return fmt.Errorf("backup destination get does not accept -yes: %w", errUsage)
 		}
 		if operands[0] == "set" && !*yes || operands[0] == "delete" && !*yes && !tty {
-			return errors.New("backup destination changes require explicit consent: pass -yes before the command; set reads its JSON only from stdin")
+			return consentRequired("backup destination changes require explicit consent: pass -yes; set reads its JSON only from stdin")
 		}
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination", "collection drop", "functions delete", "import"}, name) {
+	if yesSet && !slices.Contains([]string{"db delete", "orgs delete", "projects delete", "backup destination", "collection drop", "functions delete", "keys revoke", "import"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if (name == "orgs delete" || name == "projects delete") && !tty && !*yes {
-		return errors.New("resource deletion requires a terminal: pass -yes before the command to explicitly consent")
+		return consentRequired("resource deletion requires a terminal: pass -yes to explicitly consent")
 	}
 	if name == "db delete" && !tty && !*yes {
 		if err := confirmDelete(operands[0], *project, *yes, in, prompt, tty); err != nil {
@@ -409,7 +439,15 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		}
 	}
 	if (name == "collection drop" || name == "functions delete") && !tty && !*yes {
-		return errors.New("resource deletion requires a terminal: pass -yes before the command to explicitly consent")
+		return consentRequired("resource deletion requires a terminal: pass -yes to explicitly consent")
+	}
+	if name == "keys revoke" {
+		if entityid.Check(operands[0]) != nil {
+			return &cliError{code: "invalid_arguments", message: "key id must be a canonical ULID; run ts keys list", err: errUsage}
+		}
+		if !tty && !*yes {
+			return consentRequired("key revocation requires a terminal: pass -yes to explicitly consent")
+		}
 	}
 	switch name {
 	case "billing":
@@ -451,7 +489,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		if placementSet {
 			return createPlacedDatabase(ctx, s.tb.Database(s.project, operands[0]), requestedPlacement, out)
 		}
-		return s.dispatch(ctx, name, fn, *collection, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
+		return placementError(s.dispatch(ctx, name, fn, *collection, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out))
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
@@ -604,6 +642,12 @@ func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, c
 		}
 		return importFile(ctx, s.tb.Database(s.project, operands[0]), operands[1], operands[2], collection, confirm, out)
 	}
+	if name == "keys revoke" {
+		message := fmt.Sprintf("Revoke API key %s in project %s; clients using it stop authenticating.", operands[0], s.project)
+		if err := confirmNamedOperation(operands[0], message, name, input.yes, input.in, input.prompt, input.tty); err != nil {
+			return err
+		}
+	}
 	return s.run(ctx, name, operands, out)
 }
 
@@ -722,11 +766,11 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("not signed in: run ts auth login")
+		return "", &cliError{code: "not_signed_in", message: "not signed in: run ts auth login"}
 	}
 	var c credentials
 	if err != nil || json.Unmarshal(data, &c) != nil {
-		return "", fmt.Errorf("unreadable %s: run ts auth login", path)
+		return "", &cliError{code: "not_signed_in", message: "unreadable " + path + ": run ts auth login"}
 	}
 	if time.Until(c.Expiry) > time.Minute {
 		return c.AccessToken, nil
@@ -734,7 +778,7 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 	t, err := d.Refresh(ctx, c.RefreshToken)
 	var refused *tsauth.Error
 	if errors.As(err, &refused) && refused.Code == "invalid_grant" {
-		return "", fmt.Errorf("sign-in expired, run ts auth login: %w", err)
+		return "", &cliError{code: "sign_in_expired", message: "sign-in expired, run ts auth login", err: err}
 	}
 	if err != nil {
 		// The sign-in is kept: an outage or lost connection is not an expiry.

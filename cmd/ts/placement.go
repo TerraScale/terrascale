@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	v1 "terrascale.tech/sdk/v1"
@@ -43,6 +45,17 @@ func placementRequest(home, replicas, placement string, replicasSet bool) (v1.Pl
 		}
 	}
 	return p, nil
+}
+
+// placementError names the CLI command that restores writes to a database
+// left without replica regions, instead of the API field the server suggests.
+func placementError(err error) error {
+	var api *v1.APIError
+	if errors.As(err, &api) && api.Code == "placement_needs_two_regions" && api.Status == http.StatusConflict {
+		return &cliError{code: string(api.Code), status: api.Status,
+			message: "the database has no replica region and takes no writes: add one with ts db regions <db> <region>..."}
+	}
+	return err
 }
 
 func createPlacedDatabase(ctx context.Context, db *v1.Database, placement v1.Placement, out io.Writer) error {
