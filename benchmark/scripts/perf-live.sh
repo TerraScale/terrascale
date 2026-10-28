@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs on one ts-orch serving host; all credentials stay in its private temporary directory.
+# Runs on one ts-orch serving host; all credentials stay in its private temporary directory. Runs the driver named as
+# this script is invoked: perf-live.py, or perf-live-writes.py through its link.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(realpath -m "${1:?output directory}")
@@ -51,7 +52,7 @@ pathlib.Path(sys.argv[1]).write_text('X-TerraBase-User-Id: ' + identifier + '\n'
 PY
 fi
 cp "$out/user" "$work/user"
-python3 -I "$root/benchmark/scripts/perf-live.py" "$work" "$region" "$sha" "$out/live.jsonl" "$probe" \
+python3 -I "$root/benchmark/scripts/$(basename "$0" .sh).py" "$work" "$region" "$sha" "$out/live.jsonl" "$probe" \
   "$root/scripts/terrabase/endpoint-replication-proof.py" "${@:4}" &
 job=$!
 wait "$job"
