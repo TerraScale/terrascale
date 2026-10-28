@@ -31,3 +31,7 @@ cannot by itself prove the complete transport-inclusive target. Preserve client 
 Only the point-document `api`, `api-json` and `sdk` lanes receive attribution.
 Query, batch, SQL and wire lanes do not time equivalent engine work through
 this decorator and report no attribution.
+
+Cancellation-cost experiments also count process-wide first-chance OperationCanceledException events inside each
+monotonic measurement window as Cell.CanceledExceptions. Counts include background work and repeated throws; they
+are not assumed to belong to KeyWatch. Identical exception instrumentation must run in both comparison arms.

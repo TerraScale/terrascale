@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Bogus;
@@ -273,7 +274,25 @@ namespace TerraBase.E2E
                     }
                 }
             })).ToArray();
-            await Task.WhenAll(workers);
+            long canceledExceptions = 0;
+            void CountCanceled(object? _, FirstChanceExceptionEventArgs args)
+            {
+                if (args.Exception is OperationCanceledException && Stopwatch.GetTimestamp() is var now && now >= measureFrom && now <= end)
+                {
+                    Interlocked.Increment(ref canceledExceptions);
+                }
+            }
+
+            AppDomain.CurrentDomain.FirstChanceException += CountCanceled;
+            try
+            {
+                await Task.WhenAll(workers);
+            }
+            finally
+            {
+                AppDomain.CurrentDomain.FirstChanceException -= CountCanceled;
+            }
+
             var cpu = Process.GetCurrentProcess().TotalProcessorTime - cpuBefore;
             var allocated = GC.GetTotalAllocatedBytes() - gcBefore;
             var server = attribution?.Close();
@@ -286,7 +305,7 @@ namespace TerraBase.E2E
             var ops = all.Length;
             return new Cell(
                 string.Empty, 0, body.Size, workload, concurrency, Math.Round(ops / duration.TotalSeconds, 3), Math.Round(Micros(0.50), 1), Math.Round(Micros(0.99), 1),
-                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors, ops, duration.TotalSeconds, server);
+                ops == 0 ? 0 : Math.Round(cpu.TotalMicroseconds / ops, 1), ops == 0 ? 0 : allocated / ops, errors, ops, duration.TotalSeconds, server, canceledExceptions);
         }
 
         private static string Summary(List<Cell> cells)
@@ -334,7 +353,7 @@ namespace TerraBase.E2E
 
         internal sealed record Cell(
             string Lane, int Repeat, string Size, string Workload, int Concurrency, double OpsPerSecond, double P50Micros, double P99Micros,
-            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, int Samples, double Seconds, ServerStats? Server = null);
+            double CpuMicrosPerOp, long AllocatedBytesPerOp, int Errors, int Samples, double Seconds, ServerStats? Server = null, long CanceledExceptions = 0);
 
         /// <summary>JSON documents of one size: a fixed shape with a 13-digit counter, so no write repeats the stored body.</summary>
         private sealed class Bodies
