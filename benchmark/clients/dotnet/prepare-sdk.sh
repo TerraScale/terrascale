@@ -21,13 +21,13 @@ if [[ ! -e .sdk ]]; then
     echo 'Run bash clients/dotnet/prepare-sdk.sh before building.' >&2
     exit 1
   fi
-  git clone ssh://git@git.terrascale.tech/TerraScale/ts-dotnet.git .sdk
+  git clone https://github.com/TerraScale/ts-dotnet.git .sdk
 fi
 if [[ $(git -C .sdk rev-parse --show-toplevel 2>/dev/null || true) != "$(pwd -P)/.sdk" ]]; then
   echo '.sdk is not a usable SDK checkout; move it aside and re-run prepare-sdk.sh.' >&2
   exit 1
 fi
-if [[ $(git -C .sdk remote get-url origin 2>/dev/null || true) != ssh://git@git.terrascale.tech/TerraScale/ts-dotnet.git ]]; then
+if [[ $(git -C .sdk remote get-url origin 2>/dev/null || true) != https://github.com/TerraScale/ts-dotnet.git ]]; then
   echo 'SDK checkout must use the official ts-dotnet origin.' >&2
   exit 1
 fi
