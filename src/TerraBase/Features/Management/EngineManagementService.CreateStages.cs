@@ -32,8 +32,8 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    // One database creation's current stage. A stage records once, with how it ended, when the next starts or the creation
-    // ends; the stage and outcome names are these constants, so the label set stays bounded.
+    // One database creation's current timed interval. Each interval records when the next starts or the creation ends.
+    // A stage name can repeat for repeated cleanup attempts; these constants keep the label set bounded.
     private sealed class CreateStages(Histogram<double> histogram, TimeProvider time)
     {
         public const string Serving = "serving";
