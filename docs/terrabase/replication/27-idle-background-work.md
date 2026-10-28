@@ -27,6 +27,13 @@ it was. Client writes and replicated batches queued behind all of it on 2-CPU ho
 - **Settled closures are read, not written.** A closure whose machine receipt already records it as empty, with every
   waited-for purge verified and nothing left to erase, is confirmed in a read transaction. Only a closure with work left
   takes the catalog's writer, exactly as before; the check reads what that write transaction would have found.
+- **Anti-entropy rounds are spread out.** Since [row-derived repair digests](25-row-derived-repair-digests.md) every digest
+  scans all state rows of its database. A round compared every database with every peer back to back, once a minute, and
+  each peer asked for this node's digests the same way: probes written at that second waited 1.5 to 2.9 s at the origin
+  (sjc and fra, 2026-10-27), which set the pooled p99 of every direction. A background round now leaves
+  min(round / 2 / databases, 1 s) between databases, and a peer's tenant digest request runs as bulk storage work (as its
+  bucket reads already did), so it leaves an I/O thread to client reads and replication. Every comparison still reads the
+  rows: a row lost outside the engine is found by the next comparison, as before.
 - **Deadlines within a timer tick are due.** The sender treats an item, its retry and its frontier as due within 15 ms of
   the deadline, and waits zero when the first deadline is that close.
 - `terrabase.storage.transactions{kind, at}` counts begun storage transactions by call site (file:line, as
