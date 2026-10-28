@@ -23,7 +23,7 @@ metering, FULL commits and local acknowledgements were not weakened.
 The .NET SDK transport change is [ts-dotnet #100](https://github.com/TerraScale/ts-dotnet/pull/100).
 Merged source and local measurements do not prove either change is serving everywhere.
 
-## Latest retained serving observations
+## Retained serving observations
 
 Authenticated internal health through admitted ts-orch NetBird SSH, 07:41:11–18 UTC:
 
@@ -40,6 +40,12 @@ The [auth inventory/readiness snapshot](2026-10-28-perf-api-auth-0741.json), 07:
 shows gru health/readiness 200 on its unchanged image, and no running auth task in
 the checked namespace on sjc/fra host aliases. That inventory does not establish
 those regions' public auth routing or availability.
+
+A [serving recheck](2026-10-28-perf-api-serving-0817.json), 08:17:08–16 UTC,
+returned the same three revisions and storage format. The corresponding
+[auth recheck](2026-10-28-perf-api-auth-0817.json) returned the same gru image,
+health/readiness 200, and checked sjc/fra task inventory. These unchanged
+observations do not establish recovery of the receipt's storage read failure.
 
 The normal retry [40643893257](https://github.com/TerraScale/terrascale/actions/runs/40643893257)
 terminated with failed [auth release](https://github.com/TerraScale/terrascale/actions/runs/40643893257/job/122668231687)

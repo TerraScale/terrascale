@@ -21,6 +21,12 @@ exceptions to the generic auth 503. `ErrorEnvelopeMiddleware` already logs 5xx
 exceptions through `SafeLogging`'s type/frame scrubber; a second log is not needed
 merely to establish that a storage exception occurred.
 
+The code search was limited to `remote_region_unavailable`, `confirmation_busy`,
+`catalog_stale`, `auth_unavailable`, `storage_busy`, `capacity` and
+`temporarily_unavailable`. An empty result does not rule out other TerraBase
+codes, including `copy_faulted`, `disk_capacity`, `region_unavailable` or
+`unavailable`, or a code removed by exception scrubbing.
+
 In SDK source `36d114877a69d18fba33b27ad362bd3e68e9e7ff`, the unavailable
 exception is constructed for HTTP 503 responses. The deployed image's SDK commit
 is unverified, so this is a source-backed interpretation, not exact deployed-line
