@@ -71,3 +71,33 @@ The same benchmark, with the plan changed only. Two repeats each, writes.
 `StorageQuota.EnterAsync` holds a per-organization gate from before a write to after its commit, for every plan with a
 storage limit. Its comment states that enterprise skips it "to keep engine group commit". Concurrent writes of one
 paying organization therefore commit one at a time.
+
+Not changed here, because the gate is what makes the limit exact. Two concurrent growing writes must not both pass a
+check against the same committed bytes. The two obvious redesigns each need the QoS owner's review:
+
+- **Acquiring the gate lazily, only for a growing write (inside `CheckAsync`):** this deadlocks group commit. A second
+  growing write of the same organization in the same batch waits for a gate that is released only after that batch
+  commits.
+- **A per-organization pending-growth counter (gate held only while measuring):**
+  - it is conservative for a moment after each commit: committed bytes and the pending entry both count the write until
+    `Committed` runs;
+  - it must drop the post-commit cache update (`Remember` with `committedSequence == current.Sequence + 1`). Two growing
+    writes in one batch move the sequence once, and each would remember only its own delta, an undercount.
+
+Non-growing writes (same-size replaces, shrinks, deletes) never call the measurement. They only need the gate because
+their delta is unknown when `EnterAsync` runs before the batch.
+
+## Live point reads, fra, 2026-10-28 17:14Z (not used)
+
+- **Run:** the same driver also timed c=1 document, HTTP SQL and Hrana point reads. These use P1's live statements:
+  `SELECT value FROM <table> WHERE id = '<id>'`.
+- **Results:**
+  - document reads were 1.1–16.8 ms p50;
+  - SQL small 15–104 ms p50, Hrana 11–94 ms;
+  - one read was refused with 429 before the run finished;
+  - the sjc internal listener timed out the teardown.
+- **Why not used:** P1's baseline on the same host shows fra documents at 1.3 ms and SQL small at 6.3 ms, and #781 only
+  adds an index filter. These readings therefore describe the cluster at that time (sjc was restarting), not a code
+  change. They are kept here and not used as after-numbers.
+- **Cleanup:** both synthetic tenants of that run were deleted with `perf-live.sh … cleanup` and confirmed 404 in every
+  region.
