@@ -91,6 +91,8 @@ The authoritative receipt then returned 202 and the private recovery file retain
 continuation authorization. A subsequent authorized continuation returned 202;
 its bounded status polling also timed out. Retries stopped, and the private recovery
 material and synthetic inbox remain retained. Account/inbox cleanup is incomplete.
+A later receipt-only read returned HTTP 503. No continuation or new tenant was
+started; the private recovery material remains available for reconciliation.
 
 ## Artifacts and reproduction
 
