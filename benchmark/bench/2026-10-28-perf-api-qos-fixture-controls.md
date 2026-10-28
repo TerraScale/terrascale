@@ -53,9 +53,11 @@ ts-dotnet `03881aa74a52683112180a5035d7b5ced8d65032`:
 | Full `make terrabase-test-fast`, admitted after all five passed | 3,161/3,161 passed; no skips |
 | Turso driver tests accompanying each Fast invocation | 44/44 passed each time |
 
-These used the Makefile's Debug default. CI Release, formatting and required
-checks remain the merge gate; no CI result is claimed. Only this report follows
-the qualified source in the publication branch; the test file is byte-identical.
+These used the Makefile's Debug default on main `05e7adb5b`. The publication test
+file is byte-identical. Publication was rebased onto main
+`ac630e4af06da8479119a1469f684b14bb63dfff`, which also includes later request-log
+and auth-timing changes. No new local suite result is claimed for that base.
+CI Release, formatting and required checks remain the merge gate.
 
 | Retained delta log | SHA-256 |
 |---|---|
