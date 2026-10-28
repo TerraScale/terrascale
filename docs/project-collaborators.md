@@ -17,6 +17,8 @@ OAuth grants on the next call.
 | Explicit project grants (list) | yes | yes | yes |
 | Explicit project grants (set or remove) | no | no | yes |
 | Project overview and project-scoped notifications | yes | yes | yes |
+| Project authentication: overview, users, sessions, OAuth applications (read) | yes | yes | yes |
+| Project authentication: settings, branding, social providers, user disable/enable/delete, session revoke, OAuth applications, directory export | no | no | yes |
 
 Every row applies only to the exact granted project. Sibling projects in the
 same organization return `404`, as do inactive, archived or MFA-gated
@@ -47,5 +49,10 @@ Collaborator reads never write organization state and never publish a plan.
   `set_project_member_role` only grants to existing organization members or
   changes an existing collaborator grant; it never invites. Removing a grant
   leaves organization-implied access and service keys as they are.
+- `auth_*` tools use the same project role as the pages: reads need any role,
+  changes need `admin`. `auth_create_client` validates its input and returns
+  `step_up_required`: OAuth applications are created on the dashboard's OAuth
+  applications page after hosted confirmation, which shows a confidential
+  client's secret once.
 
 See [MCP server](mcp.md) for transport, authentication and scope rules.

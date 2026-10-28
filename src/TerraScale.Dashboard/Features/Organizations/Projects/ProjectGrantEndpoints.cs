@@ -9,7 +9,7 @@ public sealed record ProjectGrantPage(ShellModel Shell, IReadOnlyList<TerraScale
 {
     public string Url => WorkspaceUrl.For(Shell.Context, "/project/members", replace: true);
     public string PostUrl => WorkspaceUrl.For(Shell.Context, "/api/v1/dashboard/project/grants", replace: true);
-    public bool CanManageGrants => Shell.Context.Project?.Role == "admin" && Shell.Context.CanWriteProjectData;
+    public bool CanManageGrants => Shell.Context.CanManageProject;
 }
 
 public static class ProjectGrantEndpoints

@@ -226,7 +226,7 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         using (var refused = await Post(browser, "branding", Csrf(readOnly), ("name", "Forbidden")))
             Check(refused.StatusCode == HttpStatusCode.Forbidden, "A read-only member cannot change branding");
         Check((await Tool(replica, secret, "auth_list_clients", new { })).GetProperty("clients").GetArrayLength() == 2, "A member reads applications");
-        Error(await Call(replica, secret, "auth_delete_client", new { clientId = clientId }), "Organization management is required.");
+        Error(await Call(replica, secret, "auth_delete_client", new { clientId = clientId }), "Project admin access is required.");
         await Control(producer, "");
         Error(await Call(replica, secret, "auth_get_overview", new { }), "Organization is unavailable.");
     }

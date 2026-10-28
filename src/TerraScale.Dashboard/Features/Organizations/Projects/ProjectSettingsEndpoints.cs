@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 
 public sealed record ProjectSettingsPage(ShellModel Shell, string Name, string Error = "", bool Renamed = false)
 {
-    public bool CanRename => Shell.Context.Project?.Role == "admin" && Shell.Context.CanWriteProjectData;
+    public bool CanRename => Shell.Context.CanManageProject;
     public string Url => WorkspaceUrl.For(Shell.Context, "/project", replace: true);
 }
 

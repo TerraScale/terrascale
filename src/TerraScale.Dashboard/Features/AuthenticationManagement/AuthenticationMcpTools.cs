@@ -28,7 +28,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_set_user_disabled", Title = "Disable or enable a project user", Idempotent = true, UseStructuredContent = true, Destructive = true, OpenWorld = false),
-     Description("Disable an end user, which ends every session and token of the user, or enable them again. Requires an owner or admin.")]
+     Description("Disable an end user, which ends every session and token of the user, or enable them again. Requires the admin project role.")]
     public async Task<TerraScaleAuthProjectUser> SetDisabled(string userId, bool disabled, string? organizationId = null, string? projectId = null)
     {
         var context = await Fresh(organizationId, projectId, true);
@@ -36,7 +36,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_delete_user", Title = "Delete a project user", UseStructuredContent = false, Destructive = true, OpenWorld = false),
-     Description("Delete an end user of the project. Requires an owner or admin.")]
+     Description("Delete an end user of the project. Requires the admin project role.")]
     public async Task<string> DeleteUser(string userId, string? organizationId = null, string? projectId = null)
     {
         var context = await Fresh(organizationId, projectId, true);
@@ -53,7 +53,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_revoke_session", Title = "Revoke a project session", UseStructuredContent = false, Destructive = true, OpenWorld = false),
-     Description("Revoke one live end-user session. Requires an owner or admin.")]
+     Description("Revoke one live end-user session. Requires the admin project role.")]
     public async Task<string> RevokeSession(string sessionId, string? organizationId = null, string? projectId = null)
     {
         var context = await Fresh(organizationId, projectId, true);
@@ -73,7 +73,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_create_client", Title = "Create an OAuth application", UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Create an OAuth application. type is public or confidential; 1 to 10 https redirect URIs (http only on localhost and loopback). A confidential client's client_secret is returned once. Requires an owner or admin.")]
+     Description("Create an OAuth application. type is public or confidential; 1 to 10 https redirect URIs (http only on localhost and loopback). Created from the dashboard's OAuth applications page after hosted confirmation, which shows a confidential client's client_secret once; unattended MCP calls validate the input and return step_up_required. Requires the admin project role.")]
     public async Task<TerraScaleAuthProjectOAuthClient> CreateClient(string name, string type, IReadOnlyList<string> redirectUris, string? organizationId = null, string? projectId = null)
     {
         _ = await Fresh(organizationId, projectId, true);
@@ -82,7 +82,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_delete_client", Title = "Delete an OAuth application", UseStructuredContent = false, Destructive = true, OpenWorld = false),
-     Description("Delete an OAuth application. Requires an owner or admin.")]
+     Description("Delete an OAuth application. Requires the admin project role.")]
     public async Task<string> DeleteClient(string clientId, string? organizationId = null, string? projectId = null)
     {
         var context = await Fresh(organizationId, projectId, true);
@@ -91,7 +91,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_update_settings", Title = "Update sign-in methods and branding", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Set the hosted pages' sign-in methods (passcode, password, signUp; passcode or password stays on) and, when any branding argument is given, their branding (name up to 64 characters, https logoUrl, #rrggbb themeColor; an empty string clears a value). Omitted arguments keep their current value. Requires an owner or admin.")]
+     Description("Set the hosted pages' sign-in methods (passcode, password, signUp; passcode or password stays on) and, when any branding argument is given, their branding (name up to 64 characters, https logoUrl, #rrggbb themeColor; an empty string clears a value). Omitted arguments keep their current value. Requires the admin project role.")]
     public async Task<TerraScaleAuthProjectSettings> UpdateSettings(bool? passcode = null, bool? password = null, bool? signUp = null,
         string? name = null, string? logoUrl = null, string? themeColor = null, string? organizationId = null, string? projectId = null)
     {
@@ -107,7 +107,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_set_provider", Title = "Configure a social sign-in provider", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Configure or update social sign-in: provider is google, github, apple or oidc. All take clientId (Apple: the Services ID) and clientSecret (Apple: the .p8 private key text), which is required the first time and kept when omitted. Apple also takes 10-character teamId and keyId; oidc takes an https issuer. Register the provider's callback_url from auth_get_overview at the provider. The secret is never returned. Requires an owner or admin.")]
+     Description("Configure or update social sign-in: provider is google, github, apple or oidc. All take clientId (Apple: the Services ID) and clientSecret (Apple: the .p8 private key text), which is required the first time and kept when omitted. Apple also takes 10-character teamId and keyId; oidc takes an https issuer. Register the provider's callback_url from auth_get_overview at the provider. The secret is never returned. Requires the admin project role.")]
     public async Task<TerraScaleAuthProjectSettings> SetProvider(string provider, string clientId, string? clientSecret = null, string? issuer = null, string? teamId = null,
         string? keyId = null, string? organizationId = null, string? projectId = null)
     {
@@ -117,7 +117,7 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     }
 
     [McpServerTool(Name = "auth_remove_provider", Title = "Remove a social sign-in provider", UseStructuredContent = true, Destructive = true, OpenWorld = false, Idempotent = true),
-     Description("Remove a social sign-in provider (google, github, apple or oidc) and its stored secret. Requires an owner or admin.")]
+     Description("Remove a social sign-in provider (google, github, apple or oidc) and its stored secret. Requires the admin project role.")]
     public async Task<TerraScaleAuthProjectSettings> RemoveProvider(string provider, string? organizationId = null, string? projectId = null)
     {
         var context = await Fresh(organizationId, projectId, true);
@@ -128,8 +128,9 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
     private async Task<AccountContext> Fresh(string? organizationId, string? projectId, bool manage)
     {
         var context = await AccountScope.RefreshAsync(accounts, DashboardMcp.Scope(http.HttpContext, organizationId, projectId), Cancellation, requireProject: true);
-        if (context.Role.Length == 0) throw new AccountAccessException("Organization membership is required.");
-        if (manage && !context.CanManage) throw new AccountAccessException("Organization management is required.");
+        // The caller's live project role, as ts-auth checks it: viewer reads, admin changes. Organization roles grant nothing more.
+        if (context.Project?.Role is not ("viewer" or "member" or "admin")) throw new AccountAccessException("Project access is required.");
+        if (manage && !context.CanManageProject) throw new AccountAccessException("Project admin access is required.");
         return context;
     }
 
