@@ -110,7 +110,8 @@ PR CI:
 | sjc | after | `c80d34fe6` | 19:46:50 | medium | 3 | 0 | 426 | 3.16 | 101.0 | 1.00 | −2.1, −2.8, 3.6 |
 | fra | before | `1035dd682` | 16:18:52 | small | 3 | 0 | 508 | 3.02 | 46.5 | 1.00 | 30.3, 10.8, −1.4 |
 | fra | before | `1035dd682` | 16:18:52 | medium | 3 | 0 | 629 | 2.68 | 48.0 | 1.00 | −29.7, 566.2, −2.2 |
-| fra | after | `c80d34fe6` | — | — | 0 | — | — | — | — | — | not obtained (below) |
+| fra | after | `c80d34fe6` | 19:54:51 | small | 3 | 0 | 715 | 2.60 | 42.9 | 1.00 | 2.7, −7.6, −4.3 |
+| fra | after | `c80d34fe6` | 19:54:51 | medium | 3 | 0 | 579 | 2.73 | 54.9 | 1.00 | −2.4, 3.0, −4.6 |
 
 Reading:
 
@@ -118,13 +119,13 @@ Reading:
   serving no client load.
   - Idle-subtracted CPU per request is therefore noise around zero, sometimes negative.
   - The 1,000 req/s target was never reached (143–998 req/s per cell).
-  - Latency (per-cell p50 1.4–3.7 ms; median p99 38–101 ms, one cell 365 ms) is CPU queueing behind background work. Beta shows ~0.15 ms p50 for the same request.
-- **Different "after" revisions:** gru after ran `80c268f64` (#854 itself). sjc after ran `c80d34fe6`, which also contains #855
+  - Latency (per-cell p50 1.4–3.7 ms; median p99 38–101 ms, single cells up to 365 ms) is CPU queueing behind background work. Beta shows ~0.15 ms p50 for the same request.
+- **Different "after" revisions:** gru after ran `80c268f64` (#854 itself). sjc and fra after ran `c80d34fe6`, which also contains #855
   and #857. Its earlier after attempt on `c1337d102` ended when the `c80d34fe6` rollout restarted the node mid-run (19:41).
 - **Not attributable:** none of these live differences can be attributed to #854.
-- **fra after not obtained:** after its rollout restart (19:43), fra answered the synthetic organization create with 503 twice
-  (19:50, ~19:53). Its log showed repeated "Waited s for a database's writer" warnings. No tenant was created: every acting user
-  in that window lists no organizations. Retries stopped after two identical failures.
+- **fra after, third attempt:** after its rollout restart (19:43), fra answered the synthetic organization create with 503 twice
+  (19:50, ~19:53), with repeated "Waited s for a database's writer" warnings in its log. No tenant was created: every acting
+  user in that window lists no organizations. The third attempt, after a production hold on unrelated work was lifted, completed.
 
 ## Cleanup
 
