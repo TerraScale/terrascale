@@ -141,8 +141,13 @@ namespace TraceAttribution
                     weight = Convert.ToDouble(item.PayloadByName("AllocationAmount64"), CultureInfo.InvariantCulture);
                     managed = true;
                 }
-                else if (sampled && name.EndsWith("AllocationSampled", StringComparison.Ordinal))
+                else if (sampled && name is "AllocationSampling" or "AllocationSampled")
                 {
+                    if (roles.Total == 0)
+                    {
+                        Console.WriteLine($"# sampled_payload {string.Join(',', item.PayloadNames)}");
+                    }
+
                     // Randomized sampling with a 100 KiB mean distance: an object of size s is sampled with probability 1 - e^(-s/100 KiB),
                     // so each sample stands for 1/p objects and s/p bytes.
                     var bytes = Convert.ToDouble(item.PayloadByName("ObjectSize"), CultureInfo.InvariantCulture);
