@@ -745,7 +745,16 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
         // so the next start opens on the catalog it left. Only an open gate anchors: a closed one may hold a restored copy.
         if (_open)
         {
-            await WriteAnchorAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await AnchorAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                // Out of the stop budget (the host cancels it) or a failed put: the last periodic anchor stands, at most
+                // AnchorEvery old. Faulting here ended the process with an unhandled exception (2026-10-28, gru and fra).
+                _logger.ZLogWarning(error, $"This machine's catalog anchor was not written at stop; the last periodic anchor stands");
+            }
         }
     }
 

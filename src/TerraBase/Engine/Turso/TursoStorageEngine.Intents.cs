@@ -40,6 +40,7 @@ internal sealed partial class TursoStorageEngine
             Checkpoint = _checkpoint,
             Ledger = Ledger,
             WriterHeld = _writerHeld,
+            Transactions = _transactions,
         };
         try
         {

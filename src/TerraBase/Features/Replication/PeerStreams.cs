@@ -34,6 +34,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
+    // An idle database's frontier only moves the peer's stable stamp, which collection trails by a minute anyway: every frontier
+    // with nothing shipped since the last one, and the last one answered, doubles the wait, up to this. Each one costs the peer a durable write and this
+    // node a bookkeeping write, for every idle database and peer.
+    private static readonly TimeSpan IdleFrontierEvery = TimeSpan.FromSeconds(60);
+    // Timers count coarse clock ticks and may fire a few milliseconds before a deadline: an item (and the retry or frontier
+    // it waits for) due within the slack is due, or the loop wakes before it, finds nothing due and spins until it is.
+    private static readonly TimeSpan TimerSlack = TimeSpan.FromMilliseconds(15);
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
     // Linked nodes HeldOriginsAsync considers at most; past it none is held. The membership bounds links well below it.
@@ -427,6 +434,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                             else
                             {
                                 cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, report.Stable));
+                                cursor.FrontierAnswered = true;
                             }
                         }
                     }
@@ -733,7 +741,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         for (var index = 0; index < (maintenance ? 1 : count); index++)
         {
             await drain().ConfigureAwait(false);
-            if (!work.Take(maintenance, _time.GetTimestamp(), out var database))
+            if (!work.Take(maintenance, _time.GetTimestamp() + Ticks(TimerSlack), out var database))
             {
                 break;
             }
@@ -776,7 +784,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
             }
 
-            if (_time.GetTimestamp() < cursor.RetryAt)
+            if (_time.GetTimestamp() + Ticks(TimerSlack) < cursor.RetryAt)
             {
                 work.Later(database, cursor.RetryAt);
                 continue;
@@ -963,10 +971,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     continue;
                 }
 
-                if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
+                if (_time.GetElapsedTime(cursor.FrontierAt) + TimerSlack >= cursor.FrontierEvery || cursor.FrontierAt == 0)
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value, Expect = cursor.Stable.Value } }, cancellationToken)
                         .ConfigureAwait(false);
+                    // Only an answered frontier backs off: one the peer dropped behind its work is repeated at the base cadence.
+                    cursor.FrontierEvery = cursor.FrontierAt == 0 || !cursor.FrontierAnswered
+                        ? FrontierEvery : TimeSpan.FromTicks(Math.Min(2 * cursor.FrontierEvery.Ticks, IdleFrontierEvery.Ticks));
+                    cursor.FrontierAnswered = false;
                     cursor.FrontierAt = _time.GetTimestamp();
                 }
 
@@ -976,7 +988,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     cursor.BehindSince = null;
                 }
 
-                work.Later(database, cursor.FrontierAt + (long)(FrontierEvery.TotalSeconds * _time.TimestampFrequency));
+                work.Later(database, cursor.FrontierAt + Ticks(cursor.FrontierEvery));
                 continue;
             }
 
@@ -997,6 +1009,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 cursor.BehindSince ??= _time.GetTimestamp();
                 cursor.Head = Math.Max(cursor.Head, last);
                 cursor.Flights.Add(new Flight(last, from, groups.Count, _time.GetTimestamp(), Stamps(groups), Refill: false));
+                cursor.FrontierEvery = FrontierEvery;
             }
             var batch = new Batch
             {
@@ -1274,7 +1287,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live, cursor.Stable) = (null, null, 0, false, null, default);
-            (cursor.FrontierAt, cursor.BehindSince, cursor.Convergence) = (0, null, null);
+            (cursor.FrontierAt, cursor.FrontierEvery, cursor.BehindSince, cursor.Convergence) = (0, FrontierEvery, null, null);
             link.Work.Enqueue(database);
         }
     }
@@ -1303,6 +1316,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         link.Placements[database] = (placed, _time.GetTimestamp());
         return placed;
     }
+
+    private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * _time.TimestampFrequency);
 
     // Half to all of the delay, so retries of many databases or links spread out.
     private static TimeSpan Jittered(TimeSpan delay) => delay * (RandomNumberGenerator.GetInt32(500, 1001) / 1000.0);
@@ -1686,13 +1701,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
+        // Zero once the first item is within TimerSlack of its deadline, which Take then treats as due.
         public TimeSpan Delay(TimeProvider time)
         {
             lock (_gate)
             {
-                return _due.Count > 0
-                    ? TimeSpan.FromSeconds(Math.Clamp((double)(_due.Min.At - time.GetTimestamp()) / time.TimestampFrequency, 0, Idle.TotalSeconds))
-                    : Idle;
+                var seconds = _due.Count > 0 ? (double)(_due.Min.At - time.GetTimestamp()) / time.TimestampFrequency : Idle.TotalSeconds;
+                return seconds <= TimerSlack.TotalSeconds ? TimeSpan.Zero : TimeSpan.FromSeconds(Math.Min(seconds, Idle.TotalSeconds));
             }
         }
     }
@@ -1785,6 +1800,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // When the last frontier went (a TimeProvider timestamp; 0 before the first).
         public long FrontierAt { get; set; }
+
+        // The wait from FrontierAt to the next frontier: FrontierEvery after a batch, doubling while idle (IdleFrontierEvery).
+        public TimeSpan FrontierEvery { get; set; } = PeerStreams.FrontierEvery;
+
+        // Whether a stable report arrived since the last frontier went.
+        public bool FrontierAnswered { get; set; }
 
         public long RetryAt { get; set; }
 

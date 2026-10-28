@@ -28,6 +28,10 @@ namespace TerraBase.Features.Replication;
 internal sealed class AntiEntropy : BackgroundService
 {
     internal static readonly TimeSpan Round = TimeSpan.FromSeconds(60);
+    // A round's digests scan every state row of each database it compares (25-row-derived-repair-digests.md): back to back
+    // they took the I/O threads for seconds once a minute, and every write behind them waited. A background round spreads its
+    // databases over half the round, at most this far apart.
+    private static readonly TimeSpan MaxPace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan DigestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromMinutes(10);
     private const int DigestBytes = 4096 * 16;
@@ -78,7 +82,7 @@ internal sealed class AntiEntropy : BackgroundService
         {
             try
             {
-                await RunRoundAsync(stoppingToken, system).ConfigureAwait(false);
+                await RunRoundAsync(stoppingToken, system, paced: true).ConfigureAwait(false);
             }
             catch (RpcException error) when (stoppingToken.IsCancellationRequested && error.StatusCode == StatusCode.Cancelled)
             {
@@ -98,14 +102,25 @@ internal sealed class AntiEntropy : BackgroundService
     /// One round over every database (only the system catalog, or only the others, when <paramref name="system"/> says so)
     /// and peer; a peer that fails is tried again next round.
     /// </summary>
-    internal async Task RunRoundAsync(CancellationToken cancellationToken, bool? system = null)
+    internal async Task RunRoundAsync(CancellationToken cancellationToken, bool? system = null, bool paced = false)
     {
         var peers = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false));
+        var databases = new List<TenantContext>();
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (system is { } only && only != (database == ChangeGroups.System))
+            if (system is not { } only || only == (database == ChangeGroups.System))
             {
-                continue;
+                databases.Add(database);
+            }
+        }
+
+        var pace = TimeSpan.FromTicks(Math.Min(Round.Ticks / 2 / Math.Max(databases.Count, 1), MaxPace.Ticks));
+        for (var index = 0; index < databases.Count; index++)
+        {
+            var database = databases[index];
+            if (paced && index > 0)
+            {
+                await Task.Delay(pace, _time, cancellationToken).ConfigureAwait(false);
             }
 
             // The system database is placed in every region.
@@ -163,8 +178,10 @@ internal sealed class AntiEntropy : BackgroundService
         return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon, incarnation).ConfigureAwait(false);
     }
 
+    // A catalog gate's pull at start: from the maintained digests on both machines, so a restart does not scan the whole catalog
+    // twice before it serves (46-70 s to open on 2026-10-28, every pull repairing nothing). Rounds keep comparing the rows.
     internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
-        CompareAsync(database, peer, force: true, cancellationToken);
+        CompareAsync(database, peer, force: true, cancellationToken, maintained: true);
 
     /// <summary>
     /// The machines whose system catalog a comparison proved held here less than <paramref name="window"/> ago, counting
@@ -218,11 +235,15 @@ internal sealed class AntiEntropy : BackgroundService
     // A refill names the peer's incarnation it was asked for; a round discovers it from the digests. Every later read of
     // either copy is pinned to the incarnation its digests came from.
     private async Task<int?> CompareAsync(
-        TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null, Ulid? incarnation = null)
+        TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null, Ulid? incarnation = null,
+        bool maintained = false)
     {
         // Taken before either digest: whatever the peer held when this began is held here once the comparison completes.
         var began = _time.GetTimestamp();
-        if (await _states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
+        var digest = maintained
+            ? await _states.MaintainedDigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false)
+            : await _states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false);
+        if (digest is not { } local)
         {
             return null;
         }
@@ -231,7 +252,7 @@ internal sealed class AntiEntropy : BackgroundService
         using var channel = PeerChannel.Create(new Uri(peer.PeerAddress), _credential);
         var client = new V1.Replication.ReplicationClient(channel);
         // gRPC evaluates absolute deadlines against the real clock, independently of scheduling and HLC clocks.
-        var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation) },
+        var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation), Maintained = maintained },
             deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
         {

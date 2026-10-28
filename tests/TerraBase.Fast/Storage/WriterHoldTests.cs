@@ -174,6 +174,9 @@ public sealed class WriterHoldTests
         await Assert.That(scraped).Contains("terrabase_storage_writer_held_seconds_bucket");
         // Each hold names its call site: this test's own durable writes.
         await Assert.That(scraped).Contains("at=\"WriterHoldTests.cs:");
+        // So does every begun transaction, read or write.
+        await Assert.That(scraped).Contains("terrabase_storage_transactions_total");
+        await Assert.That(scraped).Contains("kind=\"write\"");
         await Assert.That(scraped).Contains("terrabase_storage_queued");
     }
 

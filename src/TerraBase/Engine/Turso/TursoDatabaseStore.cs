@@ -229,6 +229,9 @@ internal sealed partial class TursoDatabaseStore(
     /// <summary>Records how long each holder kept the writer, by holder (a bounded set of names); null outside an engine.</summary>
     internal Histogram<double>? WriterHeld { get; init; }
 
+    /// <summary>Counts begun transactions by kind and call site; null outside an engine.</summary>
+    internal Counter<long>? Transactions { get; init; }
+
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
     internal TursoWriteLane WriteLane { get; } = new(name, io);
 
@@ -418,6 +421,7 @@ internal sealed partial class TursoDatabaseStore(
         // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
         // A rebuild transaction states its own: an ordinary write intent need only survive a process crash (0013d).
         durable |= write && !rebuild;
+        Transactions?.Add(1, new KeyValuePair<string, object?>("kind", write ? "write" : "read"), new KeyValuePair<string, object?>("at", CallSite(file, line)));
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
         {

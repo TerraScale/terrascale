@@ -42,6 +42,12 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
     private readonly ConcurrentDictionary<Ulid, long> _measured = new();
     private static readonly TimeSpan FarBehindEvery = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
+    // A database with no commit and no ack since its last pass, and no batch left over from it, is passed again only this
+    // often: its time-based cuts (24 h, far behind) and its collection horizon move by the minute. Each pass holds the
+    // database's writer, every TailRefresh, for every idle database.
+    private static readonly TimeSpan IdlePass = TimeSpan.FromSeconds(60);
+    // Each database's last pass: the commit count it began at, when, and whether batches were left for the next.
+    private readonly ConcurrentDictionary<Ulid, (long Sequence, long At, bool More)> _passes = new();
 
     // Bounded retention batches one pass deletes after its own (each at most 16,384 rows): 4 million rows, then the next pass.
     private const int MaxTrimBatches = 256;
@@ -411,7 +417,13 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         }
     }
 
-    public async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken)
+    public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
+        DigestAsync(database, expected, rows: true, cancellationToken);
+
+    public ValueTask<ReplicaDigest?> MaintainedDigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
+        DigestAsync(database, expected, rows: false, cancellationToken);
+
+    private async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, bool rows, CancellationToken cancellationToken)
     {
         // Discovery pins the copy in place first; the transaction then checks it is still that copy.
         var incarnation = expected
@@ -429,8 +441,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             // One snapshot: the head is the change id the digests cover, and the feed head the seq they cover. The digests
             // come from the rows, so a row deleted, added or rehashed outside the engine (a damaged or tampered file) differs
             // from the peers' and anti-entropy repairs it; the maintained _tb_merkle only shows whether that happened.
-            var buckets = await transaction.ReadRowDigestsAsync(cancellationToken).ConfigureAwait(false);
             var maintained = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+            var buckets = rows ? await transaction.ReadRowDigestsAsync(cancellationToken).ConfigureAwait(false) : maintained;
             stale = !buckets.AsSpan().SequenceEqual(maintained);
             var head = await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
             var feed = opened.IsSystem ? 0 : await transaction.ReadShapeFrontierAsync(remote: false, cancellationToken).ConfigureAwait(false);
@@ -523,11 +535,18 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
                         _ = _tail.TryRemove(incarnation, out _);
                         _ = _backlog.TryRemove(incarnation, out _);
                         _ = _measured.TryRemove(incarnation, out _);
+                        _ = _passes.TryRemove(incarnation, out _);
                         lock (_gate)
                         {
                             _ = _quiet.Remove(incarnation);
                         }
 
+                        continue;
+                    }
+
+                    if (_passes.TryGetValue(incarnation, out var last) && !last.More && last.Sequence == store.CommitSequence
+                        && _engine.HostTime.GetElapsedTime(last.At) < IdlePass)
+                    {
                         continue;
                     }
 
@@ -559,6 +578,7 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             return;
         }
 
+        var (sequence, startedAt) = (store.CommitSequence, _engine.HostTime.GetTimestamp());
         long? floor;
         var durability = _durability?.Invoke();
         var placement = store.Tenant is { } placed && durability is { Confirms: true }
@@ -642,6 +662,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             }
         }
 
+        _passes[incarnation] = (sequence, startedAt, more);
+
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
     }
 
@@ -666,6 +688,8 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             floor = lowest;
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _backlog[incarnation] = left;
+            // The ack may release rows: the next retention pass runs even with no commit since the last.
+            _ = _passes.TryRemove(incarnation, out _);
         }
 
         // After the writer is released: the gauge's read must not hold it.
