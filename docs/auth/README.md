@@ -436,7 +436,8 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
   (POST takes the same parameters form-encoded, per OpenID Connect; an
   authorize POST that needs sign-in resumes as a GET with those parameters;
   RP-initiated logout: a live session ends only for an `id_token_hint` issued
-  to its user or after the hosted "Sign out?" confirmation, a same-origin form
+  to its user (expired, or from a sign-in the client already revoked, as
+  ts-dashboard does right before it redirects here) or after the hosted "Sign out?" confirmation, a same-origin form
   POST of the request's parameters with `confirm=1`; any other request shows
   that confirmation and changes nothing. Then the hosted Signed out page
   continues to a validated `post_logout_redirect_uri` by link and a 2-second

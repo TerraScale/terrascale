@@ -324,12 +324,12 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
                     ? await accounts.AdvanceAsync(job, cancellationToken).ConfigureAwait(false)
                     : await closures.AdvanceAsync(job, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // Exceptions may carry identifiers or storage detail: log the fact only.
+                // Safe logging keeps only the exception's types and frames, never its message, so a stalled closure shows its cause.
                 try
                 {
-                    logger.ZLogWarning($"Resuming a {due.Scope:@Scope} closure failed; it stays pending");
+                    logger.ZLogWarning(error, $"Resuming a {due.Scope:@Scope} closure failed; it stays pending");
                 }
                 catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                 {
@@ -363,7 +363,7 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
 
                     try
                     {
-                        logger.ZLogWarning($"The closure retry pass failed; retrying at the next interval");
+                        logger.ZLogWarning(error, $"The closure retry pass failed; retrying at the next interval");
                     }
                     catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                     {

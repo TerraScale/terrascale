@@ -224,6 +224,25 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Logout_after_the_client_revoked_its_sign_in_still_ends_the_session_by_hint()
+    {
+        // ts-dashboard's sign-out: revoke the sign-in at the revocation endpoint, then end the session with its ID token (QA4 auth:11).
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, session, tokens) = await oidc.SignInAndRedeemAsync();
+        using var revoked = await oidc.RevokeAsync(tokens.GetProperty("refresh_token").GetString()!);
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var hint = tokens.GetProperty("id_token").GetString()!;
+        using var logout = await oidc.AuthorizeAsync($"/{OidcIssuer.Slug}/oauth/logout?id_token_hint={hint}&post_logout_redirect_uri={Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri)}", session);
+        var page = await logout.Content.ReadAsStringAsync();
+        await Assert.That(page).DoesNotContain("<h1>Sign out?</h1>");
+        await Assert.That(ClearsSessionCookie(logout)).IsTrue();
+        var (_, challenge) = OidcHarness.Pkce();
+        using var after = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), session);
+        await Assert.That(after.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");
+    }
+
+    [Test]
     public async Task Authorize_logout_and_userinfo_accept_form_posts()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);

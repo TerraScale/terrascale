@@ -71,6 +71,16 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
             return;
         }
 
+        // An id_token_hint only names the user (RP-Initiated Logout 1.0 section 2): OpenIddict has checked its signature and
+        // issuer and found its entry, and lifetime is not checked. ts-dashboard revokes its sign-in before redirecting here,
+        // so a status check would turn every dashboard sign-out into a "Sign out?" page that leaves the session live (QA4 auth:11).
+        // Clearing the authorization id skips OpenIddict's authorization-entry check for the same reason.
+        if (context.EndpointType is OpenIddictServerEndpointType.EndSession && context.Principal?.HasTokenType(TokenTypeIdentifiers.IdentityToken) == true)
+        {
+            context.AuthorizationId = null;
+            return;
+        }
+
         var token = await tokens.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false);
         if (context.EndpointType is OpenIddictServerEndpointType.Token && context.Request is { } request && request.IsRefreshTokenGrantType()
             && await CredentialLineage.RevokeRefreshReplayAsync(tokens, token, context.Principal, request.ClientId,
