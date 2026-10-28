@@ -75,6 +75,19 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         };
         using (var foreign = await browser.GetAsync(QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>(authorize) { ["redirect_uri"] = "http://127.0.0.1:33418/other" })))
             await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        // The consent binds exactly one TerraScale MCP resource and the one scope the token carries.
+        foreach (var (key, value, error) in new (string, string?, string)[]
+                 {
+                     ("resource", null, "invalid_target"), ("resource", "https://attacker.example/mcp", "invalid_target"),
+                     ("resource", origin + "/mcp?tenant=other", "invalid_target"), ("resource", "https://auth.terrascale.tech/", "invalid_target"),
+                     ("scope", "admin", "invalid_scope"), ("scope", "mcp admin", "invalid_scope")
+                 })
+        {
+            var query = authorize.Where(pair => pair.Key != key).Append(KeyValuePair.Create(key, value)).Where(pair => pair.Value is not null);
+            using var rejected = await browser.GetAsync(QueryHelpers.AddQueryString("/oauth/authorize", query));
+            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(rejected.Headers.Location!.OriginalString).StartsWith($"{Callback}?error={error}&");
+        }
 
         using var signedIn = await HttpJourney.LoginAsync(browser, persona.Email, persona.Password);
         await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -274,6 +287,52 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await state.GetAsync(McpOAuth.ClientCollection, id, default)).IsNull();
     }
 
+    [Test]
+    [Arguments(null)]
+    [Arguments("https://mcp.terrascale.tech/")]
+    [Arguments("https://attacker.example/mcp")]
+    public async Task RedemptionNamingAnotherResourceBurnsTheCodeWithoutAToken(string? redeemed)
+    {
+        IDashboardState state = null!;
+        await using var scenario = await ReferenceScenario.StartAsync(fixture.Root, builder =>
+            state = (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!);
+        using var browser = scenario.CreateClient();
+        var persona = scenario.Personas.Seeded;
+        var origin = browser.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var registered = await browser.PostAsJsonAsync("/oauth/register", new { client_name = "Resource binding", redirect_uris = new[] { Callback } });
+        var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("client_id").GetString()!;
+        var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var path = QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>
+        {
+            ["response_type"] = "code", ["client_id"] = id, ["redirect_uri"] = Callback, ["code_challenge_method"] = "S256",
+            ["code_challenge"] = WebEncoders.Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))), ["resource"] = origin + "/mcp"
+        });
+        using (var signedIn = await HttpJourney.LoginAsync(browser, persona.Email, persona.Password))
+            await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var form = QueryHelpers.ParseQuery(new Uri(browser.BaseAddress!, path).Query).ToDictionary(pair => pair.Key, pair => pair.Value.ToString());
+        form["_csrf"] = await HttpJourney.CsrfAsync(browser, path);
+        form["decision"] = "allow";
+        using var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", form);
+        using var granted = await HttpJourney.HostedSignInAsync(browser, allowed, persona.Email, persona.Password);
+        var code = QueryHelpers.ParseQuery(granted.Headers.Location!.Query)["code"].ToString();
+        var exchange = new Dictionary<string, string>
+        { ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = Callback, ["client_id"] = id, ["code_verifier"] = verifier };
+        if (redeemed is not null) exchange["resource"] = redeemed;
+        using (var mismatched = await browser.PostAsync("/oauth/token", new FormUrlEncodedContent(exchange)))
+        {
+            await Assert.That(mismatched.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            var body = await mismatched.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(body.GetProperty("error").GetString()).IsEqualTo("invalid_target");
+            await Assert.That(body.TryGetProperty("access_token", out _)).IsFalse();
+        }
+        exchange["resource"] = origin + "/mcp";
+        using (var retried = await browser.PostAsync("/oauth/token", new FormUrlEncodedContent(exchange)))
+            await Assert.That((await retried.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+        var tokens = await state.GetAsync(AccessTokens.Collection, AccountService.AccountId(persona.Subject), default);
+        await Assert.That(tokens is null || tokens.Document.Deserialize<AccessTokens.TokenSet>()!.Tokens.All(token => token.McpClientId != id)).IsTrue();
+        await Assert.That(await state.ListAsync(McpOAuth.CodeCollection, default)).IsEmpty();
+    }
+
     private static string ConsentPath(string id) => QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>
     {
         ["response_type"] = "code",
@@ -281,6 +340,7 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         ["redirect_uri"] = Callback,
         ["code_challenge"] = new string('a', 43),
         ["code_challenge_method"] = "S256",
+        ["resource"] = "https://mcp.terrascale.tech/",
         ["scope"] = "mcp"
     });
 

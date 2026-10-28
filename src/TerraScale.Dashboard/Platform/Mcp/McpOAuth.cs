@@ -187,7 +187,7 @@ public static partial class McpOAuth
             if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
                 throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
             credential = await sessions.CreateCredentialAsync(fresh, tokenExpiresAt, context.RequestAborted);
-            var grant = new McpCode(authorization.ClientId, authorization.RedirectUri, authorization.CodeChallenge, fresh.UserId, credential,
+            var grant = new McpCode(authorization.ClientId, authorization.RedirectUri, authorization.CodeChallenge, authorization.Resource, fresh.UserId, credential,
                 client.Name, time.GetUtcNow().AddMinutes(5), tokenExpiresAt);
             await state.PutAsync(CodeCollection, Hash(code), JsonSerializer.SerializeToElement(grant), TerraBasePrecondition.Absent, context.RequestAborted);
         }
@@ -227,16 +227,20 @@ public static partial class McpOAuth
             form["client_id"] != grant.ClientId ? "The authorization code belongs to another client." :
             form["redirect_uri"] != grant.RedirectUri ? "redirect_uri does not match the authorization request." :
             !VerifierMatches(verifier, grant.CodeChallenge) ? "code_verifier does not match the code challenge." : null;
+        // RFC 8707: the token request names the same resource the user consented to; the token serves only that MCP server.
+        var resource = form["resource"];
+        var target = failure is null && resource.Count != 1 ? "Send the resource the authorization request named." :
+            failure is null && CanonicalResource(context, resource.ToString()) != grant.Resource ? "resource does not match the authorization request." : null;
         if (failure is null)
         {
             var client = await McpRegistrations.ReadActiveAsync(state, time, grant.ClientId, context.RequestAborted);
             if (client is not { FirstSignInCompletedAt: not null } || !client.RedirectUris.Any(uri => RedirectMatches(uri, grant.RedirectUri)))
                 failure = "This AI client registration expired or changed. Add the server again.";
         }
-        if (failure is not null)
+        if (failure is not null || target is not null)
         {
             await tokens.ForgetGrantAsync(grant.CredentialId, context.RequestAborted);
-            return OAuthError("invalid_grant", failure);
+            return failure is not null ? OAuthError("invalid_grant", failure) : OAuthError("invalid_target", target!);
         }
         try
         {
@@ -261,23 +265,31 @@ public static partial class McpOAuth
         var redirect = requested.Length == 0 && client.RedirectUris.Length == 1 ? client.RedirectUris[0] : client.RedirectUris.Any(uri => RedirectMatches(uri, requested)) ? requested : null;
         if (redirect is null) return new(Page: ErrorPage(context, "The AI client sent a redirect address it did not register. Add the server to your client again."));
         var stateValue = parameters.GetValueOrDefault("state") is { Length: > 0 } given ? given : null;
-        var authorization = new McpAuthorization(clientId, client.Name, redirect, parameters.GetValueOrDefault("code_challenge", ""), stateValue, Issuer(context),
-            parameters.GetValueOrDefault("resource") is { Length: > 0 } resource ? resource : null);
+        var resource = CanonicalResource(context, parameters.GetValueOrDefault("resource", ""));
+        var authorization = new McpAuthorization(clientId, client.Name, redirect, parameters.GetValueOrDefault("code_challenge", ""), stateValue, Issuer(context), resource ?? "");
         string? Fail(string error, string description) =>
             QueryHelpers.AddQueryString(redirect, new Dictionary<string, string?> { ["error"] = error, ["error_description"] = description, ["state"] = stateValue, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null));
         var error =
             parameters.GetValueOrDefault("response_type") != "code" ? Fail("unsupported_response_type", "Use response_type=code.") :
             parameters.GetValueOrDefault("code_challenge_method") != "S256" || !ChallengePattern().IsMatch(authorization.CodeChallenge) ? Fail("invalid_request", "PKCE with code_challenge_method=S256 is required.") :
             stateValue is { Length: > 1024 } ? Fail("invalid_request", "state is too long.") :
-            authorization.Resource is { } target && !KnownResource(context, target) ? Fail("invalid_target", "The resource is not a TerraScale MCP server.") : null;
+            resource is null ? Fail("invalid_target", "Name a TerraScale MCP server as the resource.") :
+            !SupportedScope(parameters.GetValueOrDefault("scope")) ? Fail("invalid_scope", $"Request scope={Scope} or omit it.") : null;
         return error is null ? new(Authorization: authorization) : new(Error: Results.Redirect(error));
     }
 
-    // Both MCP addresses name the same server, so a code issued on either host serves both.
-    private static bool KnownResource(HttpContext context, string resource) =>
-        Uri.TryCreate(resource, UriKind.Absolute, out var uri) && uri.Query.Length == 0 && uri.Fragment.Length == 0 && (
-            uri.Scheme == "https" && uri.IdnHost.Equals(McpHost, StringComparison.OrdinalIgnoreCase) && uri.IsDefaultPort && uri.AbsolutePath == "/" ||
-            uri.GetLeftPart(UriPartial.Authority).Equals(Issuer(context), StringComparison.OrdinalIgnoreCase) && uri.AbsolutePath.TrimEnd('/') == "/mcp");
+    // Both MCP addresses name the same server, and the access token works on both; a code stays bound to the
+    // canonical form of the address its authorization named, and only that address redeems it.
+    private static string? CanonicalResource(HttpContext context, string resource)
+    {
+        if (!Uri.TryCreate(resource, UriKind.Absolute, out var uri) || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.UserInfo.Length != 0) return null;
+        if (uri.Scheme == "https" && uri.IdnHost.Equals(McpHost, StringComparison.OrdinalIgnoreCase) && uri.IsDefaultPort && uri.AbsolutePath == "/") return $"https://{McpHost}/";
+        var authority = uri.GetLeftPart(UriPartial.Authority);
+        return authority.Equals(Issuer(context), StringComparison.OrdinalIgnoreCase) && uri.AbsolutePath.TrimEnd('/') == "/mcp" ? authority + "/mcp" : null;
+    }
+
+    // The only scope is the whole MCP server; anything else would promise a narrower or wider grant than the token carries.
+    private static bool SupportedScope(string? scope) => scope is null || scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(item => item == Scope);
 
     private static bool ValidRedirect(string value)
     {
@@ -330,7 +342,8 @@ public static partial class McpOAuth
             ["code_challenge"] = authorization.CodeChallenge,
             ["code_challenge_method"] = "S256",
             ["state"] = authorization.State,
-            ["resource"] = authorization.Resource
+            ["resource"] = authorization.Resource,
+            ["scope"] = Scope
         }.Where(pair => pair.Value is not null).Select(pair => KeyValuePair.Create(pair.Key, pair.Value!)).ToArray();
 
     private static IResult ErrorPage(HttpContext context, string message, int statusCode = 400)
@@ -350,10 +363,10 @@ public static partial class McpOAuth
     [GeneratedRegex("^[a-z][a-z0-9+.-]*$")] private static partial Regex SchemePattern();
 
     private sealed record AuthorizationRequest(McpAuthorization? Authorization = null, IResult? Error = null, IResult? Page = null);
-    private sealed record McpCode(string ClientId, string RedirectUri, string CodeChallenge, string UserId, string CredentialId, string ClientName,
+    private sealed record McpCode(string ClientId, string RedirectUri, string CodeChallenge, string Resource, string UserId, string CredentialId, string ClientName,
         DateTimeOffset ExpiresAt, DateTimeOffset TokenExpiresAt);
 }
 
-public sealed record McpAuthorization(string ClientId, string ClientName, string RedirectUri, string CodeChallenge, string? State, string Issuer, string? Resource);
+public sealed record McpAuthorization(string ClientId, string ClientName, string RedirectUri, string CodeChallenge, string? State, string Issuer, string Resource);
 
 public sealed record McpConsentPage(DocumentModel Document, string ClientName, string RedirectHost, IReadOnlyList<KeyValuePair<string, string>> Fields, string Csrf, string? Error);
