@@ -785,7 +785,7 @@ internal sealed partial class EngineManagementService(
     // backup snapshot). stages times each awaited stage (EngineManagementService.CreateStages.cs).
     private async ValueTask<AddDatabaseResult> AddDatabaseInStagesAsync(
         CreateStages stages, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom,
-        CancellationToken cancellationToken, string? id, DatabasePlacement? placement, DateTimeOffset? createdAt)
+        string? id, DatabasePlacement? placement, DateTimeOffset? createdAt, CancellationToken cancellationToken)
     {
         // Copies are new databases even when their preserved home differs from the snapshot's region.
         // Replica materialization has no sourceId and spends no additional unit.
