@@ -202,28 +202,3 @@ dialog.ts-credential-dialog {
   }
 }
 
-.ts-apikeys-kinds {
-  flex: 0 1 auto;
-  max-width: 100%;
-  gap: var(--ts-s1);
-  border-bottom: 0;
-}
-
-.ts-apikeys-kinds .ts-tab {
-  height: var(--ts-control-h);
-  padding: 0 var(--ts-s3);
-  border: 1px solid var(--ts-control-line);
-  border-radius: var(--ts-radius-pill);
-  background: transparent;
-  cursor: pointer;
-  font-size: var(--ts-fs-sm);
-}
-
-.ts-apikeys-kinds .ts-tab[aria-current="page"],
-.ts-apikeys-kinds .ts-tab[aria-pressed="true"] {
-  background: color-mix(in oklab, white 8%, transparent);
-}
-
-.ts-apikeys-kinds .ts-tab[aria-current="page"]::after {
-  display: none;
-}

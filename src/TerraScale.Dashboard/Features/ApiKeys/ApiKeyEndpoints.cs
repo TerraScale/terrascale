@@ -31,7 +31,7 @@ public static class ApiKeyEndpoints
             .WithCursorContract().Produces<CursorPage<ProjectCredentialMetadata>>().Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", CreateAsync).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
             .WithSummary("Create a project key and reveal its secret once")
-            .WithDescription("Uses the original user session at ts-auth. " + ApiKeyService.ScopeDescription + " expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
+            .WithDescription("Uses the original user session at ts-auth. " + ApiKeyService.ScopeDescription + " expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Kind is key (api-key also accepted); services exchange the key with grant_type=client_credentials at ts-auth. Secrets are never persisted by the dashboard.")
             .Accepts<CreateProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
@@ -103,7 +103,7 @@ public static class ApiKeyEndpoints
         try
         {
             if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
-            if (kind is not ("key" or "api-key")) throw new AccountAccessException("Machine clients are not issued by this view.", 503);
+            if (kind is not ("key" or "api-key")) throw new AccountAccessException("Kind must be key.", 422);
             var expires = form["expiresInDays"].ToString();
             var expiresInDays = 0;
             if (expires.Length > 0 && !int.TryParse(expires, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out expiresInDays))
@@ -163,7 +163,7 @@ public static class ApiKeyEndpoints
         try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
         catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
         { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }
-        var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["kind"].ToString(), http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now) { Warning = warning });
+        var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now) { Warning = warning });
         result.StatusCode = status;
         return result;
     }
