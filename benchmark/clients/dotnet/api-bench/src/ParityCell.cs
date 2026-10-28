@@ -221,6 +221,10 @@ internal static class ParityCell
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(ParityCellRow))]
+[JsonSerializable(typeof(ParityHeader))]
+[JsonSerializable(typeof(ParityOwned))]
+[JsonSerializable(typeof(ParityCleanup))]
+[JsonSerializable(typeof(ParityOutcome))]
 internal partial class ParityJson : JsonSerializerContext
 {
 }
