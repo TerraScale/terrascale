@@ -16,6 +16,7 @@ and includes instrumentation; process CPU/allocations also include client/backgr
 | CPU investigation | 87,022 owned-process CPU events with stacks; usage accounting ranks prominently among selected frames | [Diagnostic ranking](2026-10-28-perf-api-cpu-ranking.md); one perturbed capture, no latency or method-self-CPU claim |
 | Regional Go attempt | Rejected: empty H2 window; no SDK matrix completed | [Live rejection and cleanup history](2026-10-28-perf-api-go-live-rejected.md) |
 | Node/Python/Rust runners | Offline controls qualified; no accepted authenticated regional parity result | [Node](2026-10-28-perf-api-node-window.md), [Python](2026-10-28-perf-api-python-lifecycle.md), [Rust](2026-10-28-rust-api-parity-output.md); Rust SDK transport observations remain null |
+| .NET benchmark compatibility | Measured SDK pin, project create and .NET 11 locks qualified locally; 101 tests passed | [Qualification](2026-10-28-perf-api-dotnet-compat.md); code is a pending candidate, not merged/live parity proof |
 
 The production key-watch change is [#795](https://github.com/TerraScale/terrascale/pull/795).
 Its per-request admission, 250 ms watch poll, two-second send-time positive-cache
