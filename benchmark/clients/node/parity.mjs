@@ -1,27 +1,20 @@
 // Node SDK versus raw HTTPS parity on an owned synthetic tenant; see README.md.
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, realpathSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { subscribe } from "node:diagnostics_channel";
 import { hostname } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { createTerraBaseV1Client, generateId, isValidId, V1NotFoundError } from "@terrascale/sdk";
-import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
+import { Observer, setActive, tokenSource, cellRejection } from "./observer.mjs";
 
 const ORIGIN = "https://api.terrascale.tech";
-const HOST = "api.terrascale.tech";
-// The Python runner's default issuer; ts-auth is never region-pinned.
-const AUTH_ORIGIN = "https://auth.terrascale.tech";
-const AUTH_SLUG = "terrascale";
 const SIZES = [256, 4096];
 const CONCURRENCY = [1, 16];
 const LANES = ["raw-h1", "sdk-h1", "raw-h2", "sdk-h2"];
 const PROTOCOLS = { "raw-h1": "HTTP/1.1", "sdk-h1": "HTTP/1.1", "raw-h2": "HTTP/2", "sdk-h2": "HTTP/2" };
 const COLLECTION = "bench";
-const PIN_HEADER = "X-TerraScale-Region-Pin";
-const REGION_HEADER = "x-terrabase-region";
 const RESERVOIR = 16_384;
 const API_KEY = /^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$/u;
 const WARMUP_S = 2;
@@ -46,68 +39,6 @@ function within(promise, ms) {
   return Promise.race([promise.then(() => true), deadline]).finally(() => clearTimeout(timer));
 }
 
-// Cells run one at a time, so one observer is live at a time; undici publishes these process-wide.
-let active = null;
-export function setActive(observer) { active = observer; }
-subscribe("undici:client:connected", ({ connectParams }) => {
-  if (active && connectParams.hostname === HOST && Number(connectParams.port || 443) === 443) active.connects += 1;
-});
-subscribe("undici:client:sendHeaders", ({ request, socket }) => {
-  const observer = active;
-  if (!observer?.measured || !observer.pinned(new URL(request.path, String(request.origin)), request.method)) return;
-  const version = socket?.alpnProtocol === "h2" ? "HTTP/2" : "HTTP/1.1";
-  observer.sent += 1;
-  observer.versions[version] = (observer.versions[version] ?? 0) + 1;
-  if (observer.protocol !== undefined && version !== observer.protocol) observer.protocolBad += 1;
-});
-
-/** Counts every pinned attempt, including SDK retries, and validates each response. */
-export class Observer {
-  connects = 0; // TCP connects to the API host, readiness included.
-  constructor(routes, region, protocol = undefined, measured = true) {
-    Object.assign(this, { routes, region, protocol, measured });
-    this.window();
-  }
-  window() {
-    this.attempts = this.good = this.sent = this.protocolBad = 0;
-    this.versions = {};
-  }
-  pinned(url, method) {
-    return url.protocol === "https:" && url.hostname === HOST && (url.port === "" || url.port === "443")
-      && this.routes.has(`${method} ${url.pathname}`);
-  }
-  /** The fetch given to the SDK's public `fetch` option and used by raw lanes; pins exact routes only. */
-  observe = async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (!this.pinned(url, init.method ?? "GET")) return fetch(url, init);
-    const headers = new Headers(init.headers);
-    headers.set(PIN_HEADER, this.region);
-    if (this.measured) this.attempts += 1;
-    const response = await fetch(url, { ...init, headers });
-    if (this.measured && response.status === 200 && response.headers.get(REGION_HEADER) === this.region) this.good += 1;
-    return response;
-  };
-}
-
-/** One API-key exchange per lane, cached and refreshed a minute early as in the Python token source. */
-function tokenSource(key, project) {
-  const auth = createTsAuthClient({ apiBaseUrl: AUTH_ORIGIN, instanceSlug: AUTH_SLUG });
-  let cached;
-  let pending;
-  const exchange = async () => {
-    const started = Date.now();
-    const result = await auth.oidc.token(key.slice(0, 26), key, { grant_type: "client_credentials", project });
-    const lifetime = result.ok ? result.value.expires_in : NaN;
-    if (!result.ok || !Number.isFinite(lifetime) || lifetime <= 0) throw new Error("token exchange failed");
-    cached = { token: result.value.access_token, refreshAt: started + (lifetime - Math.min(60, lifetime / 2)) * 1000 };
-    return cached.token;
-  };
-  return async () => {
-    if (cached && Date.now() < cached.refreshAt) return cached.token;
-    pending ??= exchange().finally(() => { pending = undefined; });
-    return pending;
-  };
-}
 
 export function check(seed, raw) {
   if (raw?.state !== "value" || raw.id !== seed.id || raw.version !== seed.version
@@ -130,10 +61,11 @@ async function readyOp(op, seed, run) {
   }
 }
 
-async function measure(op, seed, concurrency, run) {
+export async function measure(op, seed, concurrency, run) {
   const stats = { latencies: [], started: 0, ok: 0, failed: 0, stuck: false };
   const from = performance.now() + WARMUP_S * 1000;
   const until = from + MEASURE_S * 1000;
+  let last = until;
   const cancel = new AbortController();
   const stop = AbortSignal.any([run, cancel.signal]);
   const worker = async () => {
@@ -147,7 +79,8 @@ async function measure(op, seed, concurrency, run) {
         return;
       }
       const done = performance.now();
-      if (began >= from && done <= until) {
+      if (began >= from) {
+        last = Math.max(last, done);
         stats.ok += 1;
         const slot = stats.ok <= RESERVOIR ? stats.ok - 1 : Math.floor(Math.random() * stats.ok);
         if (slot < RESERVOIR) stats.latencies[slot] = done - began;
@@ -158,7 +91,7 @@ async function measure(op, seed, concurrency, run) {
   stats.stuck = !(await within(tasks, (WARMUP_S + MEASURE_S + DRAIN_S) * 1000));
   cancel.abort();
   await within(tasks, DRAIN_S * 1000);
-  return stats;
+  return { ...stats, elapsed_s: (last - from) / 1000 };
 }
 
 function credentials(path) {
@@ -205,16 +138,10 @@ function sdkSourceDigest(root) {
   return digest.digest("hex");
 }
 
-export function cellRejection(ready, stats, observer) {
-  if (!ready) return "readiness";
-  if (stats.failed) return "operation_error";
-  if (stats.stuck) return "drain_timeout";
-  if (observer.attempts !== stats.started || observer.attempts !== observer.good || observer.sent !== observer.attempts || observer.protocolBad) return "attempt_mismatch";
-  return stats.latencies.length ? null : "empty";
-}
 
 export class Tenant {
   seeds = new Map();
+  tokens = new Map();
   constructor({ key, project, db, out, run }) {
     Object.assign(this, { key, project, db, out, run });
     this.dbPath = `/v1/projects/${project}/databases/${db}`;
@@ -227,7 +154,8 @@ export class Tenant {
   }
   /** The SDK reads through the observed fetch from its public `fetch` option; its transport is unchanged. */
   laneOp(lane, observer) {
-    const token = tokenSource(this.key, this.project);
+    if (!this.tokens.has(lane)) this.tokens.set(lane, tokenSource(this.key, this.project));
+    const token = this.tokens.get(lane);
     if (lane.startsWith("sdk-")) {
       const collection = createTerraBaseV1Client({ project: this.project, token, baseUrl: ORIGIN, fetch: observer.observe })
         .database(this.db).collection(COLLECTION);
@@ -238,7 +166,7 @@ export class Tenant {
         method: "GET",
         redirect: "manual",
         signal: AbortSignal.any([signal, AbortSignal.timeout(OP_S * 1000)]),
-        headers: { authorization: `Bearer ${await token()}`, accept: "application/json" },
+        headers: { authorization: `Bearer ${await token(signal)}`, accept: "application/json" },
       });
       if (!response.ok) {
         await response.body?.cancel();
@@ -254,7 +182,7 @@ export class Tenant {
     const previous = getGlobalDispatcher();
     const agent = new Agent({ allowH2: lane.endsWith("h2") });
     setGlobalDispatcher(agent);
-    active = observer;
+    setActive(observer);
     let ready;
     let stats;
     try {
@@ -263,7 +191,7 @@ export class Tenant {
       observer.window();
       stats = ready ? await measure(op, seed, concurrency, this.run) : { latencies: [], started: 0, ok: 0, failed: 0, stuck: false };
     } finally {
-      active = null;
+      setActive(null);
       setGlobalDispatcher(previous);
       await agent.destroy();
     }
@@ -272,7 +200,7 @@ export class Tenant {
     const reject = cellRejection(ready, stats, observer);
     this.emit({
       type: "cell", region, repeat, lane, payload_bytes: size, concurrency, ready, ok: stats.ok, sampled: ordered.length,
-      ops_per_s: round3(stats.ok / MEASURE_S), p50_ms: pct(ordered, 0.5), p95_ms: pct(ordered, 0.95), p99_ms: pct(ordered, 0.99),
+      elapsed_s: stats.elapsed_s ?? null, ops_per_s: round3(stats.ok / (stats.elapsed_s ?? MEASURE_S)), p50_ms: pct(ordered, 0.5), p95_ms: pct(ordered, 0.95), p99_ms: pct(ordered, 0.99),
       operations_started: stats.started, attempts: observer.attempts, good_attempts: observer.good, bad_attempts: observer.attempts - observer.good,
       sends: observer.sent, protocol_mismatches: observer.protocolBad, protocols: observer.versions,
       connects: observer.connects, operation_failures: stats.failed, stuck: stats.stuck, reject,
@@ -280,14 +208,15 @@ export class Tenant {
     if (reject) throw new Rejected(`cell rejected: ${reject}`);
   }
   async setup(admin, home) {
-    await admin.databases.create({ name: this.db, homeRegion: home, allRegions: true });
+    const options = { signal: AbortSignal.any([this.run, AbortSignal.timeout(READY_S * 1000)]) };
+    await admin.databases.create({ name: this.db, homeRegion: home, allRegions: true }, options);
     const database = admin.database(this.db);
-    await database.collections.create(COLLECTION);
+    await database.collections.create(COLLECTION, options);
     const collection = database.collection(COLLECTION);
     for (const size of SIZES) {
       const body = { payload: "x".repeat(size - 14) }; // The compact JSON document is exactly `size` bytes.
       const id = generateId();
-      this.seeds.set(size, { id, version: (await collection.put(id, body)).version, body });
+      this.seeds.set(size, { id, version: (await collection.put(id, body, options)).version, body });
     }
   }
   /** Deletes the exact owned name directly; the server coordinates remote erasure. */
@@ -300,7 +229,7 @@ export class Tenant {
         row = { accepted: false, status: error?.status ?? null, error: error?.constructor?.name ?? "Error" };
       }
     }
-    this.emit({ type: "cleanup", database: this.db, ...row });
+    this.emit({ type: "database_deletion", database: this.db, ...row, remote_erasure: "unverified" });
     return row.accepted;
   }
 }
@@ -390,7 +319,7 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => interrupt.abort());
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => interrupt.abort());
   process.exitCode = await main(process.argv.slice(2));
 }
