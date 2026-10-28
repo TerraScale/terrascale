@@ -57,17 +57,6 @@ api -X POST "$DB/index-recommendations/posts:status/apply" | jq
 
 A recommendation `id` is `collection:field`. Applying it answers `201` with `status: "applied"` and the new index under its default name. If an index already leads with that field, it answers `200` with `status: "already-applied"` and that index. A `409 name_taken` means another index already uses the default name.
 
-## Automatic index policy
-
-Automatic index maintenance is not available through these routes. They store a policy only and do not create or remove indexes. Create and drop indexes explicitly with the manual operations above.
-
-```bash
-api "$DB/auto-index/posts" | jq
-api -X PUT -H 'Content-Type: application/json' -d '{"enabled":false}' "$DB/auto-index/posts" | jq
-```
-
-`enabled` is required. `false` records an opt-out; `true` restores the default policy. Neither value starts maintenance. The collection does not need to exist yet. Manual index operations work either way. At most 1000 collections per database can record an opt-out; one more answers `400 auto_index_policy_limit`.
-
 ## Query shapes
 
 ```bash
