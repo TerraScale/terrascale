@@ -38,12 +38,12 @@ This run does not reopen either decision. It measures this exact combined commit
 
 | Item | Value |
 | --- | --- |
-| Run script | `benchmark/scripts/api-auth-temporary-allocation-20261028.sh`. It derives from `api-cached-system-open-20261028.sh` at c67903c38 (build) and 7b3980c65 (common harness). |
+| Run script | `benchmark/scripts/api-auth-temporary-allocation-20261028.sh`. It uses c67903c38's fixed-HEAD/source-swap build method and 7b3980c65's common-harness protocol. The initially committed two-HEAD adaptation was rejected in independent review before launch. |
 | Summary | `benchmark/scripts/api-auth-temporary-allocation-summary.py`. Its gate, verdict, worsening and slow-state code is unchanged from `api-cached-system-open-summary.py` at 7b3980c65. It adds arm hashes, sample counts and the control output. |
 | Observer | `benchmark/scripts/api-cpu-observer.py`, byte-identical to 7b3980c65 |
 | Control | `benchmark/scripts/api-auth-token-key-control.cs` (see below) |
 | SDK | ts-dotnet `36d114877a69d18fba33b27ad362bd3e68e9e7ff`, the established benchmark pin. CI's `TS_DOTNET_REV` 03881aa74 is its ancestor. E2E, TestHarness and `benchmark/dotnet` have not changed since a42f65d55, which built against this pin. |
-| Native | `scripts/vendor/download-turso-native.sh` at baseline checks `SHA256SUMS` before and after the download. Hashes are recorded in `turso-native.sha256`. |
+| Native | The unchanged `scripts/vendor/download-turso-native.sh` checks pin format before download and verifies asset hashes afterwards. Hashes are recorded in `turso-native.sha256`. |
 | Host / CPUs | delta, `taskset -c 2-11`, .NET from `global.json` (11.0.100-rc.1.26425.128). Runtimeconfig is set to workstation concurrent GC with TieredPGO, identical in both arms. |
 
 Before any build, the script asserts:
@@ -72,16 +72,19 @@ before any timed arm runs.
 
 ## Protocol
 
-1. Fetch both commits exactly. Create one detached worktree at a fixed path outside the job checkout. Build the baseline
-   `tests/TerraBase.E2E` (Release, no build servers), check out the candidate in the same worktree and build it again. Every
-   assembly except the server compiles from identical paths. Each build's own E2E DLL/PDB is kept and hashed
-   (`own-harness.sha256`) but is not run.
+1. Fetch both commits exactly. Create one detached worktree at the candidate HEAD and a fixed path outside the job checkout.
+   Replace exactly the two UserAuth files with baseline blobs, assert the exact two-file staged status and compare their
+   bytes to those blobs, then build `tests/TerraBase.E2E` (Release, no build servers). Restore the candidate files, require
+   a clean tracked tree and matching candidate blobs, and build again. Both builds carry the **candidate Git SHA stamp**;
+   the recorded source hashes and `production.diff` identify the actual baseline/candidate code. Each build's own E2E
+   DLL/PDB is kept and hashed (`own-harness.sha256`) but is not run.
 2. Common harness: copy the candidate-compiled `TerraBase.E2E.dll`/`.pdb` into both arms. Freeze `before.sha256`,
    `after.sha256` and the all-files manifests. The manifests exclude only TUnit's `TestResults/`, which every run rewrites.
 3. Require byte-identical `TerraScale.DotNet.dll`, `TerraBase.E2E.dll`/`.pdb` and runtimeconfig, an identical file set, a
    changed server, and **exactly** `./terrabase.dll` and `./terrabase.pdb` as the differing files. Any other difference
    (including `terrabase.xml`) stops the run.
-4. Run the 3/3 smoke on each arm, then the control. Both run outside timing, and manifests are re-verified after each.
+4. Run the smoke on each arm, explicitly require total 3, succeeded 3, failed 0 and skipped 0 in its uncolored summary,
+   then run the control. Both run outside timing; manifests and the exact file inventory are re-verified afterwards.
 5. Reserve the other three heavy slots (`flock -n` on `/tmp/ts-heavy-{1..4}.lock`; the job's own slot is held by ts-heavy). If
    that fails, exit 73 with no timed arm. Then start the 1 Hz CPU observer and `vmstat`.
 6. Run six alternating pairs (B A, A B, B A, A B, B A, A B). Each arm is one fresh `dotnet exec` process on the keyed api read
@@ -96,6 +99,8 @@ before any timed arm runs.
 
 - **Quiet gate**, per arm: external CPU mean ≤ 25 %, p95 ≤ 100 % of one core, no external build process ≥ 10 % in any sample.
   If any arm fails, the run is INVALID and gets no timing verdict. There are no opportunistic reruns.
+- Any invocation consumes the one declared launch, including exit 73 (reservation unavailable) or a pre-timing failure.
+  A pre-timing failure has no timing verdict and is retained as an aborted launch; it is not permission to retry.
 - **Allocation REPRODUCED** only if B/op is lower in ≥ 5/6 pairs **and** the median paired Δ is negative, in **both** c16
   cells (small, medium).
   - NOT REPRODUCED: neither c16 cell has more than 3/6 lower with a negative median.
@@ -145,6 +150,9 @@ does two things:
    payload claim count, and never a token. These tokens are **not** the timed token. Their lengths are reported as
    source-replicated and unverified against it.
 
+The control's 11 payload members are not 11 materialized identity claims. Source review finds seven accepted claims for
+this lane: NameIdentifier, project_id, org_id and four scopes. That count is source-derived, not allocation measurement.
+
 ## Validation done before launch (no timing)
 
 - `bash -n` on the run script.
@@ -171,7 +179,8 @@ TS_HEAVY_HOST=delta /home/mariogk/.local/bin/ts-heavy-any nice -n 19 benchmark/s
 ```
 
 Run it once, from the committed branch head the parent approves. The label `r1` must be fresh, because the script refuses an
-existing run directory. ts-heavy-any supersedes only a job with the same branch key, so make sure no job for this branch is
+existing run directory. Verify the remote branch SHA immediately before launch and compare `harness-sha.txt` afterwards.
+ts-heavy-any supersedes only a job with the same branch key, so make sure no job for this branch is
 running. Results go to delta
 `~/remote-builds/terrascale/fix-api-auth-temporary-allocation-ab-<hash>/benchmark/bench/auth-temporary-allocation-r1/`. The
 build tree and SDK clone stay at `~/remote-builds/terrascale-ab/auth-temporary-allocation-r1` and

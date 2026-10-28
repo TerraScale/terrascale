@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Auth temporary allocations (ValidatedTokens.KeyOf + UserAuthenticationHandler.Success): one preregistered paired measurement of the
 # keyed api read lane, protocol and rules in benchmark/bench/2026-10-28-perf-api-auth-temporary-allocation-prereg.md.
-# Builds main 9cbc00d60 (before) and the candidate 4cba57edb (after) at one fixed path against the pinned ts-dotnet, puts the
+# Builds baseline 9cbc00d60's two changed files (before) and candidate 4cba57edb (after) at the same candidate HEAD/path, puts the
 # candidate-compiled E2E harness in both arms and freezes every manifest. Then a 3/3 smoke on each arm and the key/token control,
 # all outside timing, then six alternating fresh-process pairs (B A, A B, B A, A B, B A, A B) under the quiet reservation.
 # No retries, no dropped arms; any failed check stops the run before or between arms and everything is kept.
@@ -38,27 +38,32 @@ git diff "$baseline" "$candidate" -- "${changed[@]}" > "$out/production.diff"
 # Harness API compatibility, by source: neither changed type is named by the E2E, its harness or the benchmark sources.
 if git grep -n -E 'ValidatedTokens|UserAuthenticationHandler' "$candidate" -- tests/TerraBase.E2E tests/TerraBase.TestHarness benchmark/dotnet; then exit 1; fi
 
-# One build tree at one fixed path, so every assembly but the server's compiles from identical paths in both arms.
+# One candidate HEAD and build path keep Git-derived assembly/PDB stamps identical. Only the two source files change.
 work=$HOME/remote-builds/terrascale-ab/auth-temporary-allocation-$label
 sdk=$HOME/remote-builds/ts-dotnet/auth-temporary-allocation-$label
 mkdir -p "$(dirname "$work")" "$(dirname "$sdk")"
 test ! -e "$work"
 test ! -e "$sdk"
 printf '%s\n%s\n' "$work" "$sdk" > "$out/build-paths.txt"
-git worktree add -q --detach "$work" "$baseline"
+git worktree add -q --detach "$work" "$candidate"
 git clone --quiet --no-checkout https://github.com/TerraScale/ts-dotnet.git "$sdk"
 git -C "$sdk" checkout --quiet --detach "$sdk_pin"
 git -C "$sdk" rev-parse HEAD > "$out/sdk-sha.txt"
 test "$(cat "$out/sdk-sha.txt")" = "$sdk_pin"
 export TsDotnetRoot=$sdk
-# Pinned Turso native assets: the script checks SHA256SUMS before and after the download.
+# The downloader checks pin format before download and verifies native asset hashes afterwards.
 (cd "$work" && scripts/vendor/download-turso-native.sh) > "$out/turso-native.log" 2>&1
 (cd "$work" && sha256sum src/vendor/Turso.Native/SHA256SUMS src/vendor/Turso.Data.Sqlite/native/runtimes/*/native/libturso_sdk_kit.so) > "$out/turso-native.sha256"
 (cd "$work" && make restore) > "$out/restore.log" 2>&1 || { tail -40 "$out/restore.log"; exit 1; }
 
 build() {
-  test "$(git -C "$work" rev-parse HEAD)" = "$2"
-  test -z "$(git -C "$work" status --porcelain --untracked-files=no)"
+  test "$(git -C "$work" rev-parse HEAD)" = "$candidate"
+  if [[ "$1" == before ]]; then
+    test "$(git -C "$work" status --porcelain --untracked-files=no)" = "$(printf 'M  %s\n' "${changed[@]}")"
+  else
+    test -z "$(git -C "$work" status --porcelain --untracked-files=no)"
+  fi
+  for source in "${changed[@]}"; do cmp <(git -C "$work" show "$2:$source") "$work/$source"; done
   (cd "$work" && sha256sum "${changed[@]}") > "$out/$1-source.sha256"
   (cd "$work" && dotnet build tests/TerraBase.E2E --configuration Release --no-restore) > "$out/build-$1.log" 2>&1 || { tail -60 "$out/build-$1.log"; return 1; }
   grep -E '^ *[0-9]+ Warning\(s\)|^ *[0-9]+ Error\(s\)' "$out/build-$1.log" > "$out/build-$1.counts" || true
@@ -73,8 +78,9 @@ build() {
   cp "$out/$1/TerraBase.E2E.dll" "$out/$1-own-TerraBase.E2E.dll"
   cp "$out/$1/TerraBase.E2E.pdb" "$out/$1-own-TerraBase.E2E.pdb"
 }
+git -C "$work" checkout -q "$baseline" -- "${changed[@]}"
 build before "$baseline"
-git -C "$work" checkout -q --detach "$candidate"
+git -C "$work" checkout -q "$candidate" -- "${changed[@]}"
 build after "$candidate"
 dotnet build-server shutdown > "$out/build-server-shutdown.log" 2>&1 || true
 # The common harness: the candidate-compiled E2E DLL/PDB in both arms. Each arm keeps its own terrabase.dll/pdb.
@@ -91,7 +97,10 @@ same() {
   cmp "$out/before/TerraBase.E2E.dll" "$out/after/TerraBase.E2E.dll"
   cmp "$out/before/TerraBase.E2E.pdb" "$out/after/TerraBase.E2E.pdb"
   cmp "$out/before/TerraBase.E2E.runtimeconfig.json" "$out/after/TerraBase.E2E.runtimeconfig.json"
-  for arm in before after; do (cd "$out/$arm" && sha256sum --check --quiet "$out/$arm.sha256" && sha256sum --check --quiet "$out/$arm.all.sha256"); done
+  for arm in before after; do
+    (cd "$out/$arm" && sha256sum --check --quiet "$out/$arm.sha256" && sha256sum --check --quiet "$out/$arm.all.sha256" &&
+      diff <(cut -c67- "$out/$arm.all.sha256") <(find . -type f -not -path './TestResults/*' -print | sort))
+  done
 }
 same
 if cmp -s "$out/before/terrabase.dll" "$out/after/terrabase.dll"; then echo 'Server artifacts did not change.'; exit 1; fi
@@ -104,7 +113,10 @@ test "$(grep '^[<>]' "$out/binary-diff.txt" | cut -c69- | sort -u)" = "$(printf 
 for arm in before after; do
   taskset -c "$cpus" dotnet exec "$out/$arm/TerraBase.E2E.dll" \
     --treenode-filter '/*/*/RepairAndContractE2ETests/Every_region_publishes_the_replication_lag_series*' \
-    --minimum-expected-tests 3 > "$out/smoke-$arm.log" 2>&1 || { tail -60 "$out/smoke-$arm.log"; exit 1; }
+    --minimum-expected-tests 3 --no-ansi > "$out/smoke-$arm.log" 2>&1 || { tail -60 "$out/smoke-$arm.log"; exit 1; }
+  for field in 'total: 3' 'succeeded: 3' 'failed: 0' 'skipped: 0'; do
+    test "$(grep -Ec "^[[:space:]]*$field[[:space:]]*$" "$out/smoke-$arm.log")" = 1
+  done
 done
 same
 # Key equivalence and token shape (api-auth-token-key-control.cs) outside timing, from a directory no Directory.Build.* reaches.
@@ -141,7 +153,7 @@ for ((repeat = 1; repeat <= pairs; repeat++)); do
     prefix=$out/$arm-$repeat
     same
     # A fresh process per arm: nothing from an earlier arm, smoke or control may still run.
-    if pgrep -a -f -- "$out/(before|after)/TerraBase.E2E.dll|api-auth-token-key-control"; then exit 1; fi
+    if pgrep -a -f -- "^([^[:space:]]*/)?dotnet (exec $out/(before|after)/TerraBase[.]E2E[.]dll( |$)|run api-auth-token-key-control[.]cs( |$))"; then exit 1; fi
     echo "$arm-$repeat" >> "$out/order.txt"
     { date -u +%FT%TZ; uptime; cat /proc/pressure/cpu; } > "$prefix.host"
     date -u +%FT%T.%NZ > "$prefix.window"
