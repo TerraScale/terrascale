@@ -8,6 +8,7 @@ using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.DotNet.TerraBase;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
@@ -184,6 +185,11 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
             return OidcResults.Forbid(Errors.TemporarilyUnavailable, error.Message);
+        }
+        catch (TerraBaseUnavailableException)
+        {
+            // Storage was down (QA round 4, auth:11 answered 500): the client gets OAuth's retryable error instead.
+            return OidcResults.Forbid(Errors.TemporarilyUnavailable, ApiException.Unavailable().Message);
         }
 
         var authenticatedAt = live?.Session.CreatedAt;

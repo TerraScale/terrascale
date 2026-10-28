@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Platform;
 
@@ -18,6 +19,10 @@ public sealed class ErrorEnvelopeTests
         app.MapGet("/__test/conflict", (HttpContext _) => throw new ApiException(409, "conflict", "The resource changed."));
         app.MapGet("/__test/unavailable", (HttpContext _) => throw ApiException.Unavailable());
         app.MapGet("/__test/cancelled-work", (HttpContext _) => throw new OperationCanceledException("not the client"));
+        // The real SDK against storage that answers 503, as gru's TerraBase did during a writer storm. Loopback, like
+        // ts-auth's own storage origin, needs no credential; the handler answers before any connection.
+        app.MapGet("/__test/storage-unavailable", () => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
+        app.MapGet("/__test/storage-conflict", () => StorageAsync(HttpStatusCode.PreconditionFailed, "precondition_failed"));
         app.MapGet("/__test/slow", async (HttpContext context) =>
         {
             var signals = context.RequestServices.GetRequiredService<DisconnectSignals>();
@@ -75,6 +80,29 @@ public sealed class ErrorEnvelopeTests
     }
 
     [Test]
+    public async Task Storage_that_terrabase_reports_unavailable_answers_a_retryable_503()
+    {
+        await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
+        using var response = await server.Client.GetAsync(new Uri("/__test/storage-unavailable", UriKind.Relative));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
+        await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+    }
+
+    [Test]
+    public async Task A_storage_write_that_lost_a_race_answers_409_conflict_not_500()
+    {
+        await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
+        using var response = await server.Client.GetAsync(new Uri("/__test/storage-conflict", UriKind.Relative));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("conflict");
+    }
+
+    [Test]
     public async Task A_cancellation_that_is_not_the_client_leaving_is_a_server_error()
     {
         await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
@@ -115,5 +143,22 @@ public sealed class ErrorEnvelopeTests
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private static async Task<IResult> StorageAsync(HttpStatusCode status, string code)
+    {
+        using var http = new HttpClient(new StorageAnswers(status, code));
+        await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://127.0.0.1/") })
+            .Database(TerraScale.Authentication.Store.AuthStore.NewId(), "auth").ListCollectionsAsync();
+        return Results.Ok();
+    }
+
+    private sealed class StorageAnswers(HttpStatusCode status, string code) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent($$$"""{"error":{"code":"{{{code}}}","message":"synthetic"}}""", System.Text.Encoding.UTF8, "application/json"),
+            });
     }
 }

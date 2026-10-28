@@ -147,7 +147,7 @@ test-only sign-in route revokes the presented session before setting the new
 cookie.
 
 Passcodes (`passcodes`, one document per user) are six CSPRNG digits that last
-10 minutes, work once and die after 5 wrong guesses. At most 5 codes are issued
+30 minutes, work once and die after 5 wrong guesses. At most 5 codes are issued
 per user per hour, using a fixed window stored on the same document and updated
 with conditional writes. A new code replaces the previous one. Only an
 HMAC-SHA256 is stored, keyed by HKDF-SHA256 of the master key (info
