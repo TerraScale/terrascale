@@ -23,6 +23,9 @@ The synthetic API-key token includes key_id/key_gen and is registered with TestI
 key authority and in-flight key watch against a test-only issuer; production key status remains cached for at most
 2 seconds from the question's send time. The token has a 12-hour benchmark lifetime and project-scoped permissions;
 no token or key is logged. Earlier keyless-token runs are diagnostic, not production-equivalent auth evidence.
+The api-keyless lane mints a second token in the same run with identical subject, project, org, scope and expiry,
+omitting only key_id/key_gen; the keyed token still performs setup. It is a keyed-minus-keyless diagnostic for the
+key path's attributed cost (the header is also shorter), never production auth evidence or a production speedup.
 
 The <10% target is unproven. Qualification requires three before/after repeats on the same quiet host through
 `ts-heavy-any nice -n 19`, plus live gru/sjc/fra evidence. Hosting attribution excludes some Kestrel cost, so it

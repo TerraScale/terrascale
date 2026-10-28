@@ -20,7 +20,8 @@ namespace TerraBase.E2E
     /// Lanes: <c>turso</c> (one upsert per transaction, WAL, synchronous FULL), <c>turso-cdc</c> (the same with change capture,
     /// as TerraBase's writer runs), <c>engine</c> and <c>api</c> (one local node: <see cref="IDocumentService"/> in process, and
     /// its public HTTP API over loopback), <c>floor</c> (that listener answering <c>GET /healthz</c>), <c>engine-3</c> and
-    /// <c>api-3</c> (gru of gru, sjc and fra, answered after a remote ack), and every <see cref="IVsTursoLane"/> in this assembly.
+    /// <c>api-3</c> (gru of gru, sjc and fra, answered after a remote ack), <c>api-keyless</c> (the api lane with a key-less
+    /// diagnostic token), and every <see cref="IVsTursoLane"/> in this assembly.
     /// Every lane compares with <c>turso</c>.
     /// </summary>
     [Category("benchmark-host")]
@@ -67,7 +68,7 @@ namespace TerraBase.E2E
                 // One node outside a cell: change capture, change groups and the feed run, nothing ships and no write waits for a remote ack.
                 // Its attribution splits each measured HTTP request into server, engine and overhead time; it stops listening before the cluster.
                 using (var attribution = new ServerAttribution())
-                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "api-exceptions" or "floor" || plugins.Any(plugin => plugin.Name == lane))
+                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "api-exceptions" or "api-keyless" or "floor" || plugins.Any(plugin => plugin.Name == lane))
                     ? await ManagementApi.StartAsync(services: attribution.Install) : null)
                 {
                     if (node is not null)
@@ -80,16 +81,31 @@ namespace TerraBase.E2E
                         // through the key revocation path, against the test issuer. Runs with the earlier key-less token are diagnostic only.
                         var keyId = EntityIds.New().ToString();
                         var key = keyId + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
-                        var token = node.Issuer.Mint(keyId, descriptor =>
+                        var org = EntityIds.New().ToString();
+                        var expires = DateTime.UtcNow.AddHours(12);
+                        string Mint(bool keyed)
                         {
-                            descriptor.Claims["project_id"] = database.Project;
-                            descriptor.Claims["scope"] = "databases:read databases:write documents:read documents:write";
-                            descriptor.Claims["key_id"] = keyId;
-                            descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
-                            descriptor.Expires = DateTime.UtcNow.AddHours(12);
-                        });
+                            return node.Issuer.Mint(keyId, descriptor =>
+                            {
+                                descriptor.Claims["project_id"] = database.Project;
+                                descriptor.Claims["org_id"] = org;
+                                descriptor.Claims["scope"] = "databases:read databases:write documents:read documents:write";
+                                if (keyed)
+                                {
+                                    descriptor.Claims["key_id"] = keyId;
+                                    descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
+                                }
+
+                                descriptor.Expires = expires;
+                            });
+                        }
+
+                        var token = Mint(keyed: true);
                         node.Issuer.GrantClient(key, () => token);
-                        await log.WriteLineAsync($"# token: synthetic API key {keyId} (key_id, key_gen), project-scoped, 12 h");
+                        // Diagnostic only, never production-equivalent: the same claims without key_id/key_gen skip the key revocation path.
+                        // Both tokens exist in every run; only the api-keyless lane reads with this one, after the keyed token's setup.
+                        var keyless = Mint(keyed: false);
+                        await log.WriteLineAsync($"# token: synthetic API key {keyId} (key_id, key_gen), project-scoped, 12 h; api-keyless omits key_id/key_gen");
                         using (var data = node.WithToken(token))
                         {
                             await ManagementApi.CreateCollectionAsync(data, database, "bench", cancellationToken);
@@ -97,7 +113,7 @@ namespace TerraBase.E2E
 
                         single.AddRange(Targets(
                             lanes, string.Empty, node.Server.Services, new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id),
-                            node.Server.ClientAddress!, token, $"{database.Data}/collections/bench/documents/by-key?id=", "bench"));
+                            node.Server.ClientAddress!, token, $"{database.Data}/collections/bench/documents/by-key?id=", "bench", keyless));
                         var setup = new VsTursoNode(node, new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id), token, "bench", directory);
                         foreach (var plugin in plugins.Where(plugin => lanes.Contains(plugin.Name)))
                         {
@@ -139,7 +155,8 @@ namespace TerraBase.E2E
         }
 
         private static List<(string, ITarget)> Targets(
-            string[] lanes, string suffix, IServiceProvider services, TenantContext database, Uri address, string token, string path, string collection)
+            string[] lanes, string suffix, IServiceProvider services, TenantContext database, Uri address, string token, string path, string collection,
+            string? keyless = null)
         {
             var targets = new List<(string, ITarget)>();
             // The engine lane calls the node's own service, never the attribution's decorator.
@@ -158,6 +175,11 @@ namespace TerraBase.E2E
             if (lanes.Contains("api-exceptions" + suffix))
             {
                 targets.Add(("api-exceptions" + suffix, new ApiTarget(address, token, path, engine)));
+            }
+
+            if (keyless is not null && lanes.Contains("api-keyless" + suffix))
+            {
+                targets.Add(("api-keyless" + suffix, new ApiTarget(address, keyless, path, engine)));
             }
 
             // The HTTP floor: the same client and listener answering GET /healthz, so no auth, catalog or storage.
@@ -205,12 +227,12 @@ namespace TerraBase.E2E
                                 // measured requests at c=16; give these cells a useful sample window on the same dataset.
                                 var window = workload == "read" && lane is "sql" or "hrana" or "pg"
                                     ? TimeSpan.FromSeconds(Math.Max(30, duration.TotalSeconds)) : duration;
-                                var timing = lane is "api" or "api-exceptions" or "api-json" or "sdk" ? attribution : null;
+                                var timing = Attributed(lane) ? attribution : null;
                                 var cell = await MeasureAsync(target, body, workload, concurrency, window, timing, lane) with { Lane = lane, Repeat = repeat };
                                 cells.Add(cell);
                                 await log.WriteLineAsync(JsonSerializer.Serialize(cell, VsTursoJson.Default.Cell));
                                 await log.FlushAsync(cancellationToken);
-                                if (attribution is not null && (lane is "api" or "api-exceptions" or "api-json" or "sdk") && cell.Server is null)
+                                if (attribution is not null && Attributed(lane) && cell.Server is null)
                                 {
                                     throw new InvalidOperationException($"{lane}: HTTP attribution is missing; reject this run.");
                                 }
@@ -219,6 +241,11 @@ namespace TerraBase.E2E
                     }
                 }
             }
+        }
+
+        private static bool Attributed(string lane)
+        {
+            return lane is "api" or "api-exceptions" or "api-keyless" or "api-json" or "sdk";
         }
 
         private static async Task<Cell> MeasureAsync(ITarget target, Bodies body, string workload, int concurrency, TimeSpan duration, ServerAttribution? attribution, string lane)
