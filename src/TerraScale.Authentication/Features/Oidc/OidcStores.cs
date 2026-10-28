@@ -93,11 +93,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
         }
 
         var application = await this.ReadAsync(identifier, cancellationToken).ConfigureAwait(false);
-        if (items is not null)
-        {
-            items[key] = application;
-        }
-
+        items?[key] = application;
         return application;
     }
 
