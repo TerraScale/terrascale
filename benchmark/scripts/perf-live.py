@@ -147,14 +147,14 @@ with open(output, "x") as stream:
         if len(set(revisions.values())) != 1 or any(not isinstance(value, str) or not value for value in revisions.values()):
             raise RuntimeError("serving regions have different or missing revisions")
         live.record(kind="metadata", host=os.uname().nodename, region=region, revisions=revisions,
-                    native_ports=matrix.NATIVE_RELAYS[region],
+                    native_ports=matrix.NATIVE_RELAYS[region], documents_per_payload=16,
                     harness_files_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                           for path in (pathlib.Path(__file__), pathlib.Path(__file__).with_suffix('.sh'), pathlib.Path(rt6), pathlib.Path(probe))},
                     load=os.getloadavg(), pressure=pathlib.Path('/proc/pressure/cpu').read_text())
         live.provision()
         tables = {}
         for size, count in (("small", 256), ("medium", 4096)):
-            table, identifier = "perf_" + size, matrix.ulid()
+            table, identifiers = "perf_" + size, [matrix.ulid() for _ in range(16)]
             live.sql("sjc", "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], live.name)
             deadline = time.monotonic() + 120
             while True:
@@ -166,11 +166,13 @@ with open(output, "x") as stream:
                         raise
                     time.sleep(.1)
             value = "x" * (count - len('{"value":""}'))
-            live.write(region, "documents", table, identifier, value, "insert", live.name)
-            tables[size] = (table, identifier, value)
+            for identifier in identifiers:
+                live.write(region, "documents", table, identifier, value, "insert", live.name)
+            tables[size] = (table, identifiers, value)
         local = threading.local()
 
-        def read(endpoint, table, identifier, value):
+        def read(endpoint, table, identifiers, value):
+            identifier, requested = identifiers[0], []
             if endpoint in ("postgres", "wire"):
                 result = live.read(region, endpoint, table, identifier, live.name)
                 if result != value:
@@ -180,6 +182,11 @@ with open(output, "x") as stream:
                 local.http = http.client.HTTPConnection("127.0.0.1", 8080, timeout=20)
             if endpoint == "documents":
                 method, path, body = "GET", live.document(live.name, table, identifier), None
+            elif endpoint in ("query", "batch"):
+                requested = identifiers[:1] if endpoint == "query" else identifiers
+                method, path = "POST", live.data(live.name) + f"/collections/{table}/query"
+                body = json.dumps({"filter": {"eq": ["$id", identifier]} if endpoint == "query" else
+                                   {"in": ["$id", requested]}, "limit": len(requested)})
             else:
                 sql = f"SELECT value FROM {table} WHERE id = '{identifier}'"
                 method = "POST"
@@ -191,12 +198,15 @@ with open(output, "x") as stream:
             data = json.loads(response.read())
             if response.status != 200 or value not in json.dumps(data):
                 raise RuntimeError(f"{endpoint}: HTTP {response.status}, value_match={value in json.dumps(data)}")
+            if requested and (len(data["items"]) != len(requested) or {item["id"] for item in data["items"]} != set(requested)
+                              or any(item["document"]["value"] != value for item in data["items"])):
+                raise RuntimeError("document query/batch result mismatch")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
             for repeat in range(1, 4):
                 for size, (table, identifier, value) in tables.items():
                     for concurrency in (1,):
-                        for endpoint in matrix.ENDPOINTS:
+                        for endpoint in (*matrix.ENDPOINTS, "query", "batch"):
                             # Live is c=1 read-only after setup; 60 reads bounds production work.
                             barrier = threading.Barrier(concurrency)
                             def worker():
