@@ -8,8 +8,8 @@ exits 0. Existing results remain intact.
 
 ## Build and check
 
-Requires Linux, Bash, Git, GNU coreutils (`timeout`), util-linux (`flock`), the .NET 10.0.401 SDK (or newer
-10.0.4xx patch) and read access to the
+Requires Linux, Bash, Git, GNU coreutils (`timeout`), util-linux (`flock`), the .NET SDK pinned by
+[global.json](global.json) (11.0.100-rc.1.26425.128) and read access to the
 official private SDK Git repository. No SDK source is vendored. The production
 project references a separate checkout of the official `ts-dotnet` main build,
 pinned by [sdk.rev](sdk.rev). The CLI reports the referenced SDK assembly
