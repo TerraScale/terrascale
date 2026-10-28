@@ -20,6 +20,8 @@ export TS_PARITY_SDK_REV=$rev
 # The SDK's committed toolchain pin wins over any inherited override.
 RUSTUP_TOOLCHAIN=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
 export RUSTUP_TOOLCHAIN
+# Pin cargo subcommands too: a mise shim can otherwise select another clippy compiler.
+export PATH="$(dirname "$(rustup which --toolchain "$RUSTUP_TOOLCHAIN" rustc)"):$PATH"
 cargo --version
 rustc --version
 rustfmt --edition 2021 --check examples/api_parity/main.rs
