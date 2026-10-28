@@ -19,11 +19,12 @@ public sealed class ErrorEnvelopeTests
         app.MapGet("/__test/conflict", (HttpContext _) => throw new ApiException(409, "conflict", "The resource changed."));
         app.MapGet("/__test/unavailable", (HttpContext _) => throw ApiException.Unavailable());
         app.MapGet("/__test/cancelled-work", (HttpContext _) => throw new OperationCanceledException("not the client"));
-        // The real SDK against storage that answers 503, as gru's TerraBase did during a writer storm.
+        // The real SDK against storage that answers 503, as gru's TerraBase did during a writer storm. Loopback, like
+        // ts-auth's own storage origin, needs no credential; the handler answers before any connection.
         app.MapGet("/__test/storage-unavailable", async (HttpContext _) =>
         {
             using var http = new HttpClient(new StorageUnavailable());
-            await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("https://storage.invalid/") })
+            await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://127.0.0.1/") })
                 .Database(TerraScale.Authentication.Store.AuthStore.NewId(), "auth").ListCollectionsAsync();
             return Results.Ok();
         });
