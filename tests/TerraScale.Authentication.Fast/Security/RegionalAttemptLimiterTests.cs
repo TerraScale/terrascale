@@ -132,6 +132,30 @@ public sealed class RegionalAttemptLimiterTests
         await Assert.That(await sjc.AcquireCooldownAsync("ins_a", "mail", "user_1", interval, CancellationToken.None)).IsEqualTo(TimeSpan.FromSeconds(120));
     }
 
+    [Test]
+    public async Task Changing_a_budgets_window_starts_fresh_instead_of_locking_until_a_far_future_window()
+    {
+        await using var regions = await RegionalTerraBaseFixture.StartAsync();
+        var options = AuthOptions.Load(AuthTestServer.DefaultSettings());
+        var clock = new ManualClock(Start);
+        var limiter = Limiter(regions, "gru", clock, options);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await Assert.That(await limiter.AcquireWithDeadlineAsync("ins_a", "code", "user_1", 5, TimeSpan.FromMinutes(15), CancellationToken.None)).IsNull();
+        }
+
+        await Assert.That(await limiter.AcquireWithDeadlineAsync("ins_a", "code", "user_1", 5, TimeSpan.FromMinutes(15), CancellationToken.None)).IsNotNull();
+
+        // A release that widens the window must not read the 15-minute window number as a 30-minute one (decades ahead).
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await Assert.That(await limiter.AcquireWithDeadlineAsync("ins_a", "code", "user_1", 5, TimeSpan.FromMinutes(30), CancellationToken.None)).IsNull();
+        }
+
+        var denied = await limiter.AcquireWithDeadlineAsync("ins_a", "code", "user_1", 5, TimeSpan.FromMinutes(30), CancellationToken.None);
+        await Assert.That(denied?.Until).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds((Start.ToUnixTimeSeconds() / 1800 + 1) * 1800));
+    }
+
     private static AttemptLimiter Limiter(RegionalTerraBaseFixture regions, string region, TimeProvider clock, AuthOptions options) =>
         new(new TerraBaseDocumentStore(new AuthStore(regions.Database(region), clock)), clock, options, region);
 }

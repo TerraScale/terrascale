@@ -217,7 +217,10 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
 
         // shortcut: one TerraBase writer per region; use per-writer components before adding independent same-region writers.
         // The address is instance-scoped; service-chosen purposes never contain ':', and the subject comes last.
-        var keys = Regions.Select(component => this.BucketKey(purpose, component + ":" + subject)).ToArray();
+        // A fixed window stores its window number, which only means something at one window size: the size is part
+        // of the address, so changing a budget's window starts fresh buckets instead of reading old numbers as far-future windows.
+        var address = cooldown ? purpose : $"{purpose}/{windowSeconds}s";
+        var keys = Regions.Select(component => this.BucketKey(address, component + ":" + subject)).ToArray();
         var key = keys[this.regionIndex];
 
         // Every lost conditional write means another attempt was admitted (or the window rolled
