@@ -20,7 +20,7 @@ public sealed partial class OrganizationMcpTools
         return new ProjectGrantMcpPage(context.Organization!.Id, context.Project!.Id, page.Items.Select(GrantView).ToArray(), page.Next);
     });
 
-    [McpServerTool(Name = "set_project_member_role", Title = "Set explicit project grant", Idempotent = true, Destructive = true, OpenWorld = true, UseStructuredContent = true),
+    [McpServerTool(Name = "set_project_member_role", Title = "Set explicit project grant", ReadOnly = false, Idempotent = true, Destructive = true, OpenWorld = true, UseStructuredContent = true),
         Description("Grant or change explicit viewer/member/admin access to the exact project. Requires current effective project admin. New grants require an existing organization member; existing collaborator grants may be changed. Does not invite users or change organization membership.")]
     public Task<ProjectGrantMcpResult> SetProjectMemberRole([Description("Canonical user ULID, not an email address.")] string userId,
         [Description("Explicit project role: viewer, member or admin.")] string role,
@@ -31,7 +31,7 @@ public sealed partial class OrganizationMcpTools
         return new ProjectGrantMcpResult(context.Organization!.Id, context.Project!.Id, GrantView(grant));
     });
 
-    [McpServerTool(Name = "remove_project_member", Title = "Remove explicit project grant", Idempotent = false, Destructive = true, OpenWorld = true, UseStructuredContent = true),
+    [McpServerTool(Name = "remove_project_member", Title = "Remove explicit project grant", ReadOnly = false, Idempotent = false, Destructive = true, OpenWorld = true, UseStructuredContent = true),
         Description("Remove only this user's explicit grant to the exact project. Requires current effective project admin. Organization-implied access and independent service keys remain; removal does not imply total session or token revocation.")]
     public Task<ProjectGrantMcpRemoved> RemoveProjectMember([Description("Canonical user ULID whose explicit grant will be removed.")] string userId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => GrantChange(async () =>
