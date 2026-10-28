@@ -16,7 +16,8 @@ git diff --quiet -- "${files[@]}"
 git diff --cached --quiet -- "${files[@]}"
 restore() { git restore --source="$head" -- "${files[@]}"; }
 trap restore EXIT
-mkdir -p "$out"
+mkdir -p "$(dirname "$out")"
+mkdir "$out"
 scripts/vendor/download-turso-native.sh
 build() {
   # Explicit propagation: callers capturing build logs must never turn a failed build into a stale-artifact run.
