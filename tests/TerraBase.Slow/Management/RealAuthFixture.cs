@@ -109,8 +109,11 @@ internal sealed class RealAuthFixture : IAsyncDisposable
     public async Task<(string Organization, string Project, string Token)> SeedProjectAsync(CancellationToken token)
     {
         var services = _auth!.Services;
-        var user = (await services.GetRequiredService<tsauth::TerraScale.Authentication.Features.Identity.Users>()
-            .CreateAsync(PlatformDirectory.Instance, $"e2e-{EntityIds.New()}@example.test", token))!;
+        var users = services.GetRequiredService<tsauth::TerraScale.Authentication.Features.Identity.Users>();
+        var created = (await users.CreateAsync(PlatformDirectory.Instance, $"e2e-{EntityIds.New()}@example.test", token))!;
+        // A fixture seed issues its key as a freshly stepped-up sign-in would, bound to the account's current credentials.
+        var current = (await users.GetAsync(PlatformDirectory.Instance, created.Id, token))!;
+        var user = current with { StepUpBindings = current.AuthenticationBindings };
         var directory = services.GetRequiredService<PlatformDirectory>();
         var organization = await directory.CreateOrganizationAsync(user, "Isolated E2E", token);
         var project = await directory.CreateProjectAsync(user.Id, organization.Id, "E2E", token);
