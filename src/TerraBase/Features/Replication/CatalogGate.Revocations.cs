@@ -32,12 +32,15 @@ internal sealed partial class CatalogGate
 
     // Written after the destructive transaction and before its external anchor/response. The stream cannot acknowledge
     // this marker without holding that earlier transaction. A state-only anti-entropy join is deliberately insufficient.
-    private async Task<RevocationCut> MarkRevocationAsync(CancellationToken cancellationToken)
+    private async Task<RevocationCut> MarkRevocationAsync(AnchorSteps steps, CancellationToken cancellationToken)
     {
+        steps.Next("taking the catalog's writer");
         var store = await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        steps.Next("writing the revocation marker");
         var body = System.Text.Encoding.UTF8.GetBytes($$"""{"replica":{{_self.Id.Value}},"marker":"{{TerraBase.Primitives.EntityIds.New(_time)}}"}""");
         var stamp = await transaction.PutAsync(Revocations, _options.MachineId, body, cancellationToken).ConfigureAwait(false);
+        steps.Next("committing the revocation marker");
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         // Capture this exact commit, rather than rereading a row a delayed replica join might subsequently replace.
         return new RevocationCut(_self.Id, new Hlc(unchecked((ulong)stamp)));
