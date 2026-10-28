@@ -69,7 +69,7 @@ public static class AccountEndpoints
         return await AccountRequest.RequireAsync(http, sessions, accounts);
     }
 
-    public static IResult LoginRedirect(HttpContext http) => Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
+    public static IResult LoginRedirect(HttpContext http) => AccountRequest.LoginRedirect(http);
 }
 
 public sealed record AccountIdentityResponse(string UserId, string AccountId, string Name, string Email,

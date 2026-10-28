@@ -19,6 +19,9 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
     internal static readonly HttpRequestOptionsKey<PlanBody> Publication = new("TerraScale.StoragePlanPublication");
     // Views skip a publish this recent; the reconciler always publishes.
     private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
+    // A view never waits longer than this on TerraBase: the reconciler republishes within 30 seconds, while a
+    // stalled private listener otherwise held sign-in callbacks until their 30-second request budget (QA newuser:8).
+    private static readonly TimeSpan ViewBudget = TimeSpan.FromSeconds(2);
     private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
     private readonly ConcurrentDictionary<string, (string Plan, DateTimeOffset At)> published = new(StringComparer.Ordinal);
 
@@ -46,9 +49,11 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
         catch (IOException) { return; }
         var now = time.GetUtcNow();
         if (!reconcile && published.TryGetValue(organization.Id, out var last) && last.Plan == plan && now - last.At < Fresh) return;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (!reconcile) budget.CancelAfter(ViewBudget);
         try
         {
-            using var response = await PutAsync($"admin/organizations/{organization.Id}/plan", plan, cancellationToken);
+            using var response = await PutAsync($"admin/organizations/{organization.Id}/plan", plan, budget.Token);
             // 404 is Hobby for an organization TerraBase has no storage for yet: Hobby is its default.
             if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound && plan == "hobby" && organization.Projects.Count == 0)
             {
@@ -65,14 +70,14 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
             var enrolled = true;
             foreach (var project in organization.Projects.Keys)
             {
-                using var fallback = await PutAsync($"admin/projects/{project}/plan", plan, cancellationToken);
+                using var fallback = await PutAsync($"admin/projects/{project}/plan", plan, budget.Token);
                 enrolled &= fallback.IsSuccessStatusCode || fallback.StatusCode == HttpStatusCode.NotFound;
             }
             if (enrolled) published[organization.Id] = (plan, now);
         }
         // The page, webhook or reconciler pass that triggered this still succeeds; the next one publishes again.
         catch (HttpRequestException error) { logger.LogWarning("TerraBase plan publish failed for organization {Organization} ({ErrorType})", organization.Id, error.GetType().Name); }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { logger.LogWarning("TerraBase plan publish timed out for organization {Organization}", organization.Id); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { logger.LogWarning("TerraBase plan publish timed out for organization {Organization}", organization.Id); }
     }
 
     private async Task<HttpResponseMessage> PutAsync(string path, string plan, CancellationToken cancellationToken)

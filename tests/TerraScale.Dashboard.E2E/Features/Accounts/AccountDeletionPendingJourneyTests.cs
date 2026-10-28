@@ -24,8 +24,8 @@ public sealed class AccountDeletionPendingJourneyTests
             .And.Contains("Check deletion status").And.Contains("aria-live=\"polite\"").And.Contains("setTimeout")
             .And.DoesNotContain("/delete/continue").And.DoesNotContain("SJC");
         await Assert.That(pending.Headers.CacheControl!.NoStore).IsTrue();
-        var csrf = await CsrfAsync(client, "/account-deletion?retry=4");
-        using var last = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/status", new() { ["_csrf"] = csrf, ["_retry"] = "4" });
+        var csrf = await CsrfAsync(client, "/account-deletion?retry=19");
+        using var last = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/status", new() { ["_csrf"] = csrf, ["_retry"] = "19" });
         await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
         await Assert.That(await last.Content.ReadAsStringAsync()).Contains("Automatic checks have paused").And.DoesNotContain("setTimeout");
         await Assert.That(calls.All(method => method == "GET")).IsTrue();
@@ -90,6 +90,27 @@ public sealed class AccountDeletionPendingJourneyTests
         await Assert.That(await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(1))).IsTrue();
         await Assert.That(await response.Content.ReadAsStringAsync()).Contains("temporarily unavailable").And.Contains("setTimeout");
         await Assert.That((await scenario.State.ListAsync("account_deletions", default)).Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RevokedSessionFollowsItsDeletionToCompletionInsteadOfSignIn()
+    {
+        await using var scenario = await StartAsync();
+        using var client = await PendingClientAsync(scenario);
+        var calls = WireStatus(scenario, HttpStatusCode.NoContent);
+        using (var profile = await client.GetAsync("/profile?tab=danger"))
+        {
+            await Assert.That(profile.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(profile.Headers.Location!.OriginalString).IsEqualTo("/account-deletion")
+                .Because("ts-auth revoked the session when it accepted the deletion (QA newuser:27).");
+        }
+        var csrf = await CsrfAsync(client, "/account-deletion");
+        using var finished = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/status", new() { ["_csrf"] = csrf });
+        await Assert.That(finished.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
+        using (var after = await client.GetAsync("/profile?tab=danger"))
+            await Assert.That(after.Headers.Location!.OriginalString).StartsWith("/login?returnTo=")
+                .Because("Completion drops the recovery cookie, so later visits sign in normally.");
+        await Assert.That(calls.All(method => method == "GET")).IsTrue();
     }
 
     private static Task<Scenario> StartAsync() => Scenario.StartReceiptStatusAsync();

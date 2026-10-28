@@ -108,7 +108,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await Assert.That(await page.Locator("#key-name").InputValueAsync()).IsEqualTo(name);
                 await Assert.That(await page.Locator("#key-database").InputValueAsync()).IsEqualTo(databaseId);
                 await Assert.That(await page.Locator("#key-access-write").IsCheckedAsync()).IsTrue();
-                await SubmitAsync("#create-key form", "Create key");
+                await BrowserAudit.SubmitConfirmedAsync(page, fixture.Origin, () => page.Locator("#create-key form").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync());
                 var keySecret = page.Locator(".ts-apikeys-secret-value");
                 await keySecret.WaitForAsync();
                 var issuedKey = await keySecret.InnerTextAsync();
@@ -124,8 +124,8 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
 
                 await GotoAsync("/profile?tab=access-tokens");
                 await page.Locator("#accessTokenName").FillAsync(name);
-                // Creating a token signs in again through the hosted page; the callback renders the secret once.
-                await SubmitAsync("#profile-access-token-create form", "Create token");
+                // Creating a token confirms the action, then signs in again through the hosted page; the callback renders the secret once.
+                await BrowserAudit.SubmitConfirmedAsync(page, fixture.Origin, () => page.Locator("#profile-access-token-create form").GetByRole(AriaRole.Button, new() { Name = "Create token", Exact = true }).ClickAsync());
                 await page.GetByRole(AriaRole.Link, new() { Name = "Continue as Test User", Exact = true }).ClickAsync();
                 var secret = await page.Locator("#access-token-secret").InputValueAsync();
                 await Assert.That(secret).Matches("^tspat_[A-Za-z0-9_-]{43}$");

@@ -6,6 +6,10 @@ namespace TerraScale.Dashboard.Features.Profile;
 
 public static partial class AccountDeletion
 {
+    // ts-auth's closure waits on every storage region; 2, 4, 8, 16 s, then 30 s pauses cover about 8.5 minutes,
+    // so an ordinary closure lands on /account-deleted without the user returning to check.
+    private const int AutomaticChecks = 20;
+
     public static Task<IResult> ProgressAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity, ITsAuthPlatform platform) =>
         CheckStatusAsync(http, state, identity, platform);
 
@@ -29,10 +33,10 @@ public static partial class AccountDeletion
                 var form = await http.Request.ReadFormAsync(budget.Token);
                 if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
                 _ = int.TryParse(form["_retry"], out attempt);
-                attempt = Math.Min(5, Math.Clamp(attempt, 0, 5) + 1);
+                attempt = Math.Min(AutomaticChecks, Math.Clamp(attempt, 0, AutomaticChecks) + 1);
             }
             else _ = int.TryParse(http.Request.Query["retry"], out attempt);
-            attempt = Math.Clamp(attempt, 0, 5);
+            attempt = Math.Clamp(attempt, 0, AutomaticChecks);
             var operation = await ReadOperationAsync(http, state, identity);
             if (operation is null)
                 return PendingPage(http, "Deletion status needs attention", "This browser has no saved deletion receipt. Sign in to review your account; missing records do not confirm deletion.", attempt, 403, attention: true);
@@ -62,7 +66,7 @@ public static partial class AccountDeletion
     {
         http.Response.Headers.CacheControl = "no-store";
         var view = AccountDeletionPendingView.Create(new(new(title, DocumentModel.NonceFor(http)), title, message,
-            Csrf.Token(http), attempt, Math.Min(30000, 2000 << attempt), !attention && attempt < 5, attention));
+            Csrf.Token(http), attempt, Math.Min(30000, 2000 << Math.Min(attempt, 4)), !attention && attempt < AutomaticChecks, attention));
         view.StatusCode = statusCode;
         return view;
     }
