@@ -12,7 +12,7 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 
 ## Pull requests
 
-- Base all changes on the most recent `main`. Fetch `origin/main` before starting and rebase onto the latest `origin/main` before merging; CI must pass on that exact latest head.
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
 - Upload PNGs with `node scripts/upload-pr-images.mjs <PR-number> <file.png> [more.png ...]`; paste its Markdown into the PR body. The helper creates the orphan `pr-assets` branch on first use and preserves existing images. Use descriptive alt text and distinct filenames for each page/revision/viewport/theme.
 
 ### PR previews (required for every visible change)
