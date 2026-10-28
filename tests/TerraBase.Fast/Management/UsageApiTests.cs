@@ -928,6 +928,42 @@ public sealed class UsageApiTests
         await Assert.That(final.GetProperty("writes").GetInt64()).IsEqualTo(6);
     }
 
+    // Reads took the flush lock, so each analytics read waited for a whole SYSTEM flush, writer wait included (gru, 2026-10-28:
+    // p99 4.4 s). A read now answers from its own catalog snapshot while a flush is paused before or after its commit, and
+    // counts each operation exactly once in either window.
+    [Test]
+    public async Task A_usage_read_answers_during_a_paused_flush_and_counts_each_write_once()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        var window = new UsageWindow(UsageWindow.Hour, 0, 1);
+        await WriteAsync(data, database, "people", 2);
+
+        async Task<long> WritesAsync() =>
+            await meter.GetAsync(tenant, window, token).AsTask().WaitAsync(TimeSpan.FromSeconds(10), token) is UsageCounts counts
+                ? counts.Lifetime.Writes : -1;
+
+        foreach (var afterCommit in new[] { false, true })
+        {
+            var expected = await WritesAsync();
+            using var gate = afterCommit ? hook.PauseAfterCommit() : hook.PauseCommit();
+            var flush = meter.FlushAsync(token).AsTask();
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            await Assert.That(await WritesAsync()).IsEqualTo(expected).Because($"a read during a flush paused {(afterCommit ? "after" : "before")} its commit");
+            gate.Dispose();
+            await flush;
+            await Assert.That(await WritesAsync()).IsEqualTo(expected);
+            await WriteAsync(data, database, $"more{(afterCommit ? 1 : 0)}", 1);
+        }
+
+        await Assert.That(await WritesAsync()).IsEqualTo(4);
+    }
+
     [Test]
     public async Task A_flush_that_fails_after_its_commit_is_not_counted_again()
     {
