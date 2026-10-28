@@ -5,6 +5,9 @@ namespace TerraBase.Engine.Turso;
 internal sealed partial class TursoStorageEngine
 {
     internal const string IntentName = "_intents";
+
+    /// <summary>The intent journal's file name, which tells its store apart: it opens with SYSTEM's name and semantics.</summary>
+    internal const string IntentFile = IntentName + FileExtension;
     private TursoDatabaseStore? _intents;
 
     internal TursoDatabaseStore? IntentStore => Volatile.Read(ref _intents);
