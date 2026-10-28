@@ -159,8 +159,15 @@ class Tenant:
             status, _, _ = self.platform("/account", "DELETE", purpose="delete_account",
                 extra={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
         elif status == 202 and self.authorization:
-            status, _, _ = self.platform("/account", "DELETE", extra={"X-TerraScale-Deletion-Receipt": self.receipt,
-                "X-TerraScale-Deletion-Authorization": self.authorization}, expected=(202, 204))
+            try:
+                status, _, _ = self.platform("/account", "DELETE", extra={"X-TerraScale-Deletion-Receipt": self.receipt,
+                    "X-TerraScale-Deletion-Authorization": self.authorization}, expected=(202, 204))
+            except Failure:
+                # Closure may finish and revoke the caller between status and continuation.
+                status, _, _ = self.http.request(PLATFORM + "/account/deletion",
+                    headers={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
+                if status != 204:
+                    raise
         deadline = time.monotonic() + 180
         while status == 202 and time.monotonic() < deadline:
             time.sleep(2)
