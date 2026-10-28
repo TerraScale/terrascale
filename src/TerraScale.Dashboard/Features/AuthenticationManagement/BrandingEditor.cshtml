@@ -28,7 +28,7 @@
 <div class="ts-idp-brand-logo"><img data-brand-logo data-default-src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" referrerpolicy="no-referrer" hidden /><span data-brand-initial></span><span data-brand-name></span></div>
 <h3 data-brand-heading>Sign in</h3><p class="ts-idp-brand-subtitle" data-brand-subtitle>Welcome back. Use the email you signed up with.</p>
 <div class="ts-field"><label class="ts-label" for="auth-preview-email">Email</label><input class="ts-input" id="auth-preview-email" disabled placeholder="you@company.com" /></div>
-<div class="ts-field" data-brand-form="sign-up" hidden><label class="ts-label" for="auth-preview-password">Password</label><input class="ts-input" id="auth-preview-password" type="password" disabled /><span class="ts-hint">At least 8 characters.</span></div>
+<div class="ts-field" data-brand-form="sign-up" hidden><label class="ts-label" for="auth-preview-password">Password</label><input class="ts-input" id="auth-preview-password" type="password" disabled /><span class="ts-hint">At least 15 characters. A passphrase of a few words works well.</span></div>
 <div class="ts-stack" data-brand-form="sign-in">
 @if(Model.Settings.Methods.Passcode){<button class="ts-btn ts-btn-primary ts-btn-block" type="button" disabled>Email me a sign-in code @Icons.Render("ArrowRight", 16)</button>}
 @if(Model.Settings.Methods.Password){<button class="ts-btn @(Model.Settings.Methods.Passcode ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-block" type="button" disabled>@(Model.Settings.Methods.Passcode ? "Use a password instead" : "Continue with a password")</button>}
