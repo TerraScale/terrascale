@@ -15,7 +15,8 @@ public sealed class HomeMcpTools(IHttpContextAccessor http, AccountService accou
     {
         var normalized = range.Length == 0 ? "7d" : range;
         if (normalized is not ("1h" or "24h" or "7d" or "30d")) throw new AccountAccessException("Choose 1h, 24h, 7d or 30d.", 400);
-        var context = await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
+        var context = Scope(organizationId, projectId);
+        context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: context.Role.Length == 0);
         return HomeMcpPresentation.For(context, await measurements.ReadAsync(context, normalized, Cancellation), normalized);
     }
 

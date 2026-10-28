@@ -108,7 +108,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         await page.WaitForFunctionAsync("() => document.querySelector('#ts-notifications-body input[name=status]')?.value === 'unread' && document.querySelectorAll('#ts-notifications-body .ts-notification-list article').length === 1");
         await Assert.That(await dialog.Locator(".ts-notification-list article").CountAsync()).IsEqualTo(1);
         await Assert.That(await dialog.Locator("form:is([action='/api/v1/notifications/read-all'],[action^='/api/v1/notifications/read-all?'])").GetAttributeAsync("data-on:submit"))
-            .IsEqualTo("@post('/api/v1/notifications/read-all', {contentType:'form'})");
+            .StartsWith("@post('/api/v1/notifications/read-all?organizationId=").And.EndsWith("', {contentType:'form'})");
         var pageUrl = page.Url;
         var marked = await page.RunAndWaitForResponseAsync(
             () => dialog.GetByRole(AriaRole.Button, new() { Name = "Mark all read", Exact = true }).ClickAsync(),

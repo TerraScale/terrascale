@@ -12,13 +12,13 @@ public sealed record NotificationPage(ShellModel Shell, IReadOnlyList<Notificati
         var inbox = NotificationCommands.Inbox(shell.Context, status, int.TryParse(rawPage, out var parsed) ? parsed : 1);
         return new(shell, inbox.Items, inbox.Status, inbox.Unread, inbox.Critical, inbox.Total, inbox.Page, inbox.PageCount, dialog);
     }
-    public string Href(int page, bool dialog = false) => (dialog ? "/notifications/dialog" : "/notifications") +
-        (page > 1 || Status == "unread" ? "?" + string.Join('&', new[] { page > 1 ? "page=" + page : "", Status == "unread" ? "status=unread" : "" }.Where(item => item.Length > 0)) : "");
+    public string Href(int page, bool dialog = false) => WorkspaceUrl.For(Shell.Context, (dialog ? "/notifications/dialog" : "/notifications") +
+        (page > 1 || Status == "unread" ? "?" + string.Join('&', new[] { page > 1 ? "page=" + page : "", Status == "unread" ? "status=unread" : "" }.Where(item => item.Length > 0)) : ""));
 }
 
 public sealed record NotificationReadFormModel(NotificationPage Page, string? Id = null)
 {
-    public string Action => Id is null ? "/api/v1/notifications/read-all" : "/api/v1/notifications/" + Uri.EscapeDataString(Id) + "/read";
+    public string Action => WorkspaceUrl.For(Page.Shell.Context, Id is null ? "/api/v1/notifications/read-all" : "/api/v1/notifications/" + Uri.EscapeDataString(Id) + "/read");
 }
 
 public static class NotificationEndpoints
@@ -29,6 +29,7 @@ public static class NotificationEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);
+            context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
             await ApiKeyExpiryNotifications.RefreshAsync(http, context);
             return NotificationView.Create(Page(http, context));
         });
@@ -36,6 +37,7 @@ public static class NotificationEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
+            context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
             if (http.Request.Headers["Datastar-Request"] != "true") return Results.Redirect("/notifications");
             await ApiKeyExpiryNotifications.RefreshAsync(http, context);
             await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(Page(http, context, true)));
@@ -62,7 +64,7 @@ public static class NotificationEndpoints
             await NotificationCommands.MarkAsync(accounts, context, id, http.RequestAborted);
         }
         catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-        context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+        context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
         var page = NotificationPage.For(ShellModel.For(http, context, "Notifications"), form["status"], form["page"], true);
         if (http.Request.Headers["Datastar-Request"] == "true")
         {

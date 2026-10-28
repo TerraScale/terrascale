@@ -281,7 +281,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await ownerPage.Locator("#ts-notifications-menu").ClickAsync();
             await ownerPage.Locator("#ts-notifications-dialog[open]").WaitForAsync();
             await ownerPage.Locator("#ts-notifications-body").GetByText("You're all caught up", new() { Exact = true }).WaitForAsync();
-            await Assert.That(await ownerPage.Locator("#ts-notifications-body form").GetAttributeAsync("data-on:submit")).IsEqualTo("@post('/api/v1/notifications/read-all', {contentType:'form'})");
+            await Assert.That(await ownerPage.Locator("#ts-notifications-body form").GetAttributeAsync("data-on:submit")).StartsWith("@post('/api/v1/notifications/read-all?organizationId=").And.EndsWith("', {contentType:'form'})");
             await flow.ShotAsync(ownerPage, "notifications-dialog-desktop", accessibility: false);
             await ownerPage.Locator("#ts-notifications-dialog").GetByRole(AriaRole.Button, new() { Name = "Close", Exact = true }).ClickAsync();
             flow.Checks.Add("empty notification filtering/paging, native mutation authorization and live Datastar modal patch");
