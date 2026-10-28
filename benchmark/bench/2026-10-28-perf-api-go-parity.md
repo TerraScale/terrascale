@@ -1,63 +1,39 @@
 # Go SDK and raw HTTP parity qualification, 2026-10-28
 
-**Synthetic qualification only. No live cell was measured and no speedup is claimed.** These controls show the parity
-runner rejects the defects found in the first live attempt. They do not establish SDK overhead, gru/sjc/fra latency or
-parity. The earlier live attempt with `origin/fix/api-go-parity` `62adf93c4` reportedly produced an empty, rejected H2 cell.
-Its raw evidence is not in this branch; that result stays rejected, and nothing here replaces it.
+Synthetic qualification only: no live cell or speedup. Earlier live source `62adf93c4` reportedly emitted an empty, rejected H2 cell; its raw evidence is outside this branch and remains rejected. These controls do not establish SDK overhead or gru/sjc/fra latency.
 
-## Defects fixed
-
-| Defect in `62adf93c4` | Fix |
+| Defect in `62adf93c4` | Qualified behavior |
 | --- | --- |
-| Regions came from public `/v1/regions` | `TS_PEERS_FILE` rows `<node> <region> <ipv4>`, sorted and deduplicated. A malformed row rejects the file; gru, sjc and fra are required |
-| `apibench.RunStep` cancels at the window end and keeps only operations that finish inside it, so slow tails vanish and a slow cell can be empty | Parity-only loop: every read started in the 5 s window keeps its full latency. Throughput runs to the last measured completion. 2 s warmup, 30 s bounded drain, bounded HDR histogram. `RunStep` and other workloads are unchanged |
-| SDK retries after a valid 200 header and a failed body read were invisible | A cell is rejected when RoundTripper attempts differ from logical starts (warmup and window; readiness excluded). Failed body reads are also counted |
-| Mismatches returned a transport error, which bypassed the SDK's 401 refresh | Mismatches are counted and the response passes through unchanged, so the shipped refresh and retries still run |
-| Database name known only after setup; setup unbounded | `owned` row before the create; create, collection and seeds share one 60 s deadline; exact-name delete on a fresh 30 s context, after cancellation too |
-| Cleanup reported plain `accepted` | `deletion` is `logical_accepted`, `absent` or `failed`. `remote_erasure` is `unverified`. Uncertain create plus absent, or a failed delete, sets `reconcile_required` |
+| Public `/v1/regions` discovery | Strict `TS_PEERS_FILE` node/region/IPv4 rows, sorted/deduplicated; malformed rows and missing gru/sjc/fra rejected |
+| End-window cancellation censors tails | Separate parity loop retains every started-in-window latency through a bounded drain; throughput includes drain; `apibench.RunStep` unchanged |
+| SDK retries hidden behind 200 headers | Attempts must equal logical starts, warmup/window/drain included and readiness excluded; body-read failures counted |
+| Transport errors bypass SDK refresh | Mismatches counted and response passed through; shipped retries/401 refresh retained |
+| Unbounded setup and uncertain ownership | `owned` row before mutation; shared 60 s setup deadline; exact-name delete on independent 30 s context after cancellation too |
+| Ambiguous cleanup claim | `logical_accepted`, `absent` or `failed`; physical/remote erasure unverified; uncertain-create absence and delete failure require reconciliation |
 
-Evidence limit: RoundTripper counts cannot show net/http's internal wire replays. `got_conn` is diagnostic only.
+Original stack base `a78bd87a1`: controls `1f6dfb69a`, transport `150af4155`, cell `9c18b1526`, runner `dea7d77df48e278166edd8fdfdff01d784c0c583`. Serial publication rebased identical Go/module bytes onto actual predecessor merges #798/#799/#800; this report was condensed afterwards.
+SDK: public ts-go `07ffb51e1d66fb2f7a42673683e731bdfc26d158`, `go.sum` `h1:89Ytf7BpR2v42aQ/I4iw8bTRtvaJ781Ag3UrM6f7OSw=`. It has no retry setting, so existing `run` keeps shipped retries. No workflow, AGENTS, StorageFormat or production code changes.
 
-## Source
+All checks ran on beta, Go 1.27.3, through `TS_HEAVY_HOST=beta ts-heavy-any nice -n 19 … --repo terrascale --branch <branch>`. HTTPS fixtures use a per-test CA for api.terrascale.tech, normal certificate checks, no live calls or credentials, and parallel execution.
 
-- Stack on `origin/main` `a78bd87a1`, about 400 changed lines per layer, no workflow, AGENTS or StorageFormat edits:
-  `fix/api-go-parity-controls` `1f6dfb69a` (SDK pin, peers, measurement),
-  `fix/api-go-parity-transport` `150af4155` (attempt observer, HTTPS fixture),
-  `fix/api-go-parity-cell` `9c18b1526` (cell and rejection), then `fix/api-go-parity-runner` (lifecycle, this report).
-- SDK: public `github.com/TerraScale/ts-go` `07ffb51e1d66fb2f7a42673683e731bdfc26d158` via the `go.mod` replace,
-  `go.sum` `h1:89Ytf7BpR2v42aQ/I4iw8bTRtvaJ781Ag3UrM6f7OSw=`. This SDK has no retry setting, so `run` keeps the shipped retries.
-- Fixture: `httptest` HTTPS with h1/h2 for `api.terrascale.tech`, using a per-test CA leaf and normal verification
-  (no `InsecureSkipVerify`). It uses no live API, credentials, tenant or SSH. Every test is `t.Parallel()`.
-
-## Commands and outcomes
-
-All ran on beta through `TS_HEAVY_HOST=beta ts-heavy-any nice -n 19 bash -c '<cmd>' --repo terrascale --branch <branch>`, Go 1.27.3.
-
-| Branch head | Command | Outcome |
+| Checked source | Commands | Outcome |
 | --- | --- | --- |
-| cell `ec3c18d74` (pre-split) | `go test -race -count=1 -v -run Parity ./clients/go/`; `go test -race ./clients/go/ ./internal/apibench/` | pass |
-| runner `51f5235a2` | `go vet ./...`; `-v -run Parity`; then `go test -race -count=1 ./...` | vet ok, parity pass; **full run FAIL**: `clients/go` 2.721s, all other packages ok |
-| runner `51f5235a2` | `go test -race ./clients/go/` once, then eight more times | 9/9 ok (no repro alone) |
-| runner `d427a74d3` | test drains raised to 10 s; `go vet ./...`; `go test -race -count=1 ./...` ×3 | vet ok; 3/3 all 12 packages ok |
-| `1f6dfb69a`, `150af4155`, `9c18b1526` | `go vet ./clients/go`; `go test -race ./clients/go/ ./internal/apibench/` | each layer ok |
+| Cell `ec3c18d74`, pre-split | `go test -race -count=1 -v -run Parity ./clients/go/`; `go test -race ./clients/go/ ./internal/apibench/` | pass |
+| Runner `51f5235a2` | `go vet ./...`; parity controls; `go test -race -count=1 ./...` | vet/controls pass; full FAIL in clients/go after 2.721 s, other packages pass |
+| Same runner | `go test -race ./clients/go/` nine times | 9/9 pass |
+| Runner `d427a74d3` | Test drains 1→10 s; vet; full race suite three times | vet and all 12 packages pass in 3/3 runs |
+| Each original lower layer | `go vet ./clients/go`; `go test -race ./clients/go/ ./internal/apibench/` | pass |
 
-The full-run failure was not captured; `tail` truncated it. Likely cause: under full-module load, the runner test's 1 s
-drain expired and a cell was rejected early. This is unconfirmed, and the failure is kept here. The drain only waits as
-long as it needs, so raising it does not weaken any check.
+The full failure's diagnosis was lost to truncated output. A short test drain under module load is suspected, unconfirmed. The longer test-only drain preserves assertions, parallelism and cancellation checks, and waits only as needed.
 
-## Controls
-
-| Control | Shows |
+| Controls | Evidence |
 | --- | --- |
-| `TestParityRegionsFromPeersFile` (7 cases, plus unset and absent) | sort/dedupe, extra region kept; missing required, IPv6, extra field, bad region, empty rejected |
-| `TestParityMeasureKeepsWhatRunStepCensors` | the same 1.2 s read: `RunStep` max < 1 s, parity max ≥ 1.2 s |
-| `TestParityMeasureKeepsTailsPastTheWindow` | 700 ms tail kept, duration extends past the window, warmup excluded |
-| `TestParityMeasureBoundsTheDrain`, `...StopsOnCancellation` | 16 stuck reads reported unfinished, cut at the deadline; cancellation ends at once; nil latency/RPS; no op outlives the call |
-| `TestParityCellAcceptsExactReadsOnEveryLane` | raw-h1/raw-h2/sdk × c1/c16 accepted with attempts = starts and exact protocol counts |
-| `TestParityCellRejectsHiddenRetriesAndMismatches` | SDK body-read retry after a 200 (all results ok, zero bad headers) rejected as `attempts_differ_from_starts`; SDK 503 retry, wrong region, wrong version rejected |
-| `TestParityTransportRejectsWrongProtocol`, `TestParityCellKeepsSDKTokenRefresh` | h2 on an h1 lane counted bad; non-document route refused; SDK 401 refresh still works |
-| `TestParityRunner*` (3) | 3 regions × 36 cells then `logical_accepted`; zero requests before `owned`; a hung create is bounded and still deleted, `reconcile_required`; a cancelled run still deletes |
+| `TestParityRegionsFromPeersFile` | Sort/dedupe; extra region retained; bad/missing/IPv6/extra-field/empty/unset/absent inputs rejected |
+| `TestParityMeasureKeepsWhatRunStepCensors`, `...KeepsTailsPastTheWindow` | 1.2 s read dropped by RunStep retained by parity; 700 ms tail extends duration; warmup excluded |
+| `...BoundsTheDrain`, `...StopsOnCancellation` | 16 stuck reads reported unfinished and cancelled; missing latency/RPS null; no op outlives the call |
+| `TestParityCellAcceptsExactReadsOnEveryLane` | raw-h1/raw-h2/sdk × c1/c16 accepted with exact documents, starts=attempts and exact protocols |
+| `...RejectsHiddenRetriesAndMismatches` | Hidden 200-body retry, SDK 503 retry, wrong region and version rejected |
+| `TestParityTransportRejectsWrongProtocol`, `...KeepsSDKTokenRefresh` | Wrong protocol/auth host refused or counted; SDK 401 refresh still works |
+| Three `TestParityRunner*` cases | 36 cells per region; owned identity precedes mutation; bounded uncertain create and cancelled run still delete exact name; reconciliation marked |
 
-## Not done
-
-No live run and no quiet same-host before/after repeats. The PR waits for the parent after #795.
+RoundTripper counts cannot expose net/http internal wire replays; got_conn is diagnostic. Live setup/deletion, three quiet same-host before/after repeats, authenticated regional parity and normal rollout proof remain incomplete. Production mutation waits for reconciliation of the retained synthetic tenant.
