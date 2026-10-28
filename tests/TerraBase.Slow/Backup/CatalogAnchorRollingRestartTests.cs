@@ -28,17 +28,36 @@ public sealed class CatalogAnchorRollingRestartTests
         var bucket = new FakeS3();
         var members = new FakeMemberStore();
         var phases = new ConcurrentQueue<(Meter Meter, string Phase, double Seconds)>();
+        // Every writer hold of a second or more, by holder and call site: what an anchor that missed its deadline queued behind.
+        var holds = new ConcurrentQueue<(Meter Meter, DateTimeOffset Released, string Holder, string At, double Seconds)>();
         var meters = new Dictionary<Meter, string>();
         using var timings = new MeterListener();
         timings.InstrumentPublished = (instrument, listener) =>
         {
-            if (instrument.Name == "terrabase.replication.snapshot_import")
+            if (instrument.Name is "terrabase.replication.snapshot_import" or "terrabase.storage.writer_held")
             {
                 listener.EnableMeasurementEvents(instrument);
             }
         };
         timings.SetMeasurementEventCallback<double>((instrument, seconds, tags, _) =>
         {
+            if (instrument.Name == "terrabase.storage.writer_held")
+            {
+                string? holder = null, at = null;
+                foreach (var tag in tags)
+                {
+                    holder = tag.Key == "holder" ? tag.Value as string : holder;
+                    at = tag.Key == "at" ? tag.Value as string : at;
+                }
+
+                if (seconds >= 1 && holds.Count < 4096)
+                {
+                    holds.Enqueue((instrument.Meter, DateTimeOffset.UtcNow, holder ?? "?", at ?? "?", seconds));
+                }
+
+                return;
+            }
+
             foreach (var tag in tags)
             {
                 if (tag.Key == "phase" && phases.Count < 4096)
@@ -62,7 +81,7 @@ public sealed class CatalogAnchorRollingRestartTests
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(machine.Gate.IsOpen), timeout: TimeSpan.FromSeconds(30));
         }
 
-        var anchors = new ConcurrentQueue<(string Region, TimeSpan Took, bool Held)>();
+        var anchors = new ConcurrentQueue<(string Region, DateTimeOffset Started, TimeSpan Took, bool Held)>();
         var writes = 0;
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
 
@@ -79,9 +98,10 @@ public sealed class CatalogAnchorRollingRestartTests
         {
             for (var i = 0; i < count && !stop.IsCancellationRequested; i++)
             {
+                var at = DateTimeOffset.UtcNow;
                 var started = Stopwatch.GetTimestamp();
                 var held = await machine.Gate.TryAnchorAsync(token);
-                anchors.Enqueue((region, Stopwatch.GetElapsedTime(started), held));
+                anchors.Enqueue((region, at, Stopwatch.GetElapsedTime(started), held));
             }
         }
 
@@ -117,6 +137,16 @@ public sealed class CatalogAnchorRollingRestartTests
             foreach (var phase in phases.Where(phase => meters.ContainsKey(phase.Meter)))
             {
                 TestContext.Current!.OutputWriter.WriteLine($"SnapshotPhase region={meters[phase.Meter]} phase={phase.Phase} seconds={phase.Seconds:F6}");
+            }
+
+            foreach (var hold in holds.Where(hold => meters.ContainsKey(hold.Meter)))
+            {
+                TestContext.Current!.OutputWriter.WriteLine($"WriterHold region={meters[hold.Meter]} released={hold.Released:HH:mm:ss.fff} holder={hold.Holder} at={hold.At} seconds={hold.Seconds:F3}");
+            }
+
+            foreach (var anchor in anchors.Where(anchor => !anchor.Held || anchor.Took >= Within))
+            {
+                TestContext.Current!.OutputWriter.WriteLine($"LateAnchor region={anchor.Region} started={anchor.Started:HH:mm:ss.fff} seconds={anchor.Took.TotalSeconds:F3} held={anchor.Held}");
             }
         }
 
