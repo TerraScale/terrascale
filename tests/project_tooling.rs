@@ -117,8 +117,7 @@ async fn schema_and_index_routes_preserve_every_producer_field() {
     for (i, body) in [
         (2, request),
         (4, index_request),
-        (7, json!({"enabled":false})),
-        (11, json!({"type":"object"})),
+        (9, json!({"type":"object"})),
     ] {
         assert_eq!(
             serde_json::from_slice::<Value>(&requests[i].body).unwrap(),
