@@ -1,5 +1,6 @@
 //! Rust SDK versus raw HTTPS parity on an owned synthetic database; see README.md.
 //! `stage.sh` places this directory at `examples/api_parity/` of a clean ts-rust checkout.
+mod lifecycle;
 mod support;
 
 use std::fs::{File, OpenOptions};
@@ -10,6 +11,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use lifecycle::Creation;
 use reqwest::Version as Http;
 use serde::Deserialize;
 use serde_json::{json, value::RawValue, Value};
@@ -146,7 +148,7 @@ impl Run {
         &mut self,
         admin: &Client,
         home: &str,
-        created: &mut Option<String>,
+        created: &mut Creation,
     ) -> terrascale::v1::Result<Vec<Arc<Seed>>> {
         let database = admin.database(&self.db);
         let placement = DatabasePlacement {
@@ -154,8 +156,9 @@ impl Run {
             all_regions: Some(true),
             ..Default::default()
         };
+        *created = Creation::Uncertain;
         let info = database.create_with_placement(&placement).await?;
-        *created = Some(info.id.clone());
+        *created = Creation::Created(info.id.clone());
         self.emit(json!({"type": "database_created", "database": info.name, "id": info.id,
             "home_region": info.home_region, "replica_regions": info.replica_regions, "all_regions": info.all_regions}));
         database.create_collection(COLLECTION).await?;
@@ -184,7 +187,7 @@ impl Run {
         regions: &[String],
         home: &str,
         admin: &Client,
-        created: &mut Option<String>,
+        created: &mut Creation,
     ) -> Result<(), Failure> {
         let stop = self.stop.clone();
         let seeds = match stop
@@ -220,24 +223,22 @@ impl Run {
     }
 
     /// One bounded attempt to delete the exact owned database, by immutable ID once known.
-    async fn cleanup(&mut self, admin: &Client, selector: &str) -> bool {
-        let deleted = timeout(CLEANUP, admin.database(selector).delete_database()).await;
-        let (accepted, outcome, status, code) = match deleted {
-            Ok(Ok(())) => (true, "accepted", None, None),
-            Ok(Err(error)) if error.status() == Some(404) => (true, "not_found", Some(404), None),
-            Ok(Err(error)) => (
-                false,
-                "error",
-                error.status(),
-                error.code().map(str::to_owned),
-            ),
-            Err(_) => (false, "timeout", None, None),
+    async fn cleanup(&mut self, admin: &Client, created: &Creation) -> bool {
+        let selector = created.id().unwrap_or(&self.db).to_owned();
+        let deleted = timeout(CLEANUP, admin.database(&selector).delete_database()).await;
+        let (deletion, status, code) = match deleted {
+            Ok(Ok(())) => ("logical_accepted", None, None),
+            Ok(Err(error)) if error.status() == Some(404) => ("absent", Some(404), None),
+            Ok(Err(error)) => ("failed", error.status(), error.code().map(str::to_owned)),
+            Err(_) => ("failed", None, Some("timeout".into())),
         };
+        let reconcile = created.reconcile_required(deletion);
         self.emit(
-            json!({"type": "database_deletion", "database": selector, "accepted": accepted,
-            "outcome": outcome, "status": status, "code": code, "remote_erasure": "unverified"}),
+            json!({"type": "database_deletion", "database": selector, "accepted": !reconcile,
+            "deletion": deletion, "create": created.state(), "reconcile_required": reconcile,
+            "status": status, "code": code, "remote_erasure": "unverified"}),
         );
-        accepted
+        !reconcile
     }
 }
 
@@ -291,6 +292,7 @@ async fn session(credentials: &str, out_path: &str, stop: Stop) -> Result<(), Fa
         include_bytes!("main.rs").as_slice(),
         include_bytes!("support.rs"),
         include_bytes!("controls.rs"),
+        include_bytes!("lifecycle.rs"),
     ]
     .map(sha256);
     // The owned database identity is recorded before any mutation, for reconciliation.
@@ -307,10 +309,9 @@ async fn session(credentials: &str, out_path: &str, stop: Stop) -> Result<(), Fa
     if run.output_failed {
         return Err(Failure::Rejected("database identity could not be recorded"));
     }
-    let mut created = None;
+    let mut created = Creation::NotAttempted;
     let result = run.measured(&regions, &home, &admin, &mut created).await;
-    let selector = created.clone().unwrap_or_else(|| run.db.clone());
-    if run.cleanup(&admin, &selector).await {
+    if run.cleanup(&admin, &created).await {
         return if run.output_failed {
             Err(Failure::Rejected("output write failed"))
         } else {
@@ -318,7 +319,8 @@ async fn session(credentials: &str, out_path: &str, stop: Stop) -> Result<(), Fa
         };
     }
     // Retained for manual reconciliation: identity only, never credentials.
-    let recovery = json!({"project": run.project, "database": run.db, "id": created, "home": home});
+    let recovery = json!({"project": run.project, "database": run.db, "id": created.id(),
+        "create": created.state(), "home": home});
     let saved = OpenOptions::new()
         .write(true)
         .create_new(true)
