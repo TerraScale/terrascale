@@ -260,6 +260,45 @@ public sealed class ProjectApiKeyContractTests
     }
 
     [Test]
+    [Arguments("198.51.100.7", "198.51.100.7/32", true)]
+    [Arguments("198.51.100.0/24,2001:db8::/48", "2001:0db8:0000::/48,198.51.100.9/24,198.51.100.0/24", true)]
+    [Arguments("2001:db8::1", "2001:db8:0:0:0:0:0:1/128", true)]
+    [Arguments("", "", true)]
+    [Arguments("198.51.100.7/32", "0.0.0.0/0", false)]
+    [Arguments("198.51.100.7/32", "198.51.100.0/24", false)]
+    [Arguments("198.51.100.0/24,203.0.113.0/24", "198.51.100.0/24", false)]
+    [Arguments("198.51.100.7", "::ffff:198.51.100.7/128", false)]
+    [Arguments("198.51.100.7", "198.51.100.7/33", false)]
+    [Arguments("", "0.0.0.0/0", false)]
+    public async Task AllowlistEchoesMustBeTheSameCanonicalNetworkSet(string requested, string returned, bool same) =>
+        await Assert.That(ApiKeyService.SameCidrs(ApiKeyService.ParseCidrs(requested), ApiKeyService.ParseCidrs(returned))).IsEqualTo(same);
+
+    [Test]
+    [Arguments("create")]
+    [Arguments("key")]
+    [Arguments("project")]
+    [Arguments("rotate")]
+    public async Task EveryCredentialWriteRefusesAWidenedAllowlistEcho(string write)
+    {
+        using var wire = new Wire { EchoCidrs = ["0.0.0.0/0"] };
+        var service = new ApiKeyService(wire, TimeProvider.System);
+        HttpRequestException? rejected = null;
+        try
+        {
+            _ = write switch
+            {
+                "create" => await service.CreateAsync(Context(), "api-key", "Synthetic", DatabaseId, ["documents:read", "documents:write"], 0, ["198.51.100.7/32"], CancellationToken.None, "synthetic-proof"),
+                "key" => await service.SetAllowedCidrsAsync(Context(), KeyId, ["198.51.100.7/32"], CancellationToken.None),
+                "project" => (object)await service.SetProjectAllowedCidrsAsync(Context(), ["198.51.100.7/32"], CancellationToken.None),
+                _ => await service.RotateAsync(Context(), KeyId, 0, CancellationToken.None, "synthetic-proof"),
+            };
+        }
+        catch (HttpRequestException error) { rejected = error; }
+        await Assert.That(rejected).IsNotNull();
+        await Assert.That(rejected!.Message).Contains("different");
+    }
+
+    [Test]
     public async Task KeysExpiringWithinSevenDaysNotifyOnceWithTheirDate()
     {
         var now = new DateTimeOffset(2026, 10, 24, 12, 0, 0, TimeSpan.Zero);
@@ -297,6 +336,8 @@ public sealed class ProjectApiKeyContractTests
         public string Failure { get; init; } = "";
         public string CreatedBy { get; init; } = "user";
         public string? LastUsedAt { get; init; }
+        // Replaces the allowlist echoed by writes, as a provider that answers a different restriction would.
+        public string[]? EchoCidrs { get; init; }
         public string Database { get; init; } = DatabaseId;
         public int Requests { get; private set; }
         public string? Body { get; private set; }
@@ -343,6 +384,7 @@ public sealed class ProjectApiKeyContractTests
             using var sent = Body is { Length: > 0 } ? JsonDocument.Parse(Body) : null;
             var cidrs = sent is not null && sent.RootElement.TryGetProperty("allowed_cidrs", out var listed)
                 ? listed.EnumerateArray().Select(item => item.GetString()!).Select(cidr => cidr.Contains('/', StringComparison.Ordinal) ? cidr : cidr + (cidr.Contains(':', StringComparison.Ordinal) ? "/128" : "/32")).ToArray() : [];
+            if (request.Method != HttpMethod.Get && EchoCidrs is not null) cidrs = EchoCidrs;
             if (!Path.Contains("/api-keys", StringComparison.Ordinal))
                 return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { id = ProjectId, organization_id = OrganizationId, allowed_cidrs = cidrs }), Encoding.UTF8, "application/json") };
             var key = new

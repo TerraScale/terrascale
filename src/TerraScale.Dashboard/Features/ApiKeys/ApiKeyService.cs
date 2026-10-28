@@ -46,7 +46,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             request, stepUpProof, cancellationToken));
         var key = Map(context, result.ApiKey);
         if (key.Name != request.Name || key.DatabaseId != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
-            (request.AllowedCidrs!.Count == 0) != (key.AllowedCidrs!.Count == 0) || string.IsNullOrEmpty(result.Key))
+            !SameCidrs(request.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key))
             throw new HttpRequestException("Credential issuance returned different restrictions.");
         return new(key, result.Key);
     }
@@ -77,7 +77,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         var cidrs = CheckCidrs(allowedCidrs);
         var key = Map(context, await SendAsync(context, HttpMethod.Put, KeysPath(DatabaseService.Scope(context)) + "/" + keyId + "/allowed-cidrs",
             JsonContent.Create(new(cidrs), ApiKeyAuthJson.Default.AuthAllowedCidrsBody), cancellationToken));
-        if (key.Id != keyId || (cidrs.Length == 0) != (key.AllowedCidrs!.Count == 0)) throw new HttpRequestException("ts-auth returned a different key allowlist.");
+        if (key.Id != keyId || !SameCidrs(cidrs, key.AllowedCidrs!)) throw new HttpRequestException("ts-auth returned a different key allowlist.");
         return key;
     }
 
@@ -91,7 +91,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         var cidrs = CheckCidrs(allowedCidrs);
         var saved = ProjectCidrs(context, await SendAsync(context, HttpMethod.Put, ProjectPath(DatabaseService.Scope(context)) + "/allowed-cidrs",
             JsonContent.Create(new(cidrs), ApiKeyAuthJson.Default.AuthAllowedCidrsBody), cancellationToken));
-        if ((cidrs.Length == 0) != (saved.Count == 0)) throw new HttpRequestException("ts-auth returned a different project allowlist.");
+        if (!SameCidrs(cidrs, saved)) throw new HttpRequestException("ts-auth returned a different project allowlist.");
         return saved;
     }
 
@@ -140,7 +140,8 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
         }
         var key = Map(context, result.ApiKey);
-        if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
+        if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId ||
+            !SameCidrs(current.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key) || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
             throw new HttpRequestException("Credential rotation returned different restrictions.");
         return new(key, result.Key);
     }
@@ -149,6 +150,25 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
 
     public const int MaxPreviousSecretTtl = 86400;
     public const int MaxAllowedCidrs = 32;
+    // ts-auth must echo the exact network set it enforces. Compare canonical networks: host bits are masked,
+    // a bare address is /32 or /128, IPv6 spelling, duplicates and order do not matter, families never mix.
+    // An entry that does not parse never matches, so a widened or different echo is rejected.
+    internal static bool SameCidrs(IReadOnlyList<string> requested, IReadOnlyList<string> returned)
+    {
+        static string? Network(string value)
+        {
+            var parts = value.Trim().Split('/');
+            if (parts.Length > 2 || !IPAddress.TryParse(parts[0], out var ip) || ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.ScopeId != 0) return null;
+            var bytes = ip.GetAddressBytes();
+            var prefix = bytes.Length * 8;
+            if (parts.Length == 2 && (!int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out prefix) || prefix > bytes.Length * 8)) return null;
+            for (var index = 0; index < bytes.Length; index++) bytes[index] &= (byte)(0xff << Math.Clamp(8 * (index + 1) - prefix, 0, 8));
+            return new IPAddress(bytes) + "/" + prefix.ToString(CultureInfo.InvariantCulture);
+        }
+        var left = requested.Select(Network).ToHashSet(StringComparer.Ordinal);
+        var right = returned.Select(Network).ToHashSet(StringComparer.Ordinal);
+        return !left.Contains(null) && !right.Contains(null) && left.SetEquals(right);
+    }
     // Light checks only: ts-auth validates and canonicalizes each entry and answers 400 with the reason.
     public static string[] ParseCidrs(string text) => text.Split([',', ';', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private static string[] CheckCidrs(IReadOnlyList<string> cidrs)
