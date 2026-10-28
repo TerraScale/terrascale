@@ -81,7 +81,9 @@ public sealed class SqlCatalogJourneyTests(DashboardRootFixture fixture)
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql")
         { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = answer == "denied" ? "INSERT INTO audit VALUES (1)" : "SELECT 1" }) };
         request.Headers.Accept.ParseAdd("text/html");
-        using var run = await client.SendAsync(request);
+        using var posted = await client.SendAsync(request);
+        await Assert.That(posted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using var run = await client.GetAsync(posted.Headers.Location);
         await Assert.That(run.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var outcome = await run.Content.ReadAsStringAsync();
         await Assert.That(outcome).Contains("id=\"sql-result\"");
