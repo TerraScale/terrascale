@@ -255,7 +255,7 @@ internal static class ApiExamples
         "413" when id == "executeSql" => "sql_too_large, payload_too_large",
         "413" => "payload_too_large",
         "415" => "unsupported_media_type",
-        "421" => "misdirected_request, wrong_region",
+        "421" => "region_pin_mismatch, invalid_region_pin, misdirected_request, wrong_region",
         "429" when id == "recoverHistoricalRecords" => "storage_quota, tenant_busy, tenant_memory",
         "429" => "tenant_busy, tenant_memory",
         "503" when id is "dropCollection" or "runTransaction" => "capacity, storage_busy, unavailable",

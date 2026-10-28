@@ -205,8 +205,11 @@ public sealed class RegionTests
         await Assert.That(response.Headers.Contains(PinHeader)).IsFalse();
         var text = await response.Content.ReadAsStringAsync();
         using var body = JsonDocument.Parse(text);
-        await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("misdirected_request");
-        if (pin.Length > 0)
+        // A well-formed pin naming another region is a mismatch; anything else is not a pin at all. Both say how to recover.
+        await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo(replay is null ? "invalid_region_pin" : "region_pin_mismatch");
+        await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString()).Contains("gru-1");
+        // The body names the node's own region, never another pin.
+        if (pin.Length > 0 && pin != "gru-1")
         {
             await Assert.That(text).DoesNotContain(pin);
         }
