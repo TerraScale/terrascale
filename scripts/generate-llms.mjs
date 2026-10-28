@@ -29,6 +29,7 @@ const routes = [
   ['/guides/orm-sqlalchemy', 'Use SQLAlchemy 2 with sqlalchemy-libsql: models, create_all, queries and transactions'],
   ['/guides/errors', 'Typed errors, SDK retry behavior and uncertain mutation reconciliation'],
   ['/guides/rename-database', 'Upcoming database rename: dashboard, API, CLI, SDKs, stable IDs and name conflicts'],
+  ['/guides/change-sign-in-email', 'Upcoming sign-in email change, verification codes, cancellation and account-wide sign-out'],
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
   ['/guides/functions', 'Deploy JavaScript functions, call them over HTTPS, trigger them on changes or cron, read logs'],
   ['/guides/file-storage', 'Project file buckets, signed uploads and downloads, owner and role permissions, and shared storage allowances'],
