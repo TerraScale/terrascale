@@ -8,8 +8,8 @@ profiling and no runtime/GC change, and it reuses b1's frozen binaries.
 **Verdict: UNRESOLVED under the predeclared rule.** The b1 tail pattern did not repeat. In six new pairs, overhead p99 and
 client p99 were worse in only 2/6, with negative median deltas, and ops/s was worse in 3/6 with a positive median. The rule
 still returns UNRESOLVED because small/c16 client p50 was worse in 3/6 pairs with a median of +0.2 µs. A small regression is
-not ruled out, and no speedup is claimed. The allocation benefit repeated: B/op fell by 457–602 in all 21 unconfounded
-paired cells. The three small/c1 pairs hit by the slow first-cell state (see the first limitation) were +4,901, −5,752 and −6,026.
+not ruled out, and no speedup is claimed. The allocation benefit repeated: B/op fell by 457–602 in the 21 paired cells outside those affected by the slow first-cell state
+described below. The three small/c1 pairs hit by the slow first-cell state (see the first limitation) were +4,901, −5,752 and −6,026.
 
 ## Predeclared assessment (committed at 7ec90f295 before any timing)
 
@@ -22,8 +22,9 @@ higher) and ops/s (worse = after lower).
 
 Six alternating pairs: B A, A B, B A, A B, B A, A B. Each arm is a fresh process. The quiet gate is b1's, checked per arm:
 external CPU mean ≤ 25 % of one core, p95 ≤ 100 %, and no external builder at ≥ 10 %. Any failing arm invalidates the run.
-Nothing is dropped, retried or stopped early. The b1 pairs are shown for comparison only and are not pooled, because they
-produced the hypothesis.
+All 12 arms of the completed r2 run are retained. The aborted r1 launch and its restart are disclosed below;
+the planned no-retry constraint was not met across launches. The b1 pairs are shown for comparison only and are not pooled,
+because they produced the hypothesis.
 
 ## Provenance
 
@@ -93,8 +94,8 @@ The full table, including b1 recomputed, is `summary.md` in the raw folder.
 ## Limits
 
 - small/c1, the first cell in each process, ran in a slow state in 3 of 12 arms (after-1, before-3, before-4): about 5,060
-  ops/s against about 6,000, +5.5 KB/op and +52 µs CPU/op. The state hit both arms and is not attributable to the change.
-  It makes small/c1 pairs 1, 3 and 4 uninformative. The c16 cells, measured after it, were not checked for carry-over beyond
+  ops/s against about 6,000, +5.5 KB/op and +52 µs CPU/op. It occurred with both builds; its cause and whether the
+  candidate changes its probability are unestablished. Small/c1 pairs 1, 3 and 4 cannot isolate the matcher effect. The c16 cells, measured after it, were not checked for carry-over beyond
   their own spread.
 - Overhead and server percentiles come from a 16,384-sample reservoir per cell (about 177 k requests at small/c16), so p99
   rests on about 164 samples. They are wall time including instrumentation, not CPU. B/op and CPU µs/op are process-wide,
