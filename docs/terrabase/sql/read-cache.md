@@ -18,7 +18,11 @@ same work was repeated for every request.
   parsed every time.
 - **Template:** for a shared read without catalog relations, keyed by text, the JSON of the read tables' definitions,
   `describe` and the `_id` table of an `UPDATE`/`DELETE`. A template is everything `SqlRead.Compile` derives: CTE tables
-  and key filter, the statement's own CTEs, the rendered statement and the parameter affinities.
+  and key filter, the statement's own CTEs, the rendered statement, and its extra parameters.
+- **Extra parameters:** the coerced copies of compared parameters (SqlCoerce) and a point read's key copy are recorded as
+  "parameter n converted by affinity a" (or a literal key). `SqlRead.Bind` computes their values from each statement's
+  arguments. A parameter compared with a typed column always gets its copy, so the rendered text never depends on an
+  argument. A copy that converts nothing compares exactly as the parameter did.
 
 Arguments are still converted and bound for each statement, and every result is read from the database at that moment.
 
