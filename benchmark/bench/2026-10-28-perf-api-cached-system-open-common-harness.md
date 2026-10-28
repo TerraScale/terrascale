@@ -53,7 +53,7 @@ passed against both arms, and all 12 timed arms ran with 0 errors.
 | Compatibility smoke | before: 3 total, 3 succeeded, 0 failed, 0 skipped (6.69 s); after: 3 total, 3 succeeded, 0 failed, 0 skipped (6.69 s) |
 | Reservation | own slot plus 3 additional heavy slots reserved; no other job stopped. No live job shared this branch's ts-heavy key at launch. |
 | Timed window | 2026-10-28T12:06:38Z – 12:20:37Z, order B A, A B, B A, A B, B A, A B (`order.txt`) |
-| Raw | `beta:…/fix-terrabase-cached-system-open-ab-425dad0e…/benchmark/bench/cached-system-open-common-r2/` |
+| Raw | `beta:~/remote-builds/terrascale/fix-terrabase-cached-system-open-ab-425dad0ed56916cf56224d19eb2e76fc3465d797f40393a72b60c1d7f7ed1e48/benchmark/bench/cached-system-open-common-r2/` |
 | Raw hashes | `job.log` f2cfc70a…04f1, `summary.md` b447243a…0cc3, `cpu-processes.jsonl` 71e0db2b…b940, `before.all.sha256` 08eda91c…a371fd, `after.all.sha256` 657fadf6…d72d0d (identical to r1's after manifest), `frozen-key.sha256` 69496c3b…720d, `smoke-before.log` 788e27e4…39c539, `smoke-after.log` 0a99786c…1ee1a; every per-arm `.md`/`.log` is in `artifacts.sha256` (verified OK after the run) |
 
 ## Quiet gate (arms in run order)
@@ -150,8 +150,8 @@ or throughput claim. The −0.3 µs engine p50 and −0.7 µs engine p99 at medi
 ## Server over engine
 
 Overhead/engine p50 stays far above the < 10 % target in both arms (before-1 per-arm table: small/c1 2,063 %, small/c16
-2,078 %, medium/c1 1,836 %, medium/c16 1,679 %). This candidate saves about 360 B/op of ~30–46 KB/op. It does not move the
-server-over-engine ratio, and that target stays unmet.
+2,078 %, medium/c1 1,836 %, medium/c16 1,679 %). This candidate saves about 360 B/op of ~30–46 KB/op. It does not establish progress toward the
+server-over-engine target, which stays unmet.
 
 ## Limits
 
@@ -163,3 +163,16 @@ server-over-engine ratio, and that target stays unmet.
 - No live authenticated gru/sjc/fra evidence. No production request, credential or tenant was used: the benchmark's token is a
   synthetic test-issuer key.
 - The owned api-perf-01m610ttq4n8ew5y4q25aj5sc2 remains `reconcile_required`, untouched.
+
+## Root verification and disposition
+
+Root rechecked `artifacts.sha256` and both final binary manifests on beta after completion. All 44 paired-metric rows and all
+12 quiet-gate rows in this report match the raw `summary.md` exactly. The raw summary SHA-256 is
+`b447243a9f6248ddcf6282ae565d68265891c51e3802795376a14ce73fd90cc3`; `job.log` is
+`f2cfc70afc1dc08fd448ff3a8db5d96e829f8091cf04318406889da2ca6c04f1`; `artifacts.sha256` is
+`4373d7f40faaa478c5deffaea7d0326b5fab46ffcb603120afde78bd846e5e00`.
+
+The production candidate is held because the predeclared concern rule fired. Allocation reduction is reproduced; latency
+neutrality and a speedup are not established. This evidence branch contains only the two reports, based on current main;
+it includes neither the production candidate nor a new measurement. The frozen protocol remains available at commit
+`7b3980c656ed4fdd683296409d7f71b733b70a6c`, under `benchmark/scripts/api-cached-system-open-20261028.sh`.
