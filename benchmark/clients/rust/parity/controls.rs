@@ -154,6 +154,15 @@ async fn failures_stop_workers_and_stuck_cells_are_reported() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn worker_panics_are_recorded_as_failures() {
+    let panics: Op = Arc::new(|| Box::pin(async { panic!("synthetic worker failure") }));
+    let measured = measure(panics, 1).await;
+    assert_eq!((measured.started, measured.failed, measured.ok), (1, 1, 0));
+    assert_eq!(measured.error, Some("worker_failed"));
+    assert!(!measured.stuck);
+}
+
+#[tokio::test(start_paused = true)]
 async fn readiness_is_bounded_and_stop_interrupts() {
     assert!(!ready(&op(Duration::from_secs(20), Ok(()))).await);
     assert!(ready(&op(Duration::from_secs(1), Ok(()))).await);
