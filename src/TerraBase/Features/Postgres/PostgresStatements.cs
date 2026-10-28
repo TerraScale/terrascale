@@ -114,6 +114,11 @@ internal static partial class PostgresStatements
     private static PgOne Statement(List<Token> tokens)
     {
         var text = string.Concat(tokens.Select(token => token.ToString())).Trim();
+        if (RefusedPattern().Match(text) is { Success: true } refused)
+        {
+            return Unsupported(refused.Groups[1].Success ? "LISTEN, NOTIFY and UNLISTEN" : "extensions");
+        }
+
         PgKind? kind = text switch
         {
             _ when SavepointPattern().IsMatch(text) => null,
@@ -645,6 +650,10 @@ internal static partial class PostgresStatements
 
     [GeneratedRegex(@"\ADEALLOCATE\s+(?:PREPARE\s+)?(\w+|""[^""]+"")\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DeallocatePattern();
+
+    // PostgreSQL commands with no SQLite equivalent; without this they would reach the SQLite parser as syntax errors.
+    [GeneratedRegex(@"\A(?:((?:LISTEN|NOTIFY|UNLISTEN)\b)|(?:CREATE|ALTER|DROP)\s+EXTENSION\b)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RefusedPattern();
 
     [GeneratedRegex(@"\A(?:SAVEPOINT|RELEASE|ROLLBACK\s+(?:WORK\s+|TRANSACTION\s+)?TO)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SavepointPattern();
