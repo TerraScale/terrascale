@@ -53,7 +53,7 @@ Production uses persistent state and ts-auth authorization. In-memory demos, fak
 - Every region always serves. NetBird membership admits a node automatically; it discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
 - Discover authentication, database, and orchestrator endpoints automatically. Production runtime secrets come from OCI Vault through ts-orch using instance principal; CI secrets are GitHub Actions secrets. The complete secret inventory lives in the terrascale repository under `ops/secrets/`. Never put secret values in code or config.
 - Values have one correct setting in code. Expose no tuning knobs.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance, with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance, with a one-line reason.
 
 ## Agent Model Routing
 
@@ -80,12 +80,16 @@ Work has been lost while resolving conflicts. On any merge, rebase, cherry-pick,
 - Before resolving, save a backup ref, e.g. `git branch backup/<branch>-<date>`.
 - After resolving, show the final diff of the conflicted files and confirm build, lint, and tests pass.
 
-### Pull Requests
+### GitHub Workflow
 
-- Use `fj` for git and Forgejo.
-- CI is the gate: no local test/check run is required before pushing or opening a PR.
-- Target `main`. Enable auto-merge once checks pass.
-- Reviewers: `mariogk` and `terrascale-bot`. Forgejo rejects the PR author, so skip whoever opened the PR.
+- Use `git` over SSH to `github.com` for source control and `gh` for GitHub PRs, repository issues, Actions and releases. All repositories live under `github.com/TerraScale`.
+- Use Ku (`ku.mariogk.com`, via Ku MCP) for TerraScale tickets and `gh issue` for repository issues.
+- Open ready-for-review PRs targeting `main`, never drafts. Keep at most one open PR per repository per thread.
+- CI is the gate: no local test/check run is required before pushing or opening a PR. GitHub Actions uses GitHub-hosted runners only.
+- Rebase onto current `origin/main` before pushing. Merge only when checks pass on the exact latest PR head.
+- Use the merge queue: `gh pr merge --auto --squash`. Never bypass the queue or required checks.
+- No review approval is required; do not request reviewers. Fix and answer every reviewer finding before merging.
+- Use the T3 PR watcher for check and review updates; never run `gh` polling loops.
 - Send the PR link to the user when done.
 
 ### Evidence for User-Facing Changes
