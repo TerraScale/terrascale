@@ -54,6 +54,7 @@ namespace TraceAttribution
             double first = double.MaxValue, last = 0, contentionNs = 0, promoted0 = 0;
             var suspendAt = -1.0;
             var suspendForGc = false;
+            var shown = false;
             var gcPauses = new List<double>();
             var gcSuspending = new List<double>();
             var otherPauses = new List<double>();
@@ -107,6 +108,12 @@ namespace TraceAttribution
                     {
                         exceptions.Add(item.PayloadByName("ExceptionType") as string ?? "?", 1, false);
                     }
+                }
+
+                if (name == "EventCounters" && counters.Count == 0 && !shown)
+                {
+                    shown = true;
+                    Console.WriteLine($"# counter_shape {string.Join(',', item.PayloadNames)} {item.PayloadByName("Payload")?.GetType().FullName} {item}");
                 }
 
                 // EventCounters nest their fields in a Payload member of the Payload value.
