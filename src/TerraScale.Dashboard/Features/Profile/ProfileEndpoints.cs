@@ -13,6 +13,8 @@ public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", strin
         : PlatformDatabases.IsPlatform(Shell.Context.Organization?.Id) ? "viewer"
         : project.Role is "viewer" or "member" or "admin" ? project.Role : null;
     public int ScopeRoleCount => (Shell.Context.Role.Length > 0 ? 1 : 0) + (SelectedProjectRole is not null ? 1 : 0);
+    public bool EmailCodeEntry { get; init; }
+    public string? PendingEmail { get; init; }
     public string? DraftName { get; init; }
     public string? DraftPhone { get; init; }
     public string? InvalidField { get; init; }
@@ -74,6 +76,8 @@ public static class ProfileEndpoints
             IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity) =>
             AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, billing, identity));
         endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/unlink", SignInMethods.UnlinkAsync);
+        endpoints.MapPost("/api/v1/dashboard/profile/email-change", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, false));
+        endpoints.MapPost("/api/v1/dashboard/profile/email-change/confirm", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, true));
         endpoints.MapPost("/api/v1/dashboard/profile/sign-out-everywhere", SignOutEverywhereAsync);
         return endpoints;
     }

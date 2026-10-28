@@ -14,6 +14,7 @@ public static class AuthEndpoints
     public static void AddAuth(this IServiceCollection services)
     {
         services.AddSingleton<AuthFlows>();
+        services.AddSingleton<IAuthEmailChangeGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IAuthStepUpGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<TsAuthGateway>();
         services.AddSingleton<IAuthGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
@@ -44,6 +45,7 @@ public static class AuthEndpoints
     {
         var returnTo = Csrf.LocalRedirect(context.Request.Query["returnTo"].ToString());
         if (await sessions.ReadAsync(context) is not null) return HttpRedirects.SeeOther(returnTo);
+        if (context.Request.Query["emailChanged"] == "1") return EmailChangedView.Create(new("Sign-in email changed", DocumentModel.NonceFor(context)));
         return await AuthorizeAsync(context, returnTo, signUp: context.Request.Query["signup"] == "1");
     }
 
