@@ -38,10 +38,10 @@ public sealed record OperationChart(string Label, string Path, string Area, IRea
             return new ChartTick(Coordinate(coordinates[index].X), tick, step == 0 ? "start" : step == 4 ? "end" : "middle");
         }).ToArray();
         var path = Smooth(coordinates);
-        var stepSize = Math.Max(1, (points.Count + 59) / 60);
-        var columnWidth = 660d * stepSize / Math.Max(1, points.Count - 1);
+        // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
+        var columnWidth = 660d / Math.Max(1, points.Count - 1);
         var columns = new List<ChartColumn>();
-        for (var index = stepSize / 2; index < points.Count; index += stepSize)
+        for (var index = 0; index < points.Count; index++)
         {
             var x = coordinates[index].X;
             var header = page.Measurement.ActivityLabels.Count > index ? page.Measurement.ActivityLabels[index] : points[index].Start.UtcDateTime.ToString(page.Range == "30d" ? "MMM d" : "MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture);

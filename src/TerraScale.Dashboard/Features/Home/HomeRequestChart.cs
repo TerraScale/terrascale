@@ -30,10 +30,10 @@ public sealed record HomeRequestChart(string Label, string Area, IReadOnlyList<C
         }).ToArray();
         var paths = names.Select((name, index) => new RequestPath(name, names.Length == 1 ? "ts-chart-series-1" : "ts-cat-" + (index % 3 + 1), index < 3 ? "" : 3 * (index / 3 + 1) + " 5",
             ChartGeometry.Smooth(points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name)))).ToArray()))).ToArray();
-        var stepSize = Math.Max(1, (points.Count + 59) / 60);
-        var columnWidth = 660d * stepSize / Math.Max(1, points.Count - 1);
+        // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
+        var columnWidth = 660d / Math.Max(1, points.Count - 1);
         var columns = new List<RequestColumn>();
-        for (var index = stepSize / 2; index < points.Count; index += stepSize)
+        for (var index = 0; index < points.Count; index++)
         {
             var header = points[index].Start.UtcDateTime.ToString("MMM d HH:mm 'UTC'", CultureInfo.InvariantCulture);
             var rows = paths.Select((path, i) => new RequestTipRow(path.Name, points[index].Requests.GetValueOrDefault(path.Name).ToString("N0", CultureInfo.InvariantCulture), path.Class, path.Dash, C(14 + 6 + 17 * (i + 1.5)))).ToArray();

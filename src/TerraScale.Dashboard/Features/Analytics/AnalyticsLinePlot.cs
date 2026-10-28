@@ -53,8 +53,9 @@ public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<
             void Flush() { if (segment.Count == 0) return; segments.Add(ChartGeometry.Smooth(segment.ToArray())); segment.Clear(); }
         }
         var columns = new List<RequestColumn>();
-        var stepSize = Math.Max(1, (starts.Count + 59) / 60); var columnWidth = 660d * stepSize / Math.Max(1, starts.Count - 1);
-        for (var index = stepSize / 2; index < starts.Count; index += stepSize)
+        // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
+        var columnWidth = 660d / Math.Max(1, starts.Count - 1);
+        for (var index = 0; index < starts.Count; index++)
         {
             var header = starts[index].UtcDateTime.ToString("MMM d HH:mm 'UTC'", CultureInfo.InvariantCulture);
             var rows = paths.Select((path, order) => new RequestTipRow(path.Name, Missing(series[order], index) ? "Not reported" : format(series[order].Values[index]), path.Class, path.Dash, C(14 + 6 + 17 * (order + 1.5)))).ToArray();
