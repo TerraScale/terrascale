@@ -28,3 +28,10 @@ Artifacts: same managed checkout, `benchmark/bench/rust-lifecycle-qualification-
 SDK stage `~/remote-builds/rust-parity/lifecycle-qualification-a`, lock unchanged.
 Main SHA-256 `6b61709879220f1616907bdcac1ac6803ca20944e10e40d8090d1fc518e0080c`;
 binary `3f2074fdc1d37b21d8da8e4d0640725a720f7ee77509ddfb9b69978a3e458681`.
+
+Final gate correction: `c6fb8a6cf` also rejects a panicked worker rather than silently
+dropping its join error. Delta's same pinned full-stack command passed nine controls,
+eight CLI cases, rustfmt, both clippy checks and Release build, with no live calls.
+Artifacts: `benchmark/bench/rust-worker-qualification-a/` in the same managed checkout;
+stage `~/remote-builds/rust-parity/worker-qualification-a`, lock unchanged, binary
+`bee9d40d3655f55704e8e245ca5ae9ea49a0a481098d2fc94e4d6c07ea8f7110`.
