@@ -962,8 +962,9 @@ public sealed partial class TsAuthPlatformJourneyTests
                 var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(Producer, fallback)));
                 // The production transport, not the in-memory platform used by other journeys.
-                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform, TsAuthGateway>());
-                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(services => (TsAuthGateway)services.GetRequiredService<ITsAuthPlatform>()));
+                builder.Services.AddSingleton<TsAuthGateway>();
+                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(services => (TsAuthGateway)services.GetService(typeof(TsAuthGateway))!));
+                builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(services => (TsAuthGateway)services.GetService(typeof(TsAuthGateway))!));
                 configure?.Invoke(builder);
             });
             app.MapGet("/__test/project-context", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databaseService) =>
