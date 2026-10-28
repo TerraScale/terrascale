@@ -6,4 +6,4 @@ twine
 editables
 # GHSA-v4x8-3wr5-3wq8 / GHSA-9vhv-jxww-xfm5 affect 3.20.4..<4.2.1.
 # Fixed 4.2.1+ requires Python 3.11; 3.20.3 is the newest clean 3.10 version.
-filelock<3.20.4
+filelock<4.1.1
