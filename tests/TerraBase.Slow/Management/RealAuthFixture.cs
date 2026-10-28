@@ -243,7 +243,16 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         {
             if (_auth is not null)
             {
-                await _auth.DisposeAsync();
+                // Stopped before disposed: disposal alone cancels the workers outside the stop path, and the host reports each
+                // as a failed BackgroundService stopping the host, a teardown artifact that reads as a ts-auth crash.
+                try
+                {
+                    await _auth.StopAsync(CancellationToken.None);
+                }
+                finally
+                {
+                    await _auth.DisposeAsync();
+                }
             }
         }
         finally
