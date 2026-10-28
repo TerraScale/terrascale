@@ -197,6 +197,26 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
+    // Integration tests can join shipping without releasing a deliberately held side drill. A second manual pass
+    // excludes jobs still busy when it begins, so observing the drill's GET alone is not a shipping-completion barrier.
+    internal async Task WaitForShippingAsync(string prefix, CancellationToken cancellationToken)
+    {
+        Task? completion;
+        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            completion = _files.TryGetValue(prefix, out var file) ? file.Job?.Completion : null;
+        }
+        finally
+        {
+            _pass.Release();
+        }
+        if (completion is not null)
+        {
+            await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task<long> ScheduleAsync(long? pass, List<Task>? pending, CancellationToken cancellationToken)
     {
         using var scheduling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token);

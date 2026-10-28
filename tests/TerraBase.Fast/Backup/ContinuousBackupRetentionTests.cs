@@ -110,6 +110,7 @@ public sealed class ContinuousBackupRetentionTests
         try
         {
             baseline = await reading.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+            await backup.WaitForShippingAsync(File(database), token);
             (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "during")), new { text = "after snapshot" }, token)).EnsureSuccessStatusCode();
             var other = await api.CreateManagedDatabaseAsync("other");
             s3.BeforePut = (key, _) =>
