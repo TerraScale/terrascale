@@ -1,4 +1,4 @@
-# SQL table name reuse after an atomic drop (TS-1176)
+# SQL table name reuse after an atomic drop
 
 A `/sql/execute` transaction may create a table, insert rows and drop it. After
 commit, the name is available for another CREATE, locally and after replication.
