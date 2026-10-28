@@ -230,16 +230,26 @@ public static partial class McpOAuth
         // RFC 8707: the token request names the same resource the user consented to; the token serves only that MCP server.
         var resource = form["resource"];
         var target = failure is null && resource.Count != 1 ? "Send the resource the authorization request named." :
-            failure is null && CanonicalResource(context, resource.ToString()) != grant.Resource ? "resource does not match the authorization request." : null;
-        if (failure is null)
+            failure is null && (CanonicalResource(context, resource.ToString()) is not { } named || named != grant.Resource) ? "resource does not match the authorization request." : null;
+        // The code is spent: every path that does not issue the token forgets its grant, even when the client disconnects.
+        async Task ForgetAsync()
         {
-            var client = await McpRegistrations.ReadActiveAsync(state, time, grant.ClientId, context.RequestAborted);
-            if (client is not { FirstSignInCompletedAt: not null } || !client.RedirectUris.Any(uri => RedirectMatches(uri, grant.RedirectUri)))
-                failure = "This AI client registration expired or changed. Add the server again.";
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await tokens.ForgetGrantAsync(grant.CredentialId, cleanup.Token);
         }
+        try
+        {
+            if (failure is null && target is null)
+            {
+                var client = await McpRegistrations.ReadActiveAsync(state, time, grant.ClientId, context.RequestAborted);
+                if (client is not { FirstSignInCompletedAt: not null } || !client.RedirectUris.Any(uri => RedirectMatches(uri, grant.RedirectUri)))
+                    failure = "This AI client registration expired or changed. Add the server again.";
+            }
+        }
+        catch { await ForgetAsync(); throw; }
         if (failure is not null || target is not null)
         {
-            await tokens.ForgetGrantAsync(grant.CredentialId, context.RequestAborted);
+            await ForgetAsync();
             return failure is not null ? OAuthError("invalid_grant", failure) : OAuthError("invalid_target", target!);
         }
         try

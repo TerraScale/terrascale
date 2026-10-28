@@ -291,6 +291,7 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
     [Arguments(null)]
     [Arguments("https://mcp.terrascale.tech/")]
     [Arguments("https://attacker.example/mcp")]
+    [Arguments("unbound:https://attacker.example/mcp")]
     public async Task RedemptionNamingAnotherResourceBurnsTheCodeWithoutAToken(string? redeemed)
     {
         IDashboardState state = null!;
@@ -319,6 +320,17 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         using var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", form);
         using var granted = await HttpJourney.HostedSignInAsync(browser, allowed, persona.Email, persona.Password);
         var code = QueryHelpers.ParseQuery(granted.Headers.Location!.Query)["code"].ToString();
+        var credential = (await state.ListAsync(McpOAuth.CodeCollection, default)).Single().Document.GetProperty("CredentialId").GetString()!;
+        await Assert.That(await state.GetAsync("auth_credentials", credential, default)).IsNotNull();
+        if (redeemed?.StartsWith("unbound:", StringComparison.Ordinal) == true)
+        {
+            // A code stored without a resource must not match a resource that canonicalizes to nothing.
+            var stored = (await state.ListAsync(McpOAuth.CodeCollection, default)).Single();
+            var unbound = System.Text.Json.Nodes.JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
+            unbound.Remove("Resource");
+            await state.PutAsync(McpOAuth.CodeCollection, stored.Id, JsonSerializer.SerializeToElement(unbound), TerraBasePrecondition.Matches(stored.Version), default);
+            redeemed = redeemed["unbound:".Length..];
+        }
         var exchange = new Dictionary<string, string>
         { ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = Callback, ["client_id"] = id, ["code_verifier"] = verifier };
         if (redeemed is not null) exchange["resource"] = redeemed;
@@ -335,6 +347,7 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         var tokens = await state.GetAsync(AccessTokens.Collection, AccountService.AccountId(persona.Subject), default);
         await Assert.That(tokens is null || tokens.Document.Deserialize<AccessTokens.TokenSet>()!.Tokens.All(token => token.McpClientId != id)).IsTrue();
         await Assert.That(await state.ListAsync(McpOAuth.CodeCollection, default)).IsEmpty();
+        await Assert.That(await state.GetAsync("auth_credentials", credential, default)).IsNull();
     }
 
     private static string ConsentPath(string id) => QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>
