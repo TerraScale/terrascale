@@ -106,12 +106,18 @@ public sealed class ContinuousBackupRetentionTests
         time.Advance(TimeSpan.FromSeconds(10));
         var first = backup.RunOnceAsync(token);
         Task? second = null;
+        Task? third = null;
         string baseline;
         try
         {
             baseline = await reading.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
             await backup.WaitForShippingAsync(File(database), token);
             (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "during")), new { text = "after snapshot" }, token)).EnsureSuccessStatusCode();
+            time.Advance(TimeSpan.FromDays(2) + TimeSpan.FromHours(2));
+            second = backup.RunOnceAsync(token);
+            // Establish expiry ownership before adding the independent upload. Manual passes also join drills;
+            // admitting a fleet of new files first can fill their joins behind the deliberately held drill.
+            await Task.WhenAll(expiring.Task, cancelled.Task).WaitAsync(TimeSpan.FromSeconds(30), token);
             var other = await api.CreateManagedDatabaseAsync("other");
             s3.BeforePut = (key, _) =>
             {
@@ -121,15 +127,22 @@ public sealed class ContinuousBackupRetentionTests
                 }
                 return Task.CompletedTask;
             };
-            time.Advance(TimeSpan.FromDays(2) + TimeSpan.FromHours(2));
-            second = backup.RunOnceAsync(token);
-            await Task.WhenAll(expiring.Task, cancelled.Task, uploading.Task).WaitAsync(TimeSpan.FromSeconds(30), token);
+            time.Advance(TimeSpan.FromSeconds(10));
+            third = backup.RunOnceAsync(token);
+            try
+            {
+                await Task.WhenAll(expiring.Task, cancelled.Task, uploading.Task).WaitAsync(TimeSpan.FromSeconds(30), token);
+            }
+            catch (TimeoutException error)
+            {
+                throw new TimeoutException($"expiry={expiring.Task.Status}; cancellation={cancelled.Task.Status}; upload={uploading.Task.Status}; backup={JsonSerializer.Serialize(backup.Status)}", error);
+            }
             await Assert.That(s3.Objects.ContainsKey(baseline)).IsTrue();
         }
         finally
         {
             release.TrySetResult();
-            await Task.WhenAll(first, second ?? Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(60), token);
+            await Task.WhenAll(first, second ?? Task.CompletedTask, third ?? Task.CompletedTask).WaitAsync(TimeSpan.FromSeconds(60), token);
         }
         await Assert.That(s3.Objects.ContainsKey(baseline)).IsFalse();
         var record = await RecordAsync(api, database);
