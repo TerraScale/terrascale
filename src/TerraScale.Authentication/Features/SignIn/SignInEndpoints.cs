@@ -96,13 +96,14 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
             return sso;
         }
 
+        // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
+        using var reservation = mail.Reserve();
         if (await hosted.LimitMailAsync(address, ip, cancellationToken) is { } wait)
         {
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        using var reservation = mail.Reserve();
         cancellationToken.ThrowIfCancellationRequested();
         await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
 

@@ -43,6 +43,17 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
         => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthStore.NewId(), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>
+    /// A new account and the operations that create it: the email claim first (it fails when the address has an
+    /// account), then the user record. Committed by a caller's own transaction (sign-up redemption).
+    /// </summary>
+    internal (UserRecord User, StoreOperation[] Operations) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId)
+    {
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
+        return (user, [AuthStore.Claim(instanceId, EmailKind, normalizedEmail, user.Id),
+            AuthStore.Create(AuthStore.UserCollection, instanceId, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord))]);
+    }
+
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));

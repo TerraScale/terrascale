@@ -135,8 +135,8 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         key["x"] = "not-a-coordinate";
         var written = await database.PutDocumentAsync(AuthStore.SigningKeyCollection, stored.Id, JsonSerializer.SerializeToElement(key), TerraBasePrecondition.Matches(stored.Version));
 
-        // It was ready, so the next pass that reads the broken key flips it.
-        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
+        // It was ready, so the third consecutive pass that reads the broken key flips it.
+        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(45))).IsTrue();
         using var response = await auth.Client.GetAsync("/readyz");
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var after = (await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single();
