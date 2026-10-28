@@ -1,0 +1,72 @@
+diff --git a/src/TerraBase/Features/UserAuth/ValidatedTokens.cs b/src/TerraBase/Features/UserAuth/ValidatedTokens.cs
+index adea0d5db..dd0a75165 100644
+--- a/src/TerraBase/Features/UserAuth/ValidatedTokens.cs
++++ b/src/TerraBase/Features/UserAuth/ValidatedTokens.cs
+@@ -1,3 +1,4 @@
++using System.Buffers;
+ using System.Collections.Concurrent;
+ using System.Net;
+ using System.Security.Cryptography;
+@@ -26,7 +27,31 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
+         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
+         string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key);
+ 
+-    public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
++    public static string KeyOf(string token)
++    {
++        // Bound stack use; oversized credentials use scratch that is cleared before returning it.
++        var length = Encoding.UTF8.GetByteCount(token);
++        byte[]? pooled = null;
++        Span<byte> bytes = length <= 2048 ? stackalloc byte[length] : (pooled = ArrayPool<byte>.Shared.Rent(length)).AsSpan(0, length);
++        try
++        {
++            _ = Encoding.UTF8.GetBytes(token, bytes);
++            Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
++            _ = SHA256.HashData(bytes, digest);
++            return Convert.ToBase64String(digest);
++        }
++        finally
++        {
++            if (pooled is null)
++            {
++                CryptographicOperations.ZeroMemory(bytes);
++            }
++            else
++            {
++                ArrayPool<byte>.Shared.Return(pooled, clearArray: true);
++            }
++        }
++    }
+ 
+     public bool TryGet(string key, IReadOnlyList<SecurityKey> keys, out Accepted accepted)
+     {
+diff --git a/tests/TerraBase.Fast/Management/UserAuthTests.cs b/tests/TerraBase.Fast/Management/UserAuthTests.cs
+index 6bc3299e0..d8f8e9ada 100644
+--- a/tests/TerraBase.Fast/Management/UserAuthTests.cs
++++ b/tests/TerraBase.Fast/Management/UserAuthTests.cs
+@@ -69,7 +69,9 @@ public sealed class UserAuthTests
+     }
+ 
+     [Test]
+-    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer()
++    [Arguments(0)]
++    [Arguments(4096)]
++    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer(int padding)
+     {
+         var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+         var clock = new FakeTimeProvider(now);
+@@ -79,7 +81,13 @@ public sealed class UserAuthTests
+         string Mint()
+         {
+             return api.Issuer.Mint(EntityIds.New().ToString(), token =>
+-                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
++            {
++                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime);
++                if (padding > 0)
++                {
++                    token.Claims["padding"] = new string('p', padding);
++                }
++            });
+         }
+         using var warm = api.WithToken(Mint());
+         using var cold = api.WithToken(Mint());
