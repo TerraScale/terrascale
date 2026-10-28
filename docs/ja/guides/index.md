@@ -19,7 +19,7 @@ Use the [quickstart](/ja/getting-started/) to establish one working application 
 - [Connect with libSQL clients](/ja/guides/libsql-clients): SQL from the official libSQL clients (pending).
 - [Use Drizzle ORM](/ja/guides/orm-drizzle), [Prisma ORM](/ja/guides/orm-prisma) and [SQLAlchemy](/ja/guides/orm-sqlalchemy): ORMs over the libSQL clients.
 - [Errors and safe retries](/ja/guides/errors): typed failures and uncertain write outcomes.
-- [Indexes](/ja/guides/indexes): secondary indexes, recommendations and automatic indexing.
+- [Indexes](/ja/guides/indexes): secondary indexes, recommendations and query shapes.
 - [Schema validation](/ja/guides/schema-validation): JSON Schema checks and unique keys per collection.
 - [Generate TypeScript document models](/ja/guides/schema-validation#generate-typescript-document-models) (upcoming): Node tooling for declared collection schemas.
 - [Schema preview and request diagnostics](/ja/guides/schema-preview-request-diagnostics) (pending rollout): bounded historical validation and request IDs for support.

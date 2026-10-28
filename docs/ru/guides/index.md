@@ -19,7 +19,7 @@ Use the [quickstart](/ru/getting-started/) to establish one working application 
 - [Connect with libSQL clients](/ru/guides/libsql-clients): SQL from the official libSQL clients (pending).
 - [Use Drizzle ORM](/ru/guides/orm-drizzle), [Prisma ORM](/ru/guides/orm-prisma) and [SQLAlchemy](/ru/guides/orm-sqlalchemy): ORMs over the libSQL clients.
 - [Errors and safe retries](/ru/guides/errors): typed failures and uncertain write outcomes.
-- [Indexes](/ru/guides/indexes): secondary indexes, recommendations and automatic indexing.
+- [Indexes](/ru/guides/indexes): secondary indexes, recommendations and query shapes.
 - [Schema validation](/ru/guides/schema-validation): JSON Schema checks and unique keys per collection.
 - [Generate TypeScript document models](/ru/guides/schema-validation#generate-typescript-document-models) (upcoming): Node tooling for declared collection schemas.
 - [Schema preview and request diagnostics](/ru/guides/schema-preview-request-diagnostics) (pending rollout): bounded historical validation and request IDs for support.
