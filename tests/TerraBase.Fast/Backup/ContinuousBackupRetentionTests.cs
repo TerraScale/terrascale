@@ -61,7 +61,7 @@ public sealed class ContinuousBackupRetentionTests
     }
 
     [Test]
-    public async Task Retention_joins_an_active_drill_before_expiring_its_inputs_while_other_files_ship()
+    public async Task Expiry_cancels_and_joins_an_active_drill_before_deleting_its_inputs_while_other_files_ship()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var s3 = new FakeS3();
@@ -69,34 +69,48 @@ public sealed class ContinuousBackupRetentionTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         var backup = (ContinuousBackup)api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
-        time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(token);
-        var baseline = s3.Objects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
-        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var reading = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expiring = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var uploading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = 0;
         s3.BeforeGet = async (key, cancellationToken) =>
         {
-            if (key == baseline)
+            if (key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)
+                && Interlocked.CompareExchange(ref held, 1, 0) == 0)
             {
-                reading.TrySetResult();
-                await release.Task.WaitAsync(cancellationToken);
+                reading.TrySetResult(key);
+                try
+                {
+                    await release.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    cancelled.TrySetResult();
+                    // Even after cancellation, deletion must join the reader before removing its input.
+                    await release.Task.WaitAsync(token);
+                    throw;
+                }
             }
         };
         backup.RetentionWaiting = file =>
         {
             if (file == File(database))
             {
-                waiting.TrySetResult();
+                expiring.TrySetResult();
             }
         };
-        time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
+        time.Advance(TimeSpan.FromSeconds(10));
         var first = backup.RunOnceAsync(token);
         Task? second = null;
+        string baseline;
         try
         {
-            await reading.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+            baseline = await reading.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+            (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "during")), new { text = "after snapshot" }, token)).EnsureSuccessStatusCode();
             var other = await api.CreateManagedDatabaseAsync("other");
             s3.BeforePut = (key, _) =>
             {
@@ -106,10 +120,9 @@ public sealed class ContinuousBackupRetentionTests
                 }
                 return Task.CompletedTask;
             };
-            // The baseline now exceeds the unchanged retention cap, while the previous day's drill still reads it.
-            time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromHours(2));
+            time.Advance(TimeSpan.FromDays(2) + TimeSpan.FromHours(2));
             second = backup.RunOnceAsync(token);
-            await Task.WhenAll(waiting.Task, uploading.Task).WaitAsync(TimeSpan.FromSeconds(30), token);
+            await Task.WhenAll(expiring.Task, cancelled.Task, uploading.Task).WaitAsync(TimeSpan.FromSeconds(30), token);
             await Assert.That(s3.Objects.ContainsKey(baseline)).IsTrue();
         }
         finally

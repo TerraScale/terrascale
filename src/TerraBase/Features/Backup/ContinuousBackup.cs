@@ -782,20 +782,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             {
                 try
                 {
-                    // A drill can still be reading an older baseline. Join it before deleting any of its inputs;
-                    // this file's pending WAL has already shipped, and other files retain their independent jobs.
-                    var previous = file.Side;
-                    if (previous is { Completion.IsCompleted: false })
-                    {
-                        RetentionWaiting?.Invoke(file.Prefix);
-                    }
-                    await file.StopSideAsync().ConfigureAwait(false);
-                    if (previous is { Stored: not null, Collected: false } && previous.Snapshot.Generation == file.Generation
-                        && !previous.Cancellation.IsCancellationRequested)
-                    {
-                        previous.Collected = true;
-                        CollectSnapshot(file, previous);
-                    }
                     await RetainAsync(file, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -1148,6 +1134,20 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         await slot.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            while (true)
+            {
+                Task? retained;
+                lock (file)
+                {
+                    retained = file.Retaining?.Task;
+                    if (retained is null)
+                    {
+                        side.Drilling = true;
+                        break;
+                    }
+                }
+                await retained.WaitAsync(token).ConfigureAwait(false);
+            }
             await DrillAsync(file, side.Snapshot, live, token).ConfigureAwait(false);
         }
         finally
@@ -1361,6 +1361,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         /// <summary>Whether the file's pass has taken in <see cref="Stored"/>.</summary>
         public bool Collected { get; set; }
 
+        public bool Drilling { get; set; }
+
         public Task Completion { get; set; } = Task.CompletedTask;
     }
 
@@ -1458,6 +1460,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public DateTimeOffset SizedAt { get; set; } = DateTimeOffset.MinValue;
 
         public long? SizeBytes { get; set; }
+
+        // Guarded by locking this file: deletion and the start of a drill cannot race.
+        public TaskCompletionSource? Retaining { get; set; }
 
         public int RetentionDays { get; set; }
 
