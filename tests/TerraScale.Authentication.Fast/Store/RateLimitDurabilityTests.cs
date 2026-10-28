@@ -16,7 +16,7 @@ using TerraScale.Authentication.Store;
 namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
-/// Rate-limit buckets and the readiness probe's document are written local_durable; every other write still waits for another region's durable acknowledgement.
+/// Rate-limit buckets, the mail admission budget and the readiness probe's document are written local_durable; every other write still waits for another region's durable acknowledgement.
 /// </summary>
 public sealed class RateLimitDurabilityTests
 {
@@ -35,7 +35,9 @@ public sealed class RateLimitDurabilityTests
 
         var bucket = $"{Database}/{AttemptLimiter.Collection}/documents/by-key?id=01M5X2000000000000000000AA";
         var user = $"{Database}/users/documents/by-key?id=01M5X2000000000000000000AB";
+        var admission = $"{Database}/email_admission/documents/by-key?id=01M5X2000000000000000000AC";
         using (await client.PutAsync(bucket, new StringContent("{}")))
+        using (await client.PutAsync(admission, new StringContent("{}")))
         using (await client.PutAsync(user, new StringContent("{}")))
         using (await client.DeleteAsync(bucket))
         {
@@ -43,6 +45,7 @@ public sealed class RateLimitDurabilityTests
 
         await Assert.That(recorder.Durability($"PUT {AttemptLimiter.Collection}")).IsEqualTo("");
         await Assert.That(recorder.Durability($"DELETE {AttemptLimiter.Collection}")).IsEqualTo("");
+        await Assert.That(recorder.Durability("PUT email_admission")).IsEqualTo("");
         await Assert.That(recorder.Durability("PUT users")).IsEqualTo("remote_durable");
     }
 

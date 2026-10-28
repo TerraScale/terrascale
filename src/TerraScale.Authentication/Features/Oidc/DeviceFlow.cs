@@ -21,12 +21,18 @@ namespace TerraScale.Authentication.Features.Oidc;
 /// <summary>
 /// The RFC 8628 device flow of the ts CLI. OpenIddict issues the codes at <c>/{slug}/oauth/device</c> and redeems them
 /// at the token endpoint; the user approves on ts-auth's own hosted page, <see cref="PagePath"/>, its end-user
-/// verification endpoint. Device and user codes live 10 minutes (OpenIddict's default).
+/// verification endpoint. Device and user codes live <see cref="Lifetime"/>.
 /// </summary>
 public static class DeviceFlow
 {
     /// <summary>The hosted verification page, under the public origin.</summary>
     public const string PagePath = "/ui/" + OidcIssuer.Slug + "/device";
+
+    /// <summary>
+    /// How long device and user codes live: long enough for a new user to sign up, wait for the emailed code (which
+    /// lives as long) and approve.
+    /// </summary>
+    public static readonly TimeSpan Lifetime = Passcodes.Lifetime;
 
     /// <summary>The minimum polling interval announced to the device and enforced with <c>slow_down</c>.</summary>
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
@@ -73,7 +79,7 @@ public static class DeviceFlow
         if ((await http.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal is not { } device
             || string.IsNullOrEmpty(device.GetClaim(Claims.ClientId)))
         {
-            return SignInPageModel.Render(http, page with { Error = "Check the code in your terminal. Codes expire after 10 minutes.", ErrorTitle = "That code is wrong or expired" },
+            return SignInPageModel.Render(http, page with { Error = "Check the code in your terminal. Codes expire after 30 minutes.", ErrorTitle = "That code is wrong or expired" },
                 StatusCodes.Status400BadRequest);
         }
 
@@ -247,7 +253,7 @@ public sealed class DeviceAuthorizationEndpoint : EndpointWithoutRequest<IResult
         Post("/{slug}/oauth/device");
         Name("oauth_device_authorization");
         Summary("Device authorization endpoint");
-        Description("RFC 8628 for the public ts CLI client (client_id 00000000000000000000000007, display name ts-cli), application/x-www-form-urlencoded client_id and optional scope (openid email profile offline_access). Answers device_code, user_code, verification_uri ({public origin}/ui/terrascale/device), verification_uri_complete (adds ?user_code=), expires_in (600) and interval (5). The user signs in and approves or denies on that page; the CLI polls the token endpoint with grant_type=urn:ietf:params:oauth:grant-type:device_code and gets authorization_pending, slow_down (polled sooner than interval), access_denied or expired_token as RFC 8628 §3.5 says. Calls share the token endpoint's per-IP minute budget; exhaustion answers 429 rate_limited with Retry-After.");
+        Description("RFC 8628 for the public ts CLI client (client_id 00000000000000000000000007, display name ts-cli), application/x-www-form-urlencoded client_id and optional scope (openid email profile offline_access). Answers device_code, user_code, verification_uri ({public origin}/ui/terrascale/device), verification_uri_complete (adds ?user_code=), expires_in (1800) and interval (5). The user signs in and approves or denies on that page; the CLI polls the token endpoint with grant_type=urn:ietf:params:oauth:grant-type:device_code and gets authorization_pending, slow_down (polled sooner than interval), access_denied or expired_token as RFC 8628 §3.5 says. Calls share the token endpoint's per-IP minute budget; exhaustion answers 429 rate_limited with Retry-After.");
         Tags("OAuth");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));

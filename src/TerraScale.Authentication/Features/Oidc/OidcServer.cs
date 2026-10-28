@@ -147,6 +147,8 @@ public static class OidcIssuer
                     .DisableSlidingRefreshTokenExpiration()
                     .SetRefreshTokenReuseLeeway(null)
                     .SetAuthorizationCodeLifetime(TimeSpan.FromMinutes(1))
+                    .SetDeviceCodeLifetime(DeviceFlow.Lifetime)
+                    .SetUserCodeLifetime(DeviceFlow.Lifetime)
                     .SetAccessTokenLifetime(TokenLifetime)
                     .SetIdentityTokenLifetime(TokenLifetime)
                     .SetRefreshTokenLifetime(Sessions.Lifetime)

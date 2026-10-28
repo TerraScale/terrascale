@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
@@ -87,14 +88,16 @@ public static class TerraBaseTransport
             : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
 
     // Credentials, sessions and revocations must survive the loss of one region: every write waits for another region's durable
-    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header. Rate-limit buckets are an
-    // exception: losing one with its region only reopens that window, while waiting for a remote ack on every attempt put a
-    // cross-region round trip (and its conflict retries) on every token request (docs/auth/rate-limit-durability.md). The
+    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header. Rate-limit buckets and the
+    // mail admission budget are exceptions: losing one with its region only reopens a window (the provider's own 429 still
+    // bounds mail), while waiting for a remote ack put a cross-region round trip (and its conflict retries) on every token
+    // request and every emailed code (docs/auth/rate-limit-durability.md, docs/auth/email/admission-durability.md). The
     // readiness probe's synthetic document is the other: readiness proves this region's storage, and waiting for another
     // region's ack made /readyz fail whenever replication was slow (docs/auth/readiness-local-durability.md).
     private sealed class RemoteDurableHandler : DelegatingHandler
     {
-        private static readonly string[] LocalCollections = [$"/collections/{AttemptLimiter.Collection}/", $"/collections/{AuthStore.HealthCollection}/"];
+        private static readonly string[] LocalCollections = [$"/collections/{AttemptLimiter.Collection}/", $"/collections/{AuthStore.HealthCollection}/",
+            $"/collections/{EmailAdmission.Collection}/"];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
