@@ -588,7 +588,7 @@ dialog.ts-db-create-dialog .ts-dialog-title {
 }
 
 /* Ready: the new database's first view confirms the create finished. */
-/* The ?created=1 confirmation is a toast: frosted, bottom-right. */
+/* The ?created=1 confirmation is a toast: opaque surface, bottom-right. */
 .ts-db-created {
   position: fixed;
   right: var(--ts-s6);
@@ -599,11 +599,9 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   gap: var(--ts-s3);
   width: min(360px, calc(100vw - 2 * var(--ts-s4)));
   padding: var(--ts-s3) var(--ts-s4);
-  border: 1px solid var(--ts-glass-line);
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
-  background: var(--ts-glass);
-  backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
-  box-shadow: var(--ts-shadow-overlay);
+  background: var(--ts-surface-2);
   animation: ts-pop-in var(--ts-base) var(--ts-ease);
 }
 

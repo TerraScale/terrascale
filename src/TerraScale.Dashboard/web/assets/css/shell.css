@@ -1,4 +1,4 @@
-/* Signed-in shell: frosted sidebar, context switcher, neutral navigation,
+/* Signed-in shell: flat sidebar, context switcher, neutral navigation,
    account menu, and the mobile drawer. */
 
 .ts-shell {
@@ -21,8 +21,6 @@
   padding: var(--ts-s5) var(--ts-s3) var(--ts-s3);
   overflow: hidden;
   background: var(--ts-sidebar);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
 }
 
 /* Logo top-left, in line with the nav icons; the drawer's close button
@@ -664,9 +662,8 @@ details[open] > .ts-account-trigger {
     inset: 0 auto 0 0;
     z-index: var(--ts-z-modal);
     width: min(86vw, 300px);
-    border-right: 1px solid var(--ts-glass-line);
-    background: var(--ts-glass-strong);
-    backdrop-filter: blur(var(--ts-blur-lg)) saturate(var(--ts-saturate));
+    border-right: 1px solid var(--ts-line-strong);
+    background: var(--ts-surface);
     transform: translateX(-102%);
     visibility: hidden;
   }
@@ -706,12 +703,9 @@ details[open] > .ts-account-trigger {
     place-items: center;
     width: 40px;
     height: 40px;
-    border: 0;
+    border: 1px solid var(--ts-line-strong);
     border-radius: var(--ts-radius-lg);
-    background: var(--ts-glass);
-    -webkit-backdrop-filter: blur(20px);
-    backdrop-filter: blur(20px);
-    box-shadow: var(--ts-shadow-overlay);
+    background: var(--ts-surface-2);
     color: var(--ts-ink);
     cursor: pointer;
   }

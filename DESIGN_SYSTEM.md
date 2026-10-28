@@ -10,7 +10,7 @@ npm project) bundles it with Lightning CSS into the single stylesheet
 
 ## Principles
 
-1. **Compose the kit.** Build pages from the shared slices in `UI/Slices/`
+1. **Compose the kit.** Build pages from the shared slices in `Shared/UI/Slices/`
    and the shared `ts-*` classes below before writing new markup or CSS.
    There are no page-header, tab, card or stat helper components in C#;
    feature slices write that markup directly, as in the example below.
@@ -18,7 +18,7 @@ npm project) bundles it with Lightning CSS into the single stylesheet
    by hairlines, never boxed, and nothing glows (no gradients, blur or soft
    shadows; focus is a solid outline). Blue (`--ts-accent`) is the one accent
    for actions, tabs, charts and highlights. Only the navigation icons carry
-   their own tones (the `Item` list in `UI/Slices/ShellSidebar.cshtml`) so
+   their own tones (the `Item` list in `Shared/UI/Slices/ShellSidebar.cshtml`) so
    sections are easy to find.
 3. **Spacing by gap.** Containers space their children with `gap`, never with
    margins. Use the 4px scale `--ts-s1`…`--ts-s12`.
@@ -39,7 +39,7 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 
 ```cshtml
 @inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabasesPage>
-@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
 <h1 class="ts-sr-only">Databases</h1><div class="ts-page-actions"></div>
 <dl class="ts-stats" aria-label="Database totals">
@@ -55,7 +55,7 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 
 | Pattern | C# location and use |
 |---|---|
-| Page heading | Markup only: signed-in pages render `<h1 class="ts-sr-only">` and `.ts-page-actions`; `UI/Slices/ShellDocument.cshtml` sets the `<title>` |
+| Page heading | Markup only: signed-in pages render `<h1 class="ts-sr-only">` and `.ts-page-actions`; `Shared/UI/Slices/ShellDocument.cshtml` sets the `<title>` |
 | Tabs | Markup only: `nav.ts-tabs` with `a.ts-tab` and `aria-current` (e.g. `Features/Databases/DatabaseFrame.cshtml`) |
 | Card | Markup only: `section.ts-card` with `ts-card-head` and `ts-card-body`; `ts-card-flush` for tables |
 | Stats | Markup only: `dl.ts-stats` with `div.ts-stat` and `data-tone` (`ts-stats-compact` for word values) |
@@ -64,8 +64,8 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 | Alert | Markup only: `ts-alert ts-alert-info/-success/-warning/-danger` with `ts-alert-title` and `ts-alert-body` |
 | Badge | Markup only: `ts-badge-neutral/-info/-success/-warning/-danger/-violet`, or `ts-badge-tone` with `data-tone` |
 | Field | Markup only: `div.ts-field` with `ts-label`, the control and a hint or error |
-| Region map | `UI/Slices/RegionMap.cshtml` (decorative) and `UI/Slices/RegionPicker.cshtml` with `UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
-| Icons | `UI/Icons.cs` (`Icons.Render`) and `UI/Slices/ShellIcons.cs` |
+| Region map | `Shared/UI/Slices/RegionMap.cshtml` (decorative) and `Shared/UI/Slices/RegionPicker.cshtml` with `Shared/UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
+| Icons | `Shared/UI/Icons.cs` (`Icons.Render`) and `Shared/UI/Slices/ShellIcons.cs` |
 
 ## Classes
 
@@ -90,7 +90,7 @@ which column the layout uses; they do not apply to public/auth layouts outside
 
 The queries use px because container-query rems resolve against the 14px root
 font size, whereas viewport-query rems resolve against 16px. On desktop the
-264px sidebar means these transitions happen at roughly 1030px and 1225px
+248px sidebar means these transitions happen at roughly 1015px and 1210px
 window widths. At phone widths the sidebar becomes a drawer and the page
 padding tightens at the existing 48rem viewport breakpoint. Give grid and list
 children a shrinkable track when adding copyable or unbroken text.
@@ -137,9 +137,10 @@ precompressed files. The Go application's hover speculation rules and
 
 ## Motion
 
-Page navigations show a full-width gradient progress bar
-(`body.ts-nav-pending`, set by Datastar in `UI/Slices/ShellDocument.cshtml`
-and `UI/Slices/Document.cshtml`). A form
+Page navigations show a flat, full-width blue bar that pulses while the next
+page loads
+(`body.ts-nav-pending`, set by Datastar in `Shared/UI/Slices/ShellDocument.cshtml`
+and `Shared/UI/Slices/Document.cshtml`). A form
 marked `data-submit-once` is not sent again while that navigation loads, and
 its submit buttons read as busy; use it where a second submission would fail
 or repeat an action. A long create shows its own progress inside the form:
@@ -147,7 +148,7 @@ the Create database dialog covers its fields with a progress panel from the
 moment the form is submitted, announces it through a `role="status"` line,
 and the new database opens on a ready notice (`?created=1`). Motion uses
 `--ts-fast` and `--ts-base` for transitions and `--ts-loop` for one cycle of
-an ongoing wait. Fonts are preloaded (the monospace face only once someone
-is signed in, since signed-out pages never show it) and use
-`font-display: block`, so text never flashes a fallback face.
+an ongoing wait. Both shell documents preload the Geist sans and mono faces,
+which use `font-display: swap`, so text renders at once in the fallback face
+and swaps when the font arrives.
 `prefers-reduced-motion` disables animation.

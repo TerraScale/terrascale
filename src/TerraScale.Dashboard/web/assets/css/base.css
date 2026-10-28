@@ -159,31 +159,8 @@ hr {
   transform: none;
 }
 
-/* Frosted glass fallback: solid surface when blur is unsupported or the
-   user asks for less transparency. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  details.ts-menu > .ts-menu-panel,
-  dialog.ts-dialog,
-  .ts-db-created,
-  .ts-topbar,
-  .ts-shell .ts-sidebar {
-    background: var(--ts-surface) !important;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  details.ts-menu > .ts-menu-panel,
-  dialog.ts-dialog,
-  .ts-db-created,
-  .ts-topbar,
-  .ts-shell .ts-sidebar {
-    background: var(--ts-surface) !important;
-    backdrop-filter: none !important;
-  }
-}
-
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
-   document loads (see UI/Slices/ShellDocument.cshtml). Reveal the bar in the
+   document loads (see Shared/UI/Slices/ShellDocument.cshtml). Reveal the bar in the
    first paint after the click. A flat pulse shows an
    ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {

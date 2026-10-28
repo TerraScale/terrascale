@@ -24,10 +24,9 @@ details.ts-menu > .ts-menu-panel {
   min-width: 14rem;
   max-width: min(90vw, 22rem);
   padding: var(--ts-s1);
-  border: 1px solid var(--ts-glass-line);
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
-  background: var(--ts-glass);
-  backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+  background: var(--ts-surface-2);
 }
 
 details.ts-menu[open] > .ts-menu-panel {
@@ -142,14 +141,12 @@ dialog.ts-dialog {
   max-height: calc(100dvh - 2 * var(--ts-s6));
   padding: 0;
   overflow: auto;
-  border: 1px solid var(--ts-glass-line);
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-xl);
-  background: var(--ts-glass-strong);
-  backdrop-filter: blur(var(--ts-blur-lg)) saturate(var(--ts-saturate));
+  background: var(--ts-surface-2);
   color: var(--ts-ink);
   text-align: left;
   white-space: normal;
-  box-shadow: var(--ts-shadow-overlay);
 }
 
 dialog.ts-dialog-wide {
@@ -160,7 +157,7 @@ dialog.ts-dialog[open] {
   animation: ts-pop-in var(--ts-base) var(--ts-ease);
 }
 
-/* The scrim only dims, so the dialog's own frost stays visible. */
+/* The scrim dims the page behind the opaque dialog. */
 dialog.ts-dialog::backdrop {
   background: var(--ts-scrim);
 }
