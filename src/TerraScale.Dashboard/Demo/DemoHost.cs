@@ -715,6 +715,16 @@ sealed class TestMeasurements : IHomeMeasurements
 }
 sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
 {
+    public Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+    {
+        var current = Database(scope, databaseId);
+        if (databases.Values.Any(database => database.Id != databaseId && database.ProjectId == scope.ProjectId && database.Name == name))
+            throw new DatabaseProviderException(HttpStatusCode.Conflict);
+        var renamed = current with { Name = name, PreviousName = null, ConflictOf = null };
+        documents.RenameDatabase(scope, current.Name, name);
+        databases[databaseId] = renamed;
+        return Task.FromResult(renamed);
+    }
     private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
     private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
     private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
@@ -780,6 +790,22 @@ sealed partial class TestDocuments : IDocumentBackend
         var prefix = scope.ProjectId + "/" + source + "/";
         lock (collections)
             foreach (var (key, rows) in collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections[Key(scope, target, key[prefix.Length..])] = rows.ToDictionary(item => item.Key, item => item.Value with { Document = item.Value.Document.Clone() }, StringComparer.Ordinal);
+    }
+    public void RenameDatabase(DatabaseScope scope, string source, string target)
+    {
+        if (source == target) return;
+        var prefix = scope.ProjectId + "/" + source + "/";
+        lock (collections)
+        {
+            foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+            {
+                collections[Key(scope, target, key[prefix.Length..])] = collections[key];
+                collections.Remove(key);
+            }
+            if (logs.Remove(scope.ProjectId + "/" + source, out var log)) logs[scope.ProjectId + "/" + target] = log;
+            changed.TrySetResult();
+            changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
     }
     public void DropDatabase(DatabaseScope scope, string database)
     {

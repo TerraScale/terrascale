@@ -131,6 +131,8 @@ public sealed class DatabaseRecord
     public string Id { get; set; } = "";
     public string ProjectId { get; set; } = "";
     public string Name { get; set; } = "";
+    public string? PreviousName { get; set; }
+    public string? ConflictOf { get; set; }
     public string Region { get; set; } = "";
     public List<string> Regions { get; set; } = [];
     // Every serving region holds a copy, including regions that join later; Regions then lists only the home.
@@ -215,6 +217,7 @@ public static class DashboardAuditSeverity
         ["api_key.created"] = "warning",
         ["api_key.revoked"] = "warning",
         ["database.restored"] = "warning",
+        ["database.renamed"] = "warning",
         ["billing.plan_changed"] = "warning",
         ["backup.destination_removed"] = "warning",
         ["database.deleted"] = "critical",

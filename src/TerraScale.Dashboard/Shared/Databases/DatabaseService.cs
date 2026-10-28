@@ -188,6 +188,42 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         }, cancellationToken);
     }
 
+    public async Task<DatabaseRecord> RenameAsync(AccountContext context, string id, string name, string confirmation, CancellationToken cancellationToken)
+    {
+        context = await CurrentAsync(context, cancellationToken);
+        var database = Database(context, id);
+        if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
+        if (database.Status != "ready") throw new AccountAccessException("Only a ready database can be renamed.", 409);
+        if (confirmation != database.Name) throw new AccountAccessException("Type the current database name to confirm the rename.", 422);
+        if (!TerraScale.Dashboard.Features.Databases.DatabaseRenameName.IsValid(name)) throw new AccountAccessException("Start with a lowercase letter, then use lowercase letters, digits, underscores or hyphens; at most 63 characters. Device names are reserved.", 422);
+        if (name == database.Name && database.ConflictOf is null) throw new AccountAccessException("Choose a different database name.", 422);
+        if (context.Project!.Databases.Values.Any(other => other.Id != id && other.Name == name))
+            throw new AccountAccessException("A database with this name already exists.", 409);
+        if (PlatformDatabases.IsPlatform(context.Organization?.Id)) throw new AccountAccessException("Platform databases keep their names.", 409);
+        var scope = Scope(context);
+        var home = await HomeAsync(context, database, cancellationToken);
+        var remote = await backend.RenameAsync(scope, home, id, name, cancellationToken);
+        var placement = await RemotePlacementAsync(remote, cancellationToken);
+        if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != name || remote.HomeRegion != home.Id ||
+            remote.CreatedAt != database.CreatedAt || remote.BranchedFrom != database.BranchedFrom || remote.AllRegions != database.AllRegions ||
+            !placement.Select(region => region.Code).Order(StringComparer.Ordinal).SequenceEqual(Regions(database).Order(StringComparer.Ordinal)))
+            throw new HttpRequestException("The rename returned an unexpected database identity or placement. Reload Settings to check its current name.");
+        await accounts.UpdateOrganizationAsync(context, org =>
+        {
+            if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management access is required.");
+            var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id)
+                ?? throw new AccountAccessException("Database is unavailable.", 404);
+            current.Name = name;
+            current.PreviousName = remote.PreviousName;
+            current.ConflictOf = remote.ConflictOf;
+            org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.renamed", name, "database", accounts.Now));
+        }, cancellationToken);
+        database.Name = name;
+        database.PreviousName = remote.PreviousName;
+        database.ConflictOf = remote.ConflictOf;
+        return database;
+    }
+
     // All regions keeps one home region (the chosen one, else home) and no replica regions.
     private static IEnumerable<string> AllRegionsPlacement(IEnumerable<string> regions, bool allRegions, string home)
     {
@@ -230,7 +266,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var seen = project.Databases.Values.ToArray();
             // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
             var observed = seen.ToDictionary(record => record.Id, record =>
-                (record.Name, record.ProjectId, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
+                (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
             var homes = seen.Select(database => database.Region).Prepend(project.Region)
                 .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
             if (homes.Length == 0 && !context.Organization!.ContainsMember(context.UserId)) homes = catalog.ToArray();
@@ -259,8 +295,11 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                 }
                 catch (HttpRequestException) { }
             }
-            if (gone.Count == 0 && imported.Count == 0 && refreshed.Count == 0) return;
+            var renamed = remote.Where(database => observed.TryGetValue(database.Id, out var before) &&
+                (before.Name != database.Name || before.PreviousName != database.PreviousName || before.ConflictOf != database.ConflictOf)).ToArray();
+            if (gone.Count == 0 && imported.Count == 0 && refreshed.Count == 0 && renamed.Length == 0) return;
             bool Unchanged(DatabaseRecord record) => observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
+                record.PreviousName == before.PreviousName && record.ConflictOf == before.ConflictOf &&
                 record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
             void Apply(ProjectRecord target)
             {
@@ -274,6 +313,14 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
                         current.AllRegions = record.AllRegions;
                         current.Endpoint = record.Endpoint;
                         current.PlacementRevision = checked(current.PlacementRevision + 1);
+                    }
+                foreach (var database in renamed)
+                    if (target.Databases.GetValueOrDefault(database.Id) is { } current && current.Name == observed[database.Id].Name &&
+                        current.PreviousName == observed[database.Id].PreviousName && current.ConflictOf == observed[database.Id].ConflictOf)
+                    {
+                        current.Name = database.Name;
+                        current.PreviousName = database.PreviousName;
+                        current.ConflictOf = database.ConflictOf;
                     }
                 foreach (var record in imported.Where(record => !target.Databases.ContainsKey(record.Id) && target.Databases.Values.All(database => database.Name != record.Name)))
                     target.Databases[record.Id] = record;
@@ -333,6 +380,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         Id = remote.Id,
         ProjectId = remote.ProjectId,
         Name = remote.Name,
+        PreviousName = remote.PreviousName,
+        ConflictOf = remote.ConflictOf,
         CreatedAt = remote.CreatedAt,
         BranchedFrom = remote.BranchedFrom,
         Region = placement[0].Code,

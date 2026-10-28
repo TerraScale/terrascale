@@ -144,6 +144,7 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
             var granted = scopes.EnumerateArray().Select(value => value.GetString() ?? "").ToArray();
             if (granted.Any(scope => !Allowed.Contains(scope)) || granted.Distinct(StringComparer.Ordinal).Count() != granted.Length) return Error(HttpStatusCode.BadRequest, "invalid_scope");
             var database = root.TryGetProperty("database", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString() : null;
+            if (database is not null && !TerraScaleIds.IsValid(database)) return Error(HttpStatusCode.BadRequest, "invalid_request");
             DateTimeOffset? expires = root.TryGetProperty("expires_at", out var expiry) && expiry.ValueKind == JsonValueKind.String ? expiry.GetDateTimeOffset() : null;
             if (Canonical(root) is not { } allowed) return Error(HttpStatusCode.BadRequest, "invalid_request", "allowed_cidrs must hold up to 32 valid IPs or CIDR ranges");
             var key = new Key(ids.NewId(), keyName, organization, project, database, granted, actor.UserId, DateTimeOffset.UtcNow, expires, null, allowed);

@@ -124,6 +124,7 @@ public static class DatabaseEndpoints
                     }
                 });
         }
+        endpoints.MapDatabaseSettings();
         endpoints.MapDataFeatures();
         endpoints.MapDatabaseLogs();
         endpoints.MapDatabaseFunctions();

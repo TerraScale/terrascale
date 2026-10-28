@@ -818,7 +818,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             ManagedDatabase current;
             lock (gate)
             {
-                var found = databases.Values.SingleOrDefault(value => value.ProjectId == project && value.Name == parts[4]);
+                var found = databases.Values.SingleOrDefault(value => value.ProjectId == project && (value.Name == parts[4] || value.Id == parts[4]));
                 if (found is null) return Error(404, "not_found");
                 current = found;
             }
@@ -832,6 +832,21 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     if (callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
                     if (!atHome) return WrongRegion(http, current);
                     var body = await JsonAsync(http);
+                    if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }))
+                    {
+                        var name = body.GetProperty("name").GetString()!;
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"\A(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])\z)[a-z][a-z0-9_-]{0,62}\z")) return Error(400, "invalid_request");
+                        lock (gate)
+                        {
+                            if (databases.Values.Any(value => value.ProjectId == project && value.Id != current.Id && value.Name == name)) return Error(409, "name_taken");
+                            var prefix = project + "/" + current.Name + "/";
+                            foreach (var collection in collections.Keys.Where(key => name != current.Name && key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+                            { collections.Add(project + "/" + name + "/" + collection[prefix.Length..], collections[collection]); collections.Remove(collection); }
+                            var renamed = current with { Name = name, PreviousName = null, ConflictOf = null };
+                            databases[current.Id] = renamed;
+                            return Results.Json(Wire(renamed, answering));
+                        }
+                    }
                     if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "allRegions" }) && body.GetProperty("allRegions").GetBoolean())
                         lock (gate) { var everywhere = current with { ReplicaRegions = [], AllRegions = true }; databases[current.Id] = everywhere; return Results.Json(Wire(everywhere, answering)); }
                     Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
