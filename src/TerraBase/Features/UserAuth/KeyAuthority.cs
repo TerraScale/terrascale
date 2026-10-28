@@ -79,6 +79,9 @@ public sealed class KeyWatch : IDisposable
         return watch;
     }
 
+    /// <summary>ts-auth's refusal that ended the watch; null while it runs, or when the key could not be verified in time.</summary>
+    public KeyRefused? Refusal { get; private set; }
+
     /// <summary>Stops watching; the target is left as it is.</summary>
     public void Dispose()
     {
@@ -117,6 +120,7 @@ public sealed class KeyWatch : IDisposable
                     : null;
                 if (answer is not KeyActive active)
                 {
+                    Refusal = answer as KeyRefused;
                     break;
                 }
 

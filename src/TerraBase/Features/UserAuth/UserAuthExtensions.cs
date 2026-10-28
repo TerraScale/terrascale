@@ -82,6 +82,24 @@ public static class UserAuthExtensions
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>
         user?.Identities.FirstOrDefault(identity => identity.IsAuthenticated && identity.AuthenticationType == scheme);
 
+    // The project check's request states: serving, cut off by the key watch, answering that cut-off.
+    private const int Serving = 0;
+    private const int CutOff = 1;
+    private const int Refusing = 2;
+
+    // ts-auth refuses the key, or cannot vouch for it right now: fail closed either way.
+    private static Task RefuseKeyAsync(HttpContext context, KeyRefused? refused)
+    {
+        if (refused is not null)
+        {
+            context.Response.Headers.WWWAuthenticate = $"Bearer error=\"invalid_token\", error_description=\"{refused.Code}\"";
+            return BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, refused.Code, KeyAuthorityMessages.Refused(refused.Code), op: null);
+        }
+
+        context.Response.Headers.RetryAfter = "1";
+        return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null);
+    }
+
     /// <summary>Checks signed project/database claims before scope authorization so cross-project calls answer 404.</summary>
     public static WebApplication UseTerraBaseProjectCheck(this WebApplication app)
     {
@@ -89,7 +107,7 @@ public static class UserAuthExtensions
         app.Use(async (context, next) =>
         {
             // An API key's token acts only while ts-auth says its key still does, and only as long as it does: a request
-            // still running (a slow body, a changes stream) is aborted once the key is refused (docs/terrabase/key-revocation.md).
+            // still running (a slow body, a changes stream) is cut off once the key is refused (docs/terrabase/key-revocation.md).
             if (Identity(context.User, UserAuthenticationHandler.SchemeName) is null || context.Features.Get<ProjectToken>()?.Key is not { } key)
             {
                 await next(context).ConfigureAwait(false);
@@ -98,22 +116,59 @@ public static class UserAuthExtensions
 
             var authority = context.RequestServices.GetRequiredService<IKeyAuthority>();
             var answer = (await authority.CheckAsync(key, context.RequestAborted).ConfigureAwait(false)).Value;
-            switch (answer)
+            if (answer is not KeyActive active)
             {
-                case KeyRefused refused:
-                    context.Response.Headers.WWWAuthenticate = $"Bearer error=\"invalid_token\", error_description=\"{refused.Code}\"";
-                    await BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, refused.Code, KeyAuthorityMessages.Refused(refused.Code), op: null).ConfigureAwait(false);
-                    return;
-                case Unavailable:
-                    context.Response.Headers.RetryAfter = "1";
-                    await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null).ConfigureAwait(false);
-                    return;
+                await RefuseKeyAsync(context, answer as KeyRefused).ConfigureAwait(false);
+                return;
             }
 
-            using var refusal = new CancellationTokenSource();
-            using var abort = refusal.Token.Register(context.Abort);
-            using var watch = KeyWatch.Start(authority, watched: true, (answer as KeyActive)?.Until, _ => ValueTask.FromResult<KeyToken?>(key), refusal, context.RequestServices.GetRequiredService<TimeProvider>());
-            await next(context).ConfigureAwait(false);
+            // The work sees a cut-off as its cancellation. Until it has answered, the client gets the same refusal as a new
+            // request would; a response already under way (a changes stream) can only end with its connection. An empty
+            // connection reset reaches clients as an edge 502 with no body.
+            var aborted = context.RequestAborted;
+            using var refusal = CancellationTokenSource.CreateLinkedTokenSource(aborted);
+            var state = Serving;
+            context.Response.OnStarting(() =>
+            {
+                // Work cut off before it answered must not answer afterwards: only the refusal below may.
+                if (Volatile.Read(ref state) == CutOff)
+                {
+                    context.Abort();
+                }
+
+                return Task.CompletedTask;
+            });
+            using var cut = refusal.Token.Register(() =>
+            {
+                if (!aborted.IsCancellationRequested)
+                {
+                    Volatile.Write(ref state, CutOff);
+                    if (context.Response.HasStarted)
+                    {
+                        context.Abort();
+                    }
+                }
+            });
+            using var watch = KeyWatch.Start(authority, watched: true, active.Until, _ => ValueTask.FromResult<KeyToken?>(key), refusal, context.RequestServices.GetRequiredService<TimeProvider>());
+            context.RequestAborted = refusal.Token;
+            try
+            {
+                await next(context).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (Volatile.Read(ref state) == CutOff && !context.Response.HasStarted)
+            {
+                // The work stopped at the cut-off; it is answered below.
+            }
+            finally
+            {
+                context.RequestAborted = aborted;
+            }
+
+            if (Interlocked.CompareExchange(ref state, Refusing, CutOff) == CutOff && !context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                await RefuseKeyAsync(context, watch!.Refusal).ConfigureAwait(false);
+            }
         });
         app.Use(async (context, next) =>
         {
