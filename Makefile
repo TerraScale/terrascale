@@ -32,9 +32,6 @@ LIBS_PROJECTS := src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
 	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
 LIBS_TEST_PROJECTS := tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
 	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
-# Only TerraScale.Logging is published: ts-reviewer consumes it outside this repository.
-LIBS_PACKAGE := src/TerraScale.Logging/TerraScale.Logging.csproj
-PACKAGE_VERSION = $(shell bash scripts/libs/package-version.sh)
 
 AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
 
@@ -42,7 +39,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
-	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
+	libs-build libs-test libs-check libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-chunks
@@ -92,13 +89,6 @@ libs-test: libs-build
 
 libs-check: libs-build
 	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
-
-libs-pack: restore
-	bash scripts/libs/package-version-test.sh
-	rm -rf -- artifacts/packages
-	dotnet pack $(LIBS_PACKAGE) --configuration Release --nologo --output artifacts/packages -p:Version=$(PACKAGE_VERSION)
-	ls -1 artifacts/packages
-	set -e; ls artifacts/packages/*.nupkg >/dev/null; for pkg in artifacts/packages/*.nupkg; do case "$$pkg" in *".$(PACKAGE_VERSION).nupkg") ;; *) echo "$$pkg is not the calendar version $(PACKAGE_VERSION)" >&2; exit 1;; esac; done
 
 # Publishes the in-repo example with native AOT: the generated registration and the endpoint pipeline must trim and AOT-compile.
 libs-nativeaot-check: restore

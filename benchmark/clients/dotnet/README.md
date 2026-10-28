@@ -118,5 +118,5 @@ verdict until the SDK and load client prerequisites above are complete.
 
 [GRU-selected preflight evidence](bench/gru-preflight.md) is validation evidence,
 not a deployed benchmark. This PR lands only the preflight after green CI,
-current ts-reviewer approval and a conflict-free state. The full TS-761 slice
+current approval and a conflict-free state. The full TS-761 slice
 remains incomplete until the load client and live receipt are implemented.

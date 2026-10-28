@@ -44,7 +44,7 @@ This repository (`TerraScale/terrascale`) holds four areas; these rules apply to
 - Every region always serves. ts-orch sets `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE`; nodes infer their region and node name from them, find every peer region in the peers file (one `<node> <region> <netbird-ipv4>` line each) and serve without a per-region enable step. Current regions: `gru`, `sjc` and `fra`.
 - OCI Vault is the only secret store. ts-orch delivers secrets to each service's environment through instance principals; nobody copies them into code or config. Store vendor-issued keys (such as Stripe and Cloudflare) once in OCI Vault. Admin access to a running host is NetBird SSH (`ts-orch netbird ssh`) only.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 - TerraBase discovers cluster membership and every serving region automatically; production credentials arrive from OCI Vault through ts-orch. Shared libraries must preserve this for consuming production services.
 - Always-on capability does not bypass authentication, customer consent, repository permissions, credential revocation, validation, resource isolation, backups or reviewed recovery. Preserve branch/event identity, quality gates and failure/cleanup conditions in CI.
 
