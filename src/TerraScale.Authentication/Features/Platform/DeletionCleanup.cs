@@ -235,7 +235,7 @@ public sealed class DeletionCleanup(
             [
                 (AuthStore.SessionCollection, "/userId"), (AuthStore.PasscodeCollection, "/userId"), (AuthStore.MfaCollection, "/userId"),
                 (AuthStore.StepUpProofCollection, "/userId"), (AuthStore.StepUpDeletionGrantCollection, "/userId"),
-                (AuthStore.StepUpPasscodeCollection, "/userId"),
+                (AuthStore.StepUpPasscodeCollection, "/userId"), (AuthStore.EmailChangeCollection, "/userId"),
                 (AuthStore.OidcTokenCollection, "/subject"), (AuthStore.OidcAuthorizationCollection, "/subject"),
                 (AuthStore.ProjectMemberCollection, "/userId"), (AuthStore.MembershipCollection, "/userId"),
                 (AuthStore.ChallengeCollection, "/subjectId"), (AuthStore.UniqueCollection, "/ownerId"),
@@ -290,7 +290,7 @@ public sealed class DeletionCleanup(
                 {
                     AuthStore.SessionCollection => Text(value, "tokenHash"),
                     AuthStore.ApiKeyUsageCollection => Text(value, "keyId"),
-                    AuthStore.PasscodeCollection or AuthStore.MfaCollection => Text(value, "userId"),
+                    AuthStore.PasscodeCollection or AuthStore.MfaCollection or AuthStore.EmailChangeCollection => Text(value, "userId"),
                     AuthStore.StepUpDeletionGrantCollection => Text(value, "receiptHash"),
                     AuthStore.StepUpPasscodeCollection => Text(value, "stepUpRequestId"),
                     AuthStore.MembershipCollection => Text(value, "organizationId") + "/" + Text(value, "userId"),

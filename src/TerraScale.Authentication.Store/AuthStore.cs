@@ -100,6 +100,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Isolated one-attempt email codes and their retained winning redemption lineage.</summary>
     public const string StepUpPasscodeCollection = "step_up_passcodes";
 
+    /// <summary>One pending sign-in email change per account, addressed by instance and user id.</summary>
+    public const string EmailChangeCollection = "email_changes";
+
     /// <summary>Authorized closure intents (<see cref="ClosureJob"/>); while one exists it fences access-adding writes to its scope.</summary>
     public const string ClosureJobCollection = "closure_jobs";
 
@@ -134,7 +137,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, DashboardDeletionCursorCollection, ClosureJobCollection, HistoryMarkCollection,
         ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection, AccountDeletionReceiptCollection,
-        StepUpProofCollection, StepUpDeletionGrantCollection, StepUpPasscodeCollection,
+        StepUpProofCollection, StepUpDeletionGrantCollection, StepUpPasscodeCollection, EmailChangeCollection,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
@@ -881,7 +884,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
             ProjectMemberCollection => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
             ApiKeyCollection or ApiKeyUsageCollection or InvitationCollection => [("organization", "organizationId"), ("project", "projectId")],
             AuditEventCollection => [("organization", "organizationId"), ("account", "actor")],
-            SessionCollection or PasscodeCollection or MfaCollection or StepUpProofCollection or StepUpDeletionGrantCollection or StepUpPasscodeCollection => [("account", "userId")],
+            SessionCollection or PasscodeCollection or MfaCollection or StepUpProofCollection or StepUpDeletionGrantCollection or StepUpPasscodeCollection or EmailChangeCollection => [("account", "userId")],
             OidcTokenCollection or OidcAuthorizationCollection => [("account", "subject")],
             UniqueCollection => [("account", "ownerId")],
             ChallengeCollection => [("account", "subjectId")],

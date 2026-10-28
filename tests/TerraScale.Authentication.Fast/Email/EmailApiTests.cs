@@ -221,7 +221,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 
         var list = await JsonAsync(await SendAsync(oidc, HttpMethod.Get, Base + "/templates"));
         var templates = list["templates"]!.AsArray();
-        await Assert.That(templates.Count).IsEqualTo(16);
+        await Assert.That(templates.Count).IsEqualTo(20);
         await Assert.That(templates.Single(entry => entry!["overridden"]!.GetValue<bool>())!["locale"]!.GetValue<string>()).IsEqualTo("pt-BR");
 
         var reset = await JsonAsync(await SendAsync(oidc, HttpMethod.Put, Template, Body(1, "fields", new JsonObject { ["subject"] = null })));

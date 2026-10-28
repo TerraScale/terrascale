@@ -6,6 +6,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -223,14 +224,21 @@ internal static class EmailApi
     /// <summary>Realistic synthetic values for previews and test sends.</summary>
     public static AuthEmailValues Sample(AuthEmailKind kind, string email, AuthOptions options, DateTimeOffset now) => new(email)
     {
-        Code = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation or AuthEmailKind.NewDevice or AuthEmailKind.Lockout ? null : "123456",
-        Link = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation ? new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/sign-in") : null,
+        Code = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation or AuthEmailKind.NewDevice or AuthEmailKind.Lockout or AuthEmailKind.EmailChangeNotice ? null : "123456",
+        Link = kind switch
+        {
+            AuthEmailKind.MagicLink or AuthEmailKind.Invitation => new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/sign-in"),
+            AuthEmailKind.EmailChangeNotice => new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/email-change/cancel"),
+            _ => null,
+        },
         ExpiresIn = kind switch
         {
             AuthEmailKind.Invitation => TimeSpan.FromDays(7),
             AuthEmailKind.NewDevice or AuthEmailKind.Lockout => null,
+            AuthEmailKind.EmailChangeCode or AuthEmailKind.EmailChangeNotice => EmailChanges.Lifetime,
             _ => Passcodes.Lifetime,
         },
+        NewEmail = kind is AuthEmailKind.EmailChangeCode or AuthEmailKind.EmailChangeNotice ? "new." + email : null,
         Organization = "Acme",
         Inviter = "Alex Silva",
         Device = "Chrome on macOS",
@@ -358,7 +366,7 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         Get("/v1/{slug}/email/templates/{kind}/{locale}");
         Name("email_template_get");
         Summary("Read an email template");
-        Description("kind is sign_in_code, magic_link, verify_email, password_reset, invitation, mfa_code, new_device or lockout; locale is en or pt-BR. Lockout copy uses locked_until, an absolute UTC timestamp.");
+        Description("kind is sign_in_code, magic_link, verify_email, password_reset, invitation, mfa_code, new_device, lockout, email_change_code or email_change_notice; locale is en or pt-BR. Lockout copy uses locked_until, an absolute UTC timestamp.");
         Tags("Email");
         Produces<EmailTemplateResponse>();
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);

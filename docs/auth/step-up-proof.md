@@ -12,8 +12,8 @@ hosted URL. The callback must be `/auth/step-up/callback` on a registered
 dashboard callback origin, without a query or fragment.
 
 Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
-`create_pat` with `ts-dashboard`, and `create_api_key`, `rotate_api_key`, or
-`create_oauth_client` with `ts-auth`. The hosted page identifies the operation
+`create_pat` with `ts-dashboard`, and `create_api_key`, `rotate_api_key`,
+`create_oauth_client`, or `change_email` with `ts-auth` (see `email-change.md`). The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses

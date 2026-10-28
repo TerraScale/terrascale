@@ -105,6 +105,7 @@ public static class App
         builder.Services.AddSingleton<PlatformBootstrap>();
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<StepUpProofs>();
+        builder.Services.AddSingleton<EmailChanges>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<EndUserAccessTokens>();

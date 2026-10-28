@@ -1,0 +1,15 @@
+Subject: 123456 confirma seu novo e-mail de acesso a TerraScale
+
+Confirme seu novo e-mail de acesso
+
+Digite este código em TerraScale para tornar new.jane@example.com seu e-mail de acesso.
+
+    123456
+
+Este código expira em 10 minutos e só pode ser usado uma vez.
+
+Não pediu isso? Pode ignorar este e-mail com segurança; nada muda sem o código. Nunca compartilhe este código com ninguém.
+
+-- 
+Este e-mail foi enviado para jane@example.com.
+TerraScale · terrascale.tech

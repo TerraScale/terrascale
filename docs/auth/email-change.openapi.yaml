@@ -1,0 +1,105 @@
+openapi: 3.1.0
+info:
+  title: TerraScale sign-in email change API
+  version: v1
+  description: Supplement to platform-api.openapi.yaml; see email-change.md for the flow and step-up-proof.md for the proof.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://auth.terrascale.tech
+security:
+  - platformUser: []
+tags:
+  - name: Members
+    description: The signed-in account.
+paths:
+  /v1/terrascale/account/email-change:
+    post:
+      operationId: request_email_change
+      tags: [Members]
+      summary: Start a sign-in email change
+      description: |
+        Requires a fresh change_email/ts-auth proof in X-TerraScale-Step-Up-Proof (step-up.openapi.yaml).
+        Emails a single-use six-digit code, valid ten minutes, to new_email and a cancel link to the current
+        address; replaces any pending change of the account. 409 email_taken when another account owns the
+        address. 429 rate_limited after three requests per account or per target address per hour, or when the
+        platform-wide hourly budget is spent; a rate-limited request leaves its proof unconsumed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailChangeRequest'
+      responses:
+        '202':
+          description: Pending change; the code is on its way to new_email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailChangeBody'
+        '400': { $ref: 'platform-api.openapi.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'platform-api.openapi.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'step-up.openapi.yaml#/components/responses/StepUpRequired' }
+        '409': { description: Another account owns the address (email_taken). }
+        '429': { description: Email change budget exhausted (rate_limited). }
+        '503': { $ref: 'platform-api.openapi.yaml#/components/responses/Unavailable' }
+  /v1/terrascale/account/email-change/confirm:
+    post:
+      operationId: confirm_email_change
+      tags: [Members]
+      summary: Confirm a sign-in email change
+      description: |
+        Commits the caller's pending change with the code the new address received, at the authentication state
+        it was requested in. One transaction consumes the change, releases the old address, reserves the new one
+        and advances the account's authentication epoch: every session, refresh token and sign-in access token,
+        including the caller's, is refused afterwards, and API-key and OAuth-client secrets that carry the old
+        authentication state stop exchanging. Five wrong codes, expiry, a newer request, the cancel link or any
+        sign-out void the change (403 email_change_denied). 409 email_taken when another account claimed the
+        address first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmEmailChangeRequest'
+      responses:
+        '204': { description: The sign-in email changed; sign in again with the new address. }
+        '400': { $ref: 'platform-api.openapi.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'platform-api.openapi.yaml#/components/responses/Unauthorized' }
+        '403': { description: No matching pending change (email_change_denied). }
+        '409': { description: Another account owns the address (email_taken). }
+        '503': { $ref: 'platform-api.openapi.yaml#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    platformUser:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform management access token for the current account.
+  schemas:
+    EmailChangeRequest:
+      type: object
+      required: [new_email]
+      properties:
+        new_email:
+          type: string
+          format: email
+    ConfirmEmailChangeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+    EmailChangeBody:
+      type: object
+      required: [new_email, expires_at]
+      properties:
+        new_email:
+          type: string
+          format: email
+          description: The normalized address.
+        expires_at:
+          type: string
+          format: date-time
