@@ -26,12 +26,14 @@ const limit = (value, format = number) => (value === null ? "Custom" : format(va
 const row = (label, cell) => `| ${label} | ${plans.map((p) => cell(p)).join(" | ")} |`;
 const table = (label) => `| ${label} | ${planNames.join(" | ")} |\n| --- | ${planNames.map(() => "---").join(" | ")} |`;
 const subscription = (p) => {
-  switch (p.billingInterval) {
-    case "free": return `${usd(p.priceMonthlyUsd)}; no card`;
-    case "year": return `${usd(p.priceAnnualUsd)}/year only (${usd(p.priceMonthlyUsd)}/month equivalent)`;
+  const intervals = p.billingIntervals.join(",");
+  if (!p.available) return `${usd(p.priceMonthlyUsd)}/month support + usage; contact sales`;
+  if (p.priceMonthlyUsd === 0) return `${usd(0)}; no card`;
+  switch (intervals) {
+    case "month,year": return `${usd(p.priceMonthlyUsd)}/month or ${usd(p.priceAnnualUsd)}/year`;
     case "month": return `${usd(p.priceMonthlyUsd)}/month`;
-    case "contact": return `${usd(p.priceMonthlyUsd)}/month support + usage; contact sales`;
-    default: throw new Error(`Unknown billing interval: ${p.billingInterval}`);
+    case "year": return `${usd(p.priceAnnualUsd)}/year only (${usd(p.priceMonthlyUsd)}/month equivalent)`;
+    default: throw new Error(`Unknown billing intervals for ${p.id}: ${intervals}`);
   }
 };
 const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(", ");
@@ -70,7 +72,7 @@ Launch regions: ${regionList}.
 Request rates, concurrency, query timeout, storage limit, point-in-time recovery, backup
 retention and support response targets per plan are in [plan entitlements](./limits.md#plan-entitlements).
 
-No trials or annual Pro/Team discounts are offered.
+Starter, Pro and Team are each billed monthly or yearly; a year costs ten monthly payments (two months free). No trials are offered.
 
 ## Pay-as-you-go rates
 
