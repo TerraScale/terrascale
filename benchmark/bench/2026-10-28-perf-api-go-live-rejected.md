@@ -61,12 +61,15 @@ These observations followed the measured cells; they are not a before/after roll
 proof. The normal deployment was not paused or altered.
 
 Database deletion was accepted. The account-deletion receipt stayed HTTP 202 through
-two bounded 180-second cleanup attempts. Private recovery material and the
-synthetic inbox were retained; account/inbox cleanup is incomplete. Cleanup retries
-stopped after the second identical timeout. No further tenant was created.
-The helper did not retain the deletion-authorization response header required for
-explicit continuation; its loss cannot be repaired by weakening authorization.
-This does not establish why the background closure remains pending.
+two bounded 180-second cleanup attempts, after which retries stopped and private
+recovery material and the synthetic inbox were retained. A later authoritative
+receipt read returned HTTP 204. Only after that changed state, one resumed cleanup
+completed successfully with `Synthetic account and inbox cleanup settled.` The
+private recovery directory `/tmp/api-overhead-_wa9ox67` was then confirmed absent
+on beta. No synthetic account, inbox or private recovery material remains.
+The earlier helper did not retain the deletion-authorization response header for
+explicit continuation. Background closure nevertheless completed normally; neither
+the timeout's cause nor an authorization repair is established by this cleanup.
 
 ## Artifacts and reproduction
 
@@ -80,4 +83,5 @@ from immutable commit `3b00282251210b85acd998cbe74c7ef6927f18f0` and uses the re
 CPU observer from the earlier HTTPS control. Run via `TS_HEAVY_HOST=beta ts-heavy-any
 nice -n 19 bash benchmark/scripts/go-parity-live-20261028.sh --repo terrascale
 --branch fix/api-go-parity` after staging this archived script on that source.
-Do not rerun until the outstanding synthetic account is reconciled.
+The original synthetic account is reconciled; any new run must use a fresh tenant
+and output directory, and must diagnose the empty HTTP/2 window before comparison.
