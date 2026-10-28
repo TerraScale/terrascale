@@ -10,7 +10,21 @@ description: Scrape per-database metrics with Prometheus, ship request logs to a
 
 # Metrics, log drains and alerts
 
-TerraScale measures every database: requests, errors, latency, document operations and storage. The dashboard shows them on the **Analytics** and **Logs** tabs. This page covers taking them into your own tools.
+TerraScale measures every database: requests, SQL statements, errors, latency, document operations and storage. The dashboard shows them on the **Analytics** and **Logs** tabs. This page covers taking them into your own tools.
+
+## Requests and SQL statements
+
+A **request** is one HTTP request, or one PostgreSQL wire exchange (a simple query, or extended-protocol messages up to their `Sync`). A **statement** is one SQL statement a request carried; one request can carry many. TerraScale counts them separately, and neither changes the other:
+
+- **libSQL (Hrana).** Hrana returns SQL errors as error results inside an HTTP `200`, as the protocol requires. So the request counts as a success, and each failed `execute`, batch step or `sequence` counts as a statement error. A `sequence` counts as one statement. `describe`, `store_sql` and `close` are not statements.
+- **PostgreSQL.** An exchange is a request error when any message in it failed. Each statement that reaches your database counts as one statement, and its failure as one statement error. Session-local commands (`SET`, `SHOW`) are not counted.
+- **Latency.** Request latency covers the whole request or exchange. Statement latency covers each statement's own run, in milliseconds.
+
+The analytics API returns statements per bucket as `statements.postgres` and `statements.hrana`. Each has `statements`, `errors` and `latency` (`p50Ms`, `p95Ms`, `p99Ms`).
+
+Each request log entry has `statements` and `statementErrors` fields. Every PostgreSQL exchange gets an entry with route `postgres` and method `OTHER`. A PostgreSQL error carries `DETAIL: request id <id>`. That `<id>` matches the `requestId` of the exchange's log entry, the same way `X-Request-ID` does for HTTP. Logs never contain SQL text, parameters or keys.
+
+Observations are attributed to a database only after the request authenticates for it, and you can read them only with a token for that project. Request logs keep the newest 100 entries within 24 hours, best effort. Analytics follow the ranges of the **Analytics** tab (up to 30 days).
 
 ## Scrape metrics with Prometheus
 
