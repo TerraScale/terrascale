@@ -84,10 +84,17 @@ public sealed class SupportEmailTests(TerraBaseFixture fixture)
     {
         public ConcurrentQueue<(string Recipient, EmailMessage Message)> Sent { get; } = [];
         public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) => signIn.SendAsync(recipient, message, cancellationToken);
-        public Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+        public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         {
+            if (message.Purpose is EmailPurpose.Authentication or EmailPurpose.Invitation)
+            {
+                // Authentication mail goes through the outbox's DeliverAsync too; it is captured, never a product outcome.
+                await signIn.SendAsync(recipient, message, cancellationToken);
+                return EmailDeliveryOutcome.Accepted;
+            }
+
             Sent.Enqueue((recipient, message));
-            return Task.FromResult(EmailDeliveryOutcome.Accepted);
+            return EmailDeliveryOutcome.Accepted;
         }
     }
 }

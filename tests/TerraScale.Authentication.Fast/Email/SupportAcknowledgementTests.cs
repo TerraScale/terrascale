@@ -121,6 +121,13 @@ public sealed class SupportAcknowledgementTests(TerraBaseFixture fixture)
 
         public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         {
+            if (message.Purpose is EmailPurpose.Authentication or EmailPurpose.Invitation)
+            {
+                // Authentication mail goes through the outbox's DeliverAsync too; it is captured, never a product outcome.
+                await signIn.SendAsync(recipient, message, cancellationToken);
+                return EmailDeliveryOutcome.Accepted;
+            }
+
             this.Sent.Enqueue(recipient);
             if (recipient == SupportEmailEndpoint.SupportAddress)
             {
