@@ -13,7 +13,9 @@ public sealed class SqlReadCacheTests
             JsonContent.Create(new { statements = new[] { statement } }));
         response.Status.ShouldBe(HttpStatusCode.OK);
         var result = response.Json.GetProperty("results")[0];
-        return $"{result.GetProperty("columns").GetRawText()} {result.GetProperty("rows").GetRawText()}";
+        var columns = result.GetProperty("columns").EnumerateArray()
+            .Select(column => $"{column.GetProperty("name").GetString()}:{(column.TryGetProperty("decltype", out var type) ? type.GetString() : null)}");
+        return $"{string.Join(',', columns)} {result.GetProperty("rows").GetRawText()}";
     }
 
     [Test]
@@ -32,12 +34,12 @@ public sealed class SqlReadCacheTests
         var changed = await RowsAsync(api, new { sql = "SELECT name FROM kv WHERE k = 'b'" });
         var widened = await RowsAsync(api, new { sql = "SELECT name FROM kv WHERE n >= ? ORDER BY n", args = new object[] { 2 } });
 
-        await Assert.That(first).IsEqualTo("""["name"] [["ann"]]""");
-        await Assert.That(second).IsEqualTo("""["name"] [["bob"]]""");
-        await Assert.That(literal).IsEqualTo("""["name"] [["bob"]]""");
-        await Assert.That(range).IsEqualTo("""["name"] [["ann"],["bob"]]""");
-        await Assert.That(changed).IsEqualTo("""["name"] [["zed"]]""");
-        await Assert.That(widened).IsEqualTo("""["name"] [["zed"],["cy"]]""");
+        await Assert.That(first).IsEqualTo("""name:TEXT [["ann"]]""");
+        await Assert.That(second).IsEqualTo("""name:TEXT [["bob"]]""");
+        await Assert.That(literal).IsEqualTo("""name:TEXT [["bob"]]""");
+        await Assert.That(range).IsEqualTo("""name:TEXT [["ann"],["bob"]]""");
+        await Assert.That(changed).IsEqualTo("""name:TEXT [["zed"]]""");
+        await Assert.That(widened).IsEqualTo("""name:TEXT [["zed"],["cy"]]""");
     }
 
     [Test]
@@ -45,7 +47,7 @@ public sealed class SqlReadCacheTests
     {
         await using var api = await DocumentApi.StartAsync();
         await SqlApi.OkAsync(api, "CREATE TABLE t (k TEXT PRIMARY KEY, a TEXT)", "INSERT INTO t VALUES ('1', 'x')");
-        (await api.SendAsync(HttpMethod.Put, api.DatabasePath("other"))).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.SendAsync(HttpMethod.Put, api.DatabasePath("other"))).Status.ShouldBe(HttpStatusCode.Created);
         (await DocumentApi.SendAsync(api.Client, HttpMethod.Post, $"{api.DatabasePath("other")}/sql/execute", JsonContent.Create(new
         {
             statements = new object[] { new { sql = "CREATE TABLE t (k INTEGER PRIMARY KEY, other TEXT)" }, new { sql = "INSERT INTO t VALUES (7, 'o')" } },
@@ -59,10 +61,10 @@ public sealed class SqlReadCacheTests
         var after = await RowsAsync(api, new { sql = "SELECT * FROM t" });
         var more = await RowsAsync(api, new { sql = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name" });
 
-        await Assert.That(before).IsEqualTo("""["k","a"] [["1","x"]]""");
-        await Assert.That(tables).IsEqualTo("""["name"] [["t"]]""");
-        await Assert.That(elsewhere).IsEqualTo("""["k","other"] [[7,"o"]]""");
-        await Assert.That(after).IsEqualTo("""["k","b","c"] [["2",5,"y"]]""");
-        await Assert.That(more).IsEqualTo("""["name"] [["t"],["u"]]""");
+        await Assert.That(before).IsEqualTo("""k:TEXT,a:TEXT [["1","x"]]""");
+        await Assert.That(tables).IsEqualTo("""name: [["t"]]""");
+        await Assert.That(elsewhere).IsEqualTo("""k:INTEGER,other:TEXT [[7,"o"]]""");
+        await Assert.That(after).IsEqualTo("""k:TEXT,b:INTEGER,c:TEXT [["2",5,"y"]]""");
+        await Assert.That(more).IsEqualTo("""name: [["t"],["u"]]""");
     }
 }
