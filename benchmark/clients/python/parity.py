@@ -84,6 +84,7 @@ class Tenant:
         self.setup_routes = {("POST", self.base), ("DELETE", self.db_path),
                              ("POST", f"{self.db_path}/collections"), ("PUT", self.doc_path)}
         self.seeds: dict[int, Seed] = {}
+        self.create = "not_attempted"
 
     def emit(self, row: dict[str, Any]) -> None:
         self.out.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
@@ -137,9 +138,11 @@ class Tenant:
             raise Rejected(f"cell rejected: {reject}")
 
 
-async def _setup(client: AsyncTerraScale, home: str, db: str) -> dict[int, Seed]:
+async def _setup(client: AsyncTerraScale, home: str, db: str, tenant: Tenant) -> dict[int, Seed]:
     handle = client.database(db)
+    tenant.create = "uncertain"
     await client.create_database(db, home_region=home, all_regions=True)
+    tenant.create = "created"
     await handle.create_collection(COLLECTION)
     collection, seeds = handle.collection(COLLECTION), {}
     for size in SIZES:
@@ -152,15 +155,15 @@ async def _setup(client: AsyncTerraScale, home: str, db: str) -> dict[int, Seed]
 
 async def _cleanup(client: AsyncTerraScale, db: str, tenant: Tenant) -> bool:
     """Delete the exact owned name directly; the server coordinates remote erasure."""
-    row: dict[str, Any] = {"accepted": True}
+    row: dict[str, Any] = {"create": tenant.create, "deletion": "logical_accepted", "reconcile_required": False}
     try:
         await asyncio.wait_for(client.database(db).delete(), CLEANUP_S)
-    except NotFoundError:  # Never created, or already gone.
-        pass
+    except NotFoundError:
+        row.update(deletion="absent", reconcile_required=tenant.create == "uncertain")
     except Exception as exc:
-        row = {"accepted": False, "status": getattr(exc, "status", None), "error": type(exc).__name__}
+        row.update(deletion="failed", reconcile_required=True, status=getattr(exc, "status", None), error=type(exc).__name__)
     tenant.emit({"type": "database_deletion", "database": db, "remote_erasure": "unverified", **row})
-    return row["accepted"]
+    return row["deletion"] != "failed" and not row["reconcile_required"]
 
 
 def _regions() -> list[str]:
@@ -217,7 +220,7 @@ async def _session(args: argparse.Namespace) -> None:
             client = AsyncTerraScale(key, project=project, base_url=ORIGIN, http_client=pool)
             try:
                 try:
-                    tenant.seeds = await asyncio.wait_for(_setup(client, home, db), SETUP_S)
+                    tenant.seeds = await asyncio.wait_for(_setup(client, home, db, tenant), SETUP_S)
                 except Exception as exc:  # The safe status and type only, never the message.
                     tenant.emit({"type": "setup_failure", "status": getattr(exc, "status", None),
                                  "error": type(exc).__name__})

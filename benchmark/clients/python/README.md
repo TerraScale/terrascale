@@ -14,8 +14,9 @@ Run only through `ts-heavy-any nice -n 19`, with the outer synthetic tenant help
 The output must be new. Keys, tokens, bodies, source URLs and raw errors are not logged.
 `TS_PEERS_FILE` supplies serving regions; it must include gru/sjc/fra. Setup owns one all-regions database and two documents.
 Setup has a shared 60 s deadline. Cleanup directly deletes the exact owned name
-with a separate 30 s deadline. `database_deletion.accepted` records logical deletion;
-remote erasure is unverified. Account/inbox erasure belongs to the outer helper.
+with a separate 30 s deadline. Cleanup records `logical_accepted`, `absent` or `failed`;
+an uncertain create followed by 404, or a failed delete, requires reconciliation.
+Remote erasure is unverified. Account/inbox erasure belongs to the outer helper.
 
 Each region runs three alternating repeats of 256/4096 B, c=1/16, raw-h1/raw-h2/sdk.
 SDK data/auth pools use the shipped HTTP/2 with HTTP/1.1 fallback, 30 s timeout,
