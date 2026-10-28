@@ -1,0 +1,16 @@
+Subject: Seu e-mail de acesso a TerraScale vai mudar
+
+Seu e-mail de acesso vai mudar
+
+Alguém que acabou de verificar suas credenciais pediu para trocar o e-mail de acesso de jane@example.com em TerraScale para new.jane@example.com. A troca acontece quando esse endereço confirmar o código.
+
+Não fui eu:
+https://auth.test.invalid/ui/terrascale/email-change/cancel
+
+Este link expira em 10 minutos e só pode ser usado uma vez.
+
+Se não foi você, use o botão para cancelar a troca e encerrar todas as sessões, depois redefina sua senha.
+
+-- 
+Este e-mail foi enviado para jane@example.com.
+TerraScale · terrascale.tech

@@ -1,0 +1,16 @@
+Subject: Your TerraScale sign-in email is changing
+
+Your sign-in email is changing
+
+Someone who just verified your credentials asked to change the sign-in email of jane@example.com on TerraScale to new.jane@example.com. It changes once that address confirms its code.
+
+This wasn't me:
+https://auth.test.invalid/ui/terrascale/email-change/cancel
+
+This link expires in 10 minutes and works only once.
+
+If this wasn't you, use the button to cancel the change and sign out everywhere, then reset your password.
+
+-- 
+This email was sent to jane@example.com.
+TerraScale · terrascale.tech

@@ -169,7 +169,7 @@ public sealed partial class OpenApiTests
         var security = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
         var operationIds = 0;
         var planned = new HashSet<(string Path, string Method, string Id)>();
-        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml", "account-deletion.openapi.yaml", "deletion-history.openapi.yaml", "step-up.openapi.yaml" })
+        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml", "account-deletion.openapi.yaml", "deletion-history.openapi.yaml", "step-up.openapi.yaml", "email-change.openapi.yaml" })
         {
             contractFiles.Add(file);
         }

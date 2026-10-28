@@ -194,6 +194,50 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     }
 
     /// <summary>
+    /// Moves the account to <paramref name="newEmail"/> at the authentication state the change was requested in: releases
+    /// the old address, reserves the new one and advances the epoch (signing out everywhere) in one transaction together
+    /// with <paramref name="extra"/>. Null when the state moved on or the transaction lost; false when another account owns the address.
+    /// </summary>
+    internal async Task<bool?> ChangeEmailAsync(string instanceId, string userId, long authEpoch, string? authStamp, string newEmail,
+        IReadOnlyList<StoreOperation> extra, CancellationToken cancellationToken)
+    {
+        if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.User.AuthEpoch != authEpoch || current.User.AuthStamp != authStamp || current.User.Disabled
+            || await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is not { } claim
+            || claim.OwnerId != userId)
+        {
+            return null;
+        }
+
+        if (await store.FindUniqueOwnerAsync(instanceId, EmailKind, newEmail, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return false;
+        }
+
+        var updated = current.User with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthStore.NewId() };
+        List<StoreOperation> operations =
+        [
+            AuthStore.Replace(AuthStore.UserCollection, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
+            AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version),
+            AuthStore.Claim(instanceId, EmailKind, newEmail, userId),
+            .. extra,
+        ];
+
+        // The user's passcode row names the old address; it would refuse every later code for the new one.
+        if (await store.GetAsync(AuthStore.PasscodeCollection, instanceId, userId, cancellationToken).ConfigureAwait(false) is { } passcode)
+        {
+            operations.Add(AuthStore.Delete(AuthStore.PasscodeCollection, instanceId, userId, passcode.Version));
+        }
+
+        if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return true;
+        }
+
+        return await store.FindUniqueOwnerAsync(instanceId, EmailKind, newEmail, cancellationToken).ConfigureAwait(false) is { } owner && owner != userId ? false : null;
+    }
+
+    /// <summary>
     /// Disables or enables the account. Either change advances the epoch, so disabling ends every session and token at
     /// once; <see cref="Sessions"/> refuses to open or resolve a session of a disabled account. Null when it is gone.
     /// </summary>

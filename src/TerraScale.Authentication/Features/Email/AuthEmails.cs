@@ -35,6 +35,12 @@ public enum AuthEmailKind
 
     /// <summary>An alert about a temporary pause of an authentication method after excessive attempts.</summary>
     Lockout,
+
+    /// <summary>A one-time code, sent to the new address, that confirms a sign-in email change.</summary>
+    EmailChangeCode,
+
+    /// <summary>An alert, sent to the current address, about a pending sign-in email change with a link that cancels it.</summary>
+    EmailChangeNotice,
 }
 
 /// <summary>
@@ -74,6 +80,9 @@ public sealed record AuthEmailValues(string Email)
 
     /// <summary>When the authentication method's temporary pause ends, rendered in UTC.</summary>
     public DateTimeOffset? LockoutUntil { get; init; }
+
+    /// <summary>The requested sign-in address of an email change notice.</summary>
+    public string? NewEmail { get; init; }
 
     /// <summary>Omits every value, so formatting or logging the record never discloses a code or a link.</summary>
     public override string ToString() => nameof(AuthEmailValues);
@@ -270,6 +279,8 @@ public sealed partial class AuthEmails(AuthOptions options)
         ["mfa_code"] = AuthEmailKind.MfaCode,
         ["new_device"] = AuthEmailKind.NewDevice,
         ["lockout"] = AuthEmailKind.Lockout,
+        ["email_change_code"] = AuthEmailKind.EmailChangeCode,
+        ["email_change_notice"] = AuthEmailKind.EmailChangeNotice,
     };
 
     // Keeps accented letters readable in the HTML part; markup characters are still encoded.
@@ -307,6 +318,8 @@ public sealed partial class AuthEmails(AuthOptions options)
             AuthEmailKind.Invitation => ["link", "expires_in", "organization", "inviter"],
             AuthEmailKind.NewDevice => ["device", "location", "time"],
             AuthEmailKind.Lockout => ["locked_until"],
+            AuthEmailKind.EmailChangeCode => ["code", "expires_in", "new_email"],
+            AuthEmailKind.EmailChangeNotice => ["link", "expires_in", "new_email"],
             _ => (string[])["code", "expires_in"],
         },
     ];
@@ -380,13 +393,14 @@ public sealed partial class AuthEmails(AuthOptions options)
             ["device"] = values.Device ?? string.Empty,
             ["location"] = values.Location ?? string.Empty,
             ["time"] = values.Time?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? string.Empty,
+            ["new_email"] = values.NewEmail ?? string.Empty,
             ["locked_until"] = values.LockoutUntil?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? string.Empty,
         };
         string Fill(string? template) => Placeholder().Replace(template ?? string.Empty, match => variables.GetValueOrDefault(match.Groups["name"].Value, string.Empty));
 
         var expiry = values.ExpiresIn is null ? null : Fill(kind switch
         {
-            AuthEmailKind.MagicLink => chrome.LinkExpiry,
+            AuthEmailKind.MagicLink or AuthEmailKind.EmailChangeNotice => chrome.LinkExpiry,
             AuthEmailKind.Invitation => chrome.InvitationExpiry,
             AuthEmailKind.NewDevice or AuthEmailKind.Lockout => string.Empty,
             _ => chrome.CodeExpiry,
@@ -619,6 +633,34 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Muitas tentativas pausaram temporariamente um método de autenticação para {{ user.email }} em {{ app_name }} até {{ locked_until }}.\n\nOutros métodos de acesso ou recuperação podem continuar disponíveis.",
             null,
             "Se não foi você, use um método disponível para revisar a segurança da sua conta ou entre em contato com o suporte. Se a redefinição de senha estiver pausada, tente novamente após o fim da pausa."),
+        [(AuthEmailKind.EmailChangeCode, English)] = new(
+            "{{ code }} confirms your new {{ app_name }} sign-in email",
+            "Confirm {{ new_email }} as your new sign-in email.",
+            "Confirm your new sign-in email",
+            "Enter this code in {{ app_name }} to make {{ new_email }} your sign-in email.",
+            null,
+            "Didn't ask for this? You can safely ignore this email; nothing changes without the code. Never share this code with anyone."),
+        [(AuthEmailKind.EmailChangeCode, Portuguese)] = new(
+            "{{ code }} confirma seu novo e-mail de acesso a {{ app_name }}",
+            "Confirme {{ new_email }} como seu novo e-mail de acesso.",
+            "Confirme seu novo e-mail de acesso",
+            "Digite este código em {{ app_name }} para tornar {{ new_email }} seu e-mail de acesso.",
+            null,
+            "Não pediu isso? Pode ignorar este e-mail com segurança; nada muda sem o código. Nunca compartilhe este código com ninguém."),
+        [(AuthEmailKind.EmailChangeNotice, English)] = new(
+            "Your {{ app_name }} sign-in email is changing",
+            "A change of your sign-in email to {{ new_email }} was requested.",
+            "Your sign-in email is changing",
+            "Someone who just verified your credentials asked to change the sign-in email of {{ user.email }} on {{ app_name }} to {{ new_email }}. It changes once that address confirms its code.",
+            "This wasn't me",
+            "If this wasn't you, use the button to cancel the change and sign out everywhere, then reset your password."),
+        [(AuthEmailKind.EmailChangeNotice, Portuguese)] = new(
+            "Seu e-mail de acesso a {{ app_name }} vai mudar",
+            "Foi pedida a troca do seu e-mail de acesso para {{ new_email }}.",
+            "Seu e-mail de acesso vai mudar",
+            "Alguém que acabou de verificar suas credenciais pediu para trocar o e-mail de acesso de {{ user.email }} em {{ app_name }} para {{ new_email }}. A troca acontece quando esse endereço confirmar o código.",
+            "Não fui eu",
+            "Se não foi você, use o botão para cancelar a troca e encerrar todas as sessões, depois redefina sua senha."),
     };
 }
 

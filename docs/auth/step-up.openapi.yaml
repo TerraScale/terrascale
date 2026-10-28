@@ -25,7 +25,7 @@ paths:
         The existing hosted session never approves the proof. Fresh password or one explicitly requested
         email code, followed by fresh active MFA when enrolled, is required. GET never sends mail.
         Valid pairs are delete_account with ts-auth or ts-dashboard, create_pat with ts-dashboard,
-        and create_api_key, rotate_api_key or create_oauth_client with ts-auth.
+        and create_api_key, rotate_api_key, create_oauth_client or change_email with ts-auth.
         return_uri must be /auth/step-up/callback on a registered dashboard redirect origin without
         query or fragment. Issuance is limited to ten requests per account per fifteen-minute window.
       requestBody:
@@ -102,7 +102,7 @@ components:
       properties:
         purpose:
           type: string
-          enum: [delete_account, create_pat, create_api_key, rotate_api_key, create_oauth_client]
+          enum: [delete_account, create_pat, create_api_key, rotate_api_key, create_oauth_client, change_email]
         audience:
           type: string
           enum: [ts-auth, ts-dashboard]

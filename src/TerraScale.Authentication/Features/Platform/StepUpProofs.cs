@@ -204,14 +204,14 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         [Current(caller), .. AuthStore.CredentialRequirements(caller.InstanceId, caller.AuthenticationBindings
             .Where(binding => binding != AuthStore.UserStateBinding(caller.Id, caller.AuthStamp!)).ToArray())];
 
-    /// <summary>Deletes expired proof, deletion grant and isolated code rows; immutable winner claims outlive descendants.</summary>
+    /// <summary>Deletes expired proof, deletion grant, isolated code and email-change rows; immutable winner claims outlive descendants.</summary>
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         var now = JsonSerializer.Serialize(clock.GetUtcNow(), IdentityJson.Default.DateTimeOffset);
         using var filter = JsonDocument.Parse($$"""{"lte":["/expiresAt",{{now}}]}""");
         var total = 0;
-        foreach (var collection in new[] { AuthStore.StepUpProofCollection, AuthStore.StepUpDeletionGrantCollection, AuthStore.StepUpPasscodeCollection })
+        foreach (var collection in new[] { AuthStore.StepUpProofCollection, AuthStore.StepUpDeletionGrantCollection, AuthStore.StepUpPasscodeCollection, AuthStore.EmailChangeCollection })
         {
             while (true)
             {
@@ -224,6 +224,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
                     {
                         AuthStore.StepUpDeletionGrantCollection => "receiptHash",
                         AuthStore.StepUpPasscodeCollection => "stepUpRequestId",
+                        AuthStore.EmailChangeCollection => "userId",
                         _ => "id",
                     }).GetString()!;
                     if (await store.CompareAndDeleteAsync(collection, instance, key, document.Version, cancellationToken).ConfigureAwait(false))
@@ -247,7 +248,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",
-        "ts-auth" => purpose is "delete_account" or "create_api_key" or "rotate_api_key" or "create_oauth_client",
+        "ts-auth" => purpose is "delete_account" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "change_email",
         _ => false,
     };
     private static JsonElement Serialize(StepUpRecord value) => JsonSerializer.SerializeToElement(value, StepUpJson.Default.StepUpRecord);

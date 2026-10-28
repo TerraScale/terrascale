@@ -252,6 +252,13 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             this.Consume().FinishReservation(() => Task.FromResult<Outgoing?>(new Outgoing(values.Email, AuthEmailKind.Invitation, values)), locale);
         }
 
+        /// <summary>Queues a committed <paramref name="kind"/> email using the slot reserved before its transaction.</summary>
+        public void EnqueueEmail(AuthEmailKind kind, AuthEmailValues values, string locale = AuthEmails.English)
+        {
+            ArgumentNullException.ThrowIfNull(values);
+            this.Consume().FinishReservation(() => Task.FromResult<Outgoing?>(new Outgoing(values.Email, kind, values)), locale);
+        }
+
         /// <inheritdoc />
         public void Dispose() => Interlocked.Exchange(ref this.owner, null)?.FinishReservation(null, AuthEmails.English);
 
