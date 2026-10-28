@@ -5,6 +5,7 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Hosting;
@@ -230,6 +231,27 @@ public sealed class AccountMfaEndpoint(TotpCredentials mfa, AuthOptions options,
     {
         var (enabled, remaining) = await mfa.StatusAsync(caller.InstanceId, caller.Id, cancellationToken);
         return Results.Json(new AccountMfaBody(enabled, remaining, new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/security").AbsoluteUri), PlatformApiJson.Default.AccountMfaBody);
+    }
+}
+
+/// <summary><c>POST /v1/terrascale/account/sign-out</c>.</summary>
+public sealed class SignOutEverywhereEndpoint(Sessions sessions, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/v1/terrascale/account/sign-out");
+        this.Document("sign_out_everywhere", "Sign out everywhere",
+            "Advances the caller's authentication epoch: every hosted browser session, OAuth refresh token and sign-in access token of the account, including the one making this call, is refused from then on, and pending sign-in codes and challenges die. API keys are separate credentials and stay valid. Repeating the call is harmless.",
+            "Members", null, StatusCodes.Status204NoContent, null, roleChecked: false, scoped: false);
+    }
+
+    /// <inheritdoc />
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        // False only when the account was deleted meanwhile, which leaves nothing signed in either.
+        await sessions.RevokeAllAsync(caller.InstanceId, caller.Id, cancellationToken);
+        return Results.NoContent();
     }
 }
 
