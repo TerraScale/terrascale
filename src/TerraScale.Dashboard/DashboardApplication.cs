@@ -97,10 +97,14 @@ public static class DashboardApplication
         builder.Services.AddDashboardContracts();
         builder.Services.AddTransient<ServerTiming.Handler>();
         builder.Services.AddTransient<RequestIdentity.Handler>();
+        builder.Services.AddTransient<PlatformTransport.PreferHttp2>();
+        // The pool itself recycles connections for DNS (PlatformTransport), so the factory keeps one handler and its warm pool.
         builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
-            .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+            .ConfigurePrimaryHttpMessageHandler(PlatformTransport.CreateHandler)
+            .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
             .AddHttpMessageHandler<ServerTiming.Handler>()
-            .AddHttpMessageHandler<RequestIdentity.Handler>();
+            .AddHttpMessageHandler<RequestIdentity.Handler>()
+            .AddHttpMessageHandler<PlatformTransport.PreferHttp2>();
         builder.Services.AddTransient<TerraBasePeerCredential>();
         builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
