@@ -9,7 +9,7 @@ cannot isolate it. The benchmark-only document-service decorator and ASP.NET Cor
   The overhead/engine p50 column uses engine time as denominator. It is not a per-request ratio quantile.
 
 All times are wall time, including waits. The in-process engine lane unwraps the decorator.
-The capture uses the client's monotonic measurement window after warmup. Requests hosting starts before the
+The capture uses the client's monotonic measurement window after a fixed 10 s warmup. Requests hosting starts before the
 window, or finishes after it, are excluded. Missing HTTP attribution fails the run. Non-HTTP lanes, the health
 floor and the separate three-node cluster have no server attribution, represented by null rather than zero.
 A uniform reservoir keeps at most 16,384 paired full-width timings (256 KiB) per cell. Catalog hits are not measured.
