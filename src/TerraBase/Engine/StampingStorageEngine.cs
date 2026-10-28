@@ -23,6 +23,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
     // conservative cache invalidation becomes measurable.
     private long _epoch;
 
+    private Store? _system;
+
     internal void InvalidateAll() => Interlocked.Increment(ref _epoch);
 
     public string Name => inner.Name;
@@ -83,7 +85,21 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         await inner.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is { } store ? new Store(this, database, store) : null;
 
     public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken) =>
-        new Store(this, null, await inner.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false));
+        SystemStore(await inner.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false));
+
+    // The inner engine is still asked every time, so its lifecycle checks run; only the stateless wrapper is reused, and
+    // only for the same inner store. A race builds an equivalent wrapper and keeps the last one.
+    private Store SystemStore(IDatabaseStore store)
+    {
+        if (Volatile.Read(ref _system) is { } cached && ReferenceEquals(cached.Inner, store))
+        {
+            return cached;
+        }
+
+        var wrapped = new Store(this, null, store);
+        Volatile.Write(ref _system, wrapped);
+        return wrapped;
+    }
 
     public ValueTask<bool> CopyDatabaseAsync(TenantContext source, TenantContext target, CancellationToken cancellationToken) =>
         inner.CopyDatabaseAsync(source, target, cancellationToken);
@@ -120,6 +136,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     private sealed class Store(StampingStorageEngine engine, TenantContext? database, IDatabaseStore inner) : IDatabaseStore
     {
+        internal IDatabaseStore Inner => inner;
+
         public Ulid Incarnation => inner.Incarnation;
 
         public TenantContext? Tenant => inner.Tenant;

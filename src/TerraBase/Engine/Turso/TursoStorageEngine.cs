@@ -975,7 +975,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         return ValueTask.FromResult<long?>(file.Exists ? file.Length + (wal.Exists ? wal.Length : 0) : null);
     }
 
-    public async ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken)
+    // Not async: an opened system store returns without the opening's closure, several times per request. Shutdown and
+    // the first opening take the async path, so they fail and complete exactly as it does.
+    public ValueTask<IDatabaseStore> OpenSystemDatabaseAsync(CancellationToken cancellationToken) =>
+        !Volatile.Read(ref _disposed) && Volatile.Read(ref _system) is { } system
+            ? ValueTask.FromResult<IDatabaseStore>(system)
+            : OpenSystemDatabaseSlowAsync(cancellationToken);
+
+    private async ValueTask<IDatabaseStore> OpenSystemDatabaseSlowAsync(CancellationToken cancellationToken)
     {
         // Like every other store: none is handed out after shutdown, even a cached one.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
