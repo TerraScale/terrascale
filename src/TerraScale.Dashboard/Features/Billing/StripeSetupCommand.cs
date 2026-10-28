@@ -73,8 +73,7 @@ public sealed class StripeSetupCommand
         var enterprise = PlanCatalog.ComparisonPlans.Single(plan => plan.Key == "enterprise");
         // Stripe support pricing does not make Enterprise a selectable dashboard plan.
         var setupPlans = PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
-            .Select(plan => (plan.Key, plan.Name, Interval: plan.CheckoutInterval,
-                Amount: plan.CheckoutInterval == "annual" ? plan.AnnualPriceCents : plan.PriceCents))
+            .SelectMany(plan => plan.CheckoutIntervals.Select(interval => (plan.Key, plan.Name, Interval: interval, Amount: plan.IntervalPriceCents(interval))))
             .Append((Key: enterprise.Key, Name: enterprise.Name + " support", Interval: "monthly", Amount: enterprise.PriceCents));
         foreach (var plan in setupPlans)
         {
@@ -94,6 +93,9 @@ public sealed class StripeSetupCommand
                 changes.Add("product_" + plan.Key + "_activated");
                 foreach (var price in prices.Where(price => price.ProductId == product.Id)) price.Product = product;
             }
+            // Each plan has one product for both intervals: later intervals reuse the one just created or activated.
+            products.RemoveAll(known => known.Id == product.Id);
+            products.Add(product);
             var interval = plan.Interval;
             var name = plan.Key + "_" + interval;
             var matches = prices.Where(price => price.Active && price.Currency == "usd" && price.UnitAmount == plan.Amount &&

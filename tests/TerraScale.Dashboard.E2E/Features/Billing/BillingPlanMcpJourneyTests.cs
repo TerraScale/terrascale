@@ -45,7 +45,9 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(listedPlans.GetProperty("plans").GetArrayLength()).IsEqualTo(3);
         var starter = listedPlans.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("key").GetString() == "starter");
         await Assert.That(starter.GetProperty("current").GetBoolean()).IsTrue();
-        await Assert.That(starter.GetProperty("billingInterval").GetString()).IsEqualTo("year");
+        await Assert.That(starter.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()!).ToArray()).IsEquivalentTo(new[] { "month", "year" });
+        await Assert.That(starter.GetProperty("priceCents").GetInt64()).IsEqualTo(300);
+        await Assert.That(starter.GetProperty("annualPriceCents").GetInt64()).IsEqualTo(3000);
         await Assert.That(starter.GetProperty("monthlyEgressBytes").GetInt64()).IsEqualTo(5_000_000_000);
         await Assert.That(starter.GetProperty("maxMembers").GetInt32()).IsEqualTo(5);
         await Assert.That(starter.GetProperty("operationUnitsPerMonth").GetInt64()).IsEqualTo(250_000);

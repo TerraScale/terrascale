@@ -167,10 +167,10 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await page.GotoAsync(new Uri(fixture.Origin, Billing + "&interval=annual").ToString());
         await page.GetByRole(AriaRole.Button, new() { Name = "Choose plan", Exact = true }).ClickAsync();
         await page.Locator("#change-billing-plan[open]").WaitForAsync();
-        var annual = (await page.Locator("#change-billing-plan").InnerTextAsync()).Contains("$30.00 / year · Billed yearly", StringComparison.Ordinal);
+        var annual = (await page.Locator("#change-billing-plan").InnerTextAsync()).Contains("$3.00 / month · Billed monthly, or $30.00 a year", StringComparison.Ordinal);
         await CaptureAsync(page, $"annual-chooser-{width}");
         await RecordAsync($"annual-chooser-{width}", new { route = Billing + "&interval=annual", width, height, annual });
-        await Assert.That(annual).IsTrue().Because("The chooser must show Starter’s yearly charge without offering unapproved billing intervals.");
+        await Assert.That(annual).IsTrue().Because("The chooser must show Starter’s monthly charge and its published yearly price.");
     }
 
     [Test, Category("Slow")]
@@ -201,7 +201,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await page.Locator("#change-billing-plan input[name=plan][value=starter]").PressAsync("Space");
         await page.GetByRole(AriaRole.Button, new() { Name = "Review change", Exact = true }).PressAsync("Enter");
         await page.Locator("#review-billing-plan[open]").WaitForAsync();
-        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("$30.00 / year");
+        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("$3.00 / month");
         await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("After Stripe confirms checkout");
         await BrowserAudit.AssertAccessibleAsync(page, "The annual review must remain keyboard accessible.");
         await Assert.That(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= innerWidth")).IsTrue();

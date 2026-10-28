@@ -183,8 +183,11 @@ public sealed class StripeAuditScenario : IAsyncDisposable
             var all = new List<(string Plan, string Interval, int Amount, string Id, bool Active, bool ProductActive)>
             {
                 ("starter", "annual", 3000, "price_starter_annual", true, true),
+                ("starter", "monthly", 300, "price_starter_monthly", true, true),
                 ("pro", "monthly", 2000, "price_pro_monthly", true, true),
-                ("team", "monthly", 5000, "price_team_monthly", true, true)
+                ("pro", "annual", 20000, "price_pro_annual", true, true),
+                ("team", "monthly", 5000, "price_team_monthly", true, true),
+                ("team", "annual", 50000, "price_team_annual", true, true)
             };
             if (fault == "missing-price") all.RemoveAll(row => row.Id == "price_starter_annual");
             if (fault == "duplicate-price") all.Add(("pro", "monthly", 2000, "price_pro_monthly_duplicate", true, true));
@@ -199,7 +202,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
             var after = query.GetValueOrDefault("starting_after").ToString();
             var start = after.Length == 0 ? 0 : all.FindIndex(value => value.Id == after) + 1;
             if (after.Length > 0 && start == 0) throw new InvalidDataException("Unknown price cursor.");
-            var rows = all.Skip(start).Take(2).ToArray();
+            var rows = all.Skip(start).Take(3).ToArray();
             foreach (var row in rows) priceFacts.Enqueue($"{row.Id}|{row.Plan}|{row.Interval}|{row.Amount}|{row.Active}|{row.ProductActive}");
             return JsonSerializer.Serialize(new { @object = "list", url = "/v1/prices", has_more = start + rows.Length < all.Count, data = rows.Select(row => Price(row.Plan, row.Interval, row.Amount, row.Plan == "team", row.Active, row.Id, row.ProductActive)) });
         }

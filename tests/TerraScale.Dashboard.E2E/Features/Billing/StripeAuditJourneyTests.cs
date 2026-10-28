@@ -71,7 +71,7 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
         Check(scenario.Requests.Count(request => request.Target.StartsWith("/v1/prices?", StringComparison.Ordinal)) == 2 &&
             scenario.Requests.Count(request => request.Target == "/v1/products/prod_team_monthly") == 1 &&
             scenario.Requests.Count(request => request.Target.StartsWith("/v1/subscriptions?", StringComparison.Ordinal)) == 2,
-            "The SDK discovers and paginates three published plan prices, resolves an unexpanded product, and follows subscription pagination");
+            "The SDK discovers and paginates six published plan prices, resolves an unexpanded product, and follows subscription pagination");
     }
 
     [Test]
@@ -144,7 +144,7 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
             !report.RootElement.GetProperty("checks").GetProperty(failedCheck).GetBoolean(),
             "The audit rejects the plan price whose provider facts are missing, ambiguous, or inactive");
         var facts = scenario.PriceFacts;
-        Check(facts.Count == (fault == "missing-price" ? 2 : fault == "duplicate-price" ? 4 : 3),
+        Check(facts.Count == (fault == "missing-price" ? 5 : fault == "duplicate-price" ? 7 : 6),
             "The TLS producer returned the intended actual SDK price records");
         if (fault == "missing-price")
             Check(facts.All(fact => !fact.StartsWith("price_starter_annual|", StringComparison.Ordinal)), "The paid starter annual price is actually absent from provider responses");
@@ -157,7 +157,7 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
         if (fault == "inactive-product")
             Check(facts.Any(fact => fact.StartsWith("price_starter_annual|", StringComparison.Ordinal) && fact.EndsWith("|True|False", StringComparison.Ordinal)),
                 "The provider response contains the matching active price with an inactive product");
-        Protocol(scenario, fault == "missing-price" ? 7 : 8);
+        Protocol(scenario, fault == "duplicate-price" ? 9 : 8);
     }
 
     [Test]

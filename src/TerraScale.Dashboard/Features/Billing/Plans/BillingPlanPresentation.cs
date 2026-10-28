@@ -40,7 +40,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
             else
             {
                 if (key == "free") interval = "";
-                price = MoneyFormat.Money(interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) + (interval.Length == 0 ? "" : interval == "annual" ? " / year" : " / month");
+                price = MoneyFormat.Money(plan.IntervalPriceCents(interval)) + (interval.Length == 0 ? "" : interval == "annual" ? " / year" : " / month");
                 if (!subscribed)
                 {
                     effect = binding?.TrialUsed != true && plan.TrialDays > 0 ? "After Stripe confirms the " + plan.TrialDays + "-day trial" : "After Stripe confirms checkout";

@@ -34,7 +34,7 @@
         {
             var selectable = Model.Plans.FirstOrDefault(item => item.Key == candidate.Key);
             var freeCandidate = candidate.Key == "free";
-            var interval = freeCandidate ? "" : selectable?.CheckoutInterval ?? "";
+            var interval = freeCandidate ? "" : selectable is not null && selectable.Id == org.PlanId && selectable.SupportsInterval(effectiveInterval ?? "") ? effectiveInterval! : selectable?.CheckoutInterval ?? "";
             var current = freeCandidate ? free && !awaiting : subscribed && selectable?.Id == org.PlanId && effectiveInterval == interval;
             var canReview = owner && subscribed && selectable is not null && (!freeCandidate || org.Kind == "personal" && Model.PlanChanges.State is not null);
             var action = current ? "Current plan" : awaiting ? "Choose " + candidate.Name : candidate.PriceCents > (plan?.PriceCents ?? 0) ? "Upgrade to " + candidate.Name : "Switch to " + candidate.Name;

@@ -17,7 +17,7 @@ public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService
         var step = account.OnboardingCompleted ? "" : account.OnboardingStep;
         var plans = await onboarding.PlansAsync(Cancellation);
         return new(account.OnboardingCompleted, step, OnboardingProgress.Steps(step),
-            plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.IntervalPriceCents, plan.BillingInterval, plan.PriceCents, plan.Price + " " + plan.PriceUnit, plan.Allowances.MonthlyEgressBytes, plan.TrialDays)).ToArray());
+            plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingIntervals, plan.Price + " " + plan.PriceUnit, plan.Allowances.MonthlyEgressBytes, plan.TrialDays)).ToArray());
     }
 
     [McpServerTool(Name = "save_onboarding_step", Title = "Save onboarding step", OpenWorld = true, Destructive = false, UseStructuredContent = true),
@@ -61,8 +61,8 @@ public sealed record OnboardingStatus(bool Completed,
     [property: Description("Paid plans the payment step offers.")] IReadOnlyList<OnboardingOfferedPlan> Plans);
 public sealed record OnboardingOfferedPlan(string Key, string Name,
     [property: Description(PlanPriceText.PriceCents)] long PriceCents,
-    [property: Description(PlanPriceText.BillingInterval)] string BillingInterval,
-    [property: Description(PlanPriceText.MonthlyEquivalentCents)] long MonthlyEquivalentCents,
+    [property: Description(PlanPriceText.AnnualPriceCents)] long AnnualPriceCents,
+    [property: Description(PlanPriceText.BillingIntervals)] IReadOnlyList<string> BillingIntervals,
     [property: Description(PlanPriceText.Price)] string Price, long MonthlyEgressBytes, int TrialDays);
 public sealed record OnboardingSaved(bool Completed,
     [property: Description("Step to complete next, empty once setup is complete.")] string Step,
