@@ -56,6 +56,8 @@ Its last two receipt-only reads, 06:57:52 and 06:58:12 UTC, returned 503 before
 any deletion continuation; readiness had already recovered by then. They correlated
 with an auth-to-TerraBase unavailable failure. No unchanged-state retry or replacement
 tenant is justified by the later unchanged readiness/revision observations.
+The [historical receipt-log diagnostic](2026-10-28-perf-api-receipt-diagnostic.md)
+preserves that correlation while keeping the underlying refusal cause unproven.
 
 After authoritative storage/receipt recovery, reconcile that tenant first. Before
 creating another tenant, preflight the current runners, credentials, output paths
