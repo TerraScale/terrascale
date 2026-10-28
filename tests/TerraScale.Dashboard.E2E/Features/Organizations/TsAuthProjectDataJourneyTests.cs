@@ -82,7 +82,7 @@ public sealed partial class TsAuthPlatformJourneyTests
                     case "webhook-read": await hooks.ListAsync(context, id, "items", ct); break;
                     case "list": return Results.Json(await saved.ListAsync(context, id, ct));
                     case "delete": await saved.DeleteAsync(context, id, http.Request.Query["query"].ToString(), ct); break;
-                    default: return Results.Json(await saved.SaveAsync(context, id, "Shared", "SELECT 1", ct));
+                    default: return Results.Json(await saved.SaveAsync(context, id, "Shared " + Guid.NewGuid().ToString("N"), "SELECT 1", ct));
                 }
                 return Results.NoContent();
             }

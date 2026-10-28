@@ -47,7 +47,7 @@ public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService back
     public Task<WholeDatabaseWindow> GetPointInTimeWindow(string databaseId, string destination = "platform", string? organizationId = null, string? projectId = null) =>
         recovery.WindowAsync(Scope(organizationId, projectId), databaseId, destination, Cancellation);
 
-    [McpServerTool(Name = "plan_point_in_time_recovery", Title = "Preview advisory PITR metadata", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read advisory metadata only for a retained UTC point (ISO timestamp ending Z). Does not verify replay bytes, reserve history or guarantee restore. Requires management access.")]
+    [McpServerTool(Name = "plan_point_in_time_recovery", Title = "Preview advisory PITR metadata", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read advisory metadata only for a retained point: an ISO 8601 timestamp ending Z or +00:00, such as a bound get_point_in_time_window returns. Does not verify replay bytes, reserve history or guarantee restore. Requires management access.")]
     public Task<TerraScale.DotNet.TerraBase.TerraBasePointInTimePlan> PlanPointInTimeRecovery(string databaseId, string pointInTime, string destination = "platform", string? organizationId = null, string? projectId = null) =>
         recovery.PlanAsync(Scope(organizationId, projectId), databaseId, destination, pointInTime, Cancellation);
 

@@ -23,9 +23,10 @@ public sealed class OnboardingService(AccountService accounts, StripeBilling pay
 
     public async Task<string> SaveAsync(SessionRecord session, IFormCollection form, CancellationToken cancellationToken)
     {
+        var step = form["step"].ToString();
+        if (step is not ("account-information" or "payment-method" or "project")) throw new OnboardingValidationException("Choose a valid setup step.");
         var context = await accounts.GetContextAsync(session, cancellationToken);
         if (context.Account.OnboardingCompleted) return "/";
-        var step = form["step"].ToString();
         switch (step)
         {
             case "account-information":

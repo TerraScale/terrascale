@@ -41,11 +41,9 @@ public sealed partial class FunctionBackend(DatabaseService databases, IProjectA
     public async Task<IReadOnlyList<TerraBaseChangeWebhookDelivery>> DeliveriesAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct) =>
         await SendAsync<IReadOnlyList<TerraBaseChangeWebhookDelivery>>(context, database, HttpMethod.Get, Segment(name) + "/deliveries", ct) ?? [];
 
-    // A function that is already gone (404) needs no further delete.
-    public async Task DeleteAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
-    {
-        await SendAsync<JsonElement?>(context, database, HttpMethod.Delete, Segment(name), ct);
-    }
+    // False when the function was already gone (404); callers decide whether that is an error.
+    public async Task<bool> DeleteAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct) =>
+        await SendAsync<bool?>(context, database, HttpMethod.Delete, Segment(name), ct) == true;
 
     private static string Segment(string name) => "/" + (ValidName(name) ? name : throw new AccountAccessException("This function does not exist.", 404));
 
@@ -71,7 +69,7 @@ public sealed partial class FunctionBackend(DatabaseService databases, IProjectA
         using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         if (response.StatusCode == HttpStatusCode.NotFound) return default;
         response.EnsureSuccessStatusCode();
-        if (method == HttpMethod.Delete) return default;
+        if (method == HttpMethod.Delete) return (T)(object)true;
         if (response.Content.Headers.ContentLength > MaxBytes) throw new HttpRequestException("Functions response is too large.");
         await response.Content.LoadIntoBufferAsync(MaxBytes, timeout.Token);
         var value = await response.Content.ReadFromJsonAsync<T>(Json, timeout.Token) ?? throw new JsonException("Functions response is missing.");

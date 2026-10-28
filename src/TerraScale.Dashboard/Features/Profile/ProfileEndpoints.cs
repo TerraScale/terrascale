@@ -93,7 +93,6 @@ public static class ProfileEndpoints
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(form["name"])) throw new AccountAccessException("Enter a display name.", 422, "invalid_profile_name");
                 await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
             }
             return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));

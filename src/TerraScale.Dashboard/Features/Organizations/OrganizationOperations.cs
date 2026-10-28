@@ -76,9 +76,14 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
             return;
         }
         Duplicate(context.Organization!, name, project.Id);
-        var locations = regions is { Count: > 0 }
-            ? await LocationsAsync(region, backupRegion, regions, cancellationToken)
-            : (Primary: project.Region, Backup: project.BackupRegion, Regions: project.Regions.ToList());
+        // A primary or backup region alone moves within the project's current regions; it is never ignored.
+        if (regions is not { Count: > 0 })
+        {
+            regions = project.Regions.Count > 0 ? project.Regions.ToList() : [project.Region];
+            if (region.Length == 0) region = project.Region;
+            if (backupRegion.Length == 0) backupRegion = project.BackupRegion;
+        }
+        var locations = await LocationsAsync(region, backupRegion, regions, cancellationToken);
         if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
@@ -88,12 +93,9 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
             if (current.OrganizationId != org.Id) throw new AccountAccessException("Project is unavailable.", 404);
             current.Name = name;
             current.Slug = AccountService.Slug(name);
-            if (regions is { Count: > 0 })
-            {
-                current.Region = locations.Primary;
-                current.BackupRegion = locations.Backup;
-                current.Regions = locations.Regions;
-            }
+            current.Region = locations.Primary;
+            current.BackupRegion = locations.Backup;
+            current.Regions = locations.Regions;
             org.AuditEvents.Add(Event(context, "project.renamed", name, "project"));
         }, cancellationToken);
     }
@@ -208,6 +210,8 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         if (regions.Any(region => !catalog.Contains(region))) throw new AccountAccessException("Choose serving project regions.", 422);
         primary = primary.Trim().ToUpperInvariant();
         backup = backup.Trim().ToUpperInvariant();
+        if (primary.Length > 0 && !regions.Contains(primary)) throw new AccountAccessException("Choose a primary region from the project's regions.", 422);
+        if (backup.Length > 0 && !regions.Contains(backup)) throw new AccountAccessException("Choose a backup region from the project's regions.", 422);
         return (regions.Contains(primary) ? primary : regions[0], regions.Contains(backup) ? backup : regions[0], regions);
     }
 

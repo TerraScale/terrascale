@@ -192,7 +192,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await ErrorAsync(replica, "run_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT '" + new string('a', 16 * 1024) + "' FROM users" });
             for (var index = 0; index < 2; index++)
             {
-                var saved = await CallAsync(index == 0 ? client : replica, "save_query", new() { ["name"] = "Shared " + suffix, ["sql"] = "SELECT * FROM users LIMIT 100" });
+                var saved = await CallAsync(index == 0 ? client : replica, "save_query", new() { ["name"] = "Shared " + suffix + " " + index, ["sql"] = "SELECT * FROM users LIMIT 100" });
                 savedIds.Add(saved.GetProperty("id").GetString()!);
             }
             await Assert.That(savedIds.Distinct().Count()).IsEqualTo(2);

@@ -31,8 +31,10 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
             permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled, null, await tokens.ListAsync(context, Cancellation));
     }
 
-    [McpServerTool(Name = "update_profile", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Update your display name and optional phone number.")]
-    public async Task<DashboardMcpSaved> UpdateProfile(string name = "", string? phone = null)
+    [McpServerTool(Name = "update_profile", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Update your display name and optional phone number. Omit a field to keep it.")]
+    public async Task<DashboardMcpSaved> UpdateProfile(
+        [Description("Display name, 1–128 characters.")] string? name = null,
+        [Description("Phone number with 7–15 digits, optionally starting with +; spaces, dots, dashes and parentheses are allowed. An empty string clears it.")] string? phone = null)
     {
         await ProfileChanges.SaveAsync(accounts, Account().Session, name, phone, Cancellation);
         return new(true);

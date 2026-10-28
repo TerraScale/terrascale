@@ -23,7 +23,8 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
 
     [McpServerTool(Name = "list_documents", Title = "List documents", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List documents using opaque after/nextCursor pagination; keep database, collection, search, sort and descending unchanged while continuing. Native ID order defaults to 100 rows; sort or descending selects query order, default 25. limit 1–100 overrides either default; 0 retains the default. Search filters case-insensitive ID/JSON substrings. Query search examines at most 100 documents in four reads per response, so empty pages may have hasMore=true. Continue until hasMore=false; nextCursor is explicitly null at the end and limit reports the effective size. page is only a positive query-page label and requires after beyond page 1; native mode uses after without page. No total or pageCount is calculated.")]
     public async Task<McpDocumentList> Documents(string databaseId, string collection, string search = "", int limit = 0, string after = "", string? organizationId = null, string? projectId = null,
-        string sort = "", bool descending = false, int page = 1)
+        string sort = "", bool descending = false,
+        [Description("Query-order page label, used only with sort or descending; pages beyond 1 also need after. Native ID order ignores labels and continues with after alone.")] int page = 1)
     {
         var context = Scope(organizationId, projectId);
         if (page is < 1 or >= int.MaxValue) throw new AccountAccessException("Document page labels must be positive and below Int32.MaxValue.", 422);
@@ -36,7 +37,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
             return new(browse.Documents.Select(row => new McpDocument(row.Id, row.Document)).ToArray(),
                 browse.NextCursor.Length == 0 ? null : browse.NextCursor, browse.More, Page: browse.Page, Limit: size);
         }
-        if (page != 1) throw new AccountAccessException("Native ID paging uses after without a page label.", 422);
+        if (page != 1) throw new AccountAccessException("page applies only with sort or descending. In native ID order, omit page and continue with after set to the previous nextCursor.", 422);
         var result = await data.ListPageAsync(context, databaseId, collection, search, limit, after, Cancellation);
         return new(result.Items.Select(row => new McpDocument(row.Id, row.Document)).ToArray(), result.NextCursor, !string.IsNullOrEmpty(result.NextCursor), Limit: limit == 0 ? 100 : limit);
     }
