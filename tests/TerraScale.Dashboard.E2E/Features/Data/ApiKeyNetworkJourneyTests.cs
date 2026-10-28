@@ -16,6 +16,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data;
 public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
+    [Arguments("json", "timeout")]
     [Arguments("json", "refused")]
     [Arguments("html", "refused")]
     [Arguments("mcp", "refused")]
@@ -97,7 +98,11 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         public Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken ct)
         {
             if (IssuerWrites > 0 && collection == AccountService.OrganizationsCollection)
-            { FailedAuditWrites++; throw new HttpRequestException("Synthetic supplementary write outage."); }
+            {
+                FailedAuditWrites++;
+                throw failure == "timeout" ? new TaskCanceledException("Synthetic supplementary write timeout.", new TimeoutException())
+                    : new HttpRequestException("Synthetic supplementary write outage.");
+            }
             return state.PutAsync(collection, id, document, precondition, ct);
         }
         private sealed class FaultTransport(HttpClient inner, PostCommitFaults faults) : HttpMessageHandler
