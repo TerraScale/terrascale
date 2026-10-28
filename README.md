@@ -15,12 +15,6 @@ is a [tooling feature](https://www.typescriptlang.org/docs/handbook/jsdoc-suppor
 independent of the ECMAScript edition. Published runtime
 support remains Node.js 22/24 and the browser targets listed above.
 
-Node defaults share an SDK-owned Undici pool and negotiate HTTP/2 over TLS,
-with HTTP/1.1 fallback. Browsers keep their native fetch transport; direct
-browser module loading needs an import-map entry for `#sdk-fetch` pointing to
-the package’s `src/default-fetch.js`, alongside `ulid`. Bundlers resolve the
-package’s browser condition. An explicitly supplied `fetch` retains its transport.
-
 ```sh
 npm install @terrascale/sdk
 ```

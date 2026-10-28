@@ -13,7 +13,7 @@ const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 // Isolated synthetic TLS transport fixtures; not TerraBase/ts-auth qualification.
 for (const surface of ["documents", "auth"]) {
   for (const protocol of ["h2", "http/1.1"]) {
-    test(`${surface}: ${protocol} negotiation, credentials and shared connection reuse`, async () => {
+    test(`${surface}: ${protocol} application policy, credentials and shared connection reuse`, async () => {
       const directory = await mkdtemp(path.join(tmpdir(), "ts-js-http2-"));
       const certPath = path.join(directory, "cert.pem");
       const keyPath = path.join(directory, "key.pem");
@@ -50,9 +50,11 @@ for (const surface of ["documents", "auth"]) {
         await run(process.execPath, [runner, `https://127.0.0.1:${address.port}`, surface, protocol], {
           env: { ...process.env, NODE_EXTRA_CA_CERTS: certPath }, timeout: 20_000,
         });
-        expect(requests).toHaveLength(17);
+        expect(requests).toHaveLength(18);
+        expect(requests[0]?.path).toBe("/");
+        expect(requests[0]?.authorization).toBeUndefined();
         expect(connections).toBe(1);
-        for (const request of requests) {
+        for (const request of requests.slice(1)) {
           expect(request.version).toBe(protocol === "h2" ? "2.0" : "1.1");
           expect(request.authorization).toBe("Bearer fixture.payload.signature");
           expect(request.path).toBe(surface === "documents"

@@ -1,6 +1,6 @@
 {
   "name": "@terrascale/sdk",
-  "version": "0.0.19",
+  "version": "0.0.18",
   "description": "JavaScript SDK, typed with JSDoc, for project-scoped C# TerraBase v1 and hosted TerraScale identity.",
   "type": "module",
   "license": "Apache-2.0",
@@ -79,8 +79,8 @@
     "check:frameworks": "vitest run src/react/core.test.js src/svelte/index.test.js"
   },
   "peerDependencies": {
-    "json-schema-to-typescript": "16.0.0",
-    "react": ">=18.2.0 <20.0.0"
+    "react": ">=18.2.0 <20.0.0",
+    "json-schema-to-typescript": "16.0.0"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -93,14 +93,15 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "svelte": "5.57.2",
+    "react": "19.2.8",
+    "react-test-renderer": "19.2.8",
     "@types/react": "19.2.14",
     "@types/react-test-renderer": "19.1.0",
     "json-schema-to-typescript": "16.0.0",
-    "react": "19.2.8",
-    "react-test-renderer": "19.2.8",
-    "svelte": "5.57.2",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "undici": "7.30.1"
   },
   "engines": {
     "node": "22.x || 24.x",
@@ -116,17 +117,9 @@
   },
   "packageManager": "npm@11.18.0",
   "dependencies": {
-    "ulid": "3.0.2",
-    "undici": "7.30.1"
+    "ulid": "3.0.2"
   },
   "overrides": {
     "vite": "8.2.4"
-  },
-  "imports": {
-    "#sdk-fetch": {
-      "browser": "./src/default-fetch.js",
-      "node": "./src/node-fetch.js",
-      "default": "./src/default-fetch.js"
-    }
   }
 }

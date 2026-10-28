@@ -1,4 +1,3 @@
-import { defaultFetch } from "#sdk-fetch";
 import { V1FileStorage } from "./file-storage.js";
 // The TerraBase v1 client: documents, transactions, queries and shapes over
 // the project-scoped C# Documents API (decision 0004 and shape-reads.md).
@@ -1028,9 +1027,7 @@ export class TerraBaseV1Client {
   constructor(config) {
     requireId(config.project);
     this.#transport = new V1Transport(config);
-    const storageFetch = config.fetch ?? defaultFetch();
-    if (storageFetch === undefined) throw new TypeError("TerraBase v1 client requires a fetch implementation.");
-    this.#storage = new V1FileStorage(this.#transport, storageFetch);
+    this.#storage = new V1FileStorage(this.#transport, config.fetch ?? globalThis.fetch.bind(globalThis));
     this.#databases = new V1Databases(this.#transport);
     this.#savedQueries = new V1SavedQueries(this.#transport);
     this.#metrics = new V1ProjectUsageClient(this.#transport);
