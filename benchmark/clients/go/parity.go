@@ -33,15 +33,19 @@ type parityTransport struct {
 	base                               http.RoundTripper
 	region, protocol                   string
 	attempts, bad, connections, h1, h2 atomic.Int64
+	maxConnectionUS, maxHeadersUS      atomic.Int64
 }
 
 func (t *parityTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.URL.Scheme != "https" || request.URL.Host != "api.terrascale.tech" || request.Method != http.MethodGet || !strings.HasSuffix(request.URL.Path, "/documents/by-key") {
 		return nil, errors.New("parity transport accepts only public document reads")
 	}
+	started := time.Now()
+	defer func() { parityMax(&t.maxHeadersUS, time.Since(started).Microseconds()) }()
 	request = request.Clone(request.Context())
 	request.Header.Set("X-TerraScale-Region-Pin", t.region)
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+		parityMax(&t.maxConnectionUS, time.Since(started).Microseconds())
 		if !info.Reused {
 			t.connections.Add(1)
 		}
@@ -69,6 +73,16 @@ func (t *parityTransport) RoundTrip(request *http.Request) (*http.Response, erro
 		return nil, errors.New("parity response status, region or protocol mismatch")
 	}
 	return response, nil
+}
+
+// Maxima include readiness, warmup and boundary cancellations. They diagnose
+// rejected empty cells; they are not latency samples from the recorded window.
+func parityMax(counter *atomic.Int64, value int64) {
+	for old := counter.Load(); value > old; old = counter.Load() {
+		if counter.CompareAndSwap(old, value) {
+			return
+		}
+	}
 }
 
 type paritySetupTransport struct {
@@ -224,8 +238,10 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 						base.CloseIdleConnections()
 						return errors.New("parity token refresh failed")
 					}
-					var operationFailures atomic.Int64
+					var operationFailures, maxOperationUS atomic.Int64
 					op := func(call context.Context, _, _ int) string {
+						started := time.Now()
+						defer func() { parityMax(&maxOperationUS, time.Since(started).Microseconds()) }()
 						var value *v1.Document
 						var err error
 						if lane == "sdk" {
@@ -295,7 +311,10 @@ func parityRegion(ctx context.Context, encode *json.Encoder, source *tsauth.Toke
 						OperationFailures int64  `json:"operation_failures"`
 						H1                int64  `json:"h1"`
 						H2                int64  `json:"h2"`
-					}{result, region, repeat, observed.connections.Load(), observed.attempts.Load(), observed.bad.Load() - beforeBad, operationFailures.Load() - beforeFailures, observed.h1.Load(), observed.h2.Load()}
+						MaxConnectionUS   int64  `json:"max_connection_us"`
+						MaxHeadersUS      int64  `json:"max_headers_us"`
+						MaxOperationUS    int64  `json:"max_operation_us"`
+					}{result, region, repeat, observed.connections.Load(), observed.attempts.Load(), observed.bad.Load() - beforeBad, operationFailures.Load() - beforeFailures, observed.h1.Load(), observed.h2.Load(), observed.maxConnectionUS.Load(), observed.maxHeadersUS.Load(), maxOperationUS.Load()}
 					base.CloseIdleConnections()
 					if err := encode.Encode(row); err != nil {
 						return err
