@@ -46,7 +46,9 @@
   --ts-radius: 6px;
 
   /* Shell. */
+  --ts-header-h: 56px;
   --ts-sidebar-width: 240px;
+  --ts-control-h-sm: 32px; --ts-control-h: 36px;
 }
 
 .dark {
@@ -94,9 +96,18 @@
   --ts-info: light-dark(#3659bd, #84b4f8);
   --ts-syn-keyword: light-dark(#3659bd, #a1bbfe);
   --ts-syn-string: light-dark(#007697, #6cc6dc);
+  --ts-syn-number: light-dark(#b45309, #fdba74);
+  --ts-syn-comment: light-dark(#666666, #8f8f8f);
+  --ts-syn-fn: light-dark(#0a0a0a, #fafafa);
+  --ts-syn-punct: light-dark(#4d4d4d, #a3a3a3);
+  --ts-primary: var(--ts-accent-fill);
+  --ts-primary-hover: var(--ts-accent-fill-hover);
+  --ts-on-primary: var(--ts-on-accent);
+  --ts-blur: 16px; --ts-blur-lg: 24px; --ts-saturate: 1.5;
+  --ts-tint-badge: 14%;
   --ts-s1: 4px; --ts-s2: 8px; --ts-s3: 12px; --ts-s4: 16px;
   --ts-s5: 20px; --ts-s6: 24px; --ts-s8: 32px; --ts-s10: 40px; --ts-s12: 48px;
-  --ts-fs-xs: 12px; --ts-fs-sm: 13px; --ts-fs-lg: 16px; --ts-fs-xl: 20px;
+  --ts-fs-xs: 12px; --ts-fs-sm: 13px; --ts-fs-lg: 16px; --ts-fs-xl: 20px; --ts-fs-4xl: 40px;
   --ts-radius-sm: 4px; --ts-radius-lg: 10px;
   --ts-fast: 150ms; --ts-ease: cubic-bezier(.2, .8, .2, 1);
 }
