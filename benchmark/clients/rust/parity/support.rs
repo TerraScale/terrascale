@@ -341,7 +341,13 @@ pub async fn measure(op: Op, concurrency: usize) -> Measured {
         });
     }
     let drained = timeout_at(until + DRAIN, async {
-        while tasks.join_next().await.is_some() {}
+        while let Some(result) = tasks.join_next().await {
+            if result.is_err() {
+                let mut stats = stats.lock().unwrap();
+                stats.failed += 1;
+                stats.error.get_or_insert("worker_failed");
+            }
+        }
     })
     .await;
     tasks.shutdown().await;
