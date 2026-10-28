@@ -174,7 +174,8 @@ internal sealed partial class TursoDatabaseStore(
 
     // The node-local write-intent journal is never replicated or backed up: its writer captures nothing, so no transaction
     // pays to turn capture off and on again (two toggles per write before, one recording and one retiring the intent).
-    internal bool Captures => name != TursoStorageEngine.IntentName;
+    // Known by its file: the journal's store is named SYSTEM for SYSTEM's semantics (TursoStorageEngine.Intents.cs).
+    internal bool Captures { get; } = !string.Equals(Path.GetFileName(path), TursoStorageEngine.IntentFile, StringComparison.Ordinal);
 
     public long CommitSequence
     {
