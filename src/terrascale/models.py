@@ -158,7 +158,7 @@ class CollectionPage:
 
 @dataclass(frozen=True)
 class Database:
-    """A managed database and its region placement."""
+    """A managed database and placement, with optional cross-region name conflict metadata."""
 
     id: str
     project_id: str
@@ -170,6 +170,8 @@ class Database:
     all_regions: bool
     branched_from: str | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    previous_name: str | None = None
+    conflict_of: str | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
@@ -185,6 +187,8 @@ class Database:
             replica_regions=list(body["replicaRegions"]),
             all_regions=bool(body["allRegions"]),
             branched_from=body["branchedFrom"],
+            previous_name=body.get("previousName"),
+            conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
             raw=body,
         )
 

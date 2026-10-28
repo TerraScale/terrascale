@@ -120,11 +120,23 @@ class AsyncTerraScale:
     # Databases -----------------------------------------------------------
 
     def database(self, name: str) -> AsyncDatabase:
-        """A handle for the named database; no request is made."""
-        return AsyncDatabase(self, _spec.name(name, "database"))
+        """A handle by current database name or immutable ULID; no request is made."""
+        return AsyncDatabase(self, _spec.database_selector(name))
 
     async def list_databases(self, *, limit: int | None = None, cursor: str | None = None) -> models.DatabasePage:
         return await self._send(_spec.list_databases(self.project, limit, cursor))
+
+    async def rename_database(self, database_id: str, name: str) -> models.Database:
+        """Rename by immutable ULID or current name with ``databases:write``; return metadata.
+
+        See docs/database-rename.md for producer availability and conflict handling.
+        ID, data, keys and placement stay unchanged. Invalid names return
+        400 (or local ValueError); known same-region duplicates return 409.
+        After convergence the old name has no alias and may be claimed again.
+        Update name-based connection strings and handles; ID-based strings remain stable. Reconcile uncertain failures
+        before explicitly retrying this mutation.
+        """
+        return await self._send(_spec.rename_database(self.project, database_id, name))
 
     async def create_database(self, name: str, *, home_region: str | None = None,
                         replica_regions: Sequence[str] | None = None,
