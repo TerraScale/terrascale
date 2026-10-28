@@ -297,8 +297,10 @@ namespace TraceAttribution
             var app = frames.FindIndex(frame => IsApplication(frame.Module, frame.Name));
             var framework = frames.FindIndex(frame => IsServer(frame.Module, frame.Name) || IsClient(frame.Module, frame.Name));
             var owner = app >= 0 ? Short(frames[app].Name) : framework >= 0 ? "[framework] " + Short(frames[framework].Name) : "(BCL/runtime only)";
-            var above = app >= 0 ? frames.FindIndex(app + 1, frame => IsApplication(frame.Module, frame.Name) && Short(frame.Name) != owner) : -1;
-            var caller = above >= 0 ? Short(frames[above].Name) : "(none)";
+            // Up to four distinct application frames above the owner, so decorators do not hide the real caller.
+            var callers = app < 0 ? [] : frames.Skip(app + 1).Where(frame => IsApplication(frame.Module, frame.Name))
+                .Select(frame => Short(frame.Name)).Where(name => name != owner).Distinct(StringComparer.Ordinal).Take(4).ToList();
+            var caller = callers.Count == 0 ? "(none)" : string.Join(" <- ", callers);
             var leaf = frames.Count == 0 ? "(no managed frames)" : Short(frames[0].Name);
             string[] inclusive = [.. frames.Select(frame => Short(frame.Name)).Distinct(StringComparer.Ordinal)];
             var attributed = new Attributed(
