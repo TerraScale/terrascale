@@ -151,3 +151,40 @@ and Go compile/vet/link work overlapped the arms. All cells remain below; no qui
 | after | 3 | medium | 1 | 7010 | 115.9/366.5 | 194.7 | 46269 | 3.5 | 73.6/223.4 |
 | after | 3 | medium | 16 | 41525 | 214.4/2603.3 | 160.8 | 45482 | 4.8 | 86.5/2187.6 |
 Raw arms, CPU samples/monitor source and host metadata on delta: `/home/mariogk/remote-builds/terrascale/fix-api-keywatch-timer-3abe240428921dedcdd8d9fd645d2b861e9c2c0be603805186d65566b2ad022e/benchmark/bench/keywatch-pairs-delta-lowload`.
+
+## Reserved quiet window
+
+Held the remaining three heavy-admission slots during all six arms; no other job was stopped. The same verified
+normal-api binaries were reused without a build. All six arms passed, 24 cells, zero errors/skipped tests.
+Predeclared quiet control: external CPU mean<=25%, p95<=100% of one CPU, no observed external build/test>=10%.
+Observed 406 one-second samples: mean/p95/max 17.94/58.57/116.70%; the max was a T3 UI burst. No build/test samples exceeded 10%.
+The slots released at completion. Small c=16 client p50 was 190.0→175.5 µs median (7.6% lower, nonoverlapping
+repeat ranges); c=16 CPU medians were 7.8%/7.9% lower for small/medium. Other latency ranges overlap; p99 shows
+no general win. This is an isolated-patch local result at the recorded source, not production or <10% target proof.
+| Arm | Pair | Size | c | ops/s | Client p50/p99 µs | CPU µs/op | B/op | Engine p50 µs | Overhead p50/p99 µs |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before | 1 | small | 1 | 6021 | 137.3/474.1 | 271.8 | 34481 | 3.9 | 78/233 |
+| before | 1 | small | 16 | 53679 | 190/2250.3 | 142.3 | 30576 | 3.8 | 77.6/1906.2 |
+| before | 1 | medium | 1 | 5240 | 151.4/616.4 | 294.2 | 55524 | 4.6 | 89/266.4 |
+| before | 1 | medium | 16 | 39337 | 240.5/2556.1 | 173.7 | 45980 | 4.9 | 89.5/2090.4 |
+| before | 2 | small | 1 | 6563 | 120.8/396.9 | 245.4 | 31139 | 3.3 | 77.2/235.2 |
+| before | 2 | small | 16 | 53695 | 191.3/2193.2 | 140 | 30595 | 3.6 | 76.6/1795.8 |
+| before | 2 | medium | 1 | 6134 | 130/407.1 | 249.1 | 46911 | 4 | 85.2/240.5 |
+| before | 2 | medium | 16 | 37909 | 253.8/2614.9 | 178.8 | 45994 | 4.8 | 91.1/2175.6 |
+| before | 3 | small | 1 | 7965 | 107.6/328.8 | 201.6 | 31010 | 3 | 66.5/196 |
+| before | 3 | small | 16 | 54629 | 189.3/2115.7 | 140.3 | 30588 | 3.7 | 76.8/1735.1 |
+| before | 3 | medium | 1 | 6380 | 123.2/381.8 | 239.3 | 46821 | 3.8 | 79.4/242.5 |
+| before | 3 | medium | 16 | 38573 | 249.2/2560.5 | 175.7 | 45994 | 4.8 | 89.9/2072 |
+| after | 1 | small | 1 | 7029 | 112/382.6 | 205.1 | 30530 | 3.2 | 70/209.5 |
+| after | 1 | small | 16 | 58382 | 175.5/2064.5 | 128.6 | 30029 | 3.6 | 72.9/1722.2 |
+| after | 1 | medium | 1 | 6055 | 128.3/466.1 | 224.5 | 46270 | 4 | 82.1/246.1 |
+| after | 1 | medium | 16 | 38466 | 241.7/2720 | 165.8 | 45470 | 5.1 | 87.4/2237.8 |
+| after | 2 | small | 1 | 6467 | 131/395 | 221.5 | 30582 | 3.6 | 80.1/224.1 |
+| after | 2 | small | 16 | 57547 | 174.6/2177.1 | 129.4 | 30052 | 3.5 | 73.6/1842.4 |
+| after | 2 | medium | 1 | 7219 | 112.3/369.8 | 188.3 | 46174 | 3.6 | 70.6/218.7 |
+| after | 2 | medium | 16 | 42113 | 210.1/2566.8 | 159 | 45508 | 4.8 | 85/2151.2 |
+| after | 3 | small | 1 | 7031 | 111.1/413.3 | 203.4 | 30626 | 3 | 70.2/215.2 |
+| after | 3 | small | 16 | 57293 | 175.8/2185.9 | 129.8 | 30053 | 3.4 | 74.4/1847.8 |
+| after | 3 | medium | 1 | 5580 | 162.5/483 | 242.1 | 46320 | 4.7 | 101.5/259.7 |
+| after | 3 | medium | 16 | 41196 | 218.5/2583.3 | 161.9 | 45500 | 4.9 | 86.6/2144.9 |
+Raw arms, reservation receipt, CPU samples/monitor source and host metadata: `/home/mariogk/remote-builds/terrascale/fix-api-keywatch-timer-3abe240428921dedcdd8d9fd645d2b861e9c2c0be603805186d65566b2ad022e/benchmark/bench/keywatch-pairs-delta-reserved`.
