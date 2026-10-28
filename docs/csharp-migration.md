@@ -60,7 +60,7 @@ application or strict visual parity describe the state at that time.
   adapters; missing producer measurements are shown as unavailable.
 - Database creation/details/placement/branches, collection and document CRUD,
   versioned updates and JSON merge patches, schema, SQL, saved queries and
-  history. API keys and M2M credentials use the real SDK boundary.
+  history. API keys use the real SDK boundary.
 - Personal access tokens with one-time plaintext display, hashed lookup,
   independent encrypted provider credentials and persistent revocation.
 - Official Stripe.net checkout, customer portal and signed webhook handling.

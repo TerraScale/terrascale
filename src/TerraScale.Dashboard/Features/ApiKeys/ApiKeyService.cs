@@ -56,7 +56,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         name = name.Trim();
         if (name.EnumerateRunes().Count() is 0 or > 128 || name.Any(char.IsControl)) throw new AccountAccessException("Enter a name of up to 128 characters and choose a database access level.", 422);
-        if (kind is not ("key" or "api-key")) throw new AccountAccessException("Machine clients are not issued by this view.", 503);
+        if (kind is not ("key" or "api-key")) throw new AccountAccessException("Kind must be key.", 422);
         var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
         var permissions = scopes.Distinct(StringComparer.Ordinal).ToArray();
         if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose one or more of documents:read, documents:write, databases:read, databases:write.", 422);
@@ -254,19 +254,16 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 }
 
-public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Kind = "", string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
+public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
 {
     public string Warning { get; init; } = "";
     public static string Lines(IReadOnlyList<string>? cidrs) => string.Join('\n', cidrs ?? []);
     public AccountContext Context => Shell.Context;
-    public IReadOnlyList<ProjectCredential> Filtered => Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (Kind.Length == 0 || Kind == "key" || Kind == "api-key") && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase))).ToArray();
-    public string TabKind => Kind is "key" or "api-key" ? "key" : Kind == "m2m" ? "m2m" : "";
-    public string TabLabel => TabKind switch { "key" => "API keys", "m2m" => "M2M clients", _ => "All credentials" };
-    public string SearchLabel => TabKind switch { "key" => "Search API keys", "m2m" => "Search M2M clients", _ => "Search credentials" };
+    public IReadOnlyList<ProjectCredential> Filtered => Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase))).ToArray();
     public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
-    public string With(string path, string? kind = null, bool clear = false, string? create = null)
+    public string With(string path, bool clear = false, string? create = null)
     {
-        var values = new SortedDictionary<string, string?> { ["kind"] = kind ?? TabKind };
+        var values = new SortedDictionary<string, string?>();
         if (!clear) { values["databaseId"] = DatabaseId; values["q"] = Search; values["status"] = Status; }
         if (create is not null) values["create"] = create;
         var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));

@@ -60,7 +60,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 await Assert.That(tools[destructive].GetProperty("annotations").GetProperty("destructiveHint").GetBoolean()).IsTrue();
             // Invoice reads reach Stripe, unlike tools confined to TerraScale-owned state.
             await Assert.That(tools["list_invoices"].GetProperty("annotations").GetProperty("openWorldHint").GetBoolean()).IsTrue();
-            var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_collection_schema", "get_collection_validation", "set_collection_schema", "list_indexes", "create_index", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
+            var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_collection_schema", "get_collection_validation", "set_collection_schema", "list_indexes", "create_index", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "rotate_api_key", "revoke_api_key", "set_api_key_allowed_cidrs" };
             await Assert.That(names.All(tools.ContainsKey)).IsTrue();
             await Assert.That(tools["revoke_api_key"].GetProperty("description").GetString()).IsEqualTo("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.");
             var rotationDescription = tools["rotate_api_key"].GetProperty("description").GetString();
@@ -243,8 +243,6 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(publicKey.GetProperty("kind").GetString()).IsEqualTo("api-key");
             await Assert.That(publicKey.GetProperty("isActive").GetBoolean()).IsTrue();
             await Assert.That(credentials.GetRawText().Contains(keySecret, StringComparison.Ordinal)).IsFalse();
-            await Assert.That((await CallAsync(replica, "list_api_keys", new() { ["kind"] = "m2m" })).GetProperty("credentials").GetArrayLength()).IsEqualTo(0);
-            await ErrorAsync(replica, "list_api_keys", new() { ["kind"] = "invalid" });
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 3600 });
             using var rotatedResponse = await HttpJourney.PostConfirmedFormAsync(replica, "/api/v1/dashboard/credentials/rotate", new()
             { ["_csrf"] = await HttpJourney.CsrfAsync(replica), ["keyId"] = keyId, ["previousSecretTtl"] = "3600" });
@@ -256,7 +254,6 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             // The previous secret is still in its grace period, so ts-auth refuses another rotation.
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId });
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 86401 });
-            await ErrorAsync(replica, "create_m2m_client", new() { ["name"] = "Unavailable", ["scopes"] = new[] { "documents:read" } });
             using (var authConsole = await replica.GetAsync("/auth/overview"))
             {
                 await Assert.That(authConsole.StatusCode).IsEqualTo(HttpStatusCode.OK);

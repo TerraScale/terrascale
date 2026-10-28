@@ -498,7 +498,7 @@ internal sealed class ReferenceMeasurements : IHomeMeasurements
         result.ActivityLabels = labels;
         result.ObservedAt = now;
         // The source fixture has four active application credentials. Their
-        // legacy M2M and revoked/expiry records require a producer contract
+        // revoked/expiry records require a producer contract
         // before the C# credential table itself can render those same rows.
         result.ActiveCredentials = 4;
         result.Regions = [new("GRU", "Not reported", "Not reported", 2), new("SJC", "Not reported", "Not reported", 2)];
