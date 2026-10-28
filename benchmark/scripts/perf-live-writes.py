@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Run on one serving host: bounded c=1 document writes (HTTP and Wire) and point reads (document, SQL, Hrana) locally.
 
-Each write is one FULL commit answered after this region's commit (0013e). A synthetic tenant comes from the RT6
-matrix (endpoint-replication-proof.py) and is deleted afterwards; writes are paced at most 10/s, 60 per cell.
+Each write is one FULL commit answered after this region's commit (0013e). A synthetic organization, project, database
+(this region and its pair, PAIR) and key are created through the local region's internal listener and deleted afterwards, their
+absence checked in every region; operations are paced at most 10/s, 60 per cell.
 """
 import http.client
 import json
 import math
 import os
 import pathlib
+import secrets
 import signal
 import statistics
 import sys
@@ -23,6 +25,8 @@ for stop in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
 spec = importlib.util.spec_from_file_location("rt6", rt6)
 matrix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(matrix)
+# A database needs two regions; gru and fra pair with each other, sjc with gru.
+PAIR = {"gru": "fra", "fra": "gru", "sjc": "gru"}
 matrix.NATIVE_RELAYS.update({region: dict(postgres=5432, wire=7464)})
 
 with open(output, "x") as stream:
@@ -30,11 +34,24 @@ with open(output, "x") as stream:
     try:
         live.record(kind="metadata", host=os.uname().nodename, region=region, load=os.getloadavg(),
                     pressure_io=pathlib.Path("/proc/pressure/io").read_text(), pressure_cpu=pathlib.Path("/proc/pressure/cpu").read_text())
-        live.provision()
+        _, body = live.http(region, "POST", "/v1/management/organizations", {"name": "rt6 endpoint matrix"}, user=True, expect={201})
+        live.organization = body["id"]
+        _, body = live.http(region, "POST", f"/v1/management/organizations/{live.organization}/projects", {"name": "rt6"}, user=True, expect={201})
+        live.project = body["id"]
+        live.management = f"/v1/management/organizations/{live.organization}/projects/{live.project}"
+        live.record(kind="tenant", organization=live.organization, project=live.project)
+        live.name = "rt6-" + secrets.token_hex(4)
+        _, body = live.http(region, "POST", live.management + "/databases", {"name": live.name, "homeRegion": region, "replicaRegions": [PAIR[region]]},
+                            user=True, expect={201})
+        live.database = body["id"]
+        _, body = live.http(region, "POST", "/admin/api-keys", {"name": "rt6 matrix", "scopes": ["documents:read", "documents:write"],
+                            "organizationId": live.organization, "projectId": live.project, "databaseId": live.database}, expect={201})
+        live.key_id, live.key = body["id"], body["secret"]
+        live.record(kind="database", database=live.database, name=live.name, key_id=live.key_id, regions=[region, PAIR[region]])
         tables = {}
         for size, count in (("small", 256), ("medium", 4096)):
             table = "perfw_" + size
-            live.sql("sjc", "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], live.name)
+            live.sql(region, "sql", [f"CREATE TABLE {table} (id TEXT PRIMARY KEY, value TEXT)"], live.name)
             deadline = time.monotonic() + 120
             while True:
                 try:
@@ -110,4 +127,26 @@ with open(output, "x") as stream:
     finally:
         for stop in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(stop, signal.SIG_IGN)
-        live.teardown()
+        # Through this region, as everything was created: another region's outage must not strand the tenant.
+        if getattr(live, "key_id", None):
+            live.record(kind="teardown", step="revoke key", status=live.http(region, "DELETE", "/admin/api-keys/" + live.key_id)[0])
+        if getattr(live, "database", None):
+            live.record(kind="teardown", step="delete database", status=live.http(region, "DELETE", live.management + "/databases/" + live.database, user=True)[0])
+        if getattr(live, "project", None):
+            live.record(kind="teardown", step="delete project", status=live.http(region, "DELETE", live.management, user=True)[0])
+        if getattr(live, "organization", None):
+            path = "/v1/management/organizations/" + live.organization
+            live.record(kind="teardown", step="delete organization", status=live.http(region, "DELETE", path, user=True)[0])
+            for target in live.node:
+                deadline = time.monotonic() + 600
+                while True:
+                    try:
+                        status = live.http(target, "GET", path, user=True)[0]
+                    except ConnectionError:
+                        status = None
+                    if status == 404:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f"organization still visible in {target}: {status}")
+                    time.sleep(5)
+                live.record(kind="teardown", step="organization gone", target=target, status=status)
