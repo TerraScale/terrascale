@@ -304,8 +304,12 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var path = QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>
         {
-            ["response_type"] = "code", ["client_id"] = id, ["redirect_uri"] = Callback, ["code_challenge_method"] = "S256",
-            ["code_challenge"] = WebEncoders.Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))), ["resource"] = origin + "/mcp"
+            ["response_type"] = "code",
+            ["client_id"] = id,
+            ["redirect_uri"] = Callback,
+            ["code_challenge_method"] = "S256",
+            ["code_challenge"] = WebEncoders.Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))),
+            ["resource"] = origin + "/mcp"
         });
         using (var signedIn = await HttpJourney.LoginAsync(browser, persona.Email, persona.Password))
             await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
