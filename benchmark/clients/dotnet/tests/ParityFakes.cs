@@ -73,3 +73,69 @@ internal class FakeReads(string variant, string region = "gru") : HttpMessageHan
         Content = body is null ? null : new StringContent(body, Encoding.UTF8, "application/json"),
     };
 }
+
+/// <summary>Synthetic TerraBase for whole runs: setup, exact seeded reads and owned-database deletion.</summary>
+internal sealed class FakeTerraBase(params string[] modes) : HttpMessageHandler
+{
+    private readonly ConcurrentDictionary<string, string> documents = new();
+    private int requests;
+
+    internal int Requests => Volatile.Read(ref requests);
+
+    internal ConcurrentQueue<string> Setup { get; } = new();
+
+    internal Func<string>? OutputAtCreate { get; set; }
+
+    internal string? Owned { get; private set; }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref requests);
+        var path = request.RequestUri!.AbsolutePath;
+        var id = request.RequestUri.Query.StartsWith("?id=", StringComparison.Ordinal) ? Uri.UnescapeDataString(request.RequestUri.Query[4..]) : "";
+        var pin = request.Headers.TryGetValues("X-TerraScale-Region-Pin", out var pins) ? string.Join(',', pins) : "none";
+        if (request.Method == HttpMethod.Get && path.EndsWith("/documents/by-key", StringComparison.Ordinal))
+        {
+            var response = FakeReads.Reply(HttpStatusCode.OK, $$"""{"id":"{{id}}","version":"v-{{id}}","state":"value","document":{{documents[id]}}}""");
+            response.Version = request.Version;
+            response.Headers.TryAddWithoutValidation("X-TerraBase-Region", modes.Contains("sjc-region") && pin == "sjc" ? "gru" : pin);
+            return response;
+        }
+        Setup.Enqueue($"{request.Method} {pin}");
+        if (request.Method == HttpMethod.Post && path.EndsWith("/databases", StringComparison.Ordinal))
+        {
+            Owned = OutputAtCreate?.Invoke();
+            return FakeReads.Reply(HttpStatusCode.Created, """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"x","branchedFrom":null,"createdAt":"2026-10-28T00:00:00+00:00","region":"fra","homeRegion":"fra","replicaRegions":[],"allRegions":true}""");
+        }
+        if (request.Method == HttpMethod.Post)
+        {
+            return FakeReads.Reply(HttpStatusCode.Created, """{"name":"bench","created_at":"0","id":"01ARZ3NDEKTSV4RRFFQ69G5FAC"}""");
+        }
+        if (request.Method == HttpMethod.Put)
+        {
+            documents[id] = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return FakeReads.Reply(HttpStatusCode.Created, $$"""{"id":"{{id}}","version":"v-{{id}}","offset":1,"durability":"replicated"}""");
+        }
+        return FakeReads.Reply(HttpStatusCode.NoContent, null);
+    }
+
+    // Shared by every lane of a run; lanes dispose their clients, which must not end this fake.
+    protected override void Dispose(bool disposing)
+    {
+    }
+
+    internal ParityRig Rig(TimeSpan? setup = null) => new(_ => this, () => new FakeAuth(3600),
+        concurrency => new ParityCellPlan(new ParityWindowPlan(concurrency, TimeSpan.Zero, TimeSpan.FromTicks(64), TimeSpan.FromSeconds(10)), TimeSpan.FromSeconds(10), TimeSpan.Zero),
+        setup ?? TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(5), new RequestClock());
+}
+
+// Whole-run controls check orchestration, not timing. Advancing per observation ensures workers get a nonempty
+// window regardless of thread-pool scheduling; separate manual-clock controls verify the timing contract.
+internal class RequestClock : TimeProvider
+{
+    private long ticks;
+
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    public override long GetTimestamp() => Interlocked.Increment(ref ticks);
+}

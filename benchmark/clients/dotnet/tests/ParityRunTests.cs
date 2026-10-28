@@ -1,0 +1,84 @@
+using System.Runtime.Versioning;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using ApiBench;
+using TUnit.Core;
+
+namespace BenchClient.Tests;
+
+[SupportedOSPlatform("linux")]
+public sealed class ParityRunTests
+{
+    internal const string Project = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    internal const string Peers = "# node region ipv4\nts-gru-1 gru 100.64.0.1\nts-sjc-1 sjc 100.64.0.2\nts-fra-1 fra 100.64.0.3\n";
+
+    internal sealed class Run : IDisposable
+    {
+        internal DirectoryInfo Directory { get; } = System.IO.Directory.CreateTempSubdirectory("dotnet-parity-");
+        internal string Credentials => Path.Combine(Directory.FullName, "credentials.json");
+        internal string Output => Path.Combine(Directory.FullName, "parity.jsonl");
+        internal StringWriter Error { get; } = new();
+
+        internal static string Valid => $$"""{"api_key":"{{FakeAuth.Key}}","project":"{{Project}}"}""";
+
+        internal Run(string? credentials = null)
+        {
+            File.WriteAllText(Credentials, credentials ?? Valid);
+            File.SetUnixFileMode(Credentials, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        internal Task<int> StartAsync(FakeTerraBase server, ParityRig? rig = null, string peers = Peers, CancellationToken interrupt = default) =>
+            ParityRun.RunAsync(Credentials, Output, () => ParityPeers.Parse(peers), rig ?? server.Rig(), Error, interrupt).WaitAsync(TimeSpan.FromSeconds(60));
+
+        internal JsonElement[] Rows() => [.. File.ReadAllLines(Output).Select(line => JsonDocument.Parse(line).RootElement)];
+
+        public void Dispose() => Directory.Delete(recursive: true);
+    }
+
+    internal static string Text(JsonElement row, string name) => row.GetProperty(name).GetString()!;
+
+    [Test]
+    public async Task FullMatrixPinsSetupToTheFirstRegionAlternatesLanesAndDeletesTheOwnedDatabase()
+    {
+        using var run = new Run();
+        var server = new FakeTerraBase();
+        server.OutputAtCreate = () => File.ReadAllText(run.Output);
+        var code = await run.StartAsync(server);
+        await Assert.That(run.Error.ToString()).IsEqualTo("");
+        await Assert.That(code).IsEqualTo(0);
+        var rows = run.Rows();
+        var database = Text(rows[1], "database");
+        await Assert.That(Regex.IsMatch(database, "^api-perf-[0-9a-z]{26}$")).IsTrue();
+        await Assert.That(Text(rows[0], "home")).IsEqualTo("fra");
+        await Assert.That(server.Owned!.Contains($"\"type\":\"owned\",\"database\":\"{database}\"", StringComparison.Ordinal)).IsTrue();
+        // Create, collection, two seeds and the delete all carry the home pin; reads carry each cell's region.
+        await Assert.That(server.Setup.ToArray()).IsEquivalentTo(new[] { "POST fra", "POST fra", "PUT fra", "PUT fra", "DELETE fra" });
+        var cells = rows.Where(row => Text(row, "type") == "cell").ToArray();
+        await Assert.That(cells.Length).IsEqualTo(3 * 3 * 2 * 2 * 3);
+        await Assert.That(cells.All(cell => cell.GetProperty("rejection").ValueKind == JsonValueKind.Null)).IsTrue();
+        await Assert.That(string.Join(',', cells.Take(3).Select(cell => Text(cell, "lane")))).IsEqualTo("raw-h1,raw-h2,sdk");
+        await Assert.That(string.Join(',', cells.Skip(12).Take(3).Select(cell => Text(cell, "lane")))).IsEqualTo("sdk,raw-h2,raw-h1");
+        await Assert.That(string.Join(',', cells.Select(cell => Text(cell, "region")).Distinct())).IsEqualTo("fra,gru,sjc");
+        await Assert.That(cells.Select(cell => cell.GetProperty("payload_bytes").GetInt32()).Distinct().Order().ToArray()).IsEquivalentTo(new[] { 256, 4096 });
+        await Assert.That(cells.All(cell => cell.GetProperty("wire_replays").ValueKind == JsonValueKind.Null && cell.GetProperty("auth_pinned").GetInt64() == 0)).IsTrue();
+        var cleanup = rows[^2];
+        await Assert.That(Text(cleanup, "deletion")).IsEqualTo("logical_accepted");
+        await Assert.That(Text(cleanup, "remote_erasure")).IsEqualTo("unverified");
+        await Assert.That(rows[^1].GetProperty("accepted").GetBoolean()).IsTrue();
+        await Assert.That(File.GetUnixFileMode(run.Output)).IsEqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
+
+    [Test]
+    public async Task FirstRejectedCellStopsTheRunAfterItsEvidenceIsWritten()
+    {
+        using var run = new Run();
+        var code = await run.StartAsync(new FakeTerraBase("sjc-region"));
+        await Assert.That(run.Error.ToString()).IsEqualTo("api-bench: parity stopped (rejected:region); evidence retained in the output" + Environment.NewLine);
+        await Assert.That(code).IsEqualTo(1);
+        var cells = run.Rows().Where(row => Text(row, "type") == "cell").ToArray();
+        await Assert.That(cells.Length).IsEqualTo(2 * 36 + 1);
+        await Assert.That(Text(cells[^1], "region")).IsEqualTo("sjc");
+        await Assert.That(Text(cells[^1], "rejection")).IsEqualTo("region");
+        await Assert.That(Text(run.Rows()[^2], "deletion")).IsEqualTo("logical_accepted");
+    }
+}
