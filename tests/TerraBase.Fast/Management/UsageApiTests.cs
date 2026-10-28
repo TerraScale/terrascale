@@ -944,9 +944,11 @@ public sealed class UsageApiTests
         var window = new UsageWindow(UsageWindow.Hour, 0, 1);
         await WriteAsync(data, database, "people", 2);
 
-        async Task<long> WritesAsync() =>
-            await meter.GetAsync(tenant, window, token).AsTask().WaitAsync(TimeSpan.FromSeconds(10), token) is UsageCounts counts
+        async Task<long> WritesAsync()
+        {
+            return await meter.GetAsync(tenant, window, token).AsTask().WaitAsync(TimeSpan.FromSeconds(10), token) is UsageCounts counts
                 ? counts.Lifetime.Writes : -1;
+        }
 
         foreach (var afterCommit in new[] { false, true })
         {
