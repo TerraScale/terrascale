@@ -192,7 +192,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
                 CreatedAt = now()
             };
             organization.Members[owner] = new() { UserId = owner, Name = account.Name, Email = account.Email, Role = "owner", CreatedAt = now() };
-            foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer" })
+            foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku" })
             {
                 var project = new ProjectRecord { Id = ids.NewId(), OrganizationId = organization.Id, Name = name, Slug = name, Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
                 var database = new DatabaseRecord { Id = ids.NewId(), ProjectId = project.Id, Name = "app", Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
