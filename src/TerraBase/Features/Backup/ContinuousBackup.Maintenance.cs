@@ -32,6 +32,9 @@ public sealed record BackupStatusRecord(
 /// <summary>Retention by plan, daily restore drills and the backup record of each shipped file.</summary>
 internal sealed partial class ContinuousBackup
 {
+    /// <summary>Observes a retention pass waiting for this file's active drill; for integration tests.</summary>
+    internal Action<string>? RetentionWaiting { get; set; }
+
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan DrillInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
@@ -235,7 +238,7 @@ internal sealed partial class ContinuousBackup
 
         if (oldest is null)
         {
-            return complete && await RetainGenerationProofsAsync(store, file.Prefix, expires, cancellationToken).ConfigureAwait(false);
+            return complete && await RetainGenerationProofsAsync(store, file.Prefix, file.Generation, expires, cancellationToken).ConfigureAwait(false);
         }
 
         if (snapshots.Count > 0 && snapshots[^1].Key == oldest.Key)
@@ -262,7 +265,7 @@ internal sealed partial class ContinuousBackup
         }
 
         complete &= await DeleteAsync(store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
-        return complete && await RetainGenerationProofsAsync(store, file.Prefix, expires, cancellationToken).ConfigureAwait(false);
+        return complete && await RetainGenerationProofsAsync(store, file.Prefix, file.Generation, expires, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, string file, Ulid generation, long? before, CancellationToken cancellationToken)

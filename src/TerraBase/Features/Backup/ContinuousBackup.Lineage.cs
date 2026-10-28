@@ -33,14 +33,15 @@ internal sealed partial class ContinuousBackup
     }
 
     // A certificate carries no content but must not outlive all data of its generation indefinitely. Keep it while any
-    // snapshot or WAL references it, including retention-locked objects; an incomplete inventory never authorizes deletion.
-    private static async Task<bool> RetainGenerationProofsAsync(IObjectStore store, string file, DateTimeOffset expires, CancellationToken cancellationToken)
+    // snapshot or WAL references it, including retention-locked objects. The active generation can still publish new
+    // snapshots after retention expires every old baseline; an incomplete inventory never authorizes deletion.
+    private static async Task<bool> RetainGenerationProofsAsync(IObjectStore store, string file, Ulid? activeGeneration, DateTimeOffset expires, CancellationToken cancellationToken)
     {
         var prefix = file + "/generations/";
         HashSet<Ulid> candidates = [];
         await foreach (var item in store.ListAsync(prefix, null, cancellationToken).ConfigureAwait(false))
         {
-            if (Ulid.TryParse(item.Key[prefix.Length..], out var generation) && generation.Time <= expires)
+            if (Ulid.TryParse(item.Key[prefix.Length..], out var generation) && generation != activeGeneration && generation.Time <= expires)
             {
                 _ = candidates.Add(generation);
                 if (candidates.Count == 10_000)

@@ -778,6 +778,34 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.BehindSince = null;
             }
 
+            if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
+            {
+                try
+                {
+                    // A drill can still be reading an older baseline. Join it before deleting any of its inputs;
+                    // this file's pending WAL has already shipped, and other files retain their independent jobs.
+                    var previous = file.Side;
+                    if (previous is { Completion.IsCompleted: false })
+                    {
+                        RetentionWaiting?.Invoke(file.Prefix);
+                    }
+                    await file.StopSideAsync().ConfigureAwait(false);
+                    if (previous is { Stored: not null, Collected: false } && previous.Snapshot.Generation == file.Generation
+                        && !previous.Cancellation.IsCancellationRequested)
+                    {
+                        previous.Collected = true;
+                        CollectSnapshot(file, previous);
+                    }
+                    await RetainAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Retention retries next hour; shipping goes on.
+                    _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
+                }
+            }
+
+            // Retention precedes the new upload/drill, so its snapshot selection sees only retained inputs.
             // A snapshot reads what is left while it holds writers: never with a backlog. Its upload holds a snapshot slot, and
             // after a failed one the next waits out its own backoff.
             if (now - file.LastSnapshot >= SnapshotInterval && now >= file.SnapshotRetryAt && !_stopped)
@@ -793,19 +821,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 else
                 {
                     await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
-            {
-                try
-                {
-                    await RetainAsync(file, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-                {
-                    // Retention retries next hour; shipping goes on.
-                    _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
                 }
             }
 
