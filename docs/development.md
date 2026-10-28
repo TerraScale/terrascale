@@ -60,10 +60,9 @@ nice -n 19 make perf
 
 `test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
 browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
-`test-e2e` runs both for local investigation. `make check` (formatting, build, security and Fast) is required before advancing an artifact. Slow runs independently in GitHub Actions; failures remain red and create or update a GitHub issue.
-CI does not run the explicit hot-reload journey. Run `nice -n 19 make test-hot-reload`
-on a tailnet machine before pushing changes to `scripts/demo.sh`, `scripts/dev.sh`,
-the asset scripts or the demo host.
+`test-e2e` runs both for local investigation. GitHub Actions is the PR gate; no local test/check run is required before pushing or opening a PR. Use `nice -n 19 make check` (formatting, build, security and Fast) for local investigation. Slow runs independently in GitHub Actions; failures remain red and create or update a GitHub issue.
+CI does not run the explicit hot-reload journey. For changes to `scripts/demo.sh`, `scripts/dev.sh`, the asset scripts or the demo host,
+use `nice -n 19 make test-hot-reload` on a tailnet machine when investigating hot reload locally.
 `check-e2e-shards` lists the discovered tests. The solution contains one
 production application and its E2E project; the test executable owns
 TUnit discovery, assertions, fixtures and TRX reports. Fixtures start real
