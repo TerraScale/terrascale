@@ -12,7 +12,7 @@ public sealed class PlatformSocialCallbackEndpoint(PlatformSocialSignIn social) 
         Get("/signin/{provider}");
         Name("ui_platform_social_callback");
         Summary("Complete platform provider sign-in");
-        Description("Consumes browser-bound OAuth state once, exchanges the authorization code with PKCE and links only a verified provider email. No provider token is stored or returned. MFA and disabled-account guards apply.");
+        Description("Consumes browser-bound OAuth state once, exchanges the authorization code with PKCE and resolves the verified stable provider subject. An unbound subject whose email belongs to an existing account is refused. Accounts with an active authenticator app get the hosted second-factor step before any session. No provider token is stored or returned.");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");

@@ -561,7 +561,7 @@ internal static class SignInFlow
         }
 
         AuthMetrics.SignIn("hosted_mfa", "challenged");
-        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Mfa, Tenant(context), user.Email, next) { Challenge = challenge });
+        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Mfa, user.InstanceId, user.Email, next) { Challenge = challenge });
     }
 
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>

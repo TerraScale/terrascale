@@ -81,54 +81,55 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     public async Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.User;
 
-    /// <summary>Signs in a stable external subject, or links its verified email to one account atomically.</summary>
+    /// <summary>Resolves only an already bound, tenant-local external subject; email is never an identity key.</summary>
+    public async Task<UserRecord?> FindByProviderAsync(string tenant, LinkedProvider identity, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        if (await store.FindUniqueOwnerAsync(tenant, ProviderKind, ProviderKey(identity), cancellationToken).ConfigureAwait(false) is not { } owner)
+        {
+            return null;
+        }
+
+        var linked = await this.GetAsync(tenant, owner, cancellationToken).ConfigureAwait(false);
+        return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
+    }
+
+    /// <summary>Signs in a bound subject, or atomically creates its account, email claim and provider claim. Never links by email.</summary>
     public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, bool allowCreation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(identity);
+        if (string.IsNullOrWhiteSpace(identity.Provider) || string.IsNullOrWhiteSpace(identity.Issuer)
+            || string.IsNullOrWhiteSpace(identity.ClientId) || string.IsNullOrWhiteSpace(identity.Subject))
+        {
+            return null;
+        }
+
         var key = ProviderKey(identity);
         for (var round = 0; round < 3; round++)
         {
-            if (await store.FindUniqueOwnerAsync(tenant, ProviderKind, key, cancellationToken).ConfigureAwait(false) is { } owner)
+            if (await store.FindUniqueOwnerAsync(tenant, ProviderKind, key, cancellationToken).ConfigureAwait(false) is not null)
             {
-                var linked = await this.GetAsync(tenant, owner, cancellationToken).ConfigureAwait(false);
-                return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
+                return await this.FindByProviderAsync(tenant, identity, cancellationToken).ConfigureAwait(false);
             }
 
-            var user = await this.FindByEmailAsync(tenant, verifiedEmail, cancellationToken).ConfigureAwait(false);
-            if (user is null && allowCreation)
-            {
-                user = await this.CreateAsync(tenant, verifiedEmail, cancellationToken).ConfigureAwait(false)
-                    ?? await this.FindByEmailAsync(tenant, verifiedEmail, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (user is null || user.Disabled || await this.GetVersionedAsync(tenant, user.Id, cancellationToken).ConfigureAwait(false) is not { } current)
+            if (!allowCreation || NormalizeEmail(verifiedEmail) is not { } normalized
+                || await store.FindUniqueOwnerAsync(tenant, EmailKind, normalized, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return null;
             }
 
-            if (current.User.Email != NormalizeEmail(verifiedEmail) || current.User.Disabled)
+            var user = new UserRecord(AuthStore.NewId(), tenant, normalized, 0, clock.GetUtcNow())
             {
-                return null;
-            }
-
-            // One identity per provider and client. Never silently replace another linked subject.
-            if (current.User.LinkedProviders.Any(item => item.Provider == identity.Provider && item.ClientId == identity.ClientId))
-            {
-                return null;
-            }
-
-            var updated = current.User with
-            {
-                LinkedProviders = [.. current.User.LinkedProviders, identity],
-                AuthEpoch = checked(current.User.AuthEpoch + 1),
                 AuthStamp = AuthStore.NewId(),
+                LinkedProviders = [identity],
             };
             if (await store.TransactAsync([
                 AuthStore.Claim(tenant, ProviderKind, key, user.Id),
-                AuthStore.Replace(AuthStore.UserCollection, tenant, user.Id, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
+                AuthStore.Claim(tenant, EmailKind, normalized, user.Id),
+                AuthStore.Create(AuthStore.UserCollection, tenant, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord)),
             ], cancellationToken).ConfigureAwait(false) is null)
             {
-                return BindProvider(updated, identity);
+                return BindProvider(user, identity);
             }
         }
 
@@ -173,7 +174,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(ProviderKind, ProviderKey(identity), user.Id)],
     };
 
-    private static string ProviderKey(LinkedProvider identity) => $"{identity.Provider}:{identity.ClientId}:{identity.Subject}";
+    private static string ProviderKey(LinkedProvider identity) => JsonSerializer.Serialize(identity, IdentityJson.Default.LinkedProvider);
 
     /// <summary>
     /// Sets the password of the account while its authentication state still matches <paramref name="caller"/>, and
@@ -338,6 +339,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(UserRecord))]
+[JsonSerializable(typeof(LinkedProvider))]
 [JsonSerializable(typeof(SessionRecord))]
 [JsonSerializable(typeof(PasscodeRecord))]
 [JsonSerializable(typeof(DateTimeOffset))]
