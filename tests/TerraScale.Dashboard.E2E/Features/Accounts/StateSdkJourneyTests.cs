@@ -242,6 +242,28 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task AStalledPlanPublishNeverHoldsADashboardView()
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        Check(await scenario.StartHostsAsync(), "The dashboard starts against the producer: " + scenario.StartupError);
+        using var client = scenario.CreateClient();
+        await ReadyAsync(client);
+        await NativeAccountAsync(client);
+        var organization = await scenario.UpgradeOnlyOrganizationAsync(OrganizationRecord.StarterPlanId);
+        await ControlAsync(controls, new { command = "pause-plans" });
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        using (var home = await client.GetAsync("/"))
+            Check(home.StatusCode == HttpStatusCode.OK && clock.Elapsed >= TimeSpan.FromSeconds(1.5) && clock.Elapsed < TimeSpan.FromSeconds(10),
+                "A view answers within the publisher's own deadline while TerraBase's plan route stalls (QA newuser:8): " + clock.Elapsed);
+        await ControlAsync(controls, new { command = "release-plans" });
+        await scenario.ReconcilePlansAsync();
+        var observed = await ObserveAsync(controls);
+        Check(observed.GetProperty("organizationPlans").TryGetProperty(organization, out var plan) && plan.GetString() == "starter",
+            "The reconciler still publishes the plan the stalled view gave up on.");
+    }
+
+    [Test]
     public async Task PlanReconcilerPublishesEveryOrganizationsPlanAgainAfterATerraBaseWipe()
     {
         await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);

@@ -314,6 +314,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private readonly Dictionary<string, (string Collection, string? Filter, string Last)> cursors = [];
         private readonly Dictionary<string, string> organizationPlans = new(StringComparer.Ordinal);
         private TaskCompletionSource? collectionGate;
+        private TaskCompletionSource? planGate;
         private TaskCompletionSource? documentGate;
         private TaskCompletionSource? transactionGate;
         private TaskCompletionSource? registrationGate;
@@ -337,7 +338,7 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
         private readonly string? databaseId = "00000000000000000000000004";
         private string mode = "";
         public string Mode { get { lock (gate) return mode; } }
-        public void Release() { ReleaseRegistrationCompletion(); collectionGate?.TrySetResult(); documentGate?.TrySetResult(); transactionGate?.TrySetResult(); }
+        public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); collectionGate?.TrySetResult(); documentGate?.TrySetResult(); transactionGate?.TrySetResult(); }
 
         public async Task<IResult> DispatchAsync(HttpContext http)
         {
@@ -362,6 +363,8 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                 // TerraBase may not serve the organization route yet.
                 if (parts is ["admin", "organizations" or "projects", var planOwner, "plan"])
                 {
+                    // A stalled private listener: the publisher's own deadline must end the wait, not this producer.
+                    if (planGate is { } stalled) await stalled.Task.WaitAsync(http.RequestAborted);
                     using var plan = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
                     var tier = plan.RootElement.TryGetProperty("plan", out var value) ? value.GetString() : null;
                     Require(http.Request.Method == "PUT" && TerraScaleIds.IsValid(planOwner) && tier is "hobby" or "starter" or "pro" or "team" or "enterprise",
@@ -585,6 +588,8 @@ public sealed partial class StateSdkScenario : IAsyncDisposable
                     case "release-account-writes": documentGate?.TrySetResult(); documentGate = null; break;
                     case "drop-collection": collections.Remove(body.GetProperty("name").GetString()!); break;
                     case "wipe-plans": organizationPlans.Clear(); break;
+                    case "pause-plans": planGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                    case "release-plans": planGate?.TrySetResult(); planGate = null; break;
                     default: return Results.BadRequest();
                 }
             }

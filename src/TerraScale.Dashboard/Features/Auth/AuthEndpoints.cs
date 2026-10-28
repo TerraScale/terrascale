@@ -87,11 +87,15 @@ public static class AuthEndpoints
             }
             var account = await EnsureAccountAsync(context, session);
             await sessions.StartAsync(context, session);
-            await RecordSignInAsync(context, session, account);
             var target = flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo;
             // API/CLI/MCP continuations retain their exact redirects. Organization choice is dashboard navigation.
-            if (!target.StartsWith("/api/", StringComparison.Ordinal) && !target.StartsWith("/onboarding", StringComparison.Ordinal) && !target.StartsWith("/organizations/choose", StringComparison.Ordinal) &&
-                (await context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted)).Organizations.Count > 1)
+            var offersChoice = !target.StartsWith("/api/", StringComparison.Ordinal) && !target.StartsWith("/onboarding", StringComparison.Ordinal) &&
+                !target.StartsWith("/organizations/choose", StringComparison.Ordinal);
+            // The audit write and the organization count are independent; the callback waits for the slower one only.
+            var recorded = RecordSignInAsync(context, session, account);
+            var workspaces = offersChoice ? context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted) : null;
+            await recorded;
+            if (workspaces is not null && (await workspaces).Organizations.Count > 1)
                 return HttpRedirects.SeeOther("/organizations/choose?returnTo=" + Uri.EscapeDataString(target));
             return HttpRedirects.SeeOther(target);
         }
