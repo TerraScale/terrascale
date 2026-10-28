@@ -248,8 +248,8 @@ public sealed class Closures(
             .Select(document => document.Document.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
     }
 
-    // 2 s, doubling per earlier attempt, at most a minute; parked intents every 15 minutes.
-    internal static TimeSpan Backoff(int attempts) => attempts >= ParkAfter ? ParkedRetry
+    // 2 s, doubling per earlier attempt, at most a minute; from the deferral that reaches ParkAfter on, every 15 minutes.
+    internal static TimeSpan Backoff(int attempts) => attempts + 1 >= ParkAfter ? ParkedRetry
         : attempts >= 5 ? MaxRetry : TimeSpan.FromTicks(Math.Min(Retry.Ticks << attempts, MaxRetry.Ticks));
 
     // Moves a pending intent behind the others; a lost race means another pass already did.
