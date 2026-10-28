@@ -754,6 +754,8 @@ public sealed partial class TsAuthPlatformJourneyTests
             await Assert.That(logout.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        // Form proofs are bound to the browser session, so the new session renders a new one.
+        csrf = await HttpJourney.CsrfAsync(client, "/profile?tab=danger");
         platform.Producer.DeletionStatus = HttpStatusCode.NotFound;
         var deletes = platform.Producer.Count("DELETE", "/v1/terrascale/account", owner.Subject);
         using (var renewed = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/continue", new() { ["_csrf"] = csrf }))

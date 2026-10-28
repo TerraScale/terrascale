@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Platform.Identity;
 
 public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity identity, IAuthGateway auth, IAuthRefreshGateway refresh, TimeProvider time, ILogger<DashboardSessions> logger)
 {
-    private const string Cookie = "ts-dashboard-session";
+    internal const string Cookie = "ts-dashboard-session";
 
     public async Task StartAsync(HttpContext context, SessionRecord record)
     {
@@ -33,6 +33,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
             throw;
         }
         await AccountEnrollment.ThrowIfErasedAsync(state, record.UserId, context.RequestAborted);
+        Csrf.Bind(context, token);
         context.Response.Cookies.Append(Cookie, token, new CookieOptions
         {
             HttpOnly = true,
@@ -55,7 +56,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         var record = await ResolveAsync("sessions", Key(token), context.RequestAborted, alongside: session => work = alongside(session));
         if (record is null)
         {
-            context.Response.Cookies.Delete(Cookie);
+            Clear(context);
             return null;
         }
         return (record, await work!);
@@ -69,11 +70,11 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         // Refuse an unavailable or inactive issuer before spending a valid
         // refresh token merely to check an operator role.
         var current = await ResolveAsync("sessions", id, context.RequestAborted);
-        if (current is null) { context.Response.Cookies.Delete(Cookie); return null; }
+        if (current is null) { Clear(context); return null; }
         var record = await ResolveAsync("sessions", id, context.RequestAborted, forceRefresh: true, initialAccessToken: current.AccessToken);
         if (record is not null && (record.UserId != current.UserId || record.Email != current.Email))
             throw new IOException("Privileged session identity changed.");
-        if (record is null) context.Response.Cookies.Delete(Cookie);
+        if (record is null) Clear(context);
         return record;
     }
 
@@ -305,7 +306,13 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                 { context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardSessions").LogWarning("Revoked session index cleanup failed ({ErrorType})", error.GetType().Name); }
             }
         }
+        Clear(context);
+    }
+
+    private static void Clear(HttpContext context)
+    {
         context.Response.Cookies.Delete(Cookie);
+        Csrf.Bind(context, null);
     }
 
     public async Task RevokeUserAsync(string subject, CancellationToken cancellationToken)
