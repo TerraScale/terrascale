@@ -44,7 +44,7 @@ public sealed class SignOutEverywhereTests(TerraBaseFixture fixture)
         foreach (var session in new[] { laptop, phone })
         {
             using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), session);
-            await Assert.That(authorize.Headers.Location?.AbsoluteUri ?? string.Empty).DoesNotStartWith(OidcHarness.RedirectUri);
+            await Assert.That(authorize.Headers.Location?.OriginalString ?? string.Empty).DoesNotStartWith(OidcHarness.RedirectUri);
         }
 
         // A new sign-in works again.
