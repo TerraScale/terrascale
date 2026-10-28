@@ -33,6 +33,8 @@ internal static class DatabaseResults
         SqlOutcomeUnknownException unknown => new Dictionary<string, object?> { ["operationId"] = unknown.AttemptId, ["outcome"] = "unknown" },
         DatabaseSqlException { SqliteCode: { } code } => new Dictionary<string, object?> { ["sqliteCode"] = code },
         _ when RetrySeconds(error) is { } seconds => new Dictionary<string, object?> { ["retryAfterSeconds"] = seconds },
+        // TerraBase's stable error code travels with its refusal, so clients can tell one 409 from another.
+        TerraBaseException { ErrorCode: { Length: > 0 } code } => new Dictionary<string, object?> { ["code"] = code },
         _ => null
     });
     // Browsers get the HTML not-found page for a database they cannot see; API clients keep problem+json.

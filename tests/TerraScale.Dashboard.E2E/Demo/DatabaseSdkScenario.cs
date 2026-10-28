@@ -318,6 +318,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private readonly Dictionary<string, BackupDestinationView> destinations = [];
         private readonly Dictionary<string, ExportScheduleView> schedules = [];
         private string backupFailure = "";
+        // A TerraBase conflict code every database create answers with, or empty.
+        private string createConflict = "";
         private int backupLists;
         private int backupCreates;
         private int backupRestores;
@@ -500,6 +502,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
                 case "role": Workspace.Role = body.GetProperty("value").GetString()!; break;
                 case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
+                case "create-conflict": createConflict = body.GetProperty("value").GetString()!; break;
                 // Another TerraBase client placed a replica: the producer's placement is wider than the dashboard asked for.
                 case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
                 case "catalog": Catalog = [.. body.GetProperty("value").EnumerateArray().Select(value => value.GetString()!)]; break;
@@ -805,6 +808,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 lock (gate)
                 {
                     if (databases.Values.Any(value => value.ProjectId == project && value.Name == name)) return Error(409, "name_taken");
+                    if (createConflict.Length > 0) return Error(409, createConflict);
                     var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas, AllRegions: all);
                     databases[database.Id] = database;
                     Interlocked.Increment(ref creates);
