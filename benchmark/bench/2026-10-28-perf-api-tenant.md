@@ -16,9 +16,12 @@ The account owner closes its account in `finally`, waits up to 180 seconds for i
 then deletes its inbox and private recovery directory. If cleanup fails, the directory is retained and printed;
 resume with `--cleanup-directory <retained-directory>`. Receipt settlement is logical account closure, not proof of
 physical erasure. Do not use a serving customer's account or credentials.
+Deletion responses retain the exact continuation-authorization header in that private checkpoint before the response
+is consumed. A resumed pending deletion submits it with the same receipt; server authorization remains required.
 
-Validation: this exact helper source ran the authenticated three-region control published in
+Validation: the prior helper revision ran the authenticated three-region control published in
 `2026-10-27-perf-api-live.md` on branch `fix/api-overhead-live`: database deletion accepted, account receipt 204,
 inbox deletion settled and private credential directory removed. That measurement was contended and establishes
 no speedup. The accompanying keyed-auth attribution report is historical diagnostic evidence, with its original
 one-second warmup and source identity; it does not describe the current ten-second-warmup harness.
+The continuation-header retention change was syntax-checked; it has not yet been exercised against live auth.

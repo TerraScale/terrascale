@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "auth"))
 from live_mail import AUTH, Failure, Forms, Http, Inbox
@@ -23,6 +24,20 @@ OAUTH = AUTH + "/terrascale/oauth"
 CLI = "00000000000000000000000007"
 
 
+class DeletionAuthorization(urllib.request.BaseHandler):
+    def __init__(self, save):
+        self.save = save
+
+    def https_response(self, request, response):
+        if request.full_url == PLATFORM + "/account" and request.get_method() == "DELETE" and response.code in (202, 204):
+            values = response.headers.get_all("X-TerraScale-Deletion-Authorization") or []
+            if values:
+                if len(values) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{43}", values[0]):
+                    raise Failure("Deletion continuation authorization was malformed")
+                self.save(values[0])
+        return response
+
+
 class Tenant:
     def __init__(self, directory):
         self.directory = Path(directory)
@@ -30,18 +45,23 @@ class Tenant:
         self.password = secrets.token_urlsafe(32)
         self.inbox = Inbox("https://api.mail.tm")
         self.inbox.checkpoint = self.checkpoint
-        self.token = self.refresh = self.key = self.project = None
+        self.token = self.refresh = self.key = self.project = self.authorization = None
         self.renew_at = 0
         self.receipt = secrets.token_urlsafe(32)
         self.settled = False
         self.deletion_started = False
+        self.http.opener.add_handler(DeletionAuthorization(self.retain_authorization))
+
+    def retain_authorization(self, value):
+        self.authorization = value
+        self.checkpoint()
 
     def checkpoint(self):
         # Keep recovery material if cleanup fails; successful cleanup removes the complete private directory.
         state = dict(password=self.password, mail_address=self.inbox.address, mail_password=self.inbox.password,
                      mail_token=self.inbox.token, mail_account=self.inbox.account_id, token=self.token,
                      refresh=self.refresh, key=self.key, project=self.project, deletion_receipt=self.receipt,
-                     deletion_started=self.deletion_started)
+                     deletion_started=self.deletion_started, deletion_authorization=self.authorization)
         path = self.directory / "recovery.json"
         with tempfile.NamedTemporaryFile(mode="w", dir=self.directory, delete=False) as stream:
             json.dump(state, stream)
@@ -138,6 +158,9 @@ class Tenant:
             self.checkpoint()
             status, _, _ = self.platform("/account", "DELETE", purpose="delete_account",
                 extra={"X-TerraScale-Deletion-Receipt": self.receipt}, expected=(202, 204))
+        elif status == 202 and self.authorization:
+            status, _, _ = self.platform("/account", "DELETE", extra={"X-TerraScale-Deletion-Receipt": self.receipt,
+                "X-TerraScale-Deletion-Authorization": self.authorization}, expected=(202, 204))
         deadline = time.monotonic() + 180
         while status == 202 and time.monotonic() < deadline:
             time.sleep(2)
@@ -165,6 +188,7 @@ def main():
             state = json.loads((args.cleanup_directory / "recovery.json").read_text())
             tenant.password, tenant.token, tenant.refresh = state["password"], state["token"], state["refresh"]
             tenant.receipt, tenant.deletion_started = state["deletion_receipt"], state.get("deletion_started", False)
+            tenant.authorization = state.get("deletion_authorization")
             tenant.key, tenant.project = state["key"], state["project"]
             tenant.inbox.address, tenant.inbox.password = state["mail_address"], state["mail_password"]
             tenant.inbox.token, tenant.inbox.account_id = state["mail_token"], state["mail_account"]
