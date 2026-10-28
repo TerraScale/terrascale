@@ -2,6 +2,7 @@ using System.Data;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -71,6 +72,69 @@ public sealed class KeyRevocationTests
         }
 
         await Assert.That(api.Issuer.StatusRequests).IsEqualTo(mismatched ? 0 : 1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_established_http_feed_ends_when_its_last_key_authority_expires(bool unavailable, CancellationToken cancellationToken)
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var (key, token) = Grant(api, database);
+        using var client = api.WithToken(token);
+        using var writer = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(writer, database, "watch", cancellationToken);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        using var response = await client.GetAsync(ManagementApi.Uri(database.Data + "/changes?cursor=now"),
+            HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
+        async Task<bool> FrameAsync(string name)
+        {
+            var matched = false;
+            while (await reader.ReadLineAsync(deadline.Token) is { } line && line.Length != 0)
+            {
+                matched |= line == "event: " + name;
+            }
+
+            return matched;
+        }
+
+        await Assert.That(await FrameAsync("cursor")).IsTrue();
+        time.Advance(TimeSpan.FromMilliseconds(250));
+        using (var written = await writer.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "watch", "active")), new { active = true }, deadline.Token))
+        {
+            await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        await Assert.That(await FrameAsync("change")).IsTrue();
+        if (unavailable)
+        {
+            api.Issuer.StatusAvailable = false;
+        }
+        else
+        {
+            api.Issuer.RevokeClient(key);
+        }
+
+        // Drive the unchanged two-second freshness plus one poll bound without a wall-clock sleep.
+        time.Advance(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await reader.ReadLineAsync(deadline.Token) is not null)
+            {
+            }
+        }
+        catch (IOException)
+        {
+            // An aborted HTTP response can end with a transport error rather than EOF.
+        }
+
+        await Assert.That(deadline.IsCancellationRequested).IsFalse();
     }
 
     [Test]

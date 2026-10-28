@@ -49,13 +49,15 @@ public sealed class KeyWatch : IDisposable
 {
     private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(250);
     private readonly CancellationTokenSource _stop = new();
+    private readonly PeriodicTimer _timer;
 
     // Whichever of Dispose and the watch loop ends second disposes _stop.
     private int _ended;
     private volatile bool _disposed;
 
-    private KeyWatch()
+    private KeyWatch(TimeProvider time)
     {
+        _timer = new PeriodicTimer(Poll, time);
     }
 
     /// <summary>
@@ -72,7 +74,7 @@ public sealed class KeyWatch : IDisposable
             return null;
         }
 
-        var watch = new KeyWatch();
+        var watch = new KeyWatch(time);
         _ = watch.RunAsync(authority, until, current, target, time);
         return watch;
     }
@@ -81,6 +83,8 @@ public sealed class KeyWatch : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        // Disposing a pending timer wait completes it with false, without a cancellation exception on every short request.
+        _timer.Dispose();
         if (Interlocked.Exchange(ref _ended, 1) == 0)
         {
             try
@@ -103,9 +107,8 @@ public sealed class KeyWatch : IDisposable
     {
         try
         {
-            while (true)
+            while (await _timer.WaitForNextTickAsync().ConfigureAwait(false))
             {
-                await Task.Delay(Poll, time, _stop.Token).ConfigureAwait(false);
                 // The question must be answered before the last yes runs out; waiting does not extend it.
                 using var deadline = until is { } end ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time) : new CancellationTokenSource();
                 using var asking = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, deadline.Token);
@@ -130,6 +133,7 @@ public sealed class KeyWatch : IDisposable
         }
         finally
         {
+            _timer.Dispose();
             if (Interlocked.Exchange(ref _ended, 1) == 1)
             {
                 _stop.Dispose();
