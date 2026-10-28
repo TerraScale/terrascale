@@ -55,6 +55,11 @@ public static partial class SqlValidation
         return false;
     }
 
+    // A cheap guard for stored text, not a parser: the first keyword must be an SQLite statement verb.
+    public static bool StartsWithCommand(string statement) => Visible(statement) is { } visible &&
+        WordPattern().Match(visible).Value.ToUpperInvariant() is "SELECT" or "WITH" or "VALUES" or "EXPLAIN" or "PRAGMA" or "INSERT" or "UPDATE" or "DELETE"
+            or "REPLACE" or "CREATE" or "DROP" or "ALTER" or "ANALYZE" or "REINDEX" or "VACUUM" or "ATTACH" or "DETACH";
+
     public static SqlAnalysis Analyze(string statement)
     {
         statement = statement.Trim();

@@ -69,9 +69,12 @@ public sealed class WholeDatabaseRecovery(IHttpClientFactory factory, IProjectAc
     }
     private static DateTimeOffset Instant(string point, WholeDatabaseWindow available)
     {
-        if (available.Window is not { } window || !DateTimeOffset.TryParseExact(point,
-            ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'"],
-            CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var instant) || instant < window.Earliest || instant > window.Latest)
+        // get_point_in_time_window serializes its bounds with a +00:00 offset; accept them as returned.
+        if (!DateTimeOffset.TryParseExact(point,
+            ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz"],
+            CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var instant))
+            throw new AccountAccessException("Enter an ISO 8601 timestamp such as 2026-10-27T22:59:00Z or 2026-10-27T22:59:00+00:00.", 422);
+        if (available.Window is not { } window || instant < window.Earliest || instant > window.Latest)
             throw new AccountAccessException("Choose a UTC timestamp inside the current retained window. Refresh the window if retention has advanced.", 422);
         return instant;
     }

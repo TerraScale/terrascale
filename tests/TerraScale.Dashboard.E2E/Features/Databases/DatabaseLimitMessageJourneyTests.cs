@@ -8,8 +8,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases;
 public sealed class DatabaseLimitMessageJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
-    [Arguments(413, "limit", "document exceeds 64 KiB", "The payload is too large. Reduce the size and try again. document exceeds 64 KiB")]
-    [Arguments(429, "limit", "stream slots exhausted", "Too many requests on this database. Wait a moment and try again. stream slots exhausted")]
+    [Arguments(413, "limit", "document exceeds 64 KiB", "The payload is too large. Reduce the size and try again. Document exceeds 64 KiB.")]
+    [Arguments(429, "limit", "stream slots exhausted", "Too many requests on this database. Wait a moment and try again. Stream slots exhausted.")]
     // A spent plan allowance is not a transient rate limit: the page says writes are paused and how to resume them.
     [Arguments(429, "operation_allowance", "the organization used its free plan allowance of 50,000 operation units this month", "This organization used its plan's operation units for this month, so new writes are paused. Reads and deletes keep working, and writes resume next month (UTC). Upgrade the plan on the organization's Billing tab to keep writing now; Usage shows this month's total.")]
     public async Task SdkLimitRefusalsKeepTheStatusAndActionableReason(int status, string code, string reason, string message)

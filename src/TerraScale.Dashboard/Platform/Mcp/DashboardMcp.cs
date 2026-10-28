@@ -1,7 +1,9 @@
 using TerraScale.Dashboard.Platform.Observability;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Http.Features;
+using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
@@ -83,9 +85,21 @@ public static class DashboardMcp
             options.ServerInfo = new() { Name = "terrascale-dashboard", Title = "TerraScale Dashboard", Version = "1.0.0" };
             options.ServerInstructions = "TerraScale dashboard tools manage organizations, projects, databases, data, credentials, billing and profile. Calls are stateless: pass organizationId and projectId to choose a scope or omit them to use your current dashboard selection. Call get_context first to discover accessible IDs.";
         }).WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
-            .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, cancellationToken) =>
+            // The SDK reports params it cannot deserialize as -32603 "An error occurred."; they are the caller's invalid params.
+            .WithMessageFilters(filters => filters.AddIncomingFilter(next => (context, cancellationToken) =>
+                context.JsonRpcMessage is JsonRpcRequest { Params: { } parameters } request && (parameters is not JsonObject ||
+                    request.Method == RequestMethods.ToolsCall && parameters["arguments"] is { } arguments && arguments is not JsonObject)
+                    ? throw new McpProtocolException(parameters is JsonObject ? "Tool arguments must be a JSON object." : "Request params must be a JSON object.", McpErrorCode.InvalidParams)
+                    : next(context, cancellationToken)))
+            .WithRequestFilters(filters => filters.AddListToolsFilter(next => (request, cancellationToken) =>
+                // Every tool fits one page and no nextCursor is ever issued, so any cursor is foreign or forged.
+                request.Params?.Cursor is not null
+                    ? throw new McpProtocolException("The cursor is invalid. tools/list returns every tool in one page; omit cursor.", McpErrorCode.InvalidParams)
+                    : next(request, cancellationToken))
+            .AddCallToolFilter(next => async (request, cancellationToken) =>
             {
                 var http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
+                if (ArgumentProblem(request.Params) is { } problem) return Failure(problem);
                 try
                 {
                     var result = await next(request, cancellationToken);
@@ -103,7 +117,8 @@ public static class DashboardMcp
                                               error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     if (DatabaseResults.Status(error) >= 500 || DatabaseResults.Status(error) == 408) ServiceSloTelemetry.MarkBad(http);
-                    Log(request.Services).LogWarning("MCP tool {Tool} failed upstream with {Status} ({ErrorType})", LoggedTool(request.Params?.Name), DatabaseResults.Status(error), error.GetType().Name);
+                    Log(request.Services).LogWarning("MCP tool {Tool} failed upstream with {Status} ({ErrorType}, code {ErrorCode})", LoggedTool(request.Params?.Name),
+                        DatabaseResults.Status(error), error.GetType().Name, (error as TerraScale.DotNet.TerraBase.TerraBaseException)?.ErrorCode ?? "none");
                     return Failure(DatabaseResults.Message(error));
                 }
                 catch (Stripe.StripeException error)
@@ -116,6 +131,44 @@ public static class DashboardMcp
                 catch { ServiceSloTelemetry.MarkBad(http); throw; }
             }))
             .WithTools(CachedTools.Value);
+    }
+
+    private static readonly Lazy<Dictionary<string, JsonElement>> InputSchemas =
+        new(() => CachedTools.Value.ToDictionary(tool => tool.ProtocolTool.Name, tool => tool.ProtocolTool.InputSchema));
+
+    // Argument binding fails after the filters with the SDK's generic "An error occurred invoking"; name the field instead.
+    private static string? ArgumentProblem(CallToolRequestParams? call)
+    {
+        if (call is null || !InputSchemas.Value.TryGetValue(call.Name, out var schema)) return null;
+        var arguments = call.Arguments;
+        if (schema.TryGetProperty("required", out var required))
+            foreach (var name in required.EnumerateArray().Select(item => item.GetString()!))
+                if (arguments is null || !arguments.ContainsKey(name)) return $"Missing required argument '{name}'.";
+        if (arguments is null || !schema.TryGetProperty("properties", out var properties)) return null;
+        foreach (var (name, value) in arguments)
+        {
+            if (!properties.TryGetProperty(name, out var property) || !property.TryGetProperty("type", out var type)) continue;
+            string[] types = type.ValueKind == JsonValueKind.Array ? [.. type.EnumerateArray().Select(item => item.GetString() ?? "")] : [type.GetString() ?? ""];
+            // Numbers may arrive as numeric strings (the SDK reads them with AllowReadingFromString).
+            var numeric = types.FirstOrDefault(item => item is "integer" or "number");
+            var valid = numeric is not null && value.ValueKind == JsonValueKind.String
+                ? numeric == "integer" ? long.TryParse(value.GetString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _)
+                    : double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+                : types.Any(item => item switch
+                {
+                    "string" => value.ValueKind == JsonValueKind.String,
+                    "integer" => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _),
+                    "number" => value.ValueKind == JsonValueKind.Number,
+                    "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+                    "object" => value.ValueKind == JsonValueKind.Object,
+                    "array" => value.ValueKind == JsonValueKind.Array,
+                    "null" => value.ValueKind == JsonValueKind.Null,
+                    _ => true
+                });
+            if (!valid) return $"Argument '{name}' must be " + (numeric is not null ? numeric == "integer" ? "an integer." : "a number." :
+                string.Join(" or ", types.Where(item => item != "null").Select(item => item is "integer" or "object" or "array" ? "an " + item : "a " + item)) + ".");
+        }
+        return null;
     }
 
     private static CallToolResult Failure(string message) => new() { IsError = true, Content = [new TextContentBlock { Text = message }] };

@@ -6,7 +6,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
-public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity identity, IAuthGateway auth, IAuthRefreshGateway refresh, TimeProvider time)
+public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity identity, IAuthGateway auth, IAuthRefreshGateway refresh, TimeProvider time, ILogger<DashboardSessions> logger)
 {
     private const string Cookie = "ts-dashboard-session";
 
@@ -182,7 +182,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
             var now = time.GetUtcNow();
             if ((record.SessionExpiresAt ?? record.ExpiresAt) <= now)
             {
-                await RemoveAsync(collection, document, cancellationToken);
+                await RemoveAsync(collection, document, "expired", cancellationToken);
                 return null;
             }
             // Privileged callers need a grant minted after their first read.
@@ -194,44 +194,48 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                 {
                     if (forceRefresh && record.ExpiresAt > now)
                         throw new IOException("Fresh platform authorization is unavailable.");
-                    await RemoveAsync(collection, document, cancellationToken);
+                    await RemoveAsync(collection, document, "no refresh token", cancellationToken);
                     return null;
                 }
                 if (record.RefreshLease.Length != 0)
                 {
                     // A replica disappeared after potentially rotating the token.
                     // Starting a second rotation could revoke the token family.
-                    if (record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now) { await RemoveAsync(collection, document, cancellationToken); return null; }
+                    if (record.RefreshLeaseUntil is null || record.RefreshLeaseUntil <= now) { await RemoveAsync(collection, document, "abandoned refresh lease", cancellationToken); return null; }
                     if (waitDeadline.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Session refresh is still in progress.");
                     await Task.Delay(100, cancellationToken);
                     continue;
                 }
+                // Once the lease is written the rotation must finish even if the caller disconnects: an abandoned
+                // lease expires into a deleted credential, so a client timeout would sign a PAT out for good.
+                using var rotation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var rotating = rotation.Token;
                 var lease = record with { RefreshLease = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), RefreshLeaseUntil = now.AddMinutes(1) };
                 try
                 {
-                    await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(lease, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(document.Version), cancellationToken);
+                    await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(lease, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(document.Version), rotating);
                 }
                 catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
                 { continue; }
                 SessionRecord refreshed;
-                try { refreshed = await refresh.RefreshAsync(lease, cancellationToken); }
+                try { refreshed = await refresh.RefreshAsync(lease, rotating); }
                 catch (SignInRejectedException)
                 {
-                    var refused = await state.GetAsync(collection, id, cancellationToken);
-                    if (refused is not null) await RemoveAsync(collection, refused, cancellationToken);
+                    var refused = await state.GetAsync(collection, id, rotating);
+                    if (refused is not null) await RemoveAsync(collection, refused, "refresh rejected by ts-auth", rotating);
                     return null;
                 }
                 catch (RefreshNotStartedException)
                 {
                     // ts-auth never read the secret, so the session keeps it and
                     // survives an auth restart instead of expiring with the lease.
-                    var unchanged = await state.GetAsync(collection, id, cancellationToken);
+                    var unchanged = await state.GetAsync(collection, id, rotating);
                     if (unchanged is { State: "value" } &&
                         Open(unchanged.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
                     {
                         try
                         {
-                            await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(record, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(unchanged.Version), cancellationToken);
+                            await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(record, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(unchanged.Version), rotating);
                         }
                         catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict) { }
                     }
@@ -242,7 +246,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||
                     forceRefresh && refreshed.AccessToken == accessOnEntry)
                     throw new IOException("Refreshed session identity is invalid.");
-                var latest = await state.GetAsync(collection, id, cancellationToken);
+                var latest = await state.GetAsync(collection, id, rotating);
                 if (latest is null) return null; // A concurrent logout wins.
                 if (latest.State != "value") throw new IOException("Dashboard session has a causal conflict.");
                 var current = Open(latest.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
@@ -250,7 +254,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                 refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null };
                 try
                 {
-                    await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(refreshed, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(latest.Version), cancellationToken);
+                    await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(refreshed, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(latest.Version), rotating);
                 }
                 catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
                 { return null; }
@@ -272,7 +276,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                     // existing refresh lease; only a valid new grant can recover
                     // the request, and issuer revocation still refuses refresh.
                     if (record.ExpiresAt <= time.GetUtcNow()) continue;
-                    await RemoveAsync(collection, rejected, cancellationToken);
+                    await RemoveAsync(collection, rejected, "inactive at ts-auth", cancellationToken);
                 }
                 return null;
             }
@@ -372,8 +376,10 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         }
     }
 
-    private async Task RemoveAsync(string collection, TerraBaseDocument document, CancellationToken cancellationToken)
+    // Every drop of a stored grant is logged so a signed-out session or PAT can be traced to its cause.
+    private async Task RemoveAsync(string collection, TerraBaseDocument document, string reason, CancellationToken cancellationToken)
     {
+        logger.Log(reason == "expired" ? LogLevel.Information : LogLevel.Warning, "Dropped a stored ts-auth grant from {Collection}: {Reason}", collection, reason);
         try { await state.DeleteAsync(collection, document.Id, document.Version, cancellationToken); }
         catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound) { }
     }

@@ -43,8 +43,14 @@ public sealed class SavedQueryService(IDashboardState state, TimeProvider time, 
         if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > 128) throw new AccountAccessException("Saved query names use 1–128 characters.", 422);
         sql = sql.Trim();
         if (SqlValidation.Diagnostics(sql).FirstOrDefault(item => item.Severity == "error") is { } problem) throw new AccountAccessException(problem.Message, 422);
+        if (!SqlValidation.StartsWithCommand(sql)) throw new AccountAccessException("Start the saved query with a SQL command such as SELECT or WITH.", 422);
         var query = new SavedQuery(AccountService.NewId(), name, sql, databaseId, time.GetUtcNow());
-        await UpdateAsync(context, queries => queries.Add(query), cancellationToken);
+        await UpdateAsync(context, queries =>
+        {
+            if (queries.Any(item => item.DatabaseId == databaseId && string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new AccountAccessException("A saved query with this name already exists. Choose another name or delete the existing query.", 409);
+            queries.Add(query);
+        }, cancellationToken);
         return query;
     }
 

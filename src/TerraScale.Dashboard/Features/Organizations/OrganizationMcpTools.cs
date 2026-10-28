@@ -19,9 +19,9 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
 
     [McpServerTool(Name = "create_project", Title = "Create project", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Create a project in an organization. Requires the owner or admin role and, for business organizations, active billing.")]
     public Task<OrganizationProjectResult> CreateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
-        [Description("Primary region code TerraBase serves, such as GRU. Defaults to the first listed region.")] string region = "",
-        [Description("Backup region code. Defaults to the first listed region.")] string backupRegion = "",
-        [Description("Region codes the project may use. Defaults to the primary region.")] string[]? regions = null,
+        [Description("Primary region code; must be one of regions. Defaults to the first of regions.")] string region = "",
+        [Description("Backup region code; must be one of regions. Defaults to the first of regions.")] string backupRegion = "",
+        [Description("Region codes TerraBase serves that the project may use, such as GRU. Omit to keep the project's current regions.")] string[]? regions = null,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     {
         var project = await operations.CreateProjectAsync(Scope(organizationId, projectId), name, region, backupRegion, regions, Cancellation);
@@ -30,9 +30,9 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
 
     [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally change its regions. Requires the owner or admin role.")]
     public Task<OrganizationDone> UpdateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
-        [Description("Primary region code TerraBase serves, such as GRU. Defaults to the first listed region.")] string region = "",
-        [Description("Backup region code. Defaults to the first listed region.")] string backupRegion = "",
-        [Description("Region codes the project may use. Defaults to the primary region.")] string[]? regions = null,
+        [Description("Primary region code; must be one of regions. Defaults to the first of regions.")] string region = "",
+        [Description("Backup region code; must be one of regions. Defaults to the first of regions.")] string backupRegion = "",
+        [Description("Region codes TerraBase serves that the project may use, such as GRU. Omit to keep the project's current regions.")] string[]? regions = null,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     { await operations.UpdateProjectAsync(Scope(organizationId, projectId), name, region, backupRegion, regions, Cancellation); return new OrganizationDone(true); });
 
@@ -141,13 +141,15 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         [Description("Case-insensitive text matched against actor, action, target, source, and severity.")] string search = "",
         [Description("Only events with this raw action code. Omit or use all for every action.")] string action = "",
         [Description("info, warn, critical, unknown (not reported by the provider), or all (default).")] string severity = "",
-        [Description("Time window: 24h, 7d (default), 30d, 90d, or 365d, capped by the plan's audit retention (retentionDays).")] string range = "",
+        [Description("Time window: 24h, 7d (default), 30d, 90d, or 365d, capped by the plan's audit retention (retentionDays). Other values are rejected.")] string range = "",
         [Description("1-based page number. Defaults to 1.")] int page = 1,
         [Description("Events per page, 1-100. Defaults to 10.")] int pageSize = 10,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     {
         if (pageSize == 0) pageSize = 10;
         if (pageSize is < 1 or > 100) throw new AccountAccessException("pageSize must be between 1 and 100.", 400);
+        if (range is not ("" or "24h" or "7d" or "30d" or "90d" or "365d")) throw new AccountAccessException("range must be 24h, 7d, 30d, 90d or 365d.", 400);
+        if (severity is not ("" or "all" or "info" or "warn" or "critical" or "unknown")) throw new AccountAccessException("severity must be info, warn, critical, unknown or all.", 400);
         var context = await FreshAsync(organizationId, projectId);
         if (!context.CanManage) throw new AccountAccessException("Organization management is required.");
         var snapshot = await access.ReadAsync(context, Cancellation);

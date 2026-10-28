@@ -51,7 +51,8 @@ public sealed class FunctionMcpTools(IHttpContextAccessor http, FunctionBackend 
         var database = DatabaseService.Database(context, databaseId);
         if (name.Length == 0 || !string.Equals(name, confirmName, StringComparison.Ordinal))
             throw new AccountAccessException("Confirm the function name before deleting it.", 422);
-        await functions.DeleteAsync(context, database, name, Cancellation);
+        if (!await functions.DeleteAsync(context, database, name, Cancellation))
+            throw new AccountAccessException("This function does not exist.", 404);
         return new(true);
     }
 

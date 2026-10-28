@@ -158,7 +158,17 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         var token = set.Tokens.SingleOrDefault(item => item.RevokedAt is null && item.Token.Id == owner.TokenId && item.SecretHash == hash && item.Token.ExpiresAt > time.GetUtcNow());
         if (token is null) return null;
         var grant = await sessions.ReadCredentialAsync(token.CredentialId, cancellationToken);
-        if (grant is null || grant.UserId != owner.UserId) return null;
+        if (grant is null)
+        {
+            // The ts-auth grant behind this token is gone for good; stop listing a token that can no longer sign in.
+            await UpdateAsync(owner.UserId, set =>
+            {
+                var position = set.Tokens.FindIndex(item => item.Token.Id == owner.TokenId && item.RevokedAt is null);
+                if (position >= 0) set.Tokens[position] = set.Tokens[position] with { RevokedAt = time.GetUtcNow() };
+            }, cancellationToken);
+            return null;
+        }
+        if (grant.UserId != owner.UserId) return null;
         var context = await accounts.GetContextAsync(grant, cancellationToken);
         // Issuer, credential subject, and account validity precede registration activity.
         if (token.McpClientId is { } clientId && await McpRegistrations.TouchAsync(state, time, clientId, cancellationToken) is null) return null;
