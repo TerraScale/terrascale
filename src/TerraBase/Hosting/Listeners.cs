@@ -3,6 +3,7 @@ using System.Net;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Primitives;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
@@ -121,6 +122,26 @@ public static class Listeners
         return [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(member => member.Region).Append(RegionOf(context))];
     }
 
+    // 421 for a pin this machine does not answer, before authentication: it names only the answering region and the
+    // serving regions, never the pin (client input) or a database, so it says how to recover without tenant details.
+    private static async Task RefusePinAsync(HttpContext context, StringValues pin, string? host)
+    {
+        var region = RegionOf(context);
+        var served = await ServedRegionsAsync(context);
+        var regions = string.Join(", ", served);
+        var (code, message) = (pin.Count == 1 && TerraBaseOptions.IsRegion(pin[0]), host) switch
+        {
+            (false, _) => ("invalid_region_pin", $"X-TerraScale-Region-Pin takes exactly one region ID; the serving regions are {regions}"),
+            (true, not null) => ("region_pin_mismatch",
+                $"X-TerraScale-Region-Pin names another region than the host {host}{RegionalHostSuffix}; send the pin or the regional host, not both"),
+            (true, null) when !served.Contains(pin[0]!) => ("region_pin_mismatch",
+                $"the pinned region has no machine to answer, so {region} received the request; pin one of the serving regions ({regions}) or drop X-TerraScale-Region-Pin"),
+            (true, null) => ("region_pin_mismatch",
+                $"the request is pinned to another region and reached {region}; retry, send it to the pinned region's host (<region>{RegionalHostSuffix}), or drop X-TerraScale-Region-Pin to be answered by the nearest region. A database answers only in its regions: pin one of them or add the pinned region to its placement"),
+        };
+        await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, code, message, op: null);
+    }
+
     /// <summary>
     /// Asks the edge to replay a client-listener request in the nearest of <paramref name="regions"/> (comma-separated,
     /// <c>ts-replay</c>), unless the edge replayed it already: a replayed request is answered where it landed, so a
@@ -150,7 +171,7 @@ public static class Listeners
                 {
                     Name = "X-TerraScale-Region-Pin",
                     In = ParameterLocation.Header,
-                    Description = "Optional single raw region ID. An empty, duplicate or mismatched pin returns 421 before execution; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
+                    Description = "Optional single raw region ID. An empty, duplicate or malformed pin returns 421 invalid_region_pin and a pin naming another region 421 region_pin_mismatch, both before execution and with recovery guidance; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
                     Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                 });
                 operation.Responses ??= [];
@@ -313,7 +334,7 @@ public static class Listeners
                     // A header naming another region contradicts the host.
                     if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], host, StringComparison.Ordinal)))
                     {
-                        context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+                        await RefusePinAsync(context, pin, host);
                         return;
                     }
 
@@ -342,7 +363,7 @@ public static class Listeners
                         ReplayIn(context, pin[0]!);
                     }
 
-                    context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+                    await RefusePinAsync(context, pin, host: null);
                     return;
                 }
             }

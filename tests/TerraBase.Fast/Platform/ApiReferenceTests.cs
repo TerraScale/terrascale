@@ -412,7 +412,7 @@ public sealed class ApiReferenceTests
         await Assert.That(response.Content.Headers.ContentType!.MediaType).IsEqualTo("application/json");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var code = body.RootElement.GetProperty("error").GetProperty("code").GetString();
-        await Assert.That(code).IsEqualTo("misdirected_request");
+        await Assert.That(code).IsEqualTo("region_pin_mismatch");
 
         using var reference = await client.GetAsync(Uri("/openapi/v1.json"));
         await Assert.That(reference.StatusCode).IsEqualTo(HttpStatusCode.OK);

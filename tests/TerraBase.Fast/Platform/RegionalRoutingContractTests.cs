@@ -66,13 +66,38 @@ public sealed class RegionalRoutingContractTests
         await Assert.That(replayed.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru"]);
         using (var body = JsonDocument.Parse(await replayed.Content.ReadAsStringAsync()))
         {
-            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("misdirected_request");
+            // sjc serves no machine here: the body says so and lists the serving regions, without echoing the pin.
+            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("region_pin_mismatch");
+            await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString())
+                .IsEqualTo("the pinned region has no machine to answer, so gru received the request; pin one of the serving regions (gru) or drop X-TerraScale-Region-Pin");
         }
 
         // A replay that lands in the pinned region is served normally.
         using var served = await SendPinnedAsync(api.Client, "gru", replayed: true);
         await Assert.That(served.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(served.Headers.Contains(Replay)).IsFalse();
+    }
+
+    [Test]
+    public async Task A_pin_to_a_serving_region_that_reached_another_says_how_to_recover_before_authentication()
+    {
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru", new OtherRegions("fra", "sjc").Register);
+        using var anonymous = api.DataClient();
+
+        // The edge could not answer it in fra (no copy there, or fra refused): unauthenticated, so no database details.
+        using var refused = await SendPinnedAsync(anonymous, "fra", replayed: true);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        await Assert.That(refused.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru"]);
+        await Assert.That(refused.Headers.Contains("X-TerraBase-Database-Home")).IsFalse();
+        using var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+        var error = body.RootElement.GetProperty("error");
+        await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("region_pin_mismatch");
+        await Assert.That(error.GetProperty("message").GetString()).IsEqualTo(
+            "the request is pinned to another region and reached gru; retry, send it to the pinned region's host (<region>.api.terrascale.tech), or drop X-TerraScale-Region-Pin to be answered by the nearest region. A database answers only in its regions: pin one of them or add the pinned region to its placement");
+
+        // Unpinned, the same request is answered where it landed.
+        using var unpinned = await anonymous.GetAsync(ManagementApi.Uri("/healthz"));
+        await Assert.That(unpinned.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -240,7 +265,14 @@ public sealed class RegionalRoutingContractTests
             await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru"]);
             await Assert.That(response.Headers.GetValues("X-TerraBase-Machine")).IsEquivalentTo(["local"]);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("misdirected_request");
+            // A bad host is misdirected; a pin beside a regional host is either not a pin or contradicts the host.
+            var code = pin switch
+            {
+                null => "misdirected_request",
+                "sjc" or "gru" => "region_pin_mismatch",
+                _ => "invalid_region_pin",
+            };
+            await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo(code);
         }
 
         var list = await api.Client.GetFromJsonAsync<JsonElement>(ManagementApi.Uri(databases));

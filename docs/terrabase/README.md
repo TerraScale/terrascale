@@ -112,7 +112,8 @@ The admin listener serves neither (`404`). See [the API reference](api-reference
 
 Every client response includes `X-TerraBase-Region`. A request with an empty,
 duplicate, or mismatched `X-TerraScale-Region-Pin` receives `421 Misdirected Request`
-with the node's region header; TerraBase does not forward it. `/healthz` and
+(`invalid_region_pin` or `region_pin_mismatch`, with recovery guidance) and the node's region header; TerraBase does not
+forward it. `/healthz` and
 management database responses include `region`, identifying the responding node.
 
 Clients resolve endpoints through Atlas, support an explicit static endpoint

@@ -21,7 +21,18 @@ including authentication failures, missing routes, and pin rejection responses.
 Clients may send `X-TerraScale-Region-Pin: <region-id>` with the raw region ID.
 The pin is optional; when present, it must contain exactly one nonempty value
 matching the configured node region. An empty, duplicate, or mismatched pin
-returns `421 Misdirected Request` with the correct `X-TerraBase-Region` header.
+returns `421 Misdirected Request` with the correct `X-TerraBase-Region` header, before authentication. The body says
+how to recover without naming any database or echoing the pin:
+
+| The pin | `error.code` | `error.message` tells the client to |
+| --- | --- | --- |
+| empty, duplicate, or not a region ID | `invalid_region_pin` | send exactly one region ID; lists the serving regions |
+| names a region with no serving machine | `region_pin_mismatch` | pin one of the listed serving regions, or drop the pin |
+| names a serving region, but the request reached another (the edge could not answer it there) | `region_pin_mismatch` | retry, call `<region>.api.terrascale.tech`, or drop the pin to reach the nearest region; a database answers only in its regions, so pin one of them or add the pinned region to its placement |
+
+`misdirected_request` stays for an unknown regional host label; a request for a database that is not
+placed in the answering region gets `421 wrong_region` with its placement headers instead
+([cross-region.md](cross-region.md)). An unavailable regional host is `503 region_unavailable` (below).
 TerraBase does not proxy or forward the rejected request; behind the edge a
 mismatched pin naming a single well-formed region also answers
 `ts-replay: region=<pin>`, requesting replay by the edge ([ts-orch.md](ts-orch.md#ts-replay)).
@@ -38,7 +49,7 @@ the nearest region, as before. The host is matched case-insensitively and its po
 | lands elsewhere, and membership lists a node in the region | `421`, `ts-replay: region=<region>;fallback=self`: requests edge replay |
 | the edge replayed it and it still landed elsewhere (`ts-replay-src`), or the edge's replay reached no machine there and came back (`ts-replay-failed`), or membership lists no node in the region | `503 region_unavailable`, naming the region and listing the regional hosts; no replay, so no loop |
 | the label is not a region (`gru_1.api…`, `a.b.api…`) | `421 misdirected_request`, listing the regional hosts; the label is not echoed |
-| carries `X-TerraScale-Region-Pin` naming another region than the host | `421`, no replay: the two pins contradict each other |
+| carries `X-TerraScale-Region-Pin` naming another region than the host | `421 region_pin_mismatch` (`invalid_region_pin` for a malformed pin), no replay: the two pins contradict each other |
 
 A request whose host is not regional keeps the header pin's rules above.
 A `200` over `sjc.api.terrascale.tech` proves DNS and TLS for that name only;
