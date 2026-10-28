@@ -23,6 +23,7 @@
 - [Supported runtimes, installation and SDK contracts](https://docs.terrascale.tech/guides/sdks)
 - [Current authentication methods, protocol scope and availability](https://docs.terrascale.tech/guides/authentication-capabilities)
 - [API keys, token exchange and scoped access](https://docs.terrascale.tech/guides/authentication)
+- [Fresh confirmation for account deletion and long-lived credentials](https://docs.terrascale.tech/guides/sensitive-actions)
 - [JSON filters, projection, opaque pagination and version preconditions](https://docs.terrascale.tech/guides/queries)
 - [Run SQL from the official libSQL clients (JavaScript, Go, Rust, Python)](https://docs.terrascale.tech/guides/libsql-clients)
 - [Use Drizzle ORM: schema, drizzle-kit migrations, queries and transactions](https://docs.terrascale.tech/guides/orm-drizzle)

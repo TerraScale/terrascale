@@ -21,6 +21,7 @@ const routes = [
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
   ['/guides/authentication-capabilities', 'Current authentication methods, protocol scope and availability'],
   ['/guides/authentication', 'API keys, token exchange and scoped access'],
+  ['/guides/sensitive-actions', 'Fresh confirmation for account deletion and long-lived credentials'],
   ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
   ['/guides/libsql-clients', 'Run SQL from the official libSQL clients (JavaScript, Go, Rust, Python)'],
   ['/guides/orm-drizzle', 'Use Drizzle ORM: schema, drizzle-kit migrations, queries and transactions'],
