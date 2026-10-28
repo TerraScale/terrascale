@@ -227,7 +227,7 @@ public static class App
             context.Response.OnStarting(() =>
             {
                 BrowserSecurity.ApplyResponseHeaders(context.Response, options.PublicOrigin.Scheme == Uri.UriSchemeHttps);
-                if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == UserInfoEndpoint.RouteName)
+                if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is UserInfoEndpoint.RouteName or UserInfoEndpoint.PostRouteName)
                 {
                     // Registered before authentication; survives protocol failures and the error envelope's Clear().
                     context.Response.Headers.CacheControl = "no-store";

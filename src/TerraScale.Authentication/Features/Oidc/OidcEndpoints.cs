@@ -91,19 +91,57 @@ public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
 }
 
 /// <summary>
-/// <c>GET /{slug}/oauth/authorize</c>: the authorization endpoint (code flow with S256 PKCE). OpenIddict validates the
-/// client, redirect URI, scopes and PKCE first; this signs in the user of the hosted session cookie, or sends the
-/// browser to the hosted sign-in page and back.
+/// <c>GET /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters in the query string.
 /// </summary>
-public sealed class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class AuthorizeGetEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
+    : AuthorizeEndpoint(sessions, settings, clock, options)
 {
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/{slug}/oauth/authorize");
+        Get(Path);
         Name("oauth_authorize");
+        this.Describe();
+    }
+}
+
+/// <summary>
+/// <c>POST /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters form-encoded (OpenID Connect Core
+/// 3.1.2.1).
+/// </summary>
+public sealed class AuthorizePostEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
+    : AuthorizeEndpoint(sessions, settings, clock, options)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post(Path);
+        Name("oauth_authorize_post");
+        this.AcceptsForm();
+        this.Describe();
+    }
+}
+
+/// <summary>
+/// The authorization endpoint (code flow with S256 PKCE), by GET or form POST. OpenIddict validates the client,
+/// redirect URI, scopes and PKCE first; this signs in the user of the hosted session cookie, or sends the browser to the
+/// hosted sign-in page and back.
+/// </summary>
+public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    /// <summary>The endpoint's route.</summary>
+    protected const string Path = "/{slug}/oauth/authorize";
+
+    /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
+    protected void AcceptsForm() =>
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+
+    /// <summary>The documentation both bindings share.</summary>
+    protected void Describe()
+    {
         Summary("Authorization endpoint");
-        Description("Authorization code flow (response_type=code) with PKCE code_challenge_method=S256 required. Without a live tsauth_session cookie the browser is redirected to /ui/{slug}/sign-in and returns here. prompt=none answers login_required without a session; prompt=login, consent and select_account are not supported and answer login_required, consent_required and account_selection_required. Errors after client and redirect validation are redirected to the client. The response is a 302 to the client, or with response_mode=form_post a 200 page that posts the result to it."
+        Description("GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. Authorization code flow (response_type=code) with PKCE code_challenge_method=S256 required. Without a live tsauth_session cookie the browser is redirected to /ui/{slug}/sign-in and returns here by GET with the same parameters. prompt=none answers login_required without a session; prompt=login, consent and select_account are not supported and answer login_required, consent_required and account_selection_required. Errors after client and redirect validation are redirected to the client. The response is a 302 to the client, or with response_mode=form_post a 200 page that posts the result to it."
             + " A project's configured session lifetime applies from the original authentication, including after rotation; the next session check persists any reduction, so a later increase cannot revive that session. A nonempty project redirect allowlist additionally requires an exact redirect_uri match; a disallowed URI receives no redirect, including error and form_post responses. An empty list keeps each client's registered URI validation."
             + " Sessions of active MFA users must come from a sign-in that proved the second factor; corrupt or unavailable factor state fails closed with temporarily_unavailable.");
         Tags("OAuth");
@@ -155,7 +193,11 @@ public sealed class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings set
                 return OidcResults.Forbid(Errors.LoginRequired, CredentialLineage.ConflictNotice);
             }
 
-            var resume = $"/{tenant}/oauth/authorize{this.HttpContext.Request.QueryString}";
+            // OpenIddict accepted the request's form or query; sign-in resumes it as a GET with the same parameters.
+            var parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
+                ? QueryString.Create(await this.HttpContext.Request.ReadFormAsync(cancellationToken))
+                : this.HttpContext.Request.QueryString;
+            var resume = $"/{tenant}/oauth/authorize{parameters}";
             var notice = this.HttpContext.Request.Cookies.ContainsKey(cookie) ? "&notice=credential_changed" : string.Empty;
             return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(resume)}{notice}");
         }
@@ -286,18 +328,51 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
     }
 }
 
-/// <summary><c>GET /{slug}/oauth/userinfo</c>: claims about the user of a valid access token.</summary>
-public sealed class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutRequest<IResult>
+/// <summary><c>GET /{slug}/oauth/userinfo</c>: the UserInfo endpoint by GET.</summary>
+public sealed class UserInfoGetEndpoint(TotpCredentials mfa) : UserInfoEndpoint(mfa)
 {
-    internal const string RouteName = "oauth_userinfo";
-
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/{slug}/oauth/userinfo");
+        Get(Path);
         Name(RouteName);
+        this.Describe();
+    }
+}
+
+/// <summary><c>POST /{slug}/oauth/userinfo</c>: the UserInfo endpoint by form POST (OpenID Connect Core 5.3.1).</summary>
+public sealed class UserInfoPostEndpoint(TotpCredentials mfa) : UserInfoEndpoint(mfa)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post(Path);
+        Name(PostRouteName);
+        this.AcceptsForm();
+        this.Describe();
+    }
+}
+
+/// <summary>The UserInfo endpoint: claims about the user of a valid access token.</summary>
+public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutRequest<IResult>
+{
+    internal const string RouteName = "oauth_userinfo";
+
+    internal const string PostRouteName = "oauth_userinfo_post";
+
+    /// <summary>The endpoint's route.</summary>
+    protected const string Path = "/{slug}/oauth/userinfo";
+
+    /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
+    protected void AcceptsForm() =>
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+
+    /// <summary>The documentation both bindings share.</summary>
+    protected void Describe()
+    {
         Summary("UserInfo endpoint");
-        Description("Requires an access token issued by this issuer and not revoked, with the user's current authentication epoch. Tokens of active MFA accounts without the ts_auth_mfa claim and identity tokens are rejected. Unavailable or corrupt MFA state answers 503 temporarily_unavailable.");
+        Description("GET, or POST with an application/x-www-form-urlencoded body. Requires an access token issued by this issuer and not revoked, with the user's current authentication epoch. Tokens of active MFA accounts without the ts_auth_mfa claim and identity tokens are rejected. Unavailable or corrupt MFA state answers 503 temporarily_unavailable.");
         Tags("OAuth");
         Produces<UserInfoBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
@@ -360,19 +435,50 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
 }
 
-/// <summary>
-/// <c>GET /{slug}/oauth/logout</c>: RP-initiated logout. Revokes the hosted session and clears its cookie, then shows the
-/// signed-out page, which continues to the client's registered <c>post_logout_redirect_uri</c> when there is one.
-/// </summary>
-public sealed class LogoutEndpoint(Sessions sessions, ProjectAuthSettings settings) : EndpointWithoutRequest<IResult>
+/// <summary><c>GET /{slug}/oauth/logout</c>: RP-initiated logout with its parameters in the query string.</summary>
+public sealed class LogoutGetEndpoint(Sessions sessions, ProjectAuthSettings settings) : LogoutEndpoint(sessions, settings)
 {
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/{slug}/oauth/logout");
+        Get(Path);
         Name("oauth_logout");
+        this.Describe();
+    }
+}
+
+/// <summary><c>POST /{slug}/oauth/logout</c>: RP-initiated logout with its parameters form-encoded (RP-Initiated Logout 1.0 section 2).</summary>
+public sealed class LogoutPostEndpoint(Sessions sessions, ProjectAuthSettings settings) : LogoutEndpoint(sessions, settings)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post(Path);
+        Name("oauth_logout_post");
+        this.AcceptsForm();
+        this.Describe();
+    }
+}
+
+/// <summary>
+/// RP-initiated logout, by GET or form POST. Revokes the hosted session and clears its cookie, then shows the signed-out
+/// page, which continues to the client's registered <c>post_logout_redirect_uri</c> when there is one.
+/// </summary>
+public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings settings) : EndpointWithoutRequest<IResult>
+{
+    /// <summary>The endpoint's route.</summary>
+    protected const string Path = "/{slug}/oauth/logout";
+
+    /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
+    protected void AcceptsForm() =>
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+
+    /// <summary>The documentation both bindings share.</summary>
+    protected void Describe()
+    {
         Summary("End-session endpoint");
-        Description("OpenID Connect RP-Initiated Logout 1.0. post_logout_redirect_uri must exactly match one registered for the client identified by client_id or id_token_hint and, for a project with a nonempty redirect allowlist, an entry in that list. A disallowed project URI answers a local error without navigation. The answer is otherwise the hosted Signed out page; with a validated post_logout_redirect_uri it continues there (with state, if sent) through a Continue link and a 2-second meta refresh. Access and refresh tokens already issued stay valid until they expire or are revoked.");
+        Description("OpenID Connect RP-Initiated Logout 1.0, by GET with query parameters or POST with the same parameters as application/x-www-form-urlencoded. post_logout_redirect_uri must exactly match one registered for the client identified by client_id or id_token_hint and, for a project with a nonempty redirect allowlist, an entry in that list. A disallowed project URI answers a local error without navigation. The answer is otherwise the hosted Signed out page; with a validated post_logout_redirect_uri it continues there (with state, if sent) through a Continue link and a 2-second meta refresh. Access and refresh tokens already issued stay valid until they expire or are revoked.");
         Tags("OAuth");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
