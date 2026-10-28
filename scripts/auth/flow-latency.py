@@ -66,17 +66,7 @@ class Run:
         try:
             self.password = secrets.token_urlsafe(24)
             self.email_step("signup", HOSTED + "/sign-up", {"email": self.inbox.address, "password": self.password})
-            _, body, _ = self.timed("device POST /oauth/device", lambda: self.form(OAUTH + "/device", {"client_id": CLI, "scope": "openid email profile offline_access"}))
-            device = json.loads(body)
-            verification = HOSTED + "/device?" + urllib.parse.urlencode({"user_code": device["user_code"]})
-            _, page, _ = self.timed("device GET approve page", lambda: self.http.request(verification))
-            fields = Forms(page).fields("/ui/terrascale/device")
-            fields.update(user_code=device["user_code"], decision="approve")
-            self.timed("device POST approve", lambda: self.form(HOSTED + "/device", fields))
-            time.sleep(max(5, device.get("interval", 5)))
-            _, body, _ = self.timed("token device_code grant", lambda: self.form(OAUTH + "/token", {"client_id": CLI, "grant_type": "urn:ietf:params:oauth:grant-type:device_code", "device_code": device["device_code"]}))
-            grant = json.loads(body)
-            self.token, self.refresh = grant["access_token"], grant.get("refresh_token")
+            self.device_token(timed=True)
             self.timed("GET /oauth/userinfo", lambda: self.http.request(OAUTH + "/userinfo", headers={"Authorization": "Bearer " + self.token}))
             self.timed("GET /v1/terrascale/organizations", lambda: self.bearer("/organizations"))
             self.timed("GET /v1/terrascale/organizations (warm)", lambda: self.bearer("/organizations"))
@@ -92,9 +82,31 @@ class Run:
             self.delete()
         return self.timings
 
+    def device_token(self, timed):
+        clock = self.timed if timed else (lambda _, action: action())
+        _, body, _ = clock("device POST /oauth/device", lambda: self.form(OAUTH + "/device", {"client_id": CLI, "scope": "openid email profile offline_access"}))
+        device = json.loads(body)
+        verification = HOSTED + "/device?" + urllib.parse.urlencode({"user_code": device["user_code"]})
+        _, page, _ = clock("device GET approve page", lambda: self.http.request(verification))
+        fields = Forms(page).fields("/ui/terrascale/device")
+        fields.update(user_code=device["user_code"], decision="approve")
+        clock("device POST approve", lambda: self.form(HOSTED + "/device", fields))
+        time.sleep(max(5, device.get("interval", 5)))
+        _, body, _ = clock("token device_code grant", lambda: self.form(OAUTH + "/token", {"client_id": CLI, "grant_type": "urn:ietf:params:oauth:grant-type:device_code", "device_code": device["device_code"]}))
+        grant = json.loads(body)
+        self.token, self.refresh = grant["access_token"], grant.get("refresh_token")
+
     def delete(self):
         import secrets
+        for _ in range(3):
+            if self.token or not any(cookie.name == "tsauth_session" for cookie in self.http.cookies):
+                break
+            try:
+                self.device_token(timed=False)  # The measured grant failed: get a token through the live session to clean up.
+            except Failure:
+                time.sleep(5)
         if not self.token:
+            print("cleanup: synthetic account may remain; inbox kept", file=sys.stderr)
             return  # Keep the inbox: the account may exist and can only be recovered through it.
         # Deletion needs a fresh purpose-bound step-up proof (docs/auth/step-up-proof.md): re-enter the password on the hosted page.
         _, body, _ = self.http.request(PLATFORM + "/step-up", "POST", headers={"Authorization": "Bearer " + self.token}, expected=(201,),
