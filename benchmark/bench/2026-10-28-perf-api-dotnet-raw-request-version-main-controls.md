@@ -19,3 +19,8 @@ The job ran on delta through `TS_HEAVY_HOST=delta ts-heavy-any nice -n 19`, invo
 | `/tmp/perf-api-dotnet-raw-version-main-check-2.log` | Corrected invocation through `bash`, exit 0 | `faf77e6887cdd77459cd1e756c44985a142f4e57204095cdc1e62b630c330fc0` |
 
 Only this report follows the checked head. Required PR CI is still pending publication. Earlier raw-h2 labels remain insufficient HTTP/2 evidence without independent protocol observation. The separate parity runner is unchanged. No speedup is established, and the original server-over-engine target and denominator remain unchanged and unmet.
+
+CI coverage boundary at main `05e7adb5b`: `.github/workflows/ci.yml` does not
+select `benchmark/clients/dotnet/**` or invoke its `make check`. Required checks
+remain a merge gate, but a green status alone would not establish client build
+or test coverage. The client qualification and offline probe above ran on delta.
