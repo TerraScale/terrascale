@@ -29,3 +29,19 @@ Compared with previously reviewed full head `39ee877506bf9e1e034ceff4b2d263956aa
 | `/tmp/perf-api-dotnet-lifecycle-manual-check.log` | `39e763eb00ecc6742b5ccd5b72a438f4233060ebe589f49f325c9751e362bde4` |
 
 The evidence layer changes no client source; its client tree equals the checked lifecycle head above. Required PR CI remains the merge gate. No production requests, credentials or tenants were used. These checks establish neither TLS/ALPN negotiation nor real signal delivery, hidden wire replay counts, remote erasure, or a speedup. The original server-over-engine target remains unmet, and the unresolved run-d owned database is unchanged.
+
+The publication stack was subsequently rebased onto main
+`05e7adb5b1b5f0dc043e5eb995cce3b428baa047`. The intervening main change is
+auth-only. Every layer's `benchmark/clients/dotnet` tree remains byte-identical
+to its checked head above; the rebase adds no new qualification result.
+
+| Layer | Publication head |
+|---|---|
+| Lanes and counted transports | `2d47625e7b374463a3ffd52f2267f20b8f9ee534` |
+| Corrected cell gates | `de959fbf85710884db7c457b32b1d6d8b3b8fe49` |
+| Corrected owned run | `20a307d3c2430e6e1acd8025527144d0d260c84b` |
+| Corrected full lifecycle | `e266e26483ab89660a2785afc5506f808175f26c` |
+
+All benchmark files in the evidence layer were also unchanged by the rebase;
+only this publication note follows it. Required CI on the published PRs remains
+pending.
