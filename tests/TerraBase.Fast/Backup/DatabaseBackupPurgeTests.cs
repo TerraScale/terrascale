@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -175,6 +176,82 @@ public sealed class DatabaseBackupPurgeTests
         await Assert.That(await VerifiedAsync(api, token)).IsFalse();
     }
 
+    [Test]
+    public async Task Unversioned_bucket_pages_resume_after_their_last_key_and_erase_only_the_database_prefix()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var state = new PurgeFixture();
+        await using var api = await state.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var neighbor = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "neighbor");
+        var prefix = Prefix(database);
+        // Tigris lists an unversioned bucket's objects as version "null" and truncates with only NextKeyMarker (2026-10-28).
+        for (var index = 0; index < 257; index++)
+        {
+            state.S3.SeedObject(false, prefix + index.ToString("D4", CultureInfo.InvariantCulture), [1]);
+        }
+
+        state.S3.SeedObject(false, Prefix(neighbor) + "snapshot", [1]);
+        var markers = new ConcurrentQueue<(string? Key, string? Version)>();
+        state.S3.PurgeVersionListed = (customer, key, version) =>
+        {
+            if (!customer)
+            {
+                markers.Enqueue((key, version));
+            }
+        };
+        await DeleteAsync(api, database, token);
+        await PassAsync(api, token);
+        await Assert.That(Remaining(state, prefix)).IsEqualTo(129);
+        state.Clock.Advance(TimeSpan.FromMinutes(10));
+        var stuck = await MetricsAsync(api, token);
+        await Assert.That(stuck).Contains("terrabase_backup_purge_pending{otel_scope_name=\"TerraScale.TerraBase\"} 1");
+        var age = double.Parse(stuck.Split('\n').Single(line => line.StartsWith("terrabase_backup_purge_oldest_age_seconds{", StringComparison.Ordinal))
+            .Split(' ')[^1], CultureInfo.InvariantCulture);
+        await Assert.That(age).IsBetween(600, 601);
+
+        await PassAsync(api, token);
+        await Assert.That(markers.Last()).IsEqualTo((prefix + "0127", (string?)null));
+        await Assert.That(Remaining(state, prefix)).IsEqualTo(1);
+        for (var pass = 0; pass < 4 && !await VerifiedAsync(api, token); pass++)
+        {
+            await PassAsync(api, token);
+        }
+
+        await Assert.That(await VerifiedAsync(api, token)).IsTrue();
+        await Assert.That(Remaining(state, prefix)).IsEqualTo(0);
+        await Assert.That(state.S3.Objects.Keys).Contains(Prefix(neighbor) + "snapshot");
+        await Assert.That(await MetricsAsync(api, token)).Contains("terrabase_backup_purge_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0");
+    }
+
+    [Test]
+    public async Task Bucket_request_timeouts_retry_within_one_pass()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var state = new PurgeFixture(shortWaitsElapse: true);
+        await using var api = await state.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var prefix = Prefix(database);
+        state.S3.SeedObject(false, prefix + "snapshot", [1]);
+        await DeleteAsync(api, database, token);
+        // More consecutive timeouts than the SDK's own attempts: only the purge's retry gets past them.
+        var timeouts = 0;
+        state.S3.PurgeListingOverride = (customer, _) => !customer && Interlocked.Increment(ref timeouts) <= 3
+            ? new HttpResponseMessage(HttpStatusCode.RequestTimeout)
+            {
+                Content = new StringContent("<Error><Code>RequestTimeout</Code><Message>RequestTimeout</Message></Error>", Encoding.UTF8, "application/xml"),
+            }
+            : null;
+        await PassAsync(api, token);
+        await Assert.That(Volatile.Read(ref timeouts)).IsGreaterThan(3);
+        await Assert.That(Remaining(state, prefix)).IsEqualTo(0);
+    }
+
+    private static int Remaining(PurgeFixture state, string prefix) => state.S3.Objects.Keys.Count(key => key.StartsWith(prefix, StringComparison.Ordinal));
+
+    private static Task<string> MetricsAsync(ManagementApi api, CancellationToken token) =>
+        api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
+
     private static string Prefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/";
 
     private static Task PassAsync(ManagementApi api, CancellationToken token) => api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
@@ -213,13 +290,15 @@ public sealed class DatabaseBackupPurgeTests
 
     private sealed class PurgeFixture : IAsyncDisposable
     {
+        private readonly bool _shortWaitsElapse;
         private readonly string _directory = Directory.CreateTempSubdirectory("backup-purge-").FullName;
         private readonly string _user = EntityIds.New().ToString();
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
         public FakeS3 S3 { get; } = new() { SnapshotsEnabled = false };
 
-        public PurgeFixture()
+        public PurgeFixture(bool shortWaitsElapse = false)
         {
+            _shortWaitsElapse = shortWaitsElapse;
             S3.Time = Clock;
         }
 
@@ -233,12 +312,32 @@ public sealed class DatabaseBackupPurgeTests
             ManualBackupHosting.Configure(services);
             var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));
             services.Remove(convergence);
-        }, time: Clock, userId: _user);
+        }, time: _shortWaitsElapse ? new ShortWaitsElapse(Clock) : Clock, userId: _user);
 
         public ValueTask DisposeAsync()
         {
             Directory.Delete(_directory, recursive: true);
             return ValueTask.CompletedTask;
+        }
+    }
+
+    // The clock, except that one-shot waits of up to 2 s (the purge's retry backoff) elapse at once.
+    private sealed class ShortWaitsElapse(FakeTimeProvider clock) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => clock.GetUtcNow();
+        public override long GetTimestamp() => clock.GetTimestamp();
+        public override long TimestampFrequency => clock.TimestampFrequency;
+        public override TimeZoneInfo LocalTimeZone => clock.LocalTimeZone;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = clock.CreateTimer(callback, state, dueTime, period);
+            if (dueTime > TimeSpan.Zero && dueTime <= TimeSpan.FromSeconds(2) && period == Timeout.InfiniteTimeSpan)
+            {
+                _ = Task.Run(() => clock.Advance(dueTime)); // After the caller holds its timer.
+            }
+
+            return timer;
         }
     }
 
