@@ -21,7 +21,9 @@ def report(directory, baseline=None):
     expected = {(size, operation, concurrency, lane) for size in ("small", "medium")
                 for operation in ("read", "write") for concurrency in (1, 16)
                 for lane in ("turso", "turso-cdc", "engine", "api", "api-query", "api-batch", "sql", "pg", "hrana", "wire", "tcp-echo")}
-    invalid = bool(metadata.get("tracked_changes") or metadata.get("untracked_source")) or set(groups) != expected or any(len(rows) != 3 or {r["Repeat"] for r in rows} != {1, 2, 3}
+    reservation = metadata.get("host_reservation", {})
+    reserved = reservation.get("host") == metadata["host"] and len(set(reservation.get("scheduler_locks", []))) == 4
+    invalid = not reserved or bool(metadata.get("tracked_changes") or metadata.get("untracked_source")) or set(groups) != expected or any(len(rows) != 3 or {r["Repeat"] for r in rows} != {1, 2, 3}
                                or any(r["Errors"] or r["OpsPerSecond"] <= 0 for r in rows)
                                for rows in groups.values())
     med = lambda rows, field: statistics.median(r[field] for r in rows)
@@ -50,7 +52,7 @@ def report(directory, baseline=None):
     try:
         if baseline is not None:
             before = json.loads(pathlib.Path(baseline).read_text())
-            if not before["valid"] or not data["valid"] or before["metadata"]["host"] != metadata["host"]:
+            if not before["valid"] or not before["metadata"].get("host_reservation") or not data["valid"] or before["metadata"]["host"] != metadata["host"]:
                 raise ValueError("comparison requires complete zero-error runs on the same host")
             if any(before["metadata"].get(key) != metadata.get(key) for key in ("cpus", "dotnet", "cpu_model")):
                 raise ValueError("comparison host CPU or .NET SDK identity differs")
@@ -73,7 +75,7 @@ def report(directory, baseline=None):
              f"Main source: `{metadata['main_sha']}`; CPUs: {metadata['cpus']}; starting load: {metadata['load_before']}.",
              f"Starting CPU pressure: `{metadata['cpu_pressure_before'].splitlines()[0]}`. "
              f"Recorded {len(metadata['load_samples'])} load/pressure observations, including build and preload.", data.get("comparison_error", ""),
-             f"Three interleaved repeats; status: {'INVALID / incomplete or failed cells' if invalid else 'complete, zero operation errors'}.",
+             f"Three interleaved repeats; host reservation: {reserved}; status: {'INVALID / missing reservation, dirty source, incomplete or failed cells' if invalid else 'complete, zero operation errors'}.",
              "", "Q-PARITY read targets: c=1 each percentile ≤ 1.1 × (raw Turso + TCP echo); "
              "c=16 ops/s ≥ 0.9 × min(raw Turso, TCP echo). Applying the Wire budget to other endpoints is an aspirational comparison.",
              "", "## Biggest gaps vs target", "", "| Rank | Lane | Size | c | Metric | Observed | Target | Gap ratio |",
