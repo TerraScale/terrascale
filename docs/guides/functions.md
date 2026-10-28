@@ -9,7 +9,22 @@ A function is one JavaScript file deployed next to a database. It runs when you 
 
 ## Write a handler
 
-A function is one ES2023 source file that defines `handler(event)`. Each invocation starts with fresh state. The handler cannot do I/O: it has no network, file, environment or database read access. It returns a response and records writes with three calls:
+A function is one ES2023 source file that defines `handler(event)` at the top level. It runs as a classic script, not as a module:
+
+- Declare `function handler(event)`, `async function handler(event)` or `const handler = (event) => …`. An async handler's result is awaited.
+- `import` and `export` (including `export default`) are refused at deploy with `400 invalid_request: source is not valid JavaScript`.
+- CommonJS `module.exports` deploys but fails at invoke time with `500 function_error: module is not defined`.
+- There is no module loader. To use ES module sources or packages, bundle them into one script and bind `handler` at the top level:
+
+```sh
+npx esbuild src/index.js --bundle --format=iife --global-name=fn --outfile=bundle.js
+echo 'const handler = fn.handler' >> bundle.js
+ts functions deploy example bundle.js -name hello
+```
+
+Here `src/index.js` uses `export function handler(event)`.
+
+Each invocation starts with fresh state. The handler cannot do I/O: it has no network, file, environment or database read access. It returns a response and records writes with three calls:
 
 | Call | Effect |
 | --- | --- |

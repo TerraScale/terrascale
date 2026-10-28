@@ -1,6 +1,6 @@
 # Browser todos
 
-SDK 0.0.16 is published and pinned in the lockfile. Connect your application’s validated session through the backend token guide, then verify collection rules and user isolation before serving users. No hosted login or credential-entry form is included.
+SDK 0.0.17 is published and pinned in the lockfile. Connect your application’s validated session through the backend token guide, then verify collection rules and user isolation before serving users. No hosted login or credential-entry form is included.
 
 Read [the browser todo guide](../../docs/getting-started/browser-todos.md) for server-owner rules, the end-user session contract and live verification requirements.
 

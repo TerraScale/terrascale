@@ -66,9 +66,9 @@ Without a schema, the answer is `{"schema": null}`. Removing a schema keeps ever
 
 ## Generate TypeScript document models
 
-`@terrascale/sdk@0.0.16` includes Node-only `@terrascale/sdk/codegen` and `terrascale-models` tooling. Install its pinned tooling peer with `npm install --save-dev @terrascale/sdk@0.0.16 json-schema-to-typescript@16.0.0 typescript`. Keep codegen imports outside browser bundles; ordinary SDK applications do not need the generator peer.
+`@terrascale/sdk@0.0.17` includes Node-only `@terrascale/sdk/codegen` and `terrascale-models` tooling. Install its pinned tooling peer with `npm install --save-dev @terrascale/sdk@0.0.17 json-schema-to-typescript@16.0.0 typescript`. Keep codegen imports outside browser bundles; ordinary SDK applications do not need the generator peer.
 
-Download the complete [typed-model fixture](/examples/typed-models/README.txt), pinned to published SDK 0.0.16. It generates models deterministically and strictly compiles the required `quantity`, nullable `note`, and invalid create/patch cases.
+Download the complete [typed-model fixture](/examples/typed-models/README.txt), pinned to published SDK 0.0.17. It generates models deterministically and strictly compiles the required `quantity`, nullable `note`, and invalid create/patch cases.
 
 For a local declaration, run `npx terrascale-models schema.json Order models.ts`. The input is the JSON Schema itself, without the API response wrapper. The equivalent API is `await generateDocumentModels(schema, 'Order')`. It returns a deterministic TypeScript string; regenerate after every schema change.
 

@@ -10,9 +10,9 @@ Use a TerraBase SDK to store and query JSON documents in a project database. Eac
 
 | Language | Package / entrypoint | Runtime | Install |
 | --- | --- | --- | --- |
-| JavaScript / TypeScript | `@terrascale/sdk@0.0.16`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
+| JavaScript / TypeScript | `@terrascale/sdk@0.0.17`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
 | C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Build the package from source; [quickstart](/getting-started/csharp) |
-| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.6` |
+| Go | `terrascale.tech/sdk/v1`, `tb.New(tb.Config{TokenSource})` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.8` |
 | Python | `terrascale`, `TerraScale` / `AsyncTerraScale` | Python ≥3.10, httpx | `pip install` from Git; [quickstart](/getting-started/python) |
 | Rust | `terrascale::v1`, `Client::for_project` | Rust 2021 edition, Tokio | Git tag `v0.0.2`; not on crates.io yet |
 
@@ -21,8 +21,10 @@ The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its 
 ### JavaScript / TypeScript
 
 ```bash
-npm install --save-exact @terrascale/sdk@0.0.16
+npm install --save-exact @terrascale/sdk@0.0.17
 ```
+
+The package is ESM-only: use `import` from an ES module (`.mjs`, or `"type": "module"` in `package.json`). `require("@terrascale/sdk")` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`; from CommonJS, load it with `await import("@terrascale/sdk")` inside an async function.
 
 Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Filter` and typed errors. `client.database(name).collection(name)` selects a collection. It provides `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` and `items`; `db.execute`, `db.query` and `db.batch` run [SQL](/guides/sql-http#from-the-sdks). See [the complete example](/getting-started/javascript).
 
@@ -84,10 +86,25 @@ Imports below use the `@terrascale/sdk` prefix. Framework utilities do not suppl
 ### Go
 
 ```bash
-go get terrascale.tech/sdk@v0.0.6
+go get terrascale.tech/sdk@v0.0.8
 ```
 
-Import `terrascale.tech/sdk/v1`. `New(Config)` takes a `BaseURL` (or a `Resolver`) and a `Token`. `Database(projectId, name)` and named collections scope document operations; `ExecuteSQL`, `QuerySQL` and `BatchSQL` run [SQL](/guides/sql-http#from-the-sdks).
+Import `tb "terrascale.tech/sdk/v1"` and `terrascale.tech/sdk/tsauth`. `tsauth.NewAPIKeySource` exchanges the API key for short-lived access tokens and renews them; `tb.New(tb.Config{TokenSource: tokens})` uses `https://api.terrascale.tech` by default. `Database(projectId, name)` and named collections scope document operations; `ExecuteSQL`, `QuerySQL` and `BatchSQL` run [SQL](/guides/sql-http#from-the-sdks).
+
+```go
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})
+if err != nil {
+	return err
+}
+client, err := tb.New(tb.Config{TokenSource: tokens})
+if err != nil {
+	return err
+}
+posts := client.Database(projectID, databaseName).Collection("posts")
+created, err := posts.Create(ctx, map[string]any{"title": "Hello"})
+```
+
+See the complete [Go quickstart](/getting-started/go).
 
 ### Python
 
