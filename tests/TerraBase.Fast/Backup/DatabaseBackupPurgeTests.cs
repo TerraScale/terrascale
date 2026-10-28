@@ -228,7 +228,7 @@ public sealed class DatabaseBackupPurgeTests
     public async Task Bucket_request_timeouts_retry_within_one_pass()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var state = new PurgeFixture(shortWaitsElapse: true);
+        await using var state = new PurgeFixture();
         await using var api = await state.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var prefix = Prefix(database);
@@ -290,15 +290,13 @@ public sealed class DatabaseBackupPurgeTests
 
     private sealed class PurgeFixture : IAsyncDisposable
     {
-        private readonly bool _shortWaitsElapse;
         private readonly string _directory = Directory.CreateTempSubdirectory("backup-purge-").FullName;
         private readonly string _user = EntityIds.New().ToString();
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
         public FakeS3 S3 { get; } = new() { SnapshotsEnabled = false };
 
-        public PurgeFixture(bool shortWaitsElapse = false)
+        public PurgeFixture()
         {
-            _shortWaitsElapse = shortWaitsElapse;
             S3.Time = Clock;
         }
 
@@ -312,32 +310,12 @@ public sealed class DatabaseBackupPurgeTests
             ManualBackupHosting.Configure(services);
             var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));
             services.Remove(convergence);
-        }, time: _shortWaitsElapse ? new ShortWaitsElapse(Clock) : Clock, userId: _user);
+        }, time: Clock, userId: _user);
 
         public ValueTask DisposeAsync()
         {
             Directory.Delete(_directory, recursive: true);
             return ValueTask.CompletedTask;
-        }
-    }
-
-    // The clock, except that one-shot waits of up to 2 s (the purge's retry backoff) elapse at once.
-    private sealed class ShortWaitsElapse(FakeTimeProvider clock) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => clock.GetUtcNow();
-        public override long GetTimestamp() => clock.GetTimestamp();
-        public override long TimestampFrequency => clock.TimestampFrequency;
-        public override TimeZoneInfo LocalTimeZone => clock.LocalTimeZone;
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            var timer = clock.CreateTimer(callback, state, dueTime, period);
-            if (dueTime > TimeSpan.Zero && dueTime <= TimeSpan.FromSeconds(2) && period == Timeout.InfiniteTimeSpan)
-            {
-                _ = Task.Run(() => clock.Advance(dueTime)); // After the caller holds its timer.
-            }
-
-            return timer;
         }
     }
 

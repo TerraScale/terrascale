@@ -152,7 +152,8 @@ internal sealed partial class S3ObjectStore
             catch (Exception error) when (attempt < PurgeAttempts && !cancellationToken.IsCancellationRequested && Transient(error))
             {
                 var backoff = PurgeBackoff * (1 << (attempt - 1)) * (RandomNumberGenerator.GetInt32(500, 1001) / 1000.0);
-                await Task.Delay(backoff, _time, cancellationToken).ConfigureAwait(false);
+                // Wall time, like the SDK's own retry backoff: the bucket recovers in real time whatever the injected clock says.
+                await Task.Delay(backoff, TimeProvider.System, cancellationToken).ConfigureAwait(false);
             }
         }
     }
