@@ -2,7 +2,6 @@ name: ci
 
 on:
   pull_request:
-    paths-ignore: ['**.md', 'docs/**']
   merge_group:
   schedule:
     # Recheck every supported interpreter and refresh main caches weekly.
