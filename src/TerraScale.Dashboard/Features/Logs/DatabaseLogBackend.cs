@@ -9,7 +9,9 @@ namespace TerraScale.Dashboard.Features.Logs;
 
 public sealed record DatabaseLogEntry(string Id, DateTimeOffset Time, string Region, string Method, string Route,
     int Status, double LatencyMs, long Operations, bool IsQuery, string? RequestId = null);
-public sealed record DatabaseLogBatch(string DatabaseId, IReadOnlyList<DatabaseLogEntry> Items, bool Truncated, bool RecordingLimited);
+// A cursor read (after=) lists settled requests oldest first, returns NextCursor, and sets Gap when requests after the cursor may have been discarded unread.
+public sealed record DatabaseLogBatch(string DatabaseId, IReadOnlyList<DatabaseLogEntry> Items, bool Truncated, bool RecordingLimited,
+    string? NextCursor = null, bool Gap = false);
 
 public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAccessTokens tokens, IDatabaseBackend databases, TimeProvider time)
 {
@@ -69,7 +71,7 @@ public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAcces
             .ThenBy(item => item.Collection, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
     }
 
-    internal static void Validate(DatabaseLogBatch batch, string databaseId, string status)
+    internal static void Validate(DatabaseLogBatch batch, string databaseId, string status, bool cursor = false)
     {
         if (batch.DatabaseId != databaseId || batch.Items is null || batch.Items.Count > 100 ||
             batch.Items.Any(item => item is null || !TerraScaleIds.IsValid(item.Id) || item.RequestId is not null && !TerraScaleIds.IsValid(item.RequestId) || item.Time == default ||
@@ -79,6 +81,13 @@ public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAcces
                 status.Length > 0 && item.Status / 100 != status[0] - '0') ||
             batch.Items.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != batch.Items.Count)
             throw new JsonException("Request logs returned invalid measurements or a different database.");
+        if (cursor)
+        {
+            if (!TerraScaleIds.IsValid(batch.NextCursor) || !batch.Items.SequenceEqual(batch.Items.OrderBy(item => item.Id, StringComparer.Ordinal)) ||
+                batch.Items.Count > 0 && string.CompareOrdinal(batch.Items[^1].Id, batch.NextCursor) > 0)
+                throw new JsonException("Request log cursor page is not in cursor order.");
+            return;
+        }
         if (!batch.Items.SequenceEqual(batch.Items.OrderByDescending(item => item.Time).ThenByDescending(item => item.Id, StringComparer.Ordinal)))
             throw new JsonException("Request logs are not in recent-first order.");
     }

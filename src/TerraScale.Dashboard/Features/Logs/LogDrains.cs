@@ -5,19 +5,21 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Logs;
 
-// One OTLP/HTTP log drain per project. Cursors hold the newest shipped request id per database.
+// One OTLP/HTTP log drain per project. Cursors hold TerraBase's request-log cursor per database; LastGapAt records when
+// TerraBase reported requests discarded before the drain read them.
 public sealed record LogDrain(string ProjectId, string OrganizationId, string Revision, string Url, string? HeaderName, SealedSecret? HeaderValue, DateTimeOffset CreatedAt)
 {
     public Dictionary<string, string> Cursors { get; init; } = [];
     public DateTimeOffset? LastSuccessAt { get; init; }
     public DateTimeOffset? LastErrorAt { get; init; }
     public int? LastErrorStatus { get; init; }
+    public DateTimeOffset? LastGapAt { get; init; }
 }
 public sealed record LogDrainIndex(Dictionary<string, string> Projects);
 
 public interface ILogDrainSource
 {
-    Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, CancellationToken cancellationToken);
+    Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken);
 }
 
 public sealed partial class LogDrains(IDashboardState state, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity, TimeProvider clock, ILogger<LogDrains> logger)
@@ -81,21 +83,25 @@ public sealed partial class LogDrains(IDashboardState state, ILogDrainSource sou
             headers.Add(new(name, value.Open((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey, "log-drain/" + projectId)));
         var cursors = new Dictionary<string, string>(StringComparer.Ordinal);
         int? failure = null;
+        var gap = false;
         foreach (var database in project.Databases.Values)
         {
-            var batch = await source.ReadAsync(projectId, database.Id, cancellationToken);
-            var cursor = drain.Cursors.GetValueOrDefault(database.Id);
-            // Without a cursor the drain starts from its creation, never earlier than the current 100 entries.
-            var fresh = batch.Items.Where(item => cursor is null ? item.Time >= drain.CreatedAt : string.CompareOrdinal(item.Id, cursor) > 0)
-                .OrderBy(item => item.Time).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
-            if (fresh.Length == 0) continue;
+            // Without a cursor the drain starts from its creation.
+            var cursor = drain.Cursors.GetValueOrDefault(database.Id) ?? Start(drain.CreatedAt);
+            var batch = await source.ReadAsync(projectId, database.Id, cursor, cancellationToken);
+            gap |= batch.Gap;
+            if (batch.Items.Count == 0)
+            {
+                if (batch.NextCursor != cursor) cursors[database.Id] = batch.NextCursor!;
+                continue;
+            }
             int status;
-            try { status = await delivery.PostAsync(new Uri(drain.Url), Otlp(projectId, database, fresh), headers, cancellationToken); }
+            try { status = await delivery.PostAsync(new Uri(drain.Url), Otlp(projectId, database, batch.Items), headers, cancellationToken); }
             catch (Exception error) when (error is HttpRequestException or ArgumentException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested) { status = 0; }
-            if (status is >= 200 and <= 299) cursors[database.Id] = fresh[^1].Id;
+            if (status is >= 200 and <= 299) cursors[database.Id] = batch.NextCursor!;
             else failure = status;
         }
-        if (cursors.Count == 0 && failure is null) return;
+        if (cursors.Count == 0 && failure is null && !gap) return;
         var now = clock.GetUtcNow();
         await state.UpdateAsync(Collection, projectId, () => throw new IOException("Log drain disappeared."), document => Read(document, projectId), current =>
         {
@@ -107,7 +113,8 @@ public sealed partial class LogDrains(IDashboardState state, ILogDrainSource sou
                 Cursors = merged,
                 LastSuccessAt = cursors.Count > 0 ? now : current.LastSuccessAt,
                 LastErrorAt = failure is null ? current.LastErrorAt : now,
-                LastErrorStatus = failure ?? current.LastErrorStatus
+                LastErrorStatus = failure ?? current.LastErrorStatus,
+                LastGapAt = gap ? now : current.LastGapAt
             };
         }, cancellationToken);
     }
@@ -143,6 +150,15 @@ public sealed partial class LogDrains(IDashboardState state, ILogDrainSource sou
             }
         }
     });
+
+    // The smallest ULID at the drain's creation time: every request recorded since then sorts after it.
+    private static string Start(DateTimeOffset time)
+    {
+        var bytes = new byte[16];
+        var milliseconds = time.ToUnixTimeMilliseconds();
+        for (var i = 0; i < 6; i++) bytes[i] = (byte)(milliseconds >> (8 * (5 - i)));
+        return new NUlid.Ulid(bytes).ToString();
+    }
 
     private static object Text(string key, string value) => new { key, value = new { stringValue = value } };
     private static object Integer(string key, long value) => new { key, value = new { intValue = value.ToString(CultureInfo.InvariantCulture) } };

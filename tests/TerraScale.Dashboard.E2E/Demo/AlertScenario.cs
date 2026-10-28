@@ -115,6 +115,12 @@ internal sealed class FakeLogSource : ILogDrainSource
         return entry;
     }
 
-    public Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, CancellationToken cancellationToken) =>
-        Task.FromResult(new DatabaseLogBatch(databaseId, entries.Take(100).ToArray(), false, false));
+    public bool Gap { get; set; }
+
+    // TerraBase's cursor read, without its settle delay: entries after the cursor, oldest first.
+    public Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken)
+    {
+        var items = entries.Where(entry => string.CompareOrdinal(entry.Id, after) > 0).OrderBy(entry => entry.Id, StringComparer.Ordinal).Take(100).ToArray();
+        return Task.FromResult(new DatabaseLogBatch(databaseId, items, false, false, items.Length > 0 ? items[^1].Id : after, Gap));
+    }
 }
