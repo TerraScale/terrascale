@@ -21,9 +21,9 @@ public sealed class ErrorEnvelopeTests
         app.MapGet("/__test/cancelled-work", (HttpContext _) => throw new OperationCanceledException("not the client"));
         // The real SDK against storage that answers 503, as gru's TerraBase did during a writer storm. Loopback, like
         // ts-auth's own storage origin, needs no credential; the handler answers before any connection.
-        app.MapGet("/__test/storage-unavailable", (HttpContext _) => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
-        app.MapGet("/__test/storage-conflict", (HttpContext _) => StorageAsync(HttpStatusCode.PreconditionFailed, "precondition_failed"));
-        app.MapGet("/ui/__test/storage-unavailable", (HttpContext _) => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
+        app.MapGet("/__test/storage-unavailable", () => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
+        app.MapGet("/__test/storage-conflict", () => StorageAsync(HttpStatusCode.PreconditionFailed, "precondition_failed"));
+        app.MapGet("/ui/__test/storage-unavailable", () => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
         app.MapGet("/__test/slow", async (HttpContext context) =>
         {
             var signals = context.RequestServices.GetRequiredService<DisconnectSignals>();
