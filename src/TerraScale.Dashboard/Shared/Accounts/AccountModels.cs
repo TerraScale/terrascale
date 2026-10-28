@@ -169,7 +169,9 @@ public sealed class NotificationRecord
     public bool Unread => Status.Equals("unread", StringComparison.OrdinalIgnoreCase);
     public bool VisibleTo(AccountContext context)
     {
-        if (Type.StartsWith("allowance-", StringComparison.Ordinal) && context.Organization?.RoleFor(context.UserId) != "owner") return false;
+        // Allowance alerts belong to one organization's plan; only its owner sees them.
+        if (Type.StartsWith("allowance-", StringComparison.Ordinal) &&
+            (OrganizationId == "" || context.Organization?.RoleFor(context.UserId) != "owner")) return false;
         if (OrganizationId == "" && ProjectId == "") return true;
         var organization = context.Organization;
         if (organization is null || OrganizationId != organization.Id || organization.MfaRequired ||
