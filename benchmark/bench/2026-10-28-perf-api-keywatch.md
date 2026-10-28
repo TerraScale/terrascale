@@ -23,7 +23,7 @@ src/TerraBase/Features/UserAuth/KeyAuthority.cs. SDK is d62203970942942811e83851
 Targeted Fast KeyRevocationTests passed 9/9 (3.041 s), including established HTTP-feed revocation and status-outage
 cases driven by FakeTimeProvider; the Turso driver suite passed 44/44 (14.352 s). No test failed or was skipped.
 Both diagnostic E2E Release builds passed with zero warnings/errors. CI still gates the full Fast suite.
-Normal-api observer-free harness changes require their own successful builds before reporting their results.
+Both normal-api E2E Release builds also passed with zero warnings/errors; all six normal arms passed.
 
 ## Diagnostic exception observation
 
@@ -89,7 +89,7 @@ and zero events for 1,470,731 hosting requests after. Normal-api latency results
 
 ## Diagnostic host and artifact evidence
 
-Host pressure and concurrent compiler activity disqualify quiet-host certification. No arm was discarded.
+Shared-host snapshots record CPU pressure and do not establish an isolated quiet host. No arm was discarded.
 
 | Arm | Pair | UTC start–end | load1 start–end | CPU some avg10 % start–end |
 | --- | ---: | --- | --- | --- |
@@ -103,3 +103,61 @@ Host pressure and concurrent compiler activity disqualify quiet-host certificati
 Diagnostic server DLL SHA-256: before `06be276443fe7c1ed7b291c2d2a1fa69d3abb71fdc7ad4cccc225dfce868b6ac`,
 after `923fddf28dc4b9a6554fbc9f8c7278ad3385c64d8aca13411db49568ac79c611`.
 Raw diagnostic artifacts on delta: `/home/mariogk/remote-builds/terrascale/fix-api-keywatch-timer-3abe240428921dedcdd8d9fd645d2b861e9c2c0be603805186d65566b2ad022e/benchmark/bench/keywatch-pairs-delta` (six `.md/.log/.host`, `vmstat.txt`, source/SDK ids, test/build logs).
+
+## Normal API comparison (no exception handler)
+
+Harness `89ad448bb4052cea62d5280634ecc9cd98f59cee`, same baseline production source and SDK as above.
+Only the api lane runs here; its per-request engine attribution supplies the denominator. All 24 cells
+returned nonempty attribution, zero operation errors and null (unmeasured) exception counts. No tests were skipped.
+These shared-host measurements are diagnostic, not quiet-host qualification or live production evidence.
+
+| Size | c | Arm | Client p50 µs median (min–max) | p99 µs median | CPU µs/op median (min–max) | B/op median | Overhead/engine p50 % median |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| small | 1 | before | 109.4 (98.3–109.7) | 366.8 | 207.9 (177.6–216.4) | 31,080 | 2,277 |
+| small | 1 | after | 104.8 (90.8–109.2) | 339.9 | 187.5 (144.6–197.8) | 30,453 | 2,238 |
+| small | 16 | before | 194.4 (194.2–218.0) | 2,154.8 | 141.9 (132.9–142.0) | 30,531 | 2,134 |
+| small | 16 | after | 174.5 (173.0–196.4) | 2,120.3 | 128.5 (121.8–129.1) | 30,017 | 2,114 |
+| medium | 1 | before | 127.1 (107.8–144.1) | 390.6 | 226.8 (177.9–270.4) | 46,808 | 2,108 |
+| medium | 1 | after | 118.4 (100.4–196.1) | 416.9 | 205.0 (149.8–253.9) | 46,281 | 2,074 |
+| medium | 16 | before | 282.1 (266.0–285.7) | 2,637.5 | 180.5 (160.1–197.0) | 45,929 | 1,880 |
+| medium | 16 | after | 232.8 (212.5–242.6) | 2,537.9 | 158.7 (147.1–160.0) | 45,457 | 1,785 |
+
+| Arm | Pair | Size | c | ops/s | Client p50/p99 µs | CPU µs/op | B/op | Server p50 µs | Engine p50 µs | Overhead p50/p99 µs |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before | 1 | small | 1 | 9054 | 98.3/265.5 | 177.6 | 30925 | 63.9 | 2.7 | 61.3/157.7 |
+| before | 1 | small | 16 | 50925 | 218/2032.2 | 132.9 | 30435 | 78.5 | 3.5 | 74.7/1681.9 |
+| before | 1 | medium | 1 | 8625 | 107.8/250.7 | 177.9 | 46593 | 72.4 | 3.3 | 69.1/135.7 |
+| before | 1 | medium | 16 | 37138 | 285.7/2308.9 | 160.1 | 45856 | 91.3 | 4.6 | 86.5/1750.5 |
+| before | 2 | small | 1 | 7699 | 109.4/366.8 | 207.9 | 31080 | 71.4 | 3 | 68.3/215.1 |
+| before | 2 | small | 16 | 53378 | 194.4/2154.8 | 141.9 | 30531 | 81.9 | 3.6 | 78/1758.7 |
+| before | 2 | medium | 1 | 6658 | 127.1/390.6 | 226.8 | 46808 | 86.4 | 3.9 | 82.2/233.9 |
+| before | 2 | medium | 16 | 36804 | 266/2637.5 | 180.5 | 45929 | 97.6 | 4.9 | 92.5/2065.1 |
+| before | 3 | small | 1 | 7324 | 109.7/368.7 | 216.4 | 31107 | 71.9 | 3 | 68.7/208.2 |
+| before | 3 | small | 16 | 53348 | 194.2/2162.3 | 142 | 30598 | 81.3 | 3.7 | 77.4/1781.7 |
+| before | 3 | medium | 1 | 5582 | 144.1/474 | 270.4 | 46847 | 97.9 | 4.4 | 93.3/289.2 |
+| before | 3 | medium | 16 | 34154 | 282.1/2909.1 | 197 | 45995 | 102 | 5.4 | 96.2/2365.5 |
+| after | 1 | small | 1 | 9930 | 90.8/221.6 | 144.6 | 30325 | 58.9 | 2.4 | 56.5/131.3 |
+| after | 1 | small | 16 | 54918 | 196.4/1981 | 121.8 | 29926 | 75 | 3.3 | 71.5/1600.1 |
+| after | 1 | medium | 1 | 9097 | 100.4/240.1 | 149.8 | 46016 | 67.4 | 3.1 | 64.3/131 |
+| after | 1 | medium | 16 | 41966 | 242.6/2160.7 | 147.1 | 45376 | 87.6 | 4.6 | 82.8/1711 |
+| after | 2 | small | 1 | 7687 | 104.8/339.9 | 187.5 | 30453 | 68.1 | 2.9 | 64.9/202.2 |
+| after | 2 | small | 16 | 57979 | 174.5/2120.3 | 129.1 | 30017 | 77.7 | 3.5 | 74/1755 |
+| after | 2 | medium | 1 | 6617 | 118.4/416.9 | 205 | 46281 | 80.9 | 3.7 | 76.8/231.1 |
+| after | 2 | medium | 16 | 42281 | 212.5/2537.9 | 158.7 | 45457 | 90.8 | 4.8 | 85.7/2088.2 |
+| after | 3 | small | 1 | 7232 | 109.2/407.7 | 197.8 | 30554 | 71 | 3.3 | 67.4/230.5 |
+| after | 3 | small | 16 | 57741 | 173/2202.1 | 128.5 | 30048 | 76.1 | 3.6 | 72.3/1846.6 |
+| after | 3 | medium | 1 | 5375 | 196.1/480.2 | 253.9 | 46504 | 122.3 | 5.7 | 114.6/279.5 |
+| after | 3 | medium | 16 | 39860 | 232.8/2609.7 | 160 | 45478 | 90 | 5.1 | 84.7/2077.4 |
+
+| Arm | Pair | UTC start–end | load1 start–end | CPU some avg10 % start–end |
+| --- | ---: | --- | --- | --- |
+| before | 1 | 2026-10-28T01:12:11Z–2026-10-28T01:13:22Z | 9.96–7.39 | 15.49–6.53 |
+| before | 2 | 2026-10-28T01:15:38Z–2026-10-28T01:16:47Z | 4.27–5.29 | 5.10–5.76 |
+| before | 3 | 2026-10-28T01:16:47Z–2026-10-28T01:17:55Z | 5.29–4.15 | 5.76–5.51 |
+| after | 1 | 2026-10-28T01:13:22Z–2026-10-28T01:14:30Z | 7.39–7.36 | 6.53–6.24 |
+| after | 2 | 2026-10-28T01:14:30Z–2026-10-28T01:15:38Z | 7.36–4.27 | 6.24–5.10 |
+| after | 3 | 2026-10-28T01:17:55Z–2026-10-28T01:19:04Z | 4.15–5.03 | 5.51–5.31 |
+
+Normal server DLL SHA-256: before `64f5463d40fbb1184d1050884abebf38c68c33966006ab2cdc1d886d2b029b9b`, after `ec66f5d759c31331babb3d41d72854ccac65bf2f76f585751954a53c5855d6d5`.
+Raw normal artifacts on delta: `/home/mariogk/remote-builds/terrascale/fix-api-keywatch-timer-3abe240428921dedcdd8d9fd645d2b861e9c2c0be603805186d65566b2ad022e/benchmark/bench/keywatch-pairs-delta-noexceptions` (six `.md/.log/.host`, `vmstat.txt`, source/SDK ids, build logs).
+Reproduce on harness 89ad448bb with `TERRABASE_VS_TURSO_LANES=api`, invoking `run-server-overhead.sh <SDK checkout> 4d2f9c029 <output directory> src/TerraBase/Features/UserAuth/KeyAuthority.cs` through `ts-heavy-any nice -n 19 taskset -c 0-11`.
