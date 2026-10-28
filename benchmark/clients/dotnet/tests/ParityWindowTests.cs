@@ -122,7 +122,7 @@ public sealed class ParityWindowTests
         await Assert.That(result.Latency.P50Us).IsEqualTo(1);
     }
 
-    private sealed class ManualTime : TimeProvider
+    internal sealed class ManualTime : TimeProvider
     {
         private readonly object gate = new();
         private readonly List<Alarm> alarms = [];

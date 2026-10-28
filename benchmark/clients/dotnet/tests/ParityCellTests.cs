@@ -9,16 +9,19 @@ public sealed class ParityCellTests
     private const string Project = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
     private static ParityCellPlan Plan(TimeSpan? readiness = null) =>
-        new(new ParityWindowPlan(4, TimeSpan.Zero, TimeSpan.FromMilliseconds(20), TimeSpan.FromSeconds(10)), readiness ?? TimeSpan.FromSeconds(10), TimeSpan.Zero);
+        new(new ParityWindowPlan(4, TimeSpan.Zero, TimeSpan.FromTicks(64), TimeSpan.FromSeconds(10)), readiness ?? TimeSpan.FromSeconds(10), TimeSpan.Zero);
 
     private static async Task<ParityCellRow> RunAsync(string lane, FakeReads server, long expiresIn = 3600, TimeSpan? readiness = null)
     {
+        var clock = new ParityWindowTests.ManualTime();
+        // A completed fake send advances time; scheduler delays cannot consume the measurement window.
+        server.OnRead = () => clock.Advance(TimeSpan.FromTicks(1));
         var (tokens, auth, http) = FakeAuth.Create(expiresIn);
         using (http)
         {
             var target = new ParityTarget(lane, "gru", Project, "api-perf-x", FakeReads.Id, 256, FakeReads.Document);
             using var observed = new ParityLane(target, tokens, _ => server);
-            return await ParityCell.RunAsync(observed, target, 1, Plan(readiness), auth, tokens, TimeProvider.System, default).WaitAsync(TimeSpan.FromSeconds(30));
+            return await ParityCell.RunAsync(observed, target, 1, Plan(readiness), auth, tokens, clock, default).WaitAsync(TimeSpan.FromSeconds(30));
         }
     }
 
@@ -75,7 +78,7 @@ public sealed class ParityCellTests
         await Assert.That(row.Readiness.Attempts).IsEqualTo(3);
         await Assert.That(row.Attempts!.Value.Attempts).IsEqualTo(row.Window!.Starts);
 
-        row = await RunAsync(lane, new FakeReads("absent"), readiness: TimeSpan.FromMilliseconds(50));
+        row = await RunAsync(lane, new FakeReads("absent"), readiness: TimeSpan.FromTicks(50));
         await Assert.That(row.Rejection).IsEqualTo("readiness");
         await Assert.That(row.Readiness.Last).IsEqualTo("404");
         await Assert.That(row.Window).IsNull();
@@ -104,8 +107,10 @@ public sealed class ParityCellTests
         {
             http.DefaultRequestHeaders.Add(TerraBaseRegion.PinHeader, "gru");
             var target = new ParityTarget("raw-h1", "gru", Project, "api-perf-x", FakeReads.Id, 256, FakeReads.Document);
-            using var observed = new ParityLane(target, tokens, _ => new FakeReads("ok"));
-            var row = await ParityCell.RunAsync(observed, target, 1, Plan(), auth, tokens, TimeProvider.System, default);
+            var clock = new ParityWindowTests.ManualTime();
+            var server = new FakeReads("ok") { OnRead = () => clock.Advance(TimeSpan.FromTicks(1)) };
+            using var observed = new ParityLane(target, tokens, _ => server);
+            var row = await ParityCell.RunAsync(observed, target, 1, Plan(), auth, tokens, clock, default).WaitAsync(TimeSpan.FromSeconds(30));
             await Assert.That(row.Rejection).IsEqualTo("auth_pin");
             await Assert.That(row.AuthPinned).IsEqualTo(1);
         }

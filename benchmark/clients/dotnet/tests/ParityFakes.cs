@@ -35,10 +35,16 @@ internal class FakeReads(string variant, string region = "gru") : HttpMessageHan
 
     internal ConcurrentDictionary<(Version, HttpVersionPolicy), bool> Policies { get; } = new();
 
+    internal Action? OnRead { get; set; }
+
     internal static ParityDocument Document => new(Id, "v1", Body);
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-        Task.FromResult(Route(request));
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var response = Route(request);
+        OnRead?.Invoke();
+        return Task.FromResult(response);
+    }
 
     protected virtual HttpResponseMessage Route(HttpRequestMessage request)
     {
