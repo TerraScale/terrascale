@@ -1,0 +1,51 @@
+diff --git a/src/TerraBase/Features/UserAuth/ValidatedTokens.cs b/src/TerraBase/Features/UserAuth/ValidatedTokens.cs
+index adea0d5db..dd0a75165 100644
+--- a/src/TerraBase/Features/UserAuth/ValidatedTokens.cs
++++ b/src/TerraBase/Features/UserAuth/ValidatedTokens.cs
+@@ -0,0 +1 @@
++using System.Buffers;
+@@ -29 +30,25 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
+-    public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
++    public static string KeyOf(string token)
++    {
++        // Bound stack use; oversized credentials use scratch that is cleared before returning it.
++        var length = Encoding.UTF8.GetByteCount(token);
++        byte[]? pooled = null;
++        Span<byte> bytes = length <= 2048 ? stackalloc byte[length] : (pooled = ArrayPool<byte>.Shared.Rent(length)).AsSpan(0, length);
++        try
++        {
++            _ = Encoding.UTF8.GetBytes(token, bytes);
++            Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
++            _ = SHA256.HashData(bytes, digest);
++            return Convert.ToBase64String(digest);
++        }
++        finally
++        {
++            if (pooled is null)
++            {
++                CryptographicOperations.ZeroMemory(bytes);
++            }
++            else
++            {
++                ArrayPool<byte>.Shared.Return(pooled, clearArray: true);
++            }
++        }
++    }
+diff --git a/tests/TerraBase.Fast/Management/UserAuthTests.cs b/tests/TerraBase.Fast/Management/UserAuthTests.cs
+index 6bc3299e0..d8f8e9ada 100644
+--- a/tests/TerraBase.Fast/Management/UserAuthTests.cs
++++ b/tests/TerraBase.Fast/Management/UserAuthTests.cs
+@@ -72 +72,3 @@ public sealed class UserAuthTests
+-    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer()
++    [Arguments(0)]
++    [Arguments(4096)]
++    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer(int padding)
+@@ -82 +84,7 @@ public sealed class UserAuthTests
+-                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
++            {
++                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime);
++                if (padding > 0)
++                {
++                    token.Claims["padding"] = new string('p', padding);
++                }
++            });
