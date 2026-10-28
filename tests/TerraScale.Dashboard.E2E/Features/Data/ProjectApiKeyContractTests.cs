@@ -65,12 +65,13 @@ public sealed class ProjectApiKeyContractTests
         await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
         await Assert.That(request.RootElement.GetProperty("allowed_cidrs").GetArrayLength()).IsEqualTo(0);
         await Assert.That(created.Key.AllowedCidrs).IsEquivalentTo(Array.Empty<string>());
-        await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo("app");
+        await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo(DatabaseId);
         await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
             .IsEquivalentTo(new[] { "documents:read", "documents:write" });
         await Assert.That(created.Secret).IsEqualTo(KeyId + "_synthetic-secret");
         await Assert.That(created.Key.LastFour).IsEqualTo("");
         await Assert.That(ApiKeyService.Metadata(created.Key).DatabaseName).IsEqualTo("app");
+        await Assert.That(ApiKeyService.Metadata(created.Key).DatabaseId).IsEqualTo(DatabaseId);
         var listed = await service.ListAsync(context, CancellationToken.None);
         await Assert.That(wire.Query).IsEqualTo("?limit=100");
         await Assert.That(listed.Single().Id).IsEqualTo(KeyId);
@@ -139,10 +140,29 @@ public sealed class ProjectApiKeyContractTests
         context.Project!.Databases.Clear();
         var service = new ApiKeyService(wire, TimeProvider.System);
         var key = (await service.ListAsync(context, CancellationToken.None)).Single();
-        await Assert.That(key.DatabaseId).IsNull();
-        await Assert.That(ApiKeyService.CredentialMetadata(key).DatabaseName).IsEqualTo("app");
+        await Assert.That(key.DatabaseId).IsEqualTo(DatabaseId);
+        await Assert.That(ApiKeyService.CredentialMetadata(key).DatabaseName).IsEqualTo("Deleted database");
         await service.RevokeAsync(context, KeyId, CancellationToken.None);
         await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Get, HttpMethod.Delete }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task AKeyForADeletedDatabaseNeverMatchesARecreatedOneOfTheSameName()
+    {
+        // The project's "app" is DatabaseId; the key was narrowed to an earlier "app" that was deleted.
+        using var wire = new Wire { Database = "01JA0000000000000000000009" };
+        var key = (await new ApiKeyService(wire, TimeProvider.System).ListAsync(Context(), CancellationToken.None)).Single();
+        await Assert.That(key.DatabaseId).IsEqualTo("01JA0000000000000000000009");
+        await Assert.That(key.DatabaseName).IsEqualTo("Deleted database");
+    }
+
+    [Test]
+    public async Task AKeyStoredNarrowedByNameStaysRestrictedAndSaysItIsUnusable()
+    {
+        using var wire = new Wire { Database = "app" };
+        var key = (await new ApiKeyService(wire, TimeProvider.System).ListAsync(Context(), CancellationToken.None)).Single();
+        await Assert.That(key.DatabaseId).IsNull();
+        await Assert.That(key.DatabaseName).IsEqualTo("app (narrowed by name, unusable: create a new key)");
     }
 
     [Test]
@@ -277,6 +297,7 @@ public sealed class ProjectApiKeyContractTests
         public string Failure { get; init; } = "";
         public string CreatedBy { get; init; } = "user";
         public string? LastUsedAt { get; init; }
+        public string Database { get; init; } = DatabaseId;
         public int Requests { get; private set; }
         public string? Body { get; private set; }
         public string? Query { get; private set; }
@@ -330,7 +351,7 @@ public sealed class ProjectApiKeyContractTests
                 name = "Synthetic",
                 organization_id = OrganizationId,
                 project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
-                database = "app",
+                database = Database,
                 scopes = new[] { "documents:read", "documents:write" },
                 created_by = CreatedBy,
                 created_at = "2026-01-01T00:00:00+00:00",
