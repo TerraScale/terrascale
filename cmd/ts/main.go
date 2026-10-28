@@ -66,6 +66,8 @@ Options go before or after the command and its operands; -- ends options.
                                           name; -yes before db delete consents
                                           explicitly for unattended use
   db branch <source> <db>                 copy a database into a new one
+  databases rename <database> <new-name>  rename by name or immutable ULID
+                                          alias: db rename
   db info <db>                            print a database's metadata as JSON
   db regions <db> <region>... | none      set the replica regions (gru, sjc,
                                           fra) besides the home region, or
@@ -141,7 +143,7 @@ Options go before or after the command and its operands; -- ends options.
                                           against base, by default the database
                                           it branched from
   keys list                               list the project's API keys
-  keys create <name> [<db>]               create an API key, shown once;
+  keys create <name> [<database-ULID>]     create an API key, shown once;
                                           -scope read requests read-only grants;
                                           default scope is read-write;
                                           set its lifetime and networks with
@@ -240,6 +242,8 @@ var commands = map[string][]int{
 	"import":             {3},
 	"import status":      {1},
 	"import cancel":      {1},
+	"db rename":          {2},
+	"databases rename":   {2},
 	"db list":            {0},
 	"db create":          {1},
 	"db delete":          {1},
@@ -654,12 +658,15 @@ func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, c
 // keyLifetimeDays maps the -expires values that set a key's lifetime.
 var keyLifetimeDays = map[string]int{"30d": 30, "90d": 90, "365d": 365}
 
-// newKeyRequest reads keys create's operands, <name> and an optional <db>,
+// newKeyRequest reads keys create's operands, <name> and an optional database ULID,
 // and its -expires and -allow-cidr flags. A key expires never unless asked.
 func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyRequest, error) {
 	req := tsauth.APIKeyRequest{Name: operands[0], Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDatabasesWrite,
 		tsauth.ScopeDocumentsRead, tsauth.ScopeDocumentsWrite}}
 	if len(operands) == 2 {
+		if entityid.Check(operands[1]) != nil {
+			return req, fmt.Errorf("database restriction must be a canonical ULID: %w", errUsage)
+		}
 		req.Database = operands[1]
 	}
 	if days, ok := keyLifetimeDays[expires]; ok {
@@ -1046,6 +1053,24 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			return err
 		}
 		return emitJSON(out, m)
+	case "db rename", "databases rename":
+		id := args[0]
+		if v1.ValidateID(id) != nil {
+			m, err := db.Info(ctx)
+			if err != nil {
+				return err
+			}
+			id = m.ID
+		}
+		m, err := s.tb.RenameDatabase(ctx, s.project, id, args[1])
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, m)
+		}
+		_, err = fmt.Fprintf(out, "Renamed %s to %s (%s)\n", args[0], m.Name, m.ID)
+		return err
 	case "db regions":
 		regions := args[1:]
 		if slices.Equal(regions, []string{"none"}) {

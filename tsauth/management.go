@@ -189,7 +189,7 @@ type APIKey struct {
 	Name           string     `json:"name"`
 	OrganizationID string     `json:"organization_id" ulid:"required"`
 	ProjectID      string     `json:"project_id" ulid:"optional"`
-	Database       string     `json:"database"`
+	Database       string     `json:"database" ulid:"optional"`
 	Scopes         []string   `json:"scopes"`
 	CreatedBy      string     `json:"created_by" ulid:"required"`
 	CreatedAt      time.Time  `json:"created_at"`
@@ -215,7 +215,7 @@ type APIKeyRequest struct {
 	Name string
 	// Scopes is a non-empty subset of the Scope constants.
 	Scopes []string
-	// Database restricts a project key to one database name.
+	// Database restricts a project key to one immutable database ULID.
 	Database string
 	// ExpiresAt, when set, ends the key.
 	ExpiresAt *time.Time
@@ -476,7 +476,7 @@ func (u *User) RemoveProjectMember(ctx context.Context, org, project, user strin
 // organization admin) or a project key (project member).
 func (u *User) CreateAPIKey(ctx context.Context, org, project string, req APIKeyRequest) (*CreatedAPIKey, error) {
 	if project == "" && req.Database != "" {
-		return nil, errors.New("tsauth: only a project key can name a database")
+		return nil, errors.New("tsauth: only a project key can restrict a database")
 	}
 	body := struct {
 		Name         string     `json:"name"`
@@ -486,6 +486,9 @@ func (u *User) CreateAPIKey(ctx context.Context, org, project string, req APIKey
 		AllowedCIDRs []string   `json:"allowed_cidrs,omitempty"`
 	}{Name: req.Name, Scopes: req.Scopes, ExpiresAt: req.ExpiresAt, AllowedCIDRs: req.AllowedCIDRs}
 	if req.Database != "" {
+		if err := entityid.Check(req.Database); err != nil {
+			return nil, fmt.Errorf("tsauth: database restriction: %w", err)
+		}
 		body.Database = &req.Database
 	}
 	return call[CreatedAPIKey](ctx, u, http.MethodPost, keyPath(org, project), nil, body)

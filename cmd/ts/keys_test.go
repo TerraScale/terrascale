@@ -35,7 +35,7 @@ func rotationFixture() tsauth.CreatedAPIKey {
 	until := time.Date(2026, 10, 26, 12, 30, 0, 0, time.UTC)
 	return tsauth.CreatedAPIKey{APIKey: tsauth.APIKey{ID: jsonAuthID, OrganizationID: jsonAuthID,
 		ProjectID: jsonAuthID, CreatedBy: jsonAuthID, PreviousSecretExpiresAt: &until,
-		Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDocumentsRead}, Database: "orders"}, Key: jsonAuthID + "_" + strings.Repeat("a", 52)}
+		Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDocumentsRead}, Database: jsonAuthID}, Key: jsonAuthID + "_" + strings.Repeat("a", 52)}
 }
 
 func TestKeyRotationHTTPAndSecretOutput(t *testing.T) {

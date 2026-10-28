@@ -18,6 +18,7 @@ func TestScopedHelpIsOfflineAndRejectsUnknownCommands(t *testing.T) {
 		bad  bool
 	}{
 		{nil, "usage: ts", false},
+		{[]string{"databases", "rename", "--help"}, "ts databases rename <database> <new-name>", false},
 		{[]string{"help", "db"}, "ts db create <database>", false},
 		{[]string{"db", "create", "--help"}, "ts db create <database>", false},
 		{[]string{"-project", "private", "doc", "put", "--help"}, "ts doc put", false},

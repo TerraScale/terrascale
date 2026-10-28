@@ -141,7 +141,7 @@ func (s *spec) generate(sc schema, name string) any {
 	switch {
 	case strings.HasSuffix(name, "_at"):
 		return "2026-10-06T12:00:00Z"
-	case name == "id" || strings.HasSuffix(name, "_id") || name == "created_by" || name == "invited_by" || name == "actor":
+	case name == "database" || name == "id" || strings.HasSuffix(name, "_id") || name == "created_by" || name == "invited_by" || name == "actor":
 		return "01K6SY8000E008000000000001"
 	}
 	return name + "-value"
@@ -360,7 +360,7 @@ func TestManagementContract(t *testing.T) {
 		errOnly("RotateAPIKey "+scope, err)
 		errOnly("RevokeAPIKey "+scope, u.RevokeAPIKey(ctx, org, scope, key))
 	}
-	_, err = u.CreateAPIKey(ctx, org, project, tsauth.APIKeyRequest{Name: "db", Scopes: []string{tsauth.ScopeDocumentsWrite}, Database: "main"})
+	_, err = u.CreateAPIKey(ctx, org, project, tsauth.APIKeyRequest{Name: "db", Scopes: []string{tsauth.ScopeDocumentsWrite}, Database: "01ARZ3NDEKTSV4RRFFQ69G5FAW"})
 	errOnly("CreateAPIKey with a database", err)
 	ev, err := u.AuditEvents(ctx, org, page)
 	check("AuditEvents", err == nil && ev.Items[0].Action != "", err)

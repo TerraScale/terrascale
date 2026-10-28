@@ -24,7 +24,29 @@ func (c *Client) Databases(ctx context.Context, project string, opts PageOptions
 	return &out, nil
 }
 
-// Info reads database metadata by name using a project access token with
+// RenameDatabase renames the database identified by its immutable ULID, using
+// databases:write. The server preserves its ID, data, keys and placement, returns
+// 400 for an invalid name and 409 for a locally known duplicate. Only the home
+// region accepts a rename; others return 421 wrong_region. Concurrent claims
+// converge with the smallest ULID keeping the name. After convergence old name
+// routes have no alias; update name-based connection strings. ID-based strings stay valid.
+// Existing name-bound Database handles are not changed. Mutations are not
+// replayed after uncertain failures; read metadata before explicitly retrying.
+func (c *Client) RenameDatabase(ctx context.Context, project, databaseID, name string) (*ManagedDatabase, error) {
+	if err := checkID(databaseID); err != nil {
+		return nil, err
+	}
+	if err := checkName("database", name); err != nil {
+		return nil, err
+	}
+	req, err := projectRequest(http.MethodPatch, project, nil, "databases", databaseID)
+	if err != nil {
+		return nil, err
+	}
+	return publicCall[ManagedDatabase](ctx, c, req, nameBody{name})
+}
+
+// Info reads database metadata by current name or immutable ULID using a project access token with
 // databases:read. The server enforces project and optional database restrictions.
 func (d *Database) Info(ctx context.Context) (*ManagedDatabase, error) {
 	p, err := d.path()
@@ -111,7 +133,7 @@ func (d *Database) sql(ctx context.Context, statement, endpoint string, out any)
 	return err
 }
 
-// projectRequest addresses the public project hierarchy; selectors remain names.
+// projectRequest addresses the public project hierarchy.
 func projectRequest(method, project string, query url.Values, extra ...string) (request, error) {
 	if err := checkID(project); err != nil {
 		return request{}, err
@@ -141,6 +163,9 @@ func databaseCall[T any](ctx context.Context, d *Database, method string, query 
 // 400 placement_needs_two_regions. A non-empty list must include at least one
 // region other than the home. AllRegions also follows future regions.
 func (d *Database) CreateIn(ctx context.Context, placement Placement) (*ManagedDatabase, error) {
+	if err := checkName("database", d.name); err != nil {
+		return nil, err
+	}
 	if _, err := d.path(); err != nil {
 		return nil, err
 	}
