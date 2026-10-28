@@ -136,6 +136,8 @@ public static class Telemetry
                     // Five bounded storage paths plus the exporter's reserved overflow series.
                     "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 6 },
                     "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
+                    // Nine creation stages by four outcomes plus the exporter's reserved overflow series.
+                    "terrabase.database_create.stage_duration" => new MetricStreamConfiguration { CardinalityLimit = 37 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.replication" or "terrabase.stats.top.operations"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },
