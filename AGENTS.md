@@ -33,7 +33,7 @@ Keep EF Core support in `src/TerraScale.EntityFrameworkCore`. It uses this SDK a
 - Every region always serves. NetBird network membership admits a node automatically; the node discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
 - OCI Vault creates, delivers, and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once there and picked up automatically. Nobody copies secrets by hand.
 - One correct value per setting, in code. Expose no tuning knobs. Fakes, demo stores, and skip-auth exist only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 
 Public regional endpoint discovery is automatic. Customer credentials authorize access; production service credentials arrive from OCI Vault. This contract is not evidence that every runtime flow has shipped; see [README.md](README.md) for SDK and qualification gaps. Existing production switches are inventoried for their owning implementation threads. Documentation changes must not invent APIs or bypass authorization, tenant scope, registered callbacks, payment consent, or safety guards.
 
