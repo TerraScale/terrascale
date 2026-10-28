@@ -100,10 +100,17 @@ CI is the gate: no local test/check run is required before pushing or opening a 
 ## Pull Requests
 
 - Open a PR into **`main`** when the work is ready for review. Keep it focused, with a concise change summary and the validation performed.
-- Request reviews from **`mariogk`**, excluding whichever account authored the PR.
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
 - Never merge while required checks are pending or failing.
-- Visual changes: attach several before/after screenshots of the affected layouts and states (mobile and desktop when both apply). Capture them from the real implementation, never mockups. Upload them as PR attachments; do not commit images just for PR documentation.
-- Before finishing, verify the target branch, title, reviewers, attachments, and current checks. Send the PR URL with the checks that passed and any unresolved blockers.
+- Before finishing, verify the target branch, title, reviewers, previews, and current checks. Send the PR URL with the checks that passed and any unresolved blockers.
+
+### PR previews (required for every visible change)
+
+- Every PR that changes anything a user sees (pages, components, styles, layout, copy, emails, generated pages, maps, charts) MUST embed previews in the PR body. A visible change without previews is not ready to merge.
+- Before and after screenshots of each changed page and state, desktop (1440 px wide) and mobile (390 px wide). Add a short video or GIF for interactions (toggles, menus, flows, animations).
+- Capture from the real running build of the exact PR head (dev server, preview deploy or live preview), never mockups. Use synthetic or demo accounts; no secrets, tokens or real customer data on screen.
+- Upload: commit the images to this repo's orphan branch `pr-assets` under `<pr-number>/` (first time: `git switch --orphan pr-assets`); never put them on the PR branch or `main`, never merge `pr-assets`. Embed each as `![<page> <state> after, desktop](https://raw.githubusercontent.com/TerraScale/ts-landing/pr-assets/<pr-number>/<file>.png)` and check that every URL returns 200 before posting.
+- When a later push changes the visuals, replace the previews. PRs with no visible change say "No visual change" in the body.
 
 ## Zero configuration (user decision 2026-10-09, do not revert)
 
