@@ -401,7 +401,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         if (authority.Id != organization.Id) throw new IOException("Internal organization identity is invalid.");
         if (authority.Name != "terrascale") throw new AccountAccessException("Internal billing requires the organization named exactly terrascale.");
         if (authority.Status != "active" || organization.Archived || organization.DeletionRequested) throw new AccountAccessException("The internal organization must be active.", 409);
-        foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer" })
+        foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku" })
             if (!authority.Projects.Any(pair => pair.Key == pair.Value.Id && pair.Value.OrganizationId == organization.Id && pair.Value.Status == "active" && pair.Value.Name == name))
                 throw new AccountAccessException("Internal service project " + name + " is missing or inactive.", 409);
         organization.InternalBilling?.Validate(organization);

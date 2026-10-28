@@ -17,8 +17,8 @@ The command signs in with ts-auth's device authorization grant (RFC 8628, client
 `ts-cli`): it prints a verification link on `https://auth.terrascale.tech` and a
 user code, and the admin named by `--admin-email` approves it on ts-auth's hosted
 page. The command keeps that grant only in memory and revokes it when it ends. Configuration requires the active projects
-`ts-dashboard`, `ts-auth`, `ts-router`, `ts-status`, `ts-orchestrator`, `ku` and
-`ts-reviewer`. It creates no identities, projects, keys or service data.
+`ts-dashboard`, `ts-auth`, `ts-router`, `ts-status`, `ts-orchestrator` and
+`ku`. It creates no identities, projects, keys or service data.
 
 Supply an existing paid base plan, a positive cap and explicit estimate rates
 (zero is permitted for either rate). Choose the amounts with the owner;
