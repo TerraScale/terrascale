@@ -8,7 +8,7 @@ Amends the frontier cadence of [R7 as built](21-r7-as-built.md) and the retentio
 recorded in a FULL write transaction (`RecordFrontierAsync`, 11-13 per second per node) and answered with a stable report
 the origin recorded in another (12-18 per second), and each ran a retention pass every 5 s under its writer (6-7 per
 second, about 18 ms each). The catalog's closure convergence opened a write transaction per settled project closure every
-2 s (17-27 per second). The sender loop also made about 2,000 empty passes per
+2 s (17-27 per second; #771 now confirms settled closures in a read transaction). The sender loop also made about 2,000 empty passes per
 second: timers fire on a coarse clock, often just before a deadline, so the pass found nothing due and the loop spun until
 it was. Client writes and replicated batches queued behind all of it on 2-CPU hosts.
 
@@ -24,9 +24,6 @@ it was. Client writes and replicated batches queued behind all of it on 2-CPU ho
 - **Retention passes back off.** A database with no commit since its last pass began, no ack recorded since, and no trim
   batch left over is passed at most every 60 s instead of every 5 s. Its time-based cuts (24 h, far behind) and the
   collection horizon therefore move up to 60 s later; acks, commits and unfinished trims keep the 5 s cadence.
-- **Settled closures are read, not written.** A closure whose machine receipt already records it as empty, with every
-  waited-for purge verified and nothing left to erase, is confirmed in a read transaction. Only a closure with work left
-  takes the catalog's writer, exactly as before; the check reads what that write transaction would have found.
 - **Anti-entropy rounds are spread out.** Since [row-derived repair digests](25-row-derived-repair-digests.md) every digest
   scans all state rows of its database. A round compared every database with every peer back to back, once a minute, and
   each peer asked for this node's digests the same way: probes written at that second waited 1.5 to 2.9 s at the origin
