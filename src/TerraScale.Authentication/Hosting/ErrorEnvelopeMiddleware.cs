@@ -110,9 +110,11 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             if (error.Status >= StatusCodes.Status409Conflict && Hosted(context.Request))
             {
                 // A browser on a hosted page gets a page it can read, not the JSON envelope (QA round 4, auth:6).
-                await SignInPageModel.Render(context, new SignInPageModel(SignInStep.Rejected, OidcIssuer.Slug,
-                    Error: "ts-auth could not finish this request. Try again in a moment.") { ErrorTitle = "Something went wrong" }, error.Status)
-                    .ExecuteAsync(context);
+                var page = new SignInPageModel(SignInStep.Rejected, OidcIssuer.Slug, Error: "ts-auth could not finish this request. Try again in a moment.")
+                {
+                    ErrorTitle = "Something went wrong",
+                };
+                await SignInPageModel.Render(context, page, error.Status).ExecuteAsync(context);
                 return;
             }
 
