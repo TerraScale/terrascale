@@ -1,0 +1,3 @@
+{"status":"ok","version":"0.1.0","region":"gru","revision":"6807e989ec6dbb80d54789510e90e095d5af871d","machine":"ts-gru-2","storageFormat":"18-e15d70682919","observed_at":"2026-10-28T09:59:23.361617+00:00","peer":"ts-gru-1"}
+{"status":"ok","version":"0.1.0","region":"sjc","revision":"86c7545afb7f335b954d2331b71121b097541af8","machine":"ts-sjc-1","storageFormat":"18-e15d70682919","observed_at":"2026-10-28T09:59:27.326991+00:00","peer":"ts-sjc-1"}
+{"status":"ok","version":"0.1.0","region":"fra","revision":"93b873792678c32fd14ae1aebc4fa9717eae79c3","machine":"ts-fra-1","storageFormat":"18-e15d70682919","observed_at":"2026-10-28T09:59:31.250511+00:00","peer":"ts-fra-1"}
