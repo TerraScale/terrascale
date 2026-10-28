@@ -4,3 +4,6 @@ target/
 *.jsonl
 !/bench/**/*.jsonl
 *.tmp
+# Host-local synthetic identity and scheduler lock, retained only for recovery.
+/bench/**/user
+/bench/**/.lock
