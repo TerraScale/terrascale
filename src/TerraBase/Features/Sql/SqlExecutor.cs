@@ -237,7 +237,8 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time,
         {
             if (definitions is null || reads.Template(database!, read.Shared!, definitions, describe, keyed) is not { } template)
             {
-                var own = read.Shared is { } text ? SqlParse.Parse(text) as ReadSql ?? throw new InvalidOperationException("a shared read parses again as a read") : read;
+                var own = read.Shared is not { } text ? read
+                    : SqlParse.Parse(text) is ReadSql fresh ? fresh : throw new InvalidOperationException("a shared read parses again as a read");
                 // The catalog relations it reads come first, as CTEs of their rows.
                 if (own.Catalog.Count > 0)
                 {
