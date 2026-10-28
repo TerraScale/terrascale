@@ -31,6 +31,7 @@
 - [Use SQLAlchemy 2 with sqlalchemy-libsql: models, create_all, queries and transactions](https://docs.terrascale.tech/guides/orm-sqlalchemy)
 - [Typed errors, SDK retry behavior and uncertain mutation reconciliation](https://docs.terrascale.tech/guides/errors)
 - [Upcoming database rename: dashboard, API, CLI, SDKs, stable IDs and name conflicts](https://docs.terrascale.tech/guides/rename-database)
+- [Upcoming sign-in email change, verification codes, cancellation and account-wide sign-out](https://docs.terrascale.tech/guides/change-sign-in-email)
 - [Customer dashboard and application database workflow](https://docs.terrascale.tech/guides/dashboard)
 - [Deploy JavaScript functions, call them over HTTPS, trigger them on changes or cron, read logs](https://docs.terrascale.tech/guides/functions)
 - [Project file buckets, signed uploads and downloads, owner and role permissions, and shared storage allowances](https://docs.terrascale.tech/guides/file-storage)
