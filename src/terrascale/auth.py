@@ -154,7 +154,7 @@ class APIKeyTokenSource:
         max_attempts: int = _spec.MAX_ATTEMPTS,
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
-        self._http = http_client or httpx.Client(timeout=30.0, follow_redirects=False)
+        self._http = http_client or httpx.Client(timeout=30.0, follow_redirects=False, http2=True)
         self._lock = threading.Lock()
         self._max_attempts = max(1, max_attempts)
 
@@ -207,7 +207,7 @@ class AsyncAPIKeyTokenSource:
         max_attempts: int = _spec.MAX_ATTEMPTS,
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
-        self._http = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=False)
+        self._http = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=False, http2=True)
         self._lock: asyncio.Lock | None = None
         self._max_attempts = max(1, max_attempts)
 
