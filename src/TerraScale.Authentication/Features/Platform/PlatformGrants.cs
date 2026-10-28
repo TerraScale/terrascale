@@ -59,6 +59,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
     /// <summary>Token requests per API key per minute.</summary>
     public const int KeyRequestsPerMinute = 1000;
 
+    internal const string NameNarrowedKeyNotice = "This API key is narrowed to a database by name. Create a new key narrowed by the database ID and revoke this one.";
+
     internal const string InvalidApiKeyNotice = "The API key is invalid, revoked, expired, or superseded by a concurrent change in another region. Use the latest credential.";
 
     /// <summary>The <c>client_credentials</c> grant of an API key OpenIddict has authenticated.</summary>
@@ -73,6 +75,13 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             || await directory.OrganizationAsync(key.OrganizationId, cancellationToken) is null)
         {
             return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
+        }
+
+        // A key stored narrowed by database name (before narrowing by ULID) would follow the name to another database;
+        // it mints nothing, with a notice that says how to replace it, rather than a token TerraBase later refuses.
+        if (key.Database is { } narrowed && !ApiKeys.IsDatabaseId(narrowed))
+        {
+            return OidcResults.Forbid(Errors.InvalidClient, NameNarrowedKeyNotice);
         }
 
         if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "api-key-token", key.Id, KeyRequestsPerMinute, cancellationToken))
