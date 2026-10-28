@@ -53,7 +53,7 @@ an immutable workflow revision: retain its reviewed source SHA in activation evi
 ## Operator activation and revocation
 
 1. Record approval, actor, policy/workflow SHAs, exact organization/project ULIDs,
-   database name and existing database ID, UTC activation/deadline, and revocation
+   existing database ULID, UTC activation/deadline, and revocation
    owner. Provision only the approved isolated project/database and expiring,
    database-restricted read-only fallback credential through the parent's approved
    workflow. No synthetic IDs or production target defaults exist in this command.

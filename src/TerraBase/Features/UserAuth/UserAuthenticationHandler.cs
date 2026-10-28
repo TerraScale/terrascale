@@ -162,7 +162,8 @@ internal sealed class UserAuthenticationHandler(
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
         {
-            if (!EntityIds.IsValid(database) && !Engine.DatabaseName.TryParse(database, out _))
+            // Only the immutable ULID narrows a token: a name could later belong to another database.
+            if (!EntityIds.IsValid(database))
             {
                 return AuthenticateResult.Fail("invalid database claim");
             }

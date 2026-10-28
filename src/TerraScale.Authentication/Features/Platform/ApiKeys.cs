@@ -107,8 +107,8 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         return cidrs.Count <= MaxAllowedCidrs ? cidrs : null;
     }
 
-    /// <summary>Whether <paramref name="value"/> is a TerraBase database name.</summary>
-    public static bool IsDatabaseName(string? value) => value is not null && DatabaseName().IsMatch(value);
+    /// <summary>Whether <paramref name="value"/> is a TerraBase database ULID; names are mutable and never narrow a credential.</summary>
+    public static bool IsDatabaseId(string? value) => PlatformDirectory.IsId(value);
 
     /// <summary>
     /// Creates an organization key (<paramref name="projectId"/> null; needs the admin organization role) or a project
@@ -395,6 +395,4 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             : null;
     }
 
-    [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
-    private static partial Regex DatabaseName();
 }

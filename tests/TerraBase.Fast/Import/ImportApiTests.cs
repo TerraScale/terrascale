@@ -415,7 +415,7 @@ public sealed class ImportApiTests
         {
             token.Claims["project_id"] = database.Project;
             token.Claims["scope"] = ImportClient.AllScopes;
-            token.Claims["database"] = "another";
+            token.Claims["database"] = Primitives.EntityIds.New().ToString();
         }));
         using var narrowedAnswer = await narrowed.GetAsync(new Uri(import, UriKind.Relative));
         await Assert.That(narrowedAnswer.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

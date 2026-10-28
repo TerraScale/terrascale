@@ -207,7 +207,7 @@ project. It is not a bearer token: code exchanges it at the token endpoint
 - **Shown once.** Creation and rotation answer the key string once (`key`).
   ts-auth stores only its SHA-256 and compares in constant time.
 - **Scope.** A project key reaches only its project, and only one database if it
-  has `database` (a TerraBase database name). An organization key reaches every
+  has `database` (a TerraBase database ULID, unchanged by a rename). An organization key reaches every
   project of its organization, one project per token. `scopes` is a non-empty
   set of section 3's scopes for the key's kind (a project key: the project
   token scopes; an organization key: also `billing:read` and `billing:write`),

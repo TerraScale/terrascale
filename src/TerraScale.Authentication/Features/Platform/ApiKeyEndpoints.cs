@@ -7,7 +7,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <summary>Creates an API key.</summary>
 /// <param name="Name">1 to 128 characters after trimming.</param>
 /// <param name="Scopes">A non-empty set of TerraBase scopes.</param>
-/// <param name="Database">Project keys only: the TerraBase database the key is narrowed to.</param>
+/// <param name="Database">Project keys only: the ULID of the TerraBase database the key is narrowed to; a rename never changes it.</param>
 /// <param name="ExpiresAt">Optional expiry, in the future.</param>
 /// <param name="AllowedCidrs">Optional IP allowlist: up to 32 IPv4 or IPv6 CIDRs or addresses; absent or empty allows any address.</param>
 public sealed record CreateApiKeyRequest(
@@ -251,9 +251,9 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
             throw Invalid("scopes must be a non-empty set of databases:read, databases:write, documents:read and documents:write.");
         }
 
-        if (body.Database is not null && (!project || !ApiKeys.IsDatabaseName(body.Database)))
+        if (body.Database is not null && (!project || !ApiKeys.IsDatabaseId(body.Database)))
         {
-            throw Invalid(project ? "database must be a TerraBase database name." : "Only project keys are narrowed to a database.");
+            throw Invalid(project ? "database must be a TerraBase database ID (ULID)." : "Only project keys are narrowed to a database.");
         }
 
         if (body.ExpiresAt <= clock.GetUtcNow())

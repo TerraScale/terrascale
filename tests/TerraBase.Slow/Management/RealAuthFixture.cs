@@ -129,12 +129,11 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         return (organization.Id, project.Id, await TokenAsync(seedRequest, token));
     }
 
-    /// <summary>A real read-only bound workload token, plus a separate fixture credential for seeding data.</summary>
-    public async Task<(string AccessToken, string Project, string SeedToken)> GitHubActionsTokenAsync(CancellationToken token)
+    /// <summary>A real read-only workload token bound to the existing database <paramref name="database"/> (its ULID).</summary>
+    public async Task<string> GitHubActionsTokenAsync(string organization, string project, string database, CancellationToken token)
     {
-        var (organization, project, seed) = await SeedProjectAsync(token);
         var deadline = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
-        await GitHubActionsBinding.BindAsync(_auth!.Services, organization, project, "ci-e2e", deadline, token);
+        await GitHubActionsBinding.BindAsync(_auth!.Services, organization, project, database, deadline, token);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -144,7 +143,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
                 ["subject_token"] = GitHub.Mint(GitHubActionsGrant.Audience),
             }),
         };
-        return (await TokenAsync(request, token), project, seed);
+        return await TokenAsync(request, token);
     }
 
     private async Task<string> TokenAsync(HttpRequestMessage request, CancellationToken token)

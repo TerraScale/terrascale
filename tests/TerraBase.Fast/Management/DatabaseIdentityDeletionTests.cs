@@ -200,7 +200,7 @@ public sealed class DatabaseIdentityDeletionTests
         using var anonymous = api.WithToken(null);
         using var readOnly = ProjectClient(api, database.Project, "databases:read");
         using var wrongProject = ProjectClient(api, EntityIds.New().ToString());
-        using var restricted = ProjectClient(api, database.Project, database: second.Name);
+        using var restricted = ProjectClient(api, database.Project, database: second.Id);
         foreach (var (client, status) in new[]
         {
             (anonymous, HttpStatusCode.Unauthorized), (readOnly, HttpStatusCode.Forbidden),

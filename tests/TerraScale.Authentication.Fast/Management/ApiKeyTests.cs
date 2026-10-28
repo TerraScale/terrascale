@@ -91,7 +91,9 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app\n" })).IsEqualTo((400, "invalid_request"));
         // TerraBase dropped shapes (R2c-1), so ts-auth no longer issues their scope.
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = WithShapes })).IsEqualTo((400, "invalid_request"));
-        var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app" }, HttpStatusCode.Created);
+        await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app" })).IsEqualTo((400, "invalid_request"));
+        var database = await oidc.CreateDatabaseIdAsync("app");
+        var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database }, HttpStatusCode.Created);
         var key = created.GetProperty("key").GetString()!;
         var id = created.GetProperty("api_key").GetProperty("id").GetString()!;
         await Assert.That(KeyString().IsMatch(key)).IsTrue();
@@ -104,7 +106,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
         await Assert.That(listed.ToString()).DoesNotContain(key[27..]);
         await Assert.That(listed.GetProperty("items")[0].GetProperty("last_used_at").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{keys}/{id}", token)).GetProperty("database").GetString()).IsEqualTo("app");
+        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{keys}/{id}", token)).GetProperty("database").GetString()).IsEqualTo(database);
 
         using var exchanged = await oidc.ApiKeyTokenAsync(key);
         await Assert.That(exchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -120,7 +122,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
         await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
-        await Assert.That(access.GetClaim("database").Value).IsEqualTo("app");
+        await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["documents:read", "documents:write"]);
         await Assert.That(access.TryGetClaim("email", out _)).IsFalse();
         await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsEqualTo(60);
@@ -201,12 +203,13 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, bobToken, new { name = "ci", scopes = ReadOnly })).IsEqualTo((403, "forbidden_role"));
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, keys, bobToken)).IsEqualTo((403, "forbidden_role"));
+        var database = await oidc.CreateDatabaseIdAsync("app");
         foreach (var invalid in new object[]
         {
             new { name = "ci", scopes = Array.Empty<string>() },
             new { name = "ci", scopes = new[] { "documents:read", "documents:read" } },
             new { name = "ci", scopes = new[] { "admin" } },
-            new { name = "ci", scopes = ReadOnly, database = "app" },
+            new { name = "ci", scopes = ReadOnly, database },
             new { name = "ci", scopes = ReadOnly, expires_at = DateTimeOffset.UtcNow.AddMinutes(-1) },
             new { name = "", scopes = ReadOnly },
         })
@@ -515,7 +518,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
             var body = await OidcHarness.JsonAsync(exchanged);
             await Assert.That(body.GetProperty("issued_token_type").GetString()).IsEqualTo("urn:ietf:params:oauth:token-type:access_token");
             await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
-            var access = await oidc.ValidateAsync(body.GetProperty("access_token").GetString()!, Audience);
+            var access = await oidc.ValidateAsync(body.GetProperty("access_token").GetString()!, Audience, clock);
             await Assert.That(access.Subject).IsEqualTo(alice.Id);
             await Assert.That(access.GetClaim("email").Value).IsEqualTo("alice@example.test");
             await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
@@ -534,7 +537,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         // A viewer gets read scopes and no more.
         using (var viewer = await oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization }))
         {
-            var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(viewer)).GetProperty("access_token").GetString()!, Audience);
+            var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(viewer)).GetProperty("access_token").GetString()!, Audience, clock);
             await Assert.That(access.TryGetClaim("project_id", out _)).IsFalse();
             await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "documents:read"]);
         }
@@ -564,7 +567,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization }))).IsEqualTo((400, "invalid_grant"));
 
         // A revoked sign-in can no longer be exchanged, on any replica, whatever it exchanged before.
-        await using var replica = await oidc.StartReplicaAsync(values => values["access-token-audiences"] = Audience);
+        await using var replica = await oidc.StartReplicaAsync(values => values["access-token-audiences"] = Audience, clock);
         await Assert.That((await TokenErrorAsync(oidc.ExchangeAsync(aliceToken, new() { ["organization"] = organization }, replica.Client))).Status).IsEqualTo(200);
         using (var revoked = await oidc.RevokeAsync(tokens.GetProperty("refresh_token").GetString()!))
         {

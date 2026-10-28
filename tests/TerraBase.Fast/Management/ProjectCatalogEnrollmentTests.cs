@@ -76,7 +76,7 @@ public sealed class ProjectCatalogEnrollmentTests
     }
 
     [Test]
-    public async Task A_denied_database_create_leaves_a_fresh_project_unenrolled_then_a_matching_create_can_enroll_it()
+    public async Task A_denied_database_create_leaves_a_fresh_project_unenrolled_then_an_unrestricted_create_can_enroll_it()
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
@@ -85,7 +85,7 @@ public sealed class ProjectCatalogEnrollmentTests
         using var restricted = api.WithToken(api.Issuer.Mint(actor, token =>
         {
             token.Claims["project_id"] = project;
-            token.Claims["database"] = "first";
+            token.Claims["database"] = EntityIds.New().ToString();
             token.Claims["scope"] = "databases:read databases:write";
         }));
         using var unrestricted = api.WithToken(api.Issuer.Mint(actor, token =>
@@ -108,7 +108,12 @@ public sealed class ProjectCatalogEnrollmentTests
             await Assert.That(organizations.Documents.Count).IsEqualTo(0);
         }
 
-        using var created = await restricted.PostAsJsonAsync(databases, new { name = "first" });
+        using var creator = api.WithToken(api.Issuer.Mint(actor, token =>
+        {
+            token.Claims["project_id"] = project;
+            token.Claims["scope"] = "databases:write";
+        }));
+        using var created = await creator.PostAsJsonAsync(databases, new { name = "first" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         var listed = await JsonAsync(unrestricted.GetAsync(databases));
         await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);

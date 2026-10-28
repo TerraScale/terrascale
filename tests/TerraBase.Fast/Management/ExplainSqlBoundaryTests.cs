@@ -408,7 +408,7 @@ public sealed class ExplainSqlBoundaryTests
             foreach (var restricted in new[] { false, true })
             {
                 using var outsider = ProjectClient(api, restricted ? database.Project : EntityIds.New().ToString(),
-                    database: restricted ? "other" : null);
+                    database: restricted ? EntityIds.New().ToString() : null);
                 var hidden = await SendHeadersOnlyAsync(api, outsider, database);
                 await Assert.That(hidden[0]).StartsWith("HTTP/1.1 404 ");
                 await Assert.That(hidden.Any(header => header.StartsWith("X-TerraBase-Database-", StringComparison.OrdinalIgnoreCase))).IsFalse();

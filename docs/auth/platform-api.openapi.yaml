@@ -830,7 +830,7 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateProjectApiKeyRequest' }
-            example: { name: backend, scopes: ['documents:read', 'documents:write'], database: app, expires_at: null }
+            example: { name: backend, scopes: ['documents:read', 'documents:write'], database: 01J8Z3NDEKTSV4RRFFQ69G5FAV, expires_at: null }
       responses:
         '201':
           description: The key and its secret string, shown once.
@@ -1700,7 +1700,7 @@ components:
           uniqueItems: true
           items: { $ref: '#/components/schemas/Scope' }
         database:
-          description: A TerraBase database name; the key then reaches only that database.
+          description: A TerraBase database ULID; the key then reaches only that database, also after a rename.
           oneOf:
             - type: string
               pattern: '^[a-z][a-z0-9_-]{0,62}$'

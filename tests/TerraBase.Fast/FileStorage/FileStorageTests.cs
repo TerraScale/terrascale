@@ -74,7 +74,7 @@ public sealed class FileStorageTests
         await Assert.That((await Send(bob, HttpMethod.Delete, file)).Status).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That((await Send(alice, HttpMethod.Put, bucket + "/rules", new { rules })).Status).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That((await Send(api.Client, HttpMethod.Delete, bucket)).Status).IsEqualTo(HttpStatusCode.Conflict);
-        using var narrowed = api.ProjectClient(database: api.Database.Name);
+        using var narrowed = api.ProjectClient(database: api.Database.Id);
         await Assert.That((await Send(narrowed, HttpMethod.Get, buckets)).Status).IsEqualTo(HttpStatusCode.Forbidden);
         var used = await api.Api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Database.Organization, api.Database.Project, CancellationToken.None);
         await Assert.That(used).IsEqualTo(5);

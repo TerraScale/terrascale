@@ -63,7 +63,7 @@ public sealed class ProjectTokenTests
         using var created = await data.PostAsJsonAsync(Uri(database.Data + "/collections/people/documents"), new { name = "Preserved" });
         created.EnsureSuccessStatusCode();
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-        using var restricted = api.WithToken(Token(api, api.User, database.Project, AllScopes, database: "first"));
+        using var restricted = api.WithToken(Token(api, api.User, database.Project, AllScopes, database: database.Id));
         Volatile.Write(ref refuseLookup, true);
         using var request = new HttpRequestMessage(new HttpMethod(method), Uri(database.Data + suffix))
         {
@@ -387,6 +387,20 @@ public sealed class ProjectTokenTests
     }
 
     [Test]
+    public async Task A_database_name_claim_is_rejected_even_when_the_database_exists()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync("first");
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var restricted = api.WithToken(Token(api, api.User, database.Project, AllScopes, database: database.Name));
+        foreach (var reference in new[] { database.Name, database.Id })
+        {
+            using var refused = await restricted.GetAsync(Uri($"/v1/projects/{database.Project}/databases/{reference}"));
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+    }
+
+    [Test]
     public async Task A_database_restricted_JWT_filters_project_list_and_usage_and_cannot_read_delete_create_branch_or_restore_another_database()
     {
         var faker = new Faker();
@@ -405,7 +419,7 @@ public sealed class ProjectTokenTests
         using var backupResponse = await api.Client.PostAsync(Uri(first.Path + "/backups"), content: null);
         backupResponse.EnsureSuccessStatusCode();
         var backup = (await backupResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-        using var restricted = api.WithToken(Token(api, EntityIds.New().ToString(), first.Project, AllScopes, database: "first"));
+        using var restricted = api.WithToken(Token(api, EntityIds.New().ToString(), first.Project, AllScopes, database: first.Id));
         var databases = $"/v1/projects/{first.Project}/databases";
         var listed = await restricted.GetFromJsonAsync<JsonElement>(Uri(databases));
         await Assert.That(listed.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
@@ -446,7 +460,7 @@ public sealed class ProjectTokenTests
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
         var otherProject = await api.CreateProjectAsync(first.Organization, "Other project");
         var foreign = await api.CreateManagedDatabaseAsync(first.Organization, otherProject, "foreign");
-        using var scopedOwner = api.WithToken(Token(api, api.User, first.Project, "databases:read documents:read", database: "first"));
+        using var scopedOwner = api.WithToken(Token(api, api.User, first.Project, "databases:read documents:read", database: first.Id));
 
         await Assert.That(await StatusAsync(scopedOwner.GetAsync(Uri(first.Data)))).IsEqualTo(HttpStatusCode.OK);
         foreach (var database in new[] { first, second, foreign })
