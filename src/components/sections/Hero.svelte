@@ -89,45 +89,47 @@
   <!-- A dotted world map laid back in perspective under the copy. Each region's flag stands
        on a pole above its pin, so no copy ever covers a label. -->
   <div class="hero__world" aria-hidden="true">
-    <div class="hero__plane" style={planeStyle}>
-      <div class="hero__map-fade">
-        <div class="hero__map"></div>
+    <div class="hero__stage">
+      <div class="hero__plane" style={planeStyle}>
+        <div class="hero__map-fade">
+          <div class="hero__map"></div>
 
-        <svg
-          class="hero__lines"
-          viewBox="0 0 {vbW} {vbH}"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          {#each arcs as arc (arc.id)}
-            <g style={arc.style}>
-              <path pathLength="1" d={arc.d} class="hero__line hero__line--halo" />
-              <path pathLength="1" d={arc.d} class="hero__line" />
-              <path pathLength="1" d={arc.d} class="hero__pulse" />
-              <path pathLength="1" d={arc.backD} class="hero__pulse hero__pulse--back" />
-            </g>
-          {/each}
-        </svg>
+          <svg
+            class="hero__lines"
+            viewBox="0 0 {vbW} {vbH}"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            {#each arcs as arc (arc.id)}
+              <g style={arc.style}>
+                <path pathLength="1" d={arc.d} class="hero__line hero__line--halo" />
+                <path pathLength="1" d={arc.d} class="hero__line" />
+                <path pathLength="1" d={arc.d} class="hero__pulse" />
+                <path pathLength="1" d={arc.backD} class="hero__pulse hero__pulse--back" />
+              </g>
+            {/each}
+          </svg>
+        </div>
+
+        {#each REGIONS as r (r.id)}
+          {@const code = flagCode(r.id)}
+          <span
+            class="hero__pin"
+            class:hero__pin--arrival={r.id !== 'gru'}
+            style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%; --depth: {(pivotY - r.y / vbH).toFixed(3)};"
+            title={regionLabel[r.id] ?? r.city}
+          >
+            <span class="hero__pin-ring"></span>
+            <span class="hero__pin-core"></span>
+            {#if code}
+              <span class="hero__flag">
+                <span class="hero__flag-label"><RegionFlag {code} /></span>
+                <span class="hero__flag-pole"></span>
+              </span>
+            {/if}
+          </span>
+        {/each}
       </div>
-
-      {#each REGIONS as r (r.id)}
-        {@const code = flagCode(r.id)}
-        <span
-          class="hero__pin"
-          class:hero__pin--arrival={r.id !== 'gru'}
-          style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%; --depth: {(pivotY - r.y / vbH).toFixed(3)};"
-          title={regionLabel[r.id] ?? r.city}
-        >
-          <span class="hero__pin-ring"></span>
-          <span class="hero__pin-core"></span>
-          {#if code}
-            <span class="hero__flag">
-              <span class="hero__flag-label"><RegionFlag {code} /></span>
-              <span class="hero__flag-pole"></span>
-            </span>
-          {/if}
-        </span>
-      {/each}
     </div>
   </div>
 
@@ -143,23 +145,29 @@
 
 <style>
   /* The floating nav overlaps the hero, so the map shows through its frost. The first line of
-     content sits as far below the nav as the first section of every other page. */
+     content sits as far below the nav as the first section of every other page. On landscape
+     screens the hero fills the first screen: the copy and spacing shrink on short screens, and
+     the map band takes whatever height is left. */
   .hero {
     /* One scene at every width: the plane, its perspective and the band it sits in all scale
-       with --plane-w, so the 3D look only changes size. */
-    --plane-w: clamp(640px, 132vw, 2300px);
+       with --plane-w, so the 3D look only changes size. The plane is never wider than this. */
+    --plane-max: clamp(640px, 132vw, 2300px);
     --tilt: 58deg;
     --perspective: 0.9;
     /* Fixed headroom above the farthest pin for its flag, so it never reaches the subtitle. */
     --flag-room: 56px;
+    --hero-gap: clamp(14px, 2.5svh, 24px);
     position: relative;
     isolation: isolate;
     overflow: hidden;
     margin-top: -60px;
-    padding: 96px 0 72px;
-    display: grid;
-    justify-items: center;
-    gap: 24px;
+    min-height: 100svh;
+    padding: calc(60px + clamp(16px, 3svh, 36px)) 0 clamp(24px, 4svh, 72px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hero-gap);
   }
 
   .hero__inner {
@@ -169,7 +177,7 @@
     padding-inline: clamp(16px, 2.5vw, 40px);
     display: grid;
     justify-items: center;
-    gap: 24px;
+    gap: var(--hero-gap);
     text-align: center;
   }
 
@@ -181,12 +189,12 @@
 
   .hero__brand-mark {
     width: auto;
-    height: clamp(52px, 5.4vw, 80px);
+    height: clamp(52px, min(5.4vw, 6.5svh), 80px);
     display: block;
   }
 
   .hero__brand-word {
-    font-size: clamp(38px, 4.2vw, 64px);
+    font-size: clamp(38px, min(4.2vw, 5.2svh), 64px);
     font-weight: 600;
     line-height: 1;
     letter-spacing: -0.03em;
@@ -194,10 +202,10 @@
   }
 
   .hero__headline {
-    font-size: clamp(40px, 6.4vw, 96px);
+    font-size: clamp(40px, min(6.4vw, 7.5svh), 96px);
     font-weight: 600;
     line-height: 1.02;
-    margin: 12px 0 0;
+    margin: clamp(4px, 1.2svh, 12px) 0 0;
     color: var(--ts-text);
     letter-spacing: -0.035em;
     text-wrap: balance;
@@ -227,20 +235,32 @@
   /* ---------- 3D map ---------- */
 
   /* The band the map is seen in. The plane's faded far edge reaches up behind the subtitle; the
-     pins and flags stay inside the band. */
+     pins and flags stay inside the band. It grows into the height the copy leaves, up to what
+     the widest plane needs. */
   .hero__world {
     position: relative;
     width: 100%;
-    height: calc(var(--plane-w) * 0.2 + var(--flag-room) + 16px);
+    flex: 1 1 0;
+    min-height: 220px;
+    max-height: calc(var(--plane-max) * 0.2 + var(--flag-room) + 16px);
     margin-top: -24px;
-    perspective: calc(var(--plane-w) * var(--perspective));
-    perspective-origin: 50% 30%;
+    container-type: size;
     pointer-events: none;
     animation: ts-world-in 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 
   @keyframes ts-world-in {
     from { opacity: 0; translate: 0 48px; }
+  }
+
+  /* On screen the pins span about a fifth of the plane's width from top to bottom, so the plane
+     is sized to fit them and their flags in the band's height. */
+  .hero__stage {
+    --plane-w: min(var(--plane-max), (100cqh - var(--flag-room) - 16px) * 5);
+    position: absolute;
+    inset: 0;
+    perspective: calc(var(--plane-w) * var(--perspective));
+    perspective-origin: 50% 30%;
   }
 
   /* The pivot (centre of the region triangle) sits on the band's centre, so the pins stay
@@ -475,15 +495,25 @@
     display: inline-block;
   }
 
+  /* Portrait screens are taller than the widest plane needs, so the hero keeps its natural height
+     and the band the height of the widest plane instead of filling the screen. */
+  @media (orientation: portrait), (max-width: 640px) {
+    .hero {
+      min-height: 0;
+    }
+    .hero__world {
+      flex: none;
+      height: calc(var(--plane-max) * 0.2 + var(--flag-room) + 16px);
+      min-height: 0;
+    }
+  }
+
   @media (max-width: 640px) {
     .hero {
-      --plane-w: 170vw;
+      --plane-max: 170vw;
       --flag-room: 52px;
+      --hero-gap: 20px;
       padding: 84px 0 56px;
-      gap: 20px;
-    }
-    .hero__inner {
-      gap: 20px;
     }
     .hero__headline {
       margin-top: 4px;
