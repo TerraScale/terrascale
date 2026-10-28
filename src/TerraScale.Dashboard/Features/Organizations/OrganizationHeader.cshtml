@@ -14,7 +14,8 @@
     @if (!access) { <a class="ts-btn ts-btn-primary" href="/organization?newOrganization=organization">@Icons.Render("Plus", 16)<span>Create organization</span></a> }
     else if (Model.CanManage) { <a class="ts-btn ts-btn-primary" href="#team-invite">@Icons.Render("UserPlus", 16)<span>Invite member</span></a> }
 </header>
-@if (Model.Error.Length > 0)
+@* An open create-project dialog shows its own refusal; repeating it behind the dialog said it twice. *@
+@if (Model.Error.Length > 0 && !(Model.OpenCreateProject && Model.Tab == "projects" && Model.CanProvision))
 {
     @if (access) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Could not update access</p><p class="ts-alert-body">@Model.Error</p></div> }
     else { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }

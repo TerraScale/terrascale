@@ -13,12 +13,15 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
     {
         var measuredId = "";
         var currentId = "";
+        var stall = false;
         var queries = new System.Collections.Concurrent.ConcurrentQueue<string>();
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
             if (http.Request.Method != "GET" || currentId.Length == 0 || !http.Request.Path.Value!.EndsWith("/analytics", StringComparison.Ordinal))
                 return Task.FromResult<IResult?>(null);
             queries.Enqueue(http.Request.QueryString.Value ?? "");
+            // TerraBase's analytics tail: gru p99 4.4 s against a 7 ms median.
+            if (Volatile.Read(ref stall)) return Task.Delay(TimeSpan.FromSeconds(6), http.RequestAborted).ContinueWith(_ => (IResult?)Results.StatusCode(504));
             var projectId = http.Request.Path.Value.Split('/', StringSplitOptions.RemoveEmptyEntries)[2];
             const int bucket = 21600;
             var to = DateTimeOffset.FromUnixTimeSeconds((DateTimeOffset.UtcNow.ToUnixTimeSeconds() / bucket + 1) * bucket);
@@ -102,6 +105,18 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
         var quiet = Row(html, "quiet-list");
         await Assert.That(quiet.Split("Not reported").Length - 1).IsEqualTo(4).Because("a database without measurements never shows zero");
         await Assert.That(quiet).DoesNotContain("<svg class=\"ts-db-spark");
+
+        // A stalled analytics read never holds the list: it renders without sparklines and says so.
+        Volatile.Write(ref stall, true);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        using (var stalled = await client.GetAsync("/databases?q=list&range=7d"))
+        {
+            await Assert.That(stalled.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(clock.Elapsed).IsLessThan(TimeSpan.FromSeconds(4)).Because("the list waits about 2 s for metrics, not the 5 s analytics deadline");
+            var page = WebUtility.HtmlDecode(await stalled.Content.ReadAsStringAsync());
+            await Assert.That(page).Contains("Could not load database metrics. Reload the page to retry.");
+            await Assert.That(page).Contains(">measured-list<").Because("the databases themselves still list");
+        }
 
         static string Row(string page, string name)
         {

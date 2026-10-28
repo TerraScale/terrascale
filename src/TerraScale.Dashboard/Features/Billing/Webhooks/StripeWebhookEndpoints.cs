@@ -49,6 +49,13 @@ public static class StripeWebhookEndpoints
         var body = Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
         try { await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted); return Results.Ok(); }
         catch (StripeWebhookRejectedException) { return Results.BadRequest(); }
+        catch (StripeWebhookDeferredException deferred)
+        {
+            http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("StripeWebhook").LogWarning(
+                "Stripe event {EventId} ({EventType}) was not applied ({ErrorType}: {Error}); answering 503 so Stripe redelivers it.",
+                deferred.EventId, deferred.EventType, deferred.InnerException!.GetType().Name, deferred.InnerException.Message);
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static async Task<IResult> RejectAfterLingeringDiscardAsync(HttpContext http, long length)

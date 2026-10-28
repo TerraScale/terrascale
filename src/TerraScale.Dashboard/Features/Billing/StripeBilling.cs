@@ -216,8 +216,16 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         if (customer is null) return;
         var orgId = AccountService.Read<CustomerBinding>(customer).OrganizationId;
         var binding = await ReadAsync(orgId, cancellationToken);
-        if (binding?.CustomerId != customerId) throw new IOException("Billing index does not match its customer.");
-        await RefreshAsync(orgId, cancellationToken);
+        try
+        {
+            if (binding?.CustomerId != customerId) throw new IOException("Billing index does not match its customer.");
+            await RefreshAsync(orgId, cancellationToken);
+        }
+        // Not applied: the endpoint answers 503 so Stripe redelivers it; a redelivery re-reads Stripe's current state.
+        catch (Exception error) when (error is IOException or HttpRequestException or TimeoutException or StripeException ||
+                                      error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        { throw new StripeWebhookDeferredException(@event.Id, @event.Type, error); }
+        logger.LogInformation("Stripe event {EventId} ({EventType}) applied for organization {OrganizationId}", @event.Id, @event.Type, orgId);
     }
 
     // Organization deletion ends the organization's Stripe subscription now, without proration.
@@ -278,7 +286,19 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         }, cancellationToken, allowDeletion: terminalDeletion);
     }
 
+    // Stripe delivers a checkout's events together, and the return page and reconciler refresh the same organization;
+    // one refresh per organization at a time keeps them from exhausting each other's conditional-write retries.
+    private readonly SemaphoreSlim[] refreshing = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
+
     private async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
+    {
+        var turn = refreshing[(StringComparer.Ordinal.GetHashCode(orgId) & int.MaxValue) % refreshing.Length];
+        await turn.WaitAsync(cancellationToken);
+        try { return await RefreshOnceAsync(orgId, cancellationToken); }
+        finally { turn.Release(); }
+    }
+
+    private async Task<bool> RefreshOnceAsync(string orgId, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 4; attempt++)
         {
@@ -402,7 +422,9 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                     return paymentValid;
                 }
             }
-            catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
+            // Another writer (an account view, audit or plan publication) moved a record: re-read after a jittered pause.
+            catch (TerraBasePreconditionFailedException) when (attempt < 3)
+            { await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(50, 150) << attempt), time, cancellationToken); }
         }
         throw new IOException("Billing changed concurrently. Retry reconciliation.");
     }
@@ -614,3 +636,10 @@ public sealed class BillingBinding
 }
 public sealed record CustomerBinding(string OrganizationId);
 public sealed class StripeWebhookRejectedException : Exception;
+
+// A verified event this dashboard could not apply; Stripe redelivers it after a non-2xx answer.
+public sealed class StripeWebhookDeferredException(string eventId, string eventType, Exception inner) : Exception("Stripe event was not applied.", inner)
+{
+    public string EventId { get; } = eventId;
+    public string EventType { get; } = eventType;
+}

@@ -67,6 +67,16 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
                 .Because("The exact 1 MiB accepted boundary also works without Content-Length.");
         }
 
+        // Stripe delivers a checkout's events together (gru, 11:12:07Z: two deliveries 120 ms apart both lost every
+        // conditional-write retry and answered 503). A burst for one organization is applied, never refused.
+        var burst = await Task.WhenAll(Enumerable.Range(0, 12).Select(async index =>
+        {
+            using var delivery = await SendWebhookAsync(anonymous, WebhookPaths[index % WebhookPaths.Length], body, signature);
+            return delivery.StatusCode;
+        }));
+        await Assert.That(burst.All(status => status == HttpStatusCode.OK)).IsTrue()
+            .Because("Concurrent deliveries for one organization all apply: " + string.Join(",", burst));
+
         using var wrongMode = await HttpJourney.PostFormAsync(browser, "/__test/billing/webhook/event",
             new() { ["_csrf"] = csrf, ["liveMode"] = "true" });
         await Assert.That(wrongMode.StatusCode).IsEqualTo(HttpStatusCode.OK);
