@@ -61,3 +61,9 @@ checked, but none of their readable log windows covers setup at 09:19:35–09:20
 failures cannot exclude a cause. Diagnostic scripts are retained under
 `benchmark/scripts/api-overhead-plan-{probe,logs}-20261028.py`; credentials stay
 on-host and raw messages/identifiers are never exported.
+
+The plan helper now classifies future failures by curl exit or HTTP status and
+an allowlisted error code, without exporting response details. Its exact on-host
+diagnostic function passed 10 parallel offline controls on delta at `335a2b97f`
+through `ts-heavy-any nice -n 19`; no network calls. This does not recover the
+historical refusal or establish that writes have recovered.
