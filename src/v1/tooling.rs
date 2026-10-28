@@ -146,34 +146,6 @@ impl Database {
         check_name("index", index)?;
         self.management_delete(&["indexes", index]).await
     }
-    /// `GET D/auto-index/{collection}`.
-    pub async fn get_auto_index_policy<T: DeserializeOwned>(&self, collection: &str) -> Result<T> {
-        check_name("collection", collection)?;
-        self.management(
-            Method::GET,
-            &["auto-index", collection],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `PUT D/auto-index/{collection}`; body contains `enabled`.
-    pub async fn set_auto_index_policy<T: DeserializeOwned>(
-        &self,
-        collection: &str,
-        body: &impl Serialize,
-    ) -> Result<T> {
-        check_name("collection", collection)?;
-        self.management(
-            Method::PUT,
-            &["auto-index", collection],
-            &[],
-            Some(body),
-            StatusCode::OK,
-        )
-        .await
-    }
     /// `GET D/index-recommendations`.
     pub async fn list_index_recommendations<T: DeserializeOwned>(&self) -> Result<T> {
         self.management(
