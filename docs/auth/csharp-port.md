@@ -195,7 +195,7 @@ sign-in, rotation and sign-out over real HTTP through test-only routes
   retries.
 - **Cookie**: the existing `tsauth_session` from `BrowserSecurity` (`Secure`,
   `HttpOnly`, `SameSite=Lax`, `Path=/`, browser-session lifetime).
-- **Passcodes** (`passcodes`, one document per user): six digits, 10 minutes,
+- **Passcodes** (`passcodes`, one document per user): six digits, 30 minutes,
   single use, 5 wrong guesses, 5 issued codes per user per hour. Only an
   HMAC-SHA256 keyed by HKDF-SHA256 of `TS_AUTH_MASTER_KEY` and bound to instance
   and user is stored, so changing the master key invalidates outstanding codes.
@@ -279,7 +279,7 @@ access tokens, and the server stack validates those.
 
 ### Hosted sign-in
 
-The page uses the TS-490 email passcodes: six digits, 10 minutes, 5 wrong
+The page uses the TS-490 email passcodes: six digits, 30 minutes, 5 wrong
 guesses, 5 codes per account per hour. It signs in existing accounts only;
 accounts are created by the hosted sign-up ([accounts and limits](#accounts-passwords-and-limits)). The page is the same whether or not the address has an account, and
 the email is sent after the response, so its timing does not reveal it either.

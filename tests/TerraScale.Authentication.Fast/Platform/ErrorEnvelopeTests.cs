@@ -21,13 +21,9 @@ public sealed class ErrorEnvelopeTests
         app.MapGet("/__test/cancelled-work", (HttpContext _) => throw new OperationCanceledException("not the client"));
         // The real SDK against storage that answers 503, as gru's TerraBase did during a writer storm. Loopback, like
         // ts-auth's own storage origin, needs no credential; the handler answers before any connection.
-        app.MapGet("/__test/storage-unavailable", async (HttpContext _) =>
-        {
-            using var http = new HttpClient(new StorageUnavailable());
-            await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://127.0.0.1/") })
-                .Database(TerraScale.Authentication.Store.AuthStore.NewId(), "auth").ListCollectionsAsync();
-            return Results.Ok();
-        });
+        app.MapGet("/__test/storage-unavailable", (HttpContext _) => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
+        app.MapGet("/__test/storage-conflict", (HttpContext _) => StorageAsync(HttpStatusCode.PreconditionFailed, "precondition_failed"));
+        app.MapGet("/ui/__test/storage-unavailable", (HttpContext _) => StorageAsync(HttpStatusCode.ServiceUnavailable, "capacity"));
         app.MapGet("/__test/slow", async (HttpContext context) =>
         {
             var signals = context.RequestServices.GetRequiredService<DisconnectSignals>();
@@ -97,6 +93,30 @@ public sealed class ErrorEnvelopeTests
     }
 
     [Test]
+    public async Task A_storage_write_that_lost_a_race_answers_409_conflict_not_500()
+    {
+        await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
+        using var response = await server.Client.GetAsync(new Uri("/__test/storage-conflict", UriKind.Relative));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("conflict");
+    }
+
+    [Test]
+    public async Task A_hosted_page_browser_gets_a_readable_page_when_storage_fails()
+    {
+        await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/ui/__test/storage-unavailable", UriKind.Relative));
+        request.Headers.Add("Accept", "text/html");
+        using var response = await server.Client.SendAsync(request);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Something went wrong");
+    }
+
+    [Test]
     public async Task A_cancellation_that_is_not_the_client_leaving_is_a_server_error()
     {
         await using var server = await AuthTestServer.StartAsync(routes: FailingRoutes);
@@ -139,12 +159,20 @@ public sealed class ErrorEnvelopeTests
         public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class StorageUnavailable : HttpMessageHandler
+    private static async Task<IResult> StorageAsync(HttpStatusCode status, string code)
+    {
+        using var http = new HttpClient(new StorageAnswers(status, code));
+        await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://127.0.0.1/") })
+            .Database(TerraScale.Authentication.Store.AuthStore.NewId(), "auth").ListCollectionsAsync();
+        return Results.Ok();
+    }
+
+    private sealed class StorageAnswers(HttpStatusCode status, string code) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            Task.FromResult(new HttpResponseMessage(status)
             {
-                Content = new StringContent("""{"error":{"code":"capacity","message":"the writer is busy"}}""", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent($$"""{"error":{"code":"{{code}}","message":"synthetic"}}""", System.Text.Encoding.UTF8, "application/json"),
             });
     }
 }
