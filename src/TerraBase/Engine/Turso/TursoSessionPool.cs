@@ -34,6 +34,7 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
     // A healthy rewrite's stores: they rent, open and pool nothing until resumed, and their drain completes once no native
     // handle of theirs is left. Failed native closes stay counted per store and refuse every drain.
     private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _paused = [];
+    private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _readersPaused = [];
     private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _drains = [];
     private readonly Dictionary<TursoDatabaseStore, int> _failedCloses = [];
 
@@ -141,6 +142,10 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         {
             ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
             ThrowIfPaused(store);
+            if (_readersPaused.TryGetValue(store, out var readers))
+            {
+                throw new StorePausedException(readers.Task);
+            }
             for (var node = _idle.Last; node is not null; node = node.Previous)
             {
                 if (node.Value.Store == store)
@@ -347,16 +352,29 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         CloseIdle(store);
     }
 
+    /// <summary>Stops new pooled readers before draining existing readers, while writers and rewrite replay can continue.</summary>
+    public void PauseReaders(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
+            _readersPaused.Add(store, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        }
+    }
+
     /// <summary>Ends <see cref="Pause"/>: waiting renters retry.</summary>
     public void Resume(TursoDatabaseStore store)
     {
         TaskCompletionSource? paused;
+        TaskCompletionSource? readers;
         lock (_gate)
         {
             _ = _paused.Remove(store, out paused);
+            _ = _readersPaused.Remove(store, out readers);
         }
 
         paused?.TrySetResult();
+        readers?.TrySetResult();
     }
 
     /// <summary>

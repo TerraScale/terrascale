@@ -15,7 +15,7 @@ assert action.is_file(), action
 match = re.search(r"^          filters: \|\n((?:^            .*\n|^\s*\n)+)", workflow.read_text(), re.MULTILINE)
 assert match, "CI filters block was not found"
 filters = textwrap.dedent(match[1])
-areas = ("libs", "auth", "auth-server", "terrabase")
+areas = ("libs", "auth", "auth-server", "terrabase", "rust-proof")
 
 
 def git(directory, *args):
@@ -73,7 +73,15 @@ all_areas = {"libs", "auth", "terrabase"}
 vendor_paths = ("src/vendor/Turso.Data.Sqlite/Connection.cs", "tests/Turso.Data.Sqlite.Tests/ConnectionTests.cs", "scripts/vendor/audit/check.sh")
 cases = [(path, status, all_areas) for path in vendor_paths for status in ("added", "modified", "deleted")]
 cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", all_areas),
-          ("scripts/ci/path-filter-test.py", "modified", {"libs"}),
+          ("scripts/ci/path-filter-test.py", "modified", set()),
+          ("scripts/ci/cache-policy-test.py", "modified", set()),
+          ("scripts/ci/test-area.sh", "modified", {"libs", "terrabase"}),
+          ("scripts/terrabase/libsql/rust/Cargo.lock", "modified", {"rust-proof"}),
+          ("scripts/terrabase/libsql/rust/src/main.rs", "modified", {"rust-proof"}),
+          ("scripts/terrabase/storage-format-check.sh", "modified", {"terrabase"}),
+          ("scripts/terrabase/postgres/go/main.go", "modified", {"terrabase"}),
+          ("scripts/terrabase/libsql/js/proof.mjs", "modified", {"terrabase"}),
+          ("scripts/terrabase/libsql/README.md", "modified", {"terrabase"}),
           ("README.md", "modified", set()),
           ("docs/auth/mfa.md", "modified", set()),
           ("docs/terrabase/ci.md", "modified", set()),

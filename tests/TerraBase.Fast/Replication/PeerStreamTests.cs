@@ -2970,9 +2970,18 @@ public sealed class PeerStreamTests
 
         public async Task StopAsync()
         {
-            await Api.DisposeAsync();
-            _api = null;
-            _sourceEngine = null;
+            var api = Api;
+            try
+            {
+                // Dispose's test-token wait can end before native cleanup does. Keep this directory owned until
+                // the actual cleanup finishes, including when a timed-out test is about to delete or restart it.
+                await Task.WhenAll(api.DisposeAsync().AsTask(), api.CleanupCompletion);
+            }
+            finally
+            {
+                _api = null;
+                _sourceEngine = null;
+            }
         }
 
         // The source the peer streams read: the CDC tailer, or the fake.

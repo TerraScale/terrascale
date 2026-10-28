@@ -1,6 +1,6 @@
 # libSQL client proof scripts
 
-One script per official libSQL client. Each runs the same flow against a TerraBase database over Hrana
+The JS, Go and Python scripts use official libSQL clients; Rust uses upstream Hrana protocol types with reqwest for HTTP/TLS. Each runs the same flow against a TerraBase database over Hrana
 (HTTP), prints every step and ends with `PASS` or `FAIL` (exit code 1 on failure):
 
 1. `CREATE TABLE` x2 with user-chosen keys (`INTEGER PRIMARY KEY`, `TEXT PRIMARY KEY`, not ULIDs)
@@ -34,7 +34,7 @@ export LIBSQL_TOKEN_FILE=$HOME/.config/terrascale/libsql-access-token   # chmod 
 | --- | --- | --- | --- |
 | JS/TS [`@libsql/client`](https://www.npmjs.com/package/@libsql/client) | 0.18.0 | Hrana v2 pipeline | `cd js && npm ci && node proof.mjs` |
 | Go [`go-libsql`](https://github.com/tursodatabase/go-libsql) (cgo) | commit `3051e37e6e04` | Hrana v3 pipeline + cursor | `cd go && CGO_ENABLED=1 go run .` |
-| Rust [`libsql`](https://crates.io/crates/libsql) (`remote`, `tls`) | 0.10.0 | Hrana v3 pipeline + cursor | `cd rust && cargo run --locked` |
+| Rust [`libsql-hrana`](https://crates.io/crates/libsql-hrana) + [`reqwest`](https://crates.io/crates/reqwest) | 0.10.0 / 0.13.5 | Hrana v3 pipeline | `cd rust && cargo run --locked` |
 | Python [`libsql`](https://pypi.org/project/libsql/) | 0.1.11 | Hrana v3 pipeline + cursor | `cd python && python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.txt && .venv/bin/python proof.py` |
 
 Locally, prefix builds and runs with `nice -n 19`. Go needs a C toolchain (go-libsql links a prebuilt static
@@ -44,17 +44,17 @@ library for linux/amd64, linux/arm64 and darwin/arm64). The Python wheels cover 
 
 - Go: `database/sql` has no batch call, and go-libsql sends only the first statement of a multi-statement `Exec`,
   so the Go batch is one transaction of three parameterized inserts.
-- Rust: `execute_transactional_batch` takes SQL text without parameters, so the batch uses literals.
+- Rust: upstream Hrana batch types encode conditional BEGIN/INSERT/COMMIT/ROLLBACK steps, with bound parameters.
 - Python: the module follows `sqlite3`: DML opens a transaction implicitly, `commit()` / `rollback()` end it; only
   positional parameters, and integers outside 32 bits are sent as floats.
 - JS: numbers are sent as Hrana `float` values (`1` arrives as `1.0`); `INTEGER` columns rely on SQLite affinity.
 
 ## Validation status
 
-All four pinned scripts passed against production TerraBase on 2026-10-26: parameters, joins, batches,
+The original four SDK-based scripts passed against production TerraBase on 2026-10-26: parameters, joins, batches,
 read-your-writes, commit and rollback. The full workflows used a forwarding relay capped at 2.78 SQL
 requests per second; each official client also passed a separate direct canonical HTTPS `SELECT 1`
-with normal TLS verification and no relay. These checks preceded the queued SQL edge-case fixes.
+with normal TLS verification and no relay. These checks preceded the queued SQL edge-case fixes and the Rust transport replacement documented in [the dependency note](../../../docs/terrabase/dependencies/2026-10-27-rust-proof.md).
 
 All four rejected expired access tokens and read successfully after reconnecting with a fresh token.
 This proves explicit read recovery, not uninterrupted transactions across token expiry. Each script's

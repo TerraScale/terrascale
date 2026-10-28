@@ -32,6 +32,9 @@ public sealed record BackupStatusRecord(
 /// <summary>Retention by plan, daily restore drills and the backup record of each shipped file.</summary>
 internal sealed partial class ContinuousBackup
 {
+    /// <summary>Observes expiry cancelling this file's active drill before deletion; for integration tests.</summary>
+    internal Action<string>? RetentionWaiting { get; set; }
+
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan DrillInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
@@ -48,6 +51,27 @@ internal sealed partial class ContinuousBackup
 
     // Keep a restore baseline before the window, but never beyond the plan plus one day.
     private async Task RetainAsync(ShippedFile file, CancellationToken cancellationToken)
+    {
+        var retained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (file)
+        {
+            file.Retaining = retained;
+        }
+        try
+        {
+            await RetainCoreAsync(file, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (file)
+            {
+                file.Retaining = null;
+            }
+            retained.TrySetResult();
+        }
+    }
+
+    private async Task RetainCoreAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow();
         if (file.Database is null)
@@ -179,7 +203,7 @@ internal sealed partial class ContinuousBackup
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
     // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
     // snapshots beyond the batch. Hard-expired objects drain in batches of sixteen in the same pass.
-    private static async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, CancellationToken cancellationToken)
+    private async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, CancellationToken cancellationToken)
     {
         var complete = true;
         // Include orphan generations and the newest segment: a failing snapshot must not retain WAL forever.
@@ -194,12 +218,12 @@ internal sealed partial class ContinuousBackup
             expiredKeys.Add(item.Key);
             if (expiredKeys.Count == 16)
             {
-                complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+                complete &= await DeleteRetainedAsync(file, store, expiredKeys, cancellationToken).ConfigureAwait(false);
                 expiredKeys.Clear();
             }
         }
 
-        complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+        complete &= await DeleteRetainedAsync(file, store, expiredKeys, cancellationToken).ConfigureAwait(false);
         expiredKeys.Clear();
 
         const int maxSnapshots = 10_000;
@@ -217,7 +241,7 @@ internal sealed partial class ContinuousBackup
                 expiredKeys.Add(snapshot.Key);
                 if (expiredKeys.Count == 16)
                 {
-                    complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+                    complete &= await DeleteRetainedAsync(file, store, expiredKeys, cancellationToken).ConfigureAwait(false);
                     expiredKeys.Clear();
                 }
 
@@ -231,11 +255,11 @@ internal sealed partial class ContinuousBackup
             }
         }
 
-        complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+        complete &= await DeleteRetainedAsync(file, store, expiredKeys, cancellationToken).ConfigureAwait(false);
 
         if (oldest is null)
         {
-            return complete && await RetainGenerationProofsAsync(store, file.Prefix, expires, cancellationToken).ConfigureAwait(false);
+            return complete && await RetainGenerationProofsAsync(store, file.Prefix, file.Generation, expires, cancellationToken).ConfigureAwait(false);
         }
 
         if (snapshots.Count > 0 && snapshots[^1].Key == oldest.Key)
@@ -258,18 +282,18 @@ internal sealed partial class ContinuousBackup
 
         foreach (var (generation, before) in kept)
         {
-            complete &= await DeleteSegmentsAsync(store, file.Prefix, generation, before, cancellationToken).ConfigureAwait(false);
+            complete &= await DeleteSegmentsAsync(store, file, generation, before, cancellationToken).ConfigureAwait(false);
         }
 
-        complete &= await DeleteAsync(store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
-        return complete && await RetainGenerationProofsAsync(store, file.Prefix, expires, cancellationToken).ConfigureAwait(false);
+        complete &= await DeleteRetainedAsync(file, store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
+        return complete && await RetainGenerationProofsAsync(store, file.Prefix, file.Generation, expires, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, string file, Ulid generation, long? before, CancellationToken cancellationToken)
+    private async Task<bool> DeleteSegmentsAsync(IObjectStore store, ShippedFile file, Ulid generation, long? before, CancellationToken cancellationToken)
     {
         var complete = true;
         var batch = new List<string>(16);
-        await foreach (var item in store.ListAsync(BackupLayout.Segments(file, generation), null, cancellationToken).ConfigureAwait(false))
+        await foreach (var item in store.ListAsync(BackupLayout.Segments(file.Prefix, generation), null, cancellationToken).ConfigureAwait(false))
         {
             if (BackupLayout.ParseSegment(item.Key) is not { } segment)
             {
@@ -284,14 +308,36 @@ internal sealed partial class ContinuousBackup
             batch.Add(item.Key);
             if (batch.Count == 16)
             {
-                complete &= await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false);
+                complete &= await DeleteRetainedAsync(file, store, batch, cancellationToken).ConfigureAwait(false);
 
                 batch.Clear();
             }
         }
 
-        complete &= await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false);
+        complete &= await DeleteRetainedAsync(file, store, batch, cancellationToken).ConfigureAwait(false);
         return complete;
+    }
+
+    // Ordinary shipping never waits for a drill. Only actual expiry ends one: cancel and join before deleting
+    // its possible inputs, then let the next snapshot perform the daily check against retained history.
+    private async Task<bool> DeleteRetainedAsync(ShippedFile file, IObjectStore store, List<string> keys, CancellationToken cancellationToken)
+    {
+        if (keys.Count > 0)
+        {
+            SideWork? active;
+            lock (file)
+            {
+                active = file.Side is { Drilling: true, Completion.IsCompleted: false } side ? side : null;
+            }
+            if (active is not null)
+            {
+                file.DrilledAt = DateTimeOffset.MinValue;
+                RetentionWaiting?.Invoke(file.Prefix);
+                active.Cancellation.Cancel();
+                await active.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+        }
+        return await DeleteAsync(store, keys, cancellationToken).ConfigureAwait(false);
     }
 
     // Failed keys remain retryable without starving later batches or committing a partial size measurement.

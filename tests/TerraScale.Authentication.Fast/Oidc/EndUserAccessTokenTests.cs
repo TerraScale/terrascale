@@ -274,7 +274,9 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     [Arguments(true)]
     public async Task Anonymous_bad_bodies_charge_the_shared_IP_budget_including_route_casing(bool alternatePath)
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["rate-limit"] = "3");
+        // All four requests exercise one fixed minute, even when a loaded runner crosses a wall-clock boundary.
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["rate-limit"] = "3", clock: clock);
         var path = Path(AuthStore.NewId());
         if (alternatePath)
         {

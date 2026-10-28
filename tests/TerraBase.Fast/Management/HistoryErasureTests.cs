@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Engine;
@@ -205,8 +206,15 @@ public sealed class HistoryErasureTests
         }
 
         var allowSnapshot = 0;
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        void RecoveryClock(IServiceCollection services)
+        {
+            services.AddSingleton(provider => ActivatorUtilities.CreateInstance<HistoryErasures>(provider, clock));
+        }
+
         await using var cluster = await StartAsync((_, services) =>
         {
+            RecoveryClock(services);
             var source = services.Last(service => service.ServiceType == typeof(IReplicaSnapshotSource));
             services.AddSingleton<IReplicaSnapshotSource>(provider => new BlockedSnapshots(
                 (IReplicaSnapshotSource)source.ImplementationFactory!(provider), () => Volatile.Read(ref allowSnapshot) == 1));
@@ -261,7 +269,11 @@ public sealed class HistoryErasureTests
                 oldIncarnation.ToString(), PeerTls.Secret, late, survivor));
             await Assert.That(await LiveAsync(fra, Users, late)).IsTrue();
             await Assert.That(await LiveAsync(gru, Users, late)).IsFalse();
-            await sjc.StartAsync(WithoutPasses);
+            await sjc.StartAsync(services =>
+            {
+                WithoutPasses(services);
+                RecoveryClock(services);
+            });
             await Assert.That(sjc.Node.Member).IsEqualTo(before.Member);
             await Assert.That(sjc.Node.Epoch).IsEqualTo((ushort)(before.Epoch + 1));
 
@@ -279,6 +291,9 @@ public sealed class HistoryErasureTests
 
             // Import the old epoch from another holder's pinned snapshot before issuing any new settlement token.
             Volatile.Write(ref allowSnapshot, 1);
+            // Unavailable witnesses deliberately back off. Advance only erasure scheduling beyond its retry window;
+            // storage clocks, retention and the real crash process keep real time and their normal causal ordering.
+            clock.Advance(TimeSpan.FromHours(1));
             // First use gru, which lacks fra's ACKed tail. Even after sjc proves its old marker, no token is allowed until
             // fra publishes a new all-holder fence with its actual old-epoch frontier.
             await RecoveryCursorAsync(sjc, erasure, fra.Name);
@@ -288,6 +303,7 @@ public sealed class HistoryErasureTests
             {
                 // Hosted passes are disabled. A failed witness backs off, so keep driving recovery after it returns;
                 // two immediate passes need not import while that retry window is still closed.
+                clock.Advance(TimeSpan.FromHours(1));
                 await RunAsync(sjc);
                 var (_, receipts) = await Service(gru).StatusAsync((await RecordAsync(gru, erasure))!, CancellationToken.None);
                 if (receipts.FirstOrDefault(receipt => receipt.MachineId == sjc.Name && receipt.Replica == sjc.Node.Value) is not { PreviousReplicas: null } own)
@@ -304,6 +320,7 @@ public sealed class HistoryErasureTests
             recovered = stalled;
             await Assert.That(await UntilAsync(gru, async () =>
             {
+                clock.Advance(TimeSpan.FromHours(1));
                 foreach (var holder in cluster.Machines)
                 {
                     await RunAsync(holder);
@@ -312,7 +329,7 @@ public sealed class HistoryErasureTests
                 return recovered.SettlementToken is not null ? 1 : 0;
             }, 1)).IsTrue();
             await Assert.That(recovered.Status).IsEqualTo(HistoryErasure.Reverify);
-            await Assert.That(await LiveAsync(sjc, Users, late)).IsTrue().Because("the lost old-epoch tail came from the peer snapshot");
+            await Assert.That(await LiveAsync(sjc, Users, late)).IsTrue().Because($"crash round {crash}: the lost old-epoch tail came from the peer snapshot");
             await Assert.That(await LiveAsync(sjc, Users, survivor)).IsTrue();
         }
 
@@ -325,6 +342,7 @@ public sealed class HistoryErasureTests
         await Assert.That(final.Status).IsEqualTo(HistoryErasure.Rewriting);
         await Assert.That(await UntilAsync(gru, async () =>
         {
+            clock.Advance(TimeSpan.FromHours(1));
             foreach (var holder in cluster.Machines)
             {
                 await RunAsync(holder);

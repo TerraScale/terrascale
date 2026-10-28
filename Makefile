@@ -209,6 +209,12 @@ terrabase-e2e-orch-outage: terrabase-build
 terrabase-check: terrabase-build terrabase-analyzer-check
 	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
 
+# The Hrana proof uses upstream wire types and a maintained TLS transport; compile its pinned dependency graph.
+.PHONY: terrabase-libsql-rust-check
+terrabase-libsql-rust-check:
+	cd scripts/terrabase/libsql/rust && cargo fmt --check
+	cd scripts/terrabase/libsql/rust && cargo check --locked
+
 terrabase-run:
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
 

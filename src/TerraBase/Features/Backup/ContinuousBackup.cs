@@ -197,6 +197,26 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
+    // Integration tests can join shipping without releasing a deliberately held side drill. A second manual pass
+    // excludes jobs still busy when it begins, so observing the drill's GET alone is not a shipping-completion barrier.
+    internal async Task WaitForShippingAsync(string prefix, CancellationToken cancellationToken)
+    {
+        Task? completion;
+        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            completion = _files.TryGetValue(prefix, out var file) ? file.Job?.Completion : null;
+        }
+        finally
+        {
+            _pass.Release();
+        }
+        if (completion is not null)
+        {
+            await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task<long> ScheduleAsync(long? pass, List<Task>? pending, CancellationToken cancellationToken)
     {
         using var scheduling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token);
@@ -778,6 +798,20 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.BehindSince = null;
             }
 
+            if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
+            {
+                try
+                {
+                    await RetainAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Retention retries next hour; shipping goes on.
+                    _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
+                }
+            }
+
+            // Retention precedes the new upload/drill, so its snapshot selection sees only retained inputs.
             // A snapshot reads what is left while it holds writers: never with a backlog. Its upload holds a snapshot slot, and
             // after a failed one the next waits out its own backoff.
             if (now - file.LastSnapshot >= SnapshotInterval && now >= file.SnapshotRetryAt && !_stopped)
@@ -793,19 +827,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 else
                 {
                     await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
-            {
-                try
-                {
-                    await RetainAsync(file, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-                {
-                    // Retention retries next hour; shipping goes on.
-                    _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
                 }
             }
 
@@ -1133,6 +1154,20 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         await slot.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            while (true)
+            {
+                Task? retained;
+                lock (file)
+                {
+                    retained = file.Retaining?.Task;
+                    if (retained is null)
+                    {
+                        side.Drilling = true;
+                        break;
+                    }
+                }
+                await retained.WaitAsync(token).ConfigureAwait(false);
+            }
             await DrillAsync(file, side.Snapshot, live, token).ConfigureAwait(false);
         }
         finally
@@ -1346,6 +1381,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         /// <summary>Whether the file's pass has taken in <see cref="Stored"/>.</summary>
         public bool Collected { get; set; }
 
+        public bool Drilling { get; set; }
+
         public Task Completion { get; set; } = Task.CompletedTask;
     }
 
@@ -1443,6 +1480,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public DateTimeOffset SizedAt { get; set; } = DateTimeOffset.MinValue;
 
         public long? SizeBytes { get; set; }
+
+        // Guarded by locking this file: deletion and the start of a drill cannot race.
+        public TaskCompletionSource? Retaining { get; set; }
 
         public int RetentionDays { get; set; }
 

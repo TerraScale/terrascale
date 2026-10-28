@@ -173,7 +173,12 @@ async fn proof(conn: &mut Connection, owners: &str, items: &str) -> Res<()> {
             )?;
             check(
                 response.result.step_results.len() == 6
-                    && response.result.step_results.iter().take(5).all(Option::is_some),
+                    && response
+                        .result
+                        .step_results
+                        .iter()
+                        .take(5)
+                        .all(Option::is_some),
                 "batch committed all inserts",
             )?;
         }
