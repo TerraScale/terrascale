@@ -57,7 +57,7 @@ internal sealed class SqlTally(bool Measure)
 }
 
 /// <summary>Runs one statement in a storage transaction the caller commits; writes go through the document service.</summary>
-internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
+internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time, SqlReadCache reads, string? database)
 {
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly DateTimeOffset KeyEpoch = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -208,8 +208,9 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
     }
 
     // The engine read of `read`: its tables' definitions, its parameters bound, its rows converted. `keyed` names the
-    // table whose rows also expose their document id (`_id`), for UPDATE and DELETE.
-    private static async ValueTask<SqlOutcome> ReadAsync(
+    // table whose rows also expose their document id (`_id`), for UPDATE and DELETE. A shared read (SqlReadCache) compiles its
+    // own parse of its text, once per set of table definitions; one that reads the catalog embeds its rows and is never kept.
+    private async ValueTask<SqlOutcome> ReadAsync(
         IStorageTransaction transaction, ReadSql read, SqlCommand command, SqlTally tally, bool describe, string? keyed, CancellationToken cancellationToken)
     {
         var tables = new Dictionary<string, SqlTableDefinition>(StringComparer.Ordinal);
@@ -223,22 +224,35 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             tables[name] = table;
         }
 
-        // The catalog relations it reads come first, as CTEs of their rows.
-        if (read.Catalog.Count > 0)
-        {
-            var catalog = await SqlCatalog.CtesAsync(transaction, read.Catalog, name => TableAsync(transaction, name, tally, cancellationToken), cancellationToken).ConfigureAwait(false);
-            read = read with { Query = read.Query with { With = new SqlParser.Ast.With(false, [.. catalog, .. read.Query.With?.CteTables ?? []]) } };
-        }
-
         if (Bind(read.Params, command) is not { } parameters)
         {
             return SqlErrors.Error(string.Create(CultureInfo.InvariantCulture, $"the statement takes {read.Params.Count} arguments"));
         }
 
+        var definitions = read is { Shared: not null, Catalog.Count: 0 } && database is not null
+            ? string.Join('\n', read.Tables.Select(name => JsonSerializer.Serialize(tables[name], Hosting.TerraBaseJsonContext.Default.SqlTableDefinition)))
+            : null;
         SqlProgram program;
         try
         {
-            program = SqlRead.Program(read, tables, parameters, describe, keyed);
+            if (definitions is null || reads.Template(database!, read.Shared!, definitions, describe, keyed) is not { } template)
+            {
+                var own = read.Shared is { } text ? SqlParse.Parse(text) as ReadSql ?? throw new InvalidOperationException("a shared read parses again as a read") : read;
+                // The catalog relations it reads come first, as CTEs of their rows.
+                if (own.Catalog.Count > 0)
+                {
+                    var catalog = await SqlCatalog.CtesAsync(transaction, own.Catalog, name => TableAsync(transaction, name, tally, cancellationToken), cancellationToken).ConfigureAwait(false);
+                    own = own with { Query = own.Query with { With = new SqlParser.Ast.With(false, [.. catalog, .. own.Query.With?.CteTables ?? []]) } };
+                }
+
+                template = SqlRead.Compile(own, tables, parameters.Length, describe, keyed);
+                if (definitions is not null)
+                {
+                    reads.Add(database!, read.Shared!, definitions, describe, keyed, template);
+                }
+            }
+
+            program = SqlRead.Bind(template, parameters);
         }
         catch (FormatException error)
         {

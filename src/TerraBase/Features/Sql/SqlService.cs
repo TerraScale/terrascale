@@ -20,10 +20,12 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlService(
     IStorageEngine engine, IDocumentService documents, IStorageQuota quota, IUsageMeter usage, IDatabaseStats stats, IMemoryBudget memory, TimeProvider time) : ISqlService
 {
+    private readonly SqlReadCache _reads = new();
+
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, stats, memory, new SqlExecutor(documents, time), time, database, canWrite);
+        return new SqlSession(engine, quota, usage, stats, memory, new SqlExecutor(documents, time, _reads, database.DatabaseId), time, database, canWrite, _reads);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -81,7 +83,7 @@ internal sealed class SqlService(
 /// </summary>
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IDatabaseStats stats, IMemoryBudget memory, SqlExecutor executor, TimeProvider time, TenantContext database,
-    bool canWrite)
+    bool canWrite, SqlReadCache reads)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -261,12 +263,12 @@ internal sealed class SqlSession(
 
     public ValueTask DisposeAsync() => AbortAsync();
 
-    // Batches repeat one statement with new arguments: its last parse is reused (parsed statements are immutable).
+    // Batches repeat one statement with new arguments: its last parse is reused, and a read's from the database's cache.
     private SqlParseResult Parse(string sql)
     {
         if (!string.Equals(sql, _parsedSql, StringComparison.Ordinal))
         {
-            _parsed = SqlParse.Parse(sql);
+            _parsed = reads.Parse(database.DatabaseId, sql);
             _parsedSql = sql;
         }
 
