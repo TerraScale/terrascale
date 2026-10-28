@@ -1,8 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Bogus;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using OtpNet;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
@@ -18,7 +20,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 /// (project-social-sign-in.md), against contract fakes of each provider.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
-public sealed class SocialSignInTests(TerraBaseFixture fixture)
+public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 {
     private readonly Faker faker = new();
 
@@ -234,30 +236,56 @@ public sealed class SocialSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Bound_identity_with_local_MFA_cannot_open_a_primary_session()
+    public async Task Bound_identity_with_local_MFA_completes_through_the_hosted_second_step()
     {
         using var providers = new FakeSocialProviders();
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: providers.Route);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: providers.Route);
         var (project, token) = await this.ProjectAsync(oidc);
         await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/providers/google", token, Configuration("google", providers));
-        var email = this.faker.Internet.Email();
+        var email = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
         await Assert.That(await SignInAsync(oidc, providers, project, "google", email)).IsNotNull();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         var user = (await users.FindByEmailAsync(project, email))!;
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         var enrollment = (await mfa.BeginAsync(user))!;
-        var secret = Base32Encoding.ToBytes(enrollment.Secret);
-        var active = await mfa.ConfirmAsync(user, new Totp(secret).ComputeTotp(oidc.Server.App.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime));
-        System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret);
-        await Assert.That(active).IsNotNull();
+        var active = (await mfa.ConfirmAsync(user, Code(enrollment.Secret, clock.GetUtcNow())))!;
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var sessions = await store.CountAsync(AuthStore.SessionCollection, project);
-        using var refused = await SignInResponseAsync(oidc, providers, project, "google", this.faker.Internet.Email());
-        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(SessionCookie(refused, project)).IsNull();
+
+        // The callback stops at the factor: no session and no account change, even with a changed upstream email.
+        using var step = await SignInResponseAsync(oidc, providers, project, "google", this.faker.Internet.Email());
+        await Assert.That(step.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(SessionCookie(step, project)).IsNull();
         await Assert.That(await store.CountAsync(AuthStore.SessionCollection, project)).IsEqualTo(sessions);
-        await UnchangedAsync(users, active!.User);
+        await UnchangedAsync(users, active.User);
+        var challenge = WebUtility.HtmlDecode(ChallengePattern().Match(await step.Content.ReadAsStringAsync()).Groups[1].Value);
+        await Assert.That(challenge).IsNotEmpty();
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+        using (var wrong = await oidc.PostFormAsync($"/ui/{project}/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = Code(enrollment.Secret, clock.GetUtcNow().AddHours(1)) }))
+        {
+            await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(SessionCookie(wrong, project)).IsNull();
+        }
+
+        using var right = await oidc.PostFormAsync($"/ui/{project}/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = Code(enrollment.Secret, clock.GetUtcNow()) });
+        var cookie = SessionCookie(right, project);
+        await Assert.That(cookie).IsNotNull();
+        var resolved = (await oidc.Server.App.Services.GetRequiredService<Sessions>().ResolveAsync(project, cookie![(cookie.IndexOf('=') + 1)..]))!.Value;
+        await Assert.That(resolved.User.Id).IsEqualTo(user.Id);
+        await Assert.That(resolved.User.Email).IsEqualTo(email);
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+        using var replay = await oidc.PostFormAsync($"/ui/{project}/sign-in/mfa", new() { ["challenge"] = challenge, ["code"] = Code(enrollment.Secret, clock.GetUtcNow()) });
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(SessionCookie(replay, project)).IsNull();
     }
+
+    private static string Code(string secret, DateTimeOffset at) => new Totp(Base32Encoding.ToBytes(secret)).ComputeTotp(at.UtcDateTime);
+
+    [GeneratedRegex("name=\"challenge\" value=\"([^\"]+)\"")]
+    private static partial Regex ChallengePattern();
 
     private static async Task UnchangedAsync(Users users, UserRecord expected) =>
         await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))

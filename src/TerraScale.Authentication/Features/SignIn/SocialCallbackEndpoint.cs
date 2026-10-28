@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
@@ -36,9 +37,9 @@ public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutReq
 }
 
 /// <summary>The callback logic both callback endpoints share.</summary>
-public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessions, HostedAuth hosted, ILogger<SocialFlow> logger)
+public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, ILogger<SocialFlow> logger)
 {
-    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account only with an unused verified email when the project allows sign-up; matching email never links accounts. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Shares the hosted IP budget.";
+    internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account only with an unused verified email when the project allows sign-up; matching email never links accounts. An account with an active authenticator app gets the hosted second-factor step before any session. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Shares the hosted IP budget.";
 
     /// <summary>Redeems the provider's answer and signs the browser in.</summary>
     public async Task<IResult> CompleteAsync(HttpContext context, string? code, string? state, CancellationToken cancellationToken)
@@ -83,6 +84,12 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
         var user = identity is null ? null : await users.FromProviderAsync(tenant,
             new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject),
             identity.Email, HostedTheme.Of(context).SignUp, cancellationToken);
+
+        // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.
+        if (user is not null && await SignInFlow.SecondFactorAsync(context, mfa, user, resumed.Next, cancellationToken) is { } factor)
+        {
+            return factor;
+        }
 
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {

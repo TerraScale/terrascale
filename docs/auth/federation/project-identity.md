@@ -27,8 +27,11 @@ These snapshot checks are not a transactional fence against later concurrent cha
 Deleting a browser cookie is not durable replay protection; provider code redemption
 remains single-use. Provider configuration is absent by default and project-scoped.
 
-Local MFA/session and disabled-account gates remain enforced. Active local MFA refuses
-this primary-only callback; hosted federated factor completion is a later slice.
+Local MFA/session and disabled-account gates remain enforced. A bound account with an
+active authenticator app gets the hosted second-factor page instead of a session, as
+with password sign-in: a sealed, 5-minute, single-use challenge bound to the account
+epoch/stamp. Upstream `amr`/`acr` never count as a factor. An unknown subject whose
+email is taken is refused before any challenge.
 Public token subjects remain local ULIDs; HTTP DTOs and SDK contracts are unchanged.
 Previously email-only project accounts require an existing sign-in method; there is
 no automatic backfill, migration or linking shim. Platform foundation storage policy
