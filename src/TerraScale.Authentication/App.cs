@@ -76,11 +76,11 @@ public static class App
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
         // All storage traffic uses the configured regional endpoint without remote fallback.
-        builder.Services.AddSingleton(services => new HttpClient(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
+        builder.Services.AddSingleton(services => new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
             peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]),
-            services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
+            services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable]))));
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
             BaseAddress = TerraBaseOrigin(options),
@@ -240,6 +240,7 @@ public static class App
             return next(context);
         });
         app.UseAuthMetrics();
+        StorageTiming.Use(app);
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
         // Inside the envelope, so a failing page still answers 500; only empty, unstarted responses reach the handler.
         app.UseStatusCodePages(NotFoundPage.HandleAsync);
