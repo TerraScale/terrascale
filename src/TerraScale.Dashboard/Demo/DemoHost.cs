@@ -488,6 +488,7 @@ sealed class TestWorkspace : ITsAuthPlatform
     { lock (Gate) { var org = Manage(session.UserId, organizationId); org.Name = name; org.Slug = AccountService.Slug(name); return Task.CompletedTask; } }
     public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Member(session.UserId, organizationId); LastOwner(org, session.UserId); org.Members.Remove(session.UserId); return Task.CompletedTask; } }
+    public Task SignOutEverywhereAsync(SessionRecord session, CancellationToken cancellationToken) => Task.CompletedTask;
     public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     {
         lock (Gate)

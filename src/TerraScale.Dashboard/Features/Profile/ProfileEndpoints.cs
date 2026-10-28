@@ -74,7 +74,22 @@ public static class ProfileEndpoints
             IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity) =>
             AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, billing, identity));
         endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/unlink", SignInMethods.UnlinkAsync);
+        endpoints.MapPost("/api/v1/dashboard/profile/sign-out-everywhere", SignOutEverywhereAsync);
         return endpoints;
+    }
+
+    // ts-auth ends every sign-in of the account, its hosted cookie included. Remove every local
+    // session of the user without trying to revoke the now-invalid bearer again.
+    private static async Task<IResult> SignOutEverywhereAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform)
+    {
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+        if (context is null) return Results.Unauthorized();
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+        await platform.SignOutEverywhereAsync(context.Session, http.RequestAborted);
+        await sessions.RevokeUserAsync(context.UserId, http.RequestAborted);
+        await sessions.EndAsync(http);
+        return HttpRedirects.SeeOther("/login?returnTo=%2Fprofile");
     }
 
     private static async Task<IResult> SaveAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool language)
