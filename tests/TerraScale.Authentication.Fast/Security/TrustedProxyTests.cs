@@ -306,7 +306,7 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
 
         using var limited = await HostedAsync(oidc.Server, clients[0], verify, attempts[maximum]);
         await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-        await Assert.That(limited.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(verify ? 55 : 895));
+        await Assert.That(limited.Headers.RetryAfter?.Delta).IsEqualTo((verify ? HostedAuth.IpInterval : HostedAuth.MailInterval));
         await Assert.That(limited.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
         using var independent = await HostedAsync(oidc.Server, clients[1], verify, attempts[maximum + 1]);
         await Assert.That(independent.StatusCode).IsEqualTo(trusted ? verify ? HttpStatusCode.Unauthorized : HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
@@ -335,12 +335,12 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
 
             using var socketLimited = await HostedAsync(oidc.Server, clients[0], verify, attempts[maximum * 2 + 2], "\"\"");
             await Assert.That(socketLimited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(socketLimited.Headers.RetryAfter?.Delta).IsEqualTo(TimeSpan.FromSeconds(verify ? 55 : 895));
+            await Assert.That(socketLimited.Headers.RetryAfter?.Delta).IsEqualTo((verify ? HostedAuth.IpInterval : HostedAuth.MailInterval));
             foreach (var tail in new[] { "\"\"", string.Empty, " \t " })
             {
                 var (duplicateLimited, duplicateDelay) = await RawHttp.DuplicateForwardedAsync(oidc.Server.BaseAddress, path, clients[1], tail, attempts[maximum * 2 + 3]);
                 await Assert.That(duplicateLimited).IsEqualTo(HttpStatusCode.TooManyRequests);
-                await Assert.That(duplicateDelay).IsEqualTo(TimeSpan.FromSeconds(verify ? 55 : 895));
+                await Assert.That(duplicateDelay).IsEqualTo((verify ? HostedAuth.IpInterval : HostedAuth.MailInterval));
             }
         }
 

@@ -203,12 +203,12 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
 
             await WaitForSendsAsync(sender, 1);
             // More than a queue's capacity, mixing known and unknown addresses while the sender cannot make progress.
-            // Every call comes from one socket peer, so a new minute renews its IP budget; the code window stays.
+            // Every call comes from one socket peer, so the clock moves on to refill its IP bucket; the code window stays.
             for (var attempt = 0; attempt < SignInMail.Capacity + 2; attempt++)
             {
-                if (attempt % (HostedAuth.PerIp - 5) == 0)
+                if (attempt % 100 == 0)
                 {
-                    clock.Advance(TimeSpan.FromMinutes(1));
+                    clock.Advance(HostedAuth.IpInterval * 100);
                 }
 
                 using var refused = await CodeAsync(oidc, attempt % 2 == 0 ? email : unknown, "000000");
@@ -396,7 +396,7 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
         await oidc.CreateUserAsync(email);
         var unknown = DistinctEmails(oidc, HostedAuth.PerIp + HostedAuth.MailPerIp, email);
         await Assert.That(unknown.Length).IsEqualTo(HostedAuth.PerIp + HostedAuth.MailPerIp);
-        // Every call comes from one socket peer: later steps move to a fresh IP minute, then a fresh mail window.
+        // Every call comes from one socket peer: later steps wait for its IP bucket, then its mail bucket, to refill.
         for (var attempt = 0; attempt < HostedAuth.PerIp; attempt++)
         {
             using var admitted = await CodeAsync(oidc, unknown[attempt], "000000");
@@ -406,10 +406,10 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
         using (var ipRefusal = await PasswordAsync(oidc, email, Password))
         {
             await Assert.That(ipRefusal.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(ipRefusal.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromMinutes(1));
+            await Assert.That(ipRefusal.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.IpInterval);
         }
 
-        clock.Advance(TimeSpan.FromMinutes(1));
+        clock.Advance(HostedAuth.IpInterval * HostedAuth.PerIp);
         for (var attempt = 0; attempt < HostedAuth.MailPerIp; attempt++)
         {
             using var admitted = await oidc.PostFormAsync(Reset, new() { ["email"] = unknown[HostedAuth.PerIp + attempt] });
@@ -419,12 +419,13 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
         using (var ipMailRefusal = await oidc.PostFormAsync(SignIn, new() { ["email"] = email }))
         {
             await Assert.That(ipMailRefusal.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(ipMailRefusal.Headers.RetryAfter!.Delta).IsEqualTo(start + HostedAuth.MailWindow - clock.GetUtcNow());
+            await Assert.That(ipMailRefusal.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.MailInterval);
         }
 
         await DrainAsync(oidc.Server);
         await Assert.That(oidc.Email.HasPending).IsFalse();
-        clock.Advance(start + HostedAuth.MailWindow - clock.GetUtcNow());
+        // A full mail bucket, so the per-email cooldown and hourly budgets below answer on their own.
+        clock.Advance(HostedAuth.MailInterval * HostedAuth.MailPerIp);
         using (var first = await oidc.PostFormAsync(Reset, new() { ["email"] = email }))
         {
             await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);

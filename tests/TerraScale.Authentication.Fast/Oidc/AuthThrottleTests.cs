@@ -72,12 +72,6 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
 
         foreach (var email in new[] { "alice@example.test", UnknownEmail(oidc) })
         {
-            if (email != "alice@example.test")
-            {
-                // A fresh per-IP mail window: every call here comes from one socket peer.
-                clock.Advance(HostedAuth.MailWindow);
-            }
-
             for (var attempt = 0; attempt < Passcodes.MaxIssuesPerWindow; attempt++)
             {
                 // All mail starts share the cooldown and still spend the same hourly budget.
@@ -228,5 +222,69 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(oidc.Email.HasPending).IsFalse();
         await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+    }
+
+    [Test]
+    public async Task The_ip_mail_bucket_refills_and_refused_retries_never_extend_the_wait()
+    {
+        var clock = Clock();
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var emails = DistinctEmails(oidc, HostedAuth.MailPerIp + 2);
+        for (var attempt = 0; attempt < HostedAuth.MailPerIp; attempt++)
+        {
+            using var started = await oidc.PostFormAsync(SignIn, new() { ["email"] = emails[attempt] });
+            await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var step = TimeSpan.FromSeconds(10);
+        for (var retry = 0; retry < 5; retry++)
+        {
+            // Each refused retry finds a shorter wait: refusals spend nothing.
+            using var refused = await oidc.PostFormAsync(SignIn, new() { ["email"] = emails[HostedAuth.MailPerIp] });
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+            await Assert.That(refused.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.MailInterval - step * retry);
+            clock.Advance(step);
+        }
+
+        clock.Advance(HostedAuth.MailInterval - step * 5);
+        using (var refilled = await oidc.PostFormAsync(SignIn, new() { ["email"] = emails[HostedAuth.MailPerIp] }))
+        {
+            await Assert.That(refilled.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        using var spent = await oidc.PostFormAsync(SignIn, new() { ["email"] = emails[HostedAuth.MailPerIp + 1] });
+        await Assert.That(spent.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(spent.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.MailInterval);
+    }
+
+    [Test]
+    public async Task Under_ts_orch_the_loopback_edge_names_each_client_so_one_clients_burst_never_limits_another()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: Clock(), configure: builder => builder.Configuration["TS_NODE"] = "ts-gru-1");
+        var emails = DistinctEmails(oidc, HostedAuth.MailPerIp + 2);
+        for (var attempt = 0; attempt <= HostedAuth.MailPerIp; attempt++)
+        {
+            using var office = await StartFromAsync(oidc, "203.0.113.10", emails[attempt]);
+            await Assert.That(office.StatusCode).IsEqualTo(attempt < HostedAuth.MailPerIp ? HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
+        }
+
+        using var elsewhere = await StartFromAsync(oidc, "198.51.100.20", emails[HostedAuth.MailPerIp + 1]);
+        await Assert.That(elsewhere.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    // The edge replaces X-Forwarded-For with the client's socket address before it reaches the node on loopback.
+    private static Task<HttpResponseMessage> StartFromAsync(OidcHarness oidc, string client, string email)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, SignIn) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["email"] = email }) };
+        request.Headers.Add("Origin", OidcHarness.PublicOrigin);
+        request.Headers.Add("X-Forwarded-For", client);
+        return oidc.Client.SendAsync(request);
+    }
+
+    // Unknown addresses whose keyed per-email buckets never collide, so only the IP buckets refuse.
+    private static string[] DistinctEmails(OidcHarness oidc, int count)
+    {
+        var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
+        return [.. Enumerable.Range(0, 4096).Select(index => $"person{index}@example.test").DistinctBy(limiter.Fold).Take(count)];
     }
 }

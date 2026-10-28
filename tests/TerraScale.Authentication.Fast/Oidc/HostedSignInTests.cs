@@ -480,8 +480,8 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
                 await oidc.Email.NextCodeAsync(email);
             }
 
-            // Give the next address its own IP mail window; rejected starts still charge the IP budget.
-            clock.Advance(HostedAuth.MailWindow);
+            // Refill the IP mail bucket for the next address; rejected starts still charge the IP budget.
+            clock.Advance(HostedAuth.MailInterval * HostedAuth.MailPerIp);
         }
 
         await oidc.Server.App.Services.GetRequiredService<SignInMail>().StopAsync(CancellationToken.None);
@@ -504,6 +504,34 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     }
 
     // Starts a hosted sign-up and returns the pending token its verify page carries.
+    [Test]
+    public async Task A_signed_in_browser_sent_to_sign_up_or_sign_in_again_resumes_the_authorization_request()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await oidc.CreateUserAsync();
+        var session = await oidc.SignInAsync("alice@example.test");
+        var (_, challenge) = OidcHarness.Pkce();
+        var authorize = OidcHarness.AuthorizePath(challenge);
+        foreach (var page in new[] { "sign-up", "sign-in" })
+        {
+            var path = $"/ui/{OidcIssuer.Slug}/{page}?next={Uri.EscapeDataString(authorize)}";
+            using (var resumed = await oidc.AuthorizeAsync(path, session))
+            {
+                await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+                await Assert.That(resumed.Headers.Location!.OriginalString).IsEqualTo(authorize);
+            }
+
+            foreach (var cookie in new[] { null, "not-a-session" })
+            {
+                using var form = await oidc.AuthorizeAsync(path, cookie);
+                await Assert.That(form.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            }
+        }
+
+        // The resumed request issues a code for the existing session without another sign-in.
+        await Assert.That(await oidc.CodeAsync(session, challenge)).IsNotEmpty();
+    }
+
     private static async Task<string> SignUpAsync(OidcHarness oidc, string address, string password)
     {
         using var response = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });

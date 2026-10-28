@@ -40,11 +40,18 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
-            ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]),
-                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null)));
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (SignInFlow.WrongSlug(this.HttpContext))
+        {
+            return Results.NotFound();
+        }
+
+        var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
+        return await SignInFlow.ResumeAsync(this.HttpContext, next, cancellationToken)
+            ?? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, SignInFlow.Tenant(this.HttpContext), Next: next,
+                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null));
+    }
 }
 
 /// <summary>
@@ -59,7 +66,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -116,7 +123,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 30 minutes (a resend keeps the code it replaces working until that code expires), and dies after 5 wrong guesses. Hosted sign-in pages share 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
+        Description("Same-origin form post. A code works once, for 30 minutes (a resend keeps the code it replaces working until that code expires), and dies after 5 wrong guesses. Hosted sign-in pages share the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
@@ -181,7 +188,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         Post("/ui/{slug}/sign-in/password");
         Name("ui_sign_in_password");
         Summary("Sign in with a password");
-        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: the IP call bucket of 120 refilling 30 per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -262,10 +269,17 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
-            ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]))));
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (SignInFlow.WrongSlug(this.HttpContext))
+        {
+            return Results.NotFound();
+        }
+
+        var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
+        return await SignInFlow.ResumeAsync(this.HttpContext, next, cancellationToken)
+            ?? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), Next: next));
+    }
 }
 
 /// <summary>
@@ -334,7 +348,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         Post("/ui/{slug}/sign-up/verify");
         Name("ui_sign_up_verify");
         Summary("Verify a sign-up");
-        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -457,7 +471,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Post("/ui/{slug}/reset/complete");
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("Same-origin form post with email, code and password. Limits: 30 calls per IP per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Description("Same-origin form post with email, code and password. Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -576,6 +590,33 @@ internal static class SignInFlow
         await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
+    }
+
+    /// <summary>
+    /// A redirect back to the authorization request in <paramref name="next"/> when the browser already holds a live
+    /// session for the page's tenant, so a signed-in visitor sent to sign in or sign up again (an application that lost
+    /// its own session) returns without a second sign-in; otherwise null. The authorization endpoint still enforces
+    /// max_age and prompt, and refuses rather than redirects back here, so this never loops.
+    /// </summary>
+    public static async Task<IResult?> ResumeAsync(HttpContext context, string? next, CancellationToken cancellationToken)
+    {
+        var tenant = Tenant(context);
+        if (next is null || !next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+            || context.Request.Cookies[Tenancy.SessionCookie(tenant)] is not { Length: > 0 } token)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await context.RequestServices.GetRequiredService<Sessions>().ResolveAsync(tenant, token, cancellationToken) is null
+                ? null : Results.Redirect(next);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        {
+            // The page still works; the authorization request checks the session again.
+            return null;
+        }
     }
 
     /// <summary>The single sign-on page when <paramref name="email"/> must sign in through its organization's identity provider; otherwise null.</summary>

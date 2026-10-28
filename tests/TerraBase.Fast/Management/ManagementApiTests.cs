@@ -358,8 +358,8 @@ public sealed class ManagementApiTests
         await Assert.That(withApiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        // A sign-in token without project_id does not reach a data project.
-        await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // A sign-in token without project_id is not a data credential.
+        await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]

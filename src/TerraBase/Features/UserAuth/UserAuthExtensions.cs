@@ -161,6 +161,14 @@ public static class UserAuthExtensions
                 var jwt = Identity(context.User, UserAuthenticationHandler.SchemeName);
                 if (jwt is not null)
                 {
+                    // A platform user's session token names no project: it is not a data credential at all.
+                    if (jwt.FindFirst("project_id") is null)
+                    {
+                        await BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, "invalid_key",
+                            "this token does not authorize project routes; use an API key or its project token", op: null).ConfigureAwait(false);
+                        return;
+                    }
+
                     if (jwt.FindFirst("project_id")?.Value != project)
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);

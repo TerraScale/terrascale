@@ -15,7 +15,7 @@ public sealed class SsoStartEndpoint(SsoSignIn sso, HostedAuth hosted) : Endpoin
         Get(SsoSignIn.StartPath);
         Name("ui_sso_start");
         Summary("Start a single sign-on");
-        Description("With email (and next, honoured as on the sign-in page), redirects to the OpenID Connect identity provider of the organization that verified the email's domain, with state, nonce and PKCE (S256) sealed into the tsauth_sso cookie for 10 minutes. 400 when the domain has no verified connection; shares the 30 calls per IP per minute sign-in budget.");
+        Description("With email (and next, honoured as on the sign-in page), redirects to the OpenID Connect identity provider of the organization that verified the email's domain, with state, nonce and PKCE (S256) sealed into the tsauth_sso cookie for 10 minutes. 400 when the domain has no verified connection; shares the sign-in IP call bucket (120, refilling 30 per minute).");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status302Found);
         Produces<string>(StatusCodes.Status400BadRequest, "text/html");

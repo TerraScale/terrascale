@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
@@ -73,21 +74,6 @@ public static class App
         });
 
         builder.Services.AddSingleton(options);
-        if (options.TrustedProxies.Count > 0)
-        {
-            builder.Services.Configure<ForwardedHeadersOptions>(forwarding =>
-            {
-                forwarding.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
-                forwarding.ForwardLimit = 1;
-                forwarding.KnownProxies.Clear();
-                forwarding.KnownIPNetworks.Clear();
-                foreach (var proxy in options.TrustedProxies)
-                {
-                    forwarding.KnownProxies.Add(proxy);
-                }
-            });
-        }
-
         builder.Services.AddSingleton(TimeProvider.System);
         // All storage traffic uses the configured regional endpoint without remote fallback.
         builder.Services.AddSingleton(services => new HttpClient(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
@@ -185,6 +171,29 @@ public static class App
         configure?.Invoke(builder);
 
         ValidateAuthenticationAuthority(options, builder.Configuration["TS_REGION"]);
+
+        // ts-orch (which sets TS_NODE) serves every node through its edge on loopback, which replaces X-Forwarded-For
+        // with the client's address. Without trusting it, every end user shares the edge's IP budgets.
+        if (builder.Configuration["TS_NODE"] is { Length: > 0 })
+        {
+            options = options with { TrustedProxies = [.. options.TrustedProxies.Union([IPAddress.Loopback, IPAddress.IPv6Loopback])] };
+            builder.Services.AddSingleton(options);
+        }
+
+        if (options.TrustedProxies.Count > 0)
+        {
+            builder.Services.Configure<ForwardedHeadersOptions>(forwarding =>
+            {
+                forwarding.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+                forwarding.ForwardLimit = 1;
+                forwarding.KnownProxies.Clear();
+                forwarding.KnownIPNetworks.Clear();
+                foreach (var proxy in options.TrustedProxies)
+                {
+                    forwarding.KnownProxies.Add(proxy);
+                }
+            });
+        }
 
         // A named TerraBase requires a valid peer credential before the first storage request.
         if (options.TerraBaseUrl is not null

@@ -142,7 +142,8 @@ public sealed partial class OidcHarness : IAsyncDisposable
     public HttpClient Client => this.Server.Client;
 
     public static async Task<OidcHarness> StartAsync(TerraBaseFixture fixture, Action<Dictionary<string, string>>? settings = null, CapturingEmailSender? email = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true)
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true,
+        Action<WebApplicationBuilder>? configure = null)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         email ??= new CapturingEmailSender();
@@ -151,7 +152,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
         {
             values["master-key"] = masterKey;
             settings?.Invoke(values);
-        }, logs, clock, services, runClosureWorker);
+        }, logs, clock, services, runClosureWorker, configure);
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 
@@ -183,7 +184,8 @@ public sealed partial class OidcHarness : IAsyncDisposable
     /// issuer's keys are provisioned first, as an operator does (idempotent: replicas find the existing keys).
     /// </summary>
     public static async Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null, bool runClosureWorker = true)
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null, bool runClosureWorker = true,
+        Action<WebApplicationBuilder>? configure = null)
     {
         var server = await AuthTestServer.StartAsync(values =>
         {
@@ -206,7 +208,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
             }
 
             replace?.Invoke(services);
-        }, beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None), runClosureWorker: runClosureWorker);
+        }, configure: configure, beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None), runClosureWorker: runClosureWorker);
         try
         {
             await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
