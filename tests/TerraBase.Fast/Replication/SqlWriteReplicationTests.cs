@@ -19,6 +19,58 @@ public sealed class SqlWriteReplicationTests
     private const string Select = "SELECT id, name, age FROM people ORDER BY id";
 
     [Test]
+    public async Task An_atomic_create_insert_drop_frees_the_name_in_every_region()
+    {
+        await using var cell = await Cell.StartAsync();
+        await OkAsync(cell.Gru,
+            Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"),
+            Statement("INSERT INTO people VALUES (1, 'old', 1)"),
+            Statement("DROP TABLE people"));
+        await OkAsync(cell.Gru,
+            Statement("CREATE TABLE barrier (id INTEGER PRIMARY KEY)"),
+            Statement("INSERT INTO barrier VALUES (1)"));
+        // Each origin's change groups arrive in order; observing this later table fences the preceding drop.
+        await RowsEverywhereAsync(cell, "[[1]]", "SELECT id FROM barrier");
+        await RowsEverywhereAsync(cell, "[]", "SELECT name FROM sqlite_master WHERE name = 'people'");
+        await OkAsync(cell.Sjc, Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, fresh TEXT)"));
+        await RowsEverywhereAsync(cell, "[]", "SELECT id, fresh FROM people");
+        await OkAsync(cell.Fra, Statement("INSERT INTO people VALUES (2, 'new')"));
+        await RowsEverywhereAsync(cell, """[[2,"new"]]""", "SELECT id, fresh FROM people");
+        // Reusing the name on the other regions must also succeed, after each replicated drop.
+        foreach (var machine in new[] { cell.Fra, cell.Gru })
+        {
+            await OkAsync(machine, Statement("DROP TABLE people"));
+            await RowsEverywhereAsync(cell, "[]", "SELECT name FROM sqlite_master WHERE name = 'people'");
+            await OkAsync(machine, Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, fresh TEXT)"));
+            await RowsEverywhereAsync(cell, "[]", "SELECT id, fresh FROM people");
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_atomic_recreation_ships_its_drop_barrier_with_the_new_definition(bool alreadyReplicated)
+    {
+        await using var cell = await Cell.StartAsync();
+        var create = Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+        var insert = Statement("INSERT INTO people VALUES (1, 'old', 1)");
+        if (alreadyReplicated)
+        {
+            await OkAsync(cell.Gru, create, insert);
+            await RowsEverywhereAsync(cell, """[[1,"old",1]]""");
+        }
+
+        object[] recreate =
+        [
+            Statement("DROP TABLE people"),
+            Statement("CREATE TABLE people (id INTEGER PRIMARY KEY, fresh TEXT)"),
+            Statement("INSERT INTO people VALUES (2, 'new')"),
+        ];
+        await OkAsync(cell.Gru, alreadyReplicated ? recreate : [create, insert, .. recreate]);
+        await RowsEverywhereAsync(cell, """[[2,"new"]]""", "SELECT id, fresh FROM people ORDER BY id");
+    }
+
+    [Test]
     public async Task Sql_inserts_updates_and_deletes_in_gru_and_a_hrana_insert_in_sjc_are_read_with_sql_in_every_region()
     {
         await using var cell = await Cell.StartAsync();
@@ -55,7 +107,7 @@ public sealed class SqlWriteReplicationTests
             string?[] read = [];
             await TerraBaseTestServer.EventuallyAsync(async _ =>
             {
-                read = await Task.WhenAll(cell.Machines.Select(RowsAsync));
+                read = await Task.WhenAll(cell.Machines.Select(machine => RowsAsync(machine, Select)));
                 return read[0] is not null && read.Distinct().Count() == 1;
             }, timeout: TimeSpan.FromSeconds(30));
             await Assert.That(read[0]).IsIn([$"""[[1,"gru-{round}",{round}]]""", $"""[[1,"sjc-{round}",{round}]]"""]).Because($"round {round}: {string.Join(" | ", read)}");
@@ -98,20 +150,20 @@ public sealed class SqlWriteReplicationTests
     }
 
     // The people rows as JSON on `machine`, or null while it cannot read the table yet.
-    private static async Task<string?> RowsAsync(Machine machine)
+    private static async Task<string?> RowsAsync(Machine machine, string select)
     {
-        using var response = await machine.Data.PostAsJsonAsync(ManagementApi.Uri($"{machine.Cell.Managed.Data}/sql/execute"), new { statements = new[] { new { sql = Select } } });
+        using var response = await machine.Data.PostAsJsonAsync(ManagementApi.Uri($"{machine.Cell.Managed.Data}/sql/execute"), new { statements = new[] { new { sql = select } } });
         return response.IsSuccessStatusCode
             ? JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("results")[0].GetProperty("rows").GetRawText()
             : null;
     }
 
-    private static async Task RowsEverywhereAsync(Cell cell, string expected)
+    private static async Task RowsEverywhereAsync(Cell cell, string expected, string select = Select)
     {
         string?[] read = [];
         await TerraBaseTestServer.EventuallyAsync(async _ =>
         {
-            read = await Task.WhenAll(cell.Machines.Select(RowsAsync));
+            read = await Task.WhenAll(cell.Machines.Select(machine => RowsAsync(machine, select)));
             return read.All(rows => rows == expected);
         }, timeout: TimeSpan.FromSeconds(30));
         await Assert.That(read.All(rows => rows == expected)).IsTrue().Because(string.Join(" | ", read));

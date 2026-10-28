@@ -61,3 +61,4 @@ elsewhere ("section 15") are the file number prefixes.
 
 - [TS-1012: catalog admission after collected revocations](replication/ts1012-collected-revocations.md)
 - [Departed peer identities stop holding the change log](replication/departed-peer-retention.md)
+- [SQL table name reuse after an atomic drop](replication/sql-drop-reuse.md)

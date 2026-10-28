@@ -11,7 +11,8 @@ namespace TerraBase.Engine.Turso;
 /// <summary>
 /// Client databases keep each document's replicated state (docs/terrabase/multi-region-replication.md sections 4 to 6): a
 /// <see cref="DocumentState"/> in <c>_tb_state</c>, and its materialized JSON in the document row every read uses. A
-/// request mints one stamp per document it touches, applies its operations to that document in order at that stamp, and
+/// request mints one stamp per document it touches (collection lifecycle metadata advances between operations), applies
+/// its operations to that document in order at that stamp, and
 /// writes the document's <c>_tb_state</c> row once, when the request ends (<see cref="FlushStatesAsync"/>), so the
 /// change feed sees one state per document per operation.
 /// </summary>
