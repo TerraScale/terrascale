@@ -7,8 +7,9 @@ WARMUP, WINDOW = 10.0, 45.0
 # informational level, and 1 s counters. Hosting at level 1 keeps its per-request events off; only counters flow.
 COUNTERS = 'System.Runtime:0:1:EventCounterIntervalSec=1,Microsoft.AspNetCore.Hosting:0:1:EventCounterIntervalSec=1'
 CPU = 'Microsoft-DotNETCore-SampleProfiler,Microsoft-Windows-DotNETRuntime:0x1C019:4,' + COUNTERS
-# GC verbose adds the ~100 KB allocation tick with its managed stack; loader and JIT keep symbols complete.
-ALLOC = 'Microsoft-Windows-DotNETRuntime:0x19:5,' + COUNTERS
+# GC verbose adds the ~100 KB allocation tick with its managed stack; AllocationSampling (0x80000000000) adds the runtime's
+# randomized, per-byte unbiased allocation samples on the same interval; loader and JIT keep symbols complete.
+ALLOC = 'Microsoft-Windows-DotNETRuntime:0x80000000019:5,' + COUNTERS
 
 def snapshot(tag, log):
     threads = []

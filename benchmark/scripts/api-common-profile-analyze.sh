@@ -29,10 +29,13 @@ EOF
 sha256sum "$lib/Microsoft.Diagnostics.Tracing.TraceEvent.dll" "$lib/Microsoft.Diagnostics.FastSerialization.dll" > "$analysis/traceevent.sha256"
 dotnet build "$analysis/TraceAttribution.csproj" --configuration Release --disable-build-servers > "$analysis/build.log" 2>&1 \
   || { grep -E 'error|warn' "$analysis/build.log" | sort -u | head -40; exit 1; }
+kinds='cpu alloc'
+if [[ -e "$out/alloc-sampling" ]]; then kinds+=' sampled'; fi
 for run in a b; do
   for cell in small-c1 small-c16; do
-    for kind in cpu alloc; do
-      dotnet exec "$analysis/bin/Release/net11.0/TraceAttribution.dll" "$out/$run/$cell-$kind.nettrace" "$kind" "$(cat "$out/$run/owned.pid")" \
+    for kind in $kinds; do
+      trace=$out/$run/$cell-${kind/sampled/alloc}.nettrace
+      dotnet exec "$analysis/bin/Release/net11.0/TraceAttribution.dll" "$trace" "$kind" "$(cat "$out/$run/owned.pid")" \
         "$out/$run/$cell-threads.tsv" > "$analysis/$run-$cell-$kind.md" 2> "$analysis/$run-$cell-$kind.err" \
         || { cat "$analysis/$run-$cell-$kind.err"; exit 1; }
     done

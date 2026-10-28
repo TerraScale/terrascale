@@ -23,6 +23,7 @@ test "$(sha256sum < "$bin/terrabase.dll" | cut -d' ' -f1)" = c1175b9eca103e93a8d
 "$tool" --version > "$out/tool-version.txt"
 sha256sum "$(readlink -f "$tool")" > "$out/tool.sha256"
 cp benchmark/scripts/api-common-profile.py benchmark/scripts/api-cpu-observer.py "$out/"
+grep -q 0x80000000019 "$out/api-common-profile.py" && : > "$out/alloc-sampling"
 lscpu -e > "$out/cpu-topology.txt"
 
 # Reserve the other admitted heavy slots without stopping work.

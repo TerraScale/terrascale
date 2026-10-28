@@ -18,13 +18,14 @@ namespace TraceAttribution
 
         private static int Main(string[] args)
         {
-            if (args.Length != 4 || args[1] is not ("cpu" or "alloc"))
+            if (args.Length != 4 || args[1] is not ("cpu" or "alloc" or "sampled"))
             {
-                Console.Error.WriteLine("usage: TraceAttribution <trace.nettrace> cpu|alloc <owned pid> <threads.tsv>");
+                Console.Error.WriteLine("usage: TraceAttribution <trace.nettrace> cpu|alloc|sampled <owned pid> <threads.tsv>");
                 return 2;
             }
 
             var cpu = args[1] == "cpu";
+            var sampled = args[1] == "sampled";
             var pid = int.Parse(args[2], CultureInfo.InvariantCulture);
             var threads = new Dictionary<int, string>();
             foreach (var line in File.ReadLines(args[3]))
@@ -135,9 +136,17 @@ namespace TraceAttribution
                     managed = Convert.ToInt32(item.PayloadByName("Type"), CultureInfo.InvariantCulture) == 2;
                     perThread[item.ThreadID] = perThread.GetValueOrDefault(item.ThreadID) + 1;
                 }
-                else if (!cpu && name == "GC/AllocationTick")
+                else if (!cpu && !sampled && name == "GC/AllocationTick")
                 {
                     weight = Convert.ToDouble(item.PayloadByName("AllocationAmount64"), CultureInfo.InvariantCulture);
+                    managed = true;
+                }
+                else if (sampled && name.EndsWith("AllocationSampled", StringComparison.Ordinal))
+                {
+                    // Randomized sampling with a 100 KiB mean distance: an object of size s is sampled with probability 1 - e^(-s/100 KiB),
+                    // so each sample stands for 1/p objects and s/p bytes.
+                    var bytes = Convert.ToDouble(item.PayloadByName("ObjectSize"), CultureInfo.InvariantCulture);
+                    weight = bytes / -double.ExpM1(-bytes / 102_400);
                     managed = true;
                 }
                 else
@@ -167,8 +176,9 @@ namespace TraceAttribution
                 {
                     var type = sample.Role + " | " + (item.PayloadByName("TypeName") as string ?? "?");
                     types.Add(type, weight, true);
-                    sizes.Add(type, Convert.ToDouble(item.PayloadByName("ObjectSize"), CultureInfo.InvariantCulture), true);
-                    ticks.Add(type, 1, true);
+                    var size = Convert.ToDouble(item.PayloadByName("ObjectSize"), CultureInfo.InvariantCulture);
+                    sizes.Add(type, size, true);
+                    ticks.Add(type, sampled ? weight / size : 1, true);
                 }
             }
 
@@ -200,6 +210,7 @@ namespace TraceAttribution
             }
 
             var per = cpu ? "est. thread-µs/request" : "est. B/request";
+            Console.WriteLine(FormattableString.Invariant($"# mode={args[1]} samples={roles.Count("server") + roles.Count("client")} (server+client events)"));
             Print("Role", roles, roles.Total, 20, unit, per);
             Print("Thread class | role", byThread, roles.Total, 30, unit, per);
             foreach (var role in roles.Keys())
@@ -222,11 +233,13 @@ namespace TraceAttribution
             {
                 Print("Role | allocated type", types, roles.Total, 40, unit, per);
                 Console.WriteLine();
-                Console.WriteLine("## Mean sampled object size of the top types (B)");
+                Console.WriteLine("## Top types: samples, mean sampled object size (B), estimated objects/request (sampled mode only)");
                 Console.WriteLine();
                 foreach (var (type, _, _) in types.Top(40))
                 {
-                    Console.WriteLine(FormattableString.Invariant($"| {type} | {sizes.Weight(type) / ticks.Weight(type):F0} |"));
+                    var samples = sampled ? sizes.Count(type) : ticks.Weight(type);
+                    Console.WriteLine(FormattableString.Invariant(
+                        $"| {type} | {samples:F0} | {sizes.Weight(type) / samples:F0} | {(sampled ? ticks.Weight(type) / requests : double.NaN):F2} |"));
                 }
             }
 
@@ -415,6 +428,7 @@ namespace TraceAttribution
     internal sealed class Tally
     {
         private readonly Dictionary<string, (double Weight, double Managed)> _rows = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, long> _counts = new(StringComparer.Ordinal);
 
         public double Total { get; private set; }
 
@@ -422,7 +436,13 @@ namespace TraceAttribution
         {
             var (sum, running) = _rows.GetValueOrDefault(key);
             _rows[key] = (sum + weight, running + (managed ? weight : 0));
+            _counts[key] = _counts.GetValueOrDefault(key) + 1;
             Total += weight;
+        }
+
+        public long Count(string key)
+        {
+            return _counts.GetValueOrDefault(key);
         }
 
         public double Weight(string key)
