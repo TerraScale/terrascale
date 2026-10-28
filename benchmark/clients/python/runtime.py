@@ -28,7 +28,7 @@ class Stats:
     stuck: bool = False
 
 
-async def measure(op: Op, seed: Seed, concurrency: int) -> Stats:
+async def measure(op: Op, seed: Any, concurrency: int) -> Stats:
     stats = Stats()
     measure_from = time.monotonic() + WARMUP_S
     until = measure_from + MEASURE_S
