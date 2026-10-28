@@ -489,6 +489,19 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         }
 
         await Assert.That(string.Join(",", delays)).IsEqualTo("2,4,8,16,32,60,60");
+
+        // An intent still pending after about an hour at the cap is parked: every 15 minutes, never dropped.
+        var directory = services.GetRequiredService<PlatformDirectory>();
+        var stuck = (await directory.ClosureAsync("project", project, CancellationToken.None))!;
+        await Assert.That(await store.ReplaceAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("project", project),
+            JsonSerializer.SerializeToElement(stuck.Value with { Attempts = Closures.ParkAfter - 1 }, ClosureJson.Default.ClosureJob), stuck.Version)).IsNotNull();
+        for (var pass = 0; pass < 2; pass++)
+        {
+            await worker.RunOnceAsync();
+            var parked = (await JobAsync(oidc, "project", project))!;
+            await Assert.That(parked.NextAttemptAt - clock.UtcNow).IsEqualTo(TimeSpan.FromMinutes(15));
+            clock.UtcNow = parked.NextAttemptAt;
+        }
     }
 
     // Review R2 P2-2: a step that read the organizations before a concurrent cancellation can no longer create an
