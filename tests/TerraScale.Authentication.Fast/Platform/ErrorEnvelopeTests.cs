@@ -23,7 +23,7 @@ public sealed class ErrorEnvelopeTests
         app.MapGet("/__test/storage-unavailable", async (HttpContext _) =>
         {
             using var http = new HttpClient(new StorageUnavailable());
-            await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://storage.invalid/") })
+            await new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("https://storage.invalid/") })
                 .Database(TerraScale.Authentication.Store.AuthStore.NewId(), "auth").ListCollectionsAsync();
             return Results.Ok();
         });
