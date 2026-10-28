@@ -38,6 +38,8 @@ func main() {
 	switch {
 	case len(args) == 1 && args[0] == "startup":
 		err = startup(os.Stdout)
+	case len(args) > 0 && args[0] == "parity":
+		err = runParity(args[1:])
 	case len(args) > 0 && args[0] == "run":
 		err = runBench(args[1:])
 	default:
