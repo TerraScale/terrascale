@@ -12,7 +12,11 @@ automatic 401 retry, plus invalid metadata and concurrent requests. They do not
 negotiate TLS or test ALPN. SocketsHttpHandler internal wire replays are invisible
 to DelegatingHandler; no zero-wire-retry claim is supported.
 
-This is not a complete runner. Full document checks, peers-file discovery,
+`ParityPeers` discovers all regions from `TS_PEERS_FILE`, matching the Go
+runner's strict node/region/IPv4 rows. It sorts and deduplicates regions, requires
+gru/sjc/fra, and rejects any malformed row without printing its contents.
+
+This is not a complete runner. Full document checks,
 token-exchange observation, connection counts, bounded windows/drains and
 owned-resource recovery remain necessary before live parity can be qualified.
 No latency, throughput, regional result or speedup is established here.
