@@ -36,4 +36,6 @@ counts retained timings. Connection attempts cover readiness too, via HTTPcore's
 are emitted before rejection. Setup/cleanup errors report only status/type.
 SIGINT/SIGTERM cancel once and unwind cleanup; repeated signals do not cancel it
 again. `transport_control.py` exercises the real SDK over synthetic HTTPX responses;
-`window_control.py` checks tails, peers and repeat signals. Live qualification remains.
+`window_control.py` checks tails, peers and repeat signals.
+`lifecycle_control.py` checks exact-name cleanup, bounded uncertain create and
+reconciliation reporting through the real SDK. Live qualification remains.
