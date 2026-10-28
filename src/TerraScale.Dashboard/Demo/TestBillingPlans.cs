@@ -339,7 +339,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
             ["object"] = "price",
             ["active"] = !republishedPrices.ContainsKey(id),
             ["currency"] = "usd",
-            ["unit_amount"] = interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents,
+            ["unit_amount"] = plan.IntervalPriceCents(interval),
             ["recurring"] = new JsonObject { ["interval"] = interval == "annual" ? "year" : "month", ["interval_count"] = 1 },
             ["product"] = new JsonObject { ["id"] = "prod_" + plan.Key, ["object"] = "product", ["active"] = true, ["name"] = "TerraScale " + plan.Name, ["metadata"] = new JsonObject { ["plan"] = plan.Key } }
         };

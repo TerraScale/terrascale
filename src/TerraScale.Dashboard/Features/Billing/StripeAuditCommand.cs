@@ -52,7 +52,7 @@ public sealed class StripeAuditCommand
             var client = clientFactory(key);
             await AuditPricesAsync(client, live, checks, cancellationToken);
             checks["published_prices_valid"] = PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
-                .Select(plan => plan.Key + "_" + plan.CheckoutInterval).All(name => checks.GetValueOrDefault(name));
+                .SelectMany(plan => plan.CheckoutIntervals.Select(interval => plan.Key + "_" + interval)).All(name => checks.GetValueOrDefault(name));
             var webhookEndpoints = new List<WebhookEndpoint>();
             await foreach (var endpoint in client.V1.WebhookEndpoints.ListAutoPagingAsync(new() { Limit = 100 }, cancellationToken: cancellationToken))
                 webhookEndpoints.Add(endpoint);
@@ -140,7 +140,7 @@ public sealed class StripeAuditCommand
             price.Product = product;
         }
         foreach (var plan in PlanCatalog.Plans.Where(plan => plan.PriceCents > 0))
-            foreach (var interval in new[] { plan.CheckoutInterval })
+            foreach (var interval in plan.CheckoutIntervals)
             {
                 checks[plan.Key + "_" + interval] = prices.Count(price => price.Livemode == live &&
                     price.Product?.Livemode == live && StripeBilling.MatchesPrice(price, plan, interval, requirePublished: true)) == 1;

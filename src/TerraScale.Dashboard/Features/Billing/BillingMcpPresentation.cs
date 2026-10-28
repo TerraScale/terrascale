@@ -6,8 +6,8 @@ namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed record BillingMcpPlan(string Key, string Name,
     [property: Description(PlanPriceText.PriceCents)] long PriceCents,
-    [property: Description(PlanPriceText.BillingInterval)] string BillingInterval,
-    [property: Description(PlanPriceText.MonthlyEquivalentCents)] long MonthlyEquivalentCents,
+    [property: Description(PlanPriceText.AnnualPriceCents)] long AnnualPriceCents,
+    [property: Description(PlanPriceText.BillingIntervals)] IReadOnlyList<string> BillingIntervals,
     [property: Description(PlanPriceText.Price)] string Price, long MonthlyEgressBytes, int TrialDays, [property: Description("Database limit; 0 means unlimited.")] int MaxDatabases,
     [property: Description("Member limit; 0 means unlimited.")] int MaxMembers,
     [property: Description("Included operation units per month, shared by reads and writes.")] long OperationUnitsPerMonth,
@@ -48,7 +48,7 @@ public sealed partial class StripeBilling
             {
                 var limits = PlanCatalog.ResourceLimits(plan.Id);
                 var allowance = PlanCatalog.Limits(plan.Id);
-                return new BillingMcpPlan(plan.Key, plan.Name, plan.IntervalPriceCents, plan.BillingInterval, plan.PriceCents, plan.Price + " " + plan.PriceUnit, allowance.MonthlyEgressBytes, plan.TrialDays, limits.Databases,
+                return new BillingMcpPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingIntervals, plan.Price + " " + plan.PriceUnit, allowance.MonthlyEgressBytes, plan.TrialDays, limits.Databases,
                     limits.Members, allowance.MonthlyOperations, PlanCatalog.OperationUnitBytes,
                     new[] { plan.StorageAllowance, plan.OperationsAllowance, plan.EgressAllowance, plan.DatabaseAllowance, plan.MemberAllowance }
                         .Where(value => value != "Limit not published").ToArray(), plan.Key == facts.PlanKey);

@@ -594,7 +594,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
     }
 
     internal static bool MatchesPrice(Price price, BillingPlan plan, string interval, bool requirePublished = false) =>
-        plan.SupportsInterval(interval) && price.Recurring?.UsageType != "metered" && (!requirePublished || price.Active) && price.Currency == "usd" && price.UnitAmount == (interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) &&
+        plan.SupportsInterval(interval) && price.Recurring?.UsageType != "metered" && (!requirePublished || price.Active) && price.Currency == "usd" && price.UnitAmount == plan.IntervalPriceCents(interval) &&
         price.Recurring?.Interval == (interval == "annual" ? "year" : "month") && price.Recurring.IntervalCount == 1 &&
         price.Product is { } product && (!requirePublished || product.Active) && (product.Metadata.GetValueOrDefault("plan") == plan.Key ||
             product.Name == plan.Name || product.Name == "TerraScale " + plan.Name);
@@ -604,7 +604,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         if (price is null) return null;
         var matches = (from plan in PlanCatalog.Plans
                        where plan.PriceCents > 0
-                       from interval in new[] { plan.CheckoutInterval }
+                       from interval in plan.CheckoutIntervals
                        where MatchesPrice(price, plan, interval)
                        select (plan, interval)).ToArray();
         return matches.Length == 1 ? matches[0] : null;

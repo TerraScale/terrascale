@@ -17,14 +17,14 @@ public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling bil
         return new CheckoutCanceled(true);
     });
 
-    private const string IntervalDescription = "Billing interval: annual (or list_plans' year) for Starter; monthly (or month) for Pro and Team. Omit to use the plan's only interval, and for free.";
+    private const string IntervalDescription = "Billing interval: monthly (or list_plans' month) or annual (or year). Omit for monthly, and for free.";
 
     // list_plans publishes Stripe's month/year; checkout and plan changes take monthly/annual. Accept both and name the valid one.
     private static string Interval(string plan, string interval)
     {
         interval = interval.Trim() switch { "year" => "annual", "month" => "monthly", var value => value };
         if (interval.Length == 0 || PlanCatalog.Plans.SingleOrDefault(item => item.Key == plan) is not { PriceCents: > 0 } paid || paid.SupportsInterval(interval)) return interval;
-        throw new AccountAccessException($"{paid.Name} is billed only {paid.CheckoutInterval}: pass interval {paid.CheckoutInterval} or omit it.", 400);
+        throw new AccountAccessException($"{paid.Name} is billed {string.Join(" or ", paid.CheckoutIntervals)}: pass one of those or omit it.", 400);
     }
 
     [McpServerTool(Name = "preview_plan_change", Title = "Preview plan change", ReadOnly = true, Idempotent = true, OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Estimate the charge and effective date of changing a subscribed organization's plan, without changing it. Owner only.")]

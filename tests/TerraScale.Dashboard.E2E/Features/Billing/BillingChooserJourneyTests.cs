@@ -23,10 +23,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
         await Assert.That(chooser.Length).IsGreaterThan(0);
         await Assert.That(chooser.Contains("name=\"interval\"", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(chooser).Contains("$30.00 / year · Billed yearly · $2.50/month equivalent");
-        await Assert.That(chooser.Contains("$2.50 / month", StringComparison.Ordinal)).IsFalse().Because("Starter is sold only by the year.");
-        await Assert.That(chooser).Contains("$20.00 / month · Billed monthly");
-        await Assert.That(chooser).Contains("$50.00 / month · Billed monthly");
+        await Assert.That(chooser).Contains("$3.00 / month · Billed monthly, or $30.00 a year");
+        await Assert.That(chooser).Contains("$20.00 / month · Billed monthly, or $200.00 a year");
+        await Assert.That(chooser).Contains("$50.00 / month · Billed monthly, or $500.00 a year");
         await Assert.That(html.Contains("Save up to", StringComparison.Ordinal)).IsFalse();
         await Assert.That(html).Contains("Checkout canceled");
         await Assert.That(Regex.Matches(chooser, "name=\"plan\"").Count).IsEqualTo(3);
@@ -43,7 +42,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
 
     [Test]
     [Arguments("starter", "annual", "Annual")]
+    [Arguments("starter", "monthly", "Monthly")]
     [Arguments("pro", "monthly", "Monthly")]
+    [Arguments("team", "annual", "Annual")]
     public async Task PendingAndCanceledCheckoutCadenceDoesNotReplaceFreeUntilSubscriptionConfirmed(string plan, string interval, string paidCadence)
     {
         using var client = fixture.CreateClient();
@@ -79,9 +80,9 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
-    [Arguments("starter", "monthly")]
-    [Arguments("pro", "annual")]
-    [Arguments("team", "annual")]
+    [Arguments("starter", "weekly")]
+    [Arguments("pro", "quarterly")]
+    [Arguments("team", "daily")]
     public async Task CheckoutRejectsUnpublishedPlanCadences(string plan, string interval)
     {
         using var client = fixture.CreateClient();
@@ -108,8 +109,8 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         using var wizard = await client.GetAsync(wizardUri);
         await Assert.That(wizard.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var wizardBody = await wizard.Content.ReadAsStringAsync();
-        await Assert.That(wizardBody).Contains("<strong>$30.00</strong> / year");
-        await Assert.That(wizardBody.Contains("<strong>$2.50</strong> / month", StringComparison.Ordinal)).IsFalse().Because("the pre-selected Starter plan is sold only by the year.");
+        await Assert.That(wizardBody).Contains("<strong>$3.00</strong> / month");
+        await Assert.That(wizardBody).Contains("Billed monthly, or $30.00 a year");
         using var checkout = await HttpJourney.PostFormAsync(client,
             "/api/v1/dashboard/organization/new-organization?organizationId=" + Uri.EscapeDataString(organizationId), new()
             { ["_csrf"] = csrf, ["step"] = "payment-method", ["organizationID"] = organizationId, ["plan"] = "starter" });

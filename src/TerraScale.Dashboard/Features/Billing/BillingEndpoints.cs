@@ -85,7 +85,7 @@ public static class BillingEndpoints
     private static InvoiceRenewal? Renewal(BillingBinding? binding, BillingPlanState? state)
     {
         static long Price(string key, string interval) => PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key) is { } plan
-            ? interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents : 0;
+            ? plan.IntervalPriceCents(interval) : 0;
         if (state is not null)
         {
             var scheduled = state.ScheduledPlanKey.Length > 0 && (state.ScheduledAt is null || state.ScheduledAt <= state.RenewalAt);
