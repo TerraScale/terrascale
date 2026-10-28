@@ -86,16 +86,16 @@ Work has been lost while resolving conflicts. On any merge, rebase, cherry-pick,
 - Use Ku (`ku.mariogk.com`, via Ku MCP) for TerraScale tickets and `gh issue` for repository issues.
 - Open ready-for-review PRs targeting `main`, never drafts. Keep at most one open PR per repository per thread.
 - CI is the gate: no local test/check run is required before pushing or opening a PR. GitHub Actions uses GitHub-hosted runners only.
-- Rebase onto current `origin/main` before pushing. Merge only when checks pass on the exact latest PR head.
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
+- Merge only when checks pass on the exact latest PR head.
 - Use the merge queue: `gh pr merge --auto --squash`. Never bypass the queue or required checks.
-- No review approval is required; do not request reviewers. Fix and answer every reviewer finding before merging.
 - Use the T3 PR watcher for check and review updates; never run `gh` polling loops.
 - Send the PR link to the user when done.
 
-### Evidence for User-Facing Changes
+### PR previews (required for every visible change)
 
-- For each changed user-facing flow, attach actual screenshots and short videos of the running app, captured against the current tested PR head (the commit that passed the checks).
-- Show the navigation and interaction that demonstrate the change, plus success, error, and empty states where they apply.
-- Label each capture with its flow and tested commit SHA. Redact secrets and personal data (tokens, keys, emails, customer names, payment details) first.
-- Embed or link the evidence in the PR with alt text or a text description. Upload it as PR attachments; never commit it. Visual changes: include several before/after screenshots.
-- Recapture when the head changes. Never fabricate evidence or present stale or mock captures as verification; if evidence is unavailable, say why in the PR. Docs-only changes may say why running-app captures do not apply.
+- Every PR that changes anything a user sees (pages, components, styles, layout, copy, emails, generated pages, maps, charts) MUST embed previews in the PR body. A visible change without previews is not ready to merge.
+- Before and after screenshots of each changed page and state, desktop (1440 px wide) and mobile (390 px wide). Add a short video or GIF for interactions (toggles, menus, flows, animations).
+- Capture from the real running build of the exact PR head (dev server, preview deploy or live preview), never mockups. Use synthetic or demo accounts; no secrets, tokens or real customer data on screen.
+- Upload: commit the images to this repo's orphan branch `pr-assets` under `<pr-number>/` (first time: `git switch --orphan pr-assets`); never put them on the PR branch or `main`, never merge `pr-assets`. Embed each as `![<page> <state> after, desktop](https://raw.githubusercontent.com/TerraScale/ts-dashboard/pr-assets/<pr-number>/<file>.png)` and check that every URL returns 200 before posting.
+- When a later push changes the visuals, replace the previews. PRs with no visible change say "No visual change" in the body.
