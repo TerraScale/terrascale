@@ -45,3 +45,9 @@ to its checked head above; the rebase adds no new qualification result.
 All benchmark files in the evidence layer were also unchanged by the rebase;
 only this publication note follows it. Required CI on the published PRs remains
 pending.
+
+CI coverage boundary at main `05e7adb5b`: `.github/workflows/ci.yml` selects
+`benchmark/dotnet/**` for the libs area, but does not select
+`benchmark/clients/dotnet/**` or invoke its `make check`. Required status checks
+remain a merge gate; their success alone would not qualify the client runner.
+The runner build, format and test results in this report are delta results.
