@@ -17,6 +17,26 @@ import tempfile
 def read(args):
     return subprocess.check_output(args)
 
+def refusal(result):
+    if result.returncode:
+        return 'transport (curl_exit ' + str(result.returncode) + ')'
+    body, _, status = result.stdout.rpartition(b'\n')
+    if status == b'200':
+        return None
+    status = status.decode('ascii') if len(status) == 3 and status.isdigit() and 100 <= int(status) <= 599 else 'unclassified'
+    code = None
+    try:
+        value = json.loads(body)
+        error = value.get('error') if isinstance(value, dict) else None
+        code = error.get('code') if isinstance(error, dict) else error
+    except (ValueError, TypeError):
+        pass
+    known = {'invalid_request', 'invalid_key', 'not_found', 'forbidden_scope', 'storage_busy', 'catalog_stale',
+             'confirmation_busy', 'disk_capacity', 'copy_faulted', 'capacity', 'remote_region_unavailable',
+             'auth_unavailable', 'internal_error', 'unavailable'}
+    code = code if isinstance(code, str) and code in known else 'other'
+    return 'HTTP ' + status + ' (' + code + ')'
+
 organization = sys.argv[1]
 tasks = {row.split()[0]: row.split()[1] for row in read(["sudo", "-n", "ctr", "-n", "terrascale", "tasks", "ls"]).decode().splitlines()[1:]
          if len(row.split()) >= 3 and row.split()[2] == "RUNNING"}
@@ -38,11 +58,12 @@ with tempfile.NamedTemporaryFile() as header:
     header.flush()
     result = subprocess.run(["curl", "--silent", "--show-error", "--http2-prior-knowledge", "--max-time", "30",
         "--header", "@" + header.name, "--header", "Content-Type: application/json", "--request", "PUT",
-        "--data-binary", "@-", "--output", "/dev/null", "--write-out", "%{http_code}",
+        "--data-binary", "@-", "--write-out", "\n%{http_code}",
         "http://" + addresses[0] + ":8081/admin/organizations/" + organization + "/plan"],
         input=json.dumps({"plan": "enterprise"}).encode(), capture_output=True)
-if result.returncode != 0 or result.stdout != b"200":
-    sys.exit("Synthetic plan assignment failed")
+failure = refusal(result)
+if failure is not None:
+    sys.exit("Synthetic plan assignment failed: " + failure)
 print("Synthetic organization plan assigned; normal auth, quotas and process safety remain active.")
 '''
 
