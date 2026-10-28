@@ -231,7 +231,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
                 if (document.Document.Deserialize(IdentityJson.Default.PasscodeRecord) is { } passcode
                     && await store.CompareAndPutAsync(AuthStore.PasscodeCollection, passcode.InstanceId,
                         passcode.Purpose == StoredPurpose(PasscodePurpose.SignUp) ? SignUpKey + passcode.Email : passcode.UserId,
-                        JsonSerializer.SerializeToElement(passcode with { CodeHash = string.Empty, PreviousCodeHash = null, PasswordHash = null, PendingTokenHash = null, Consumed = true, Pruned = true }, IdentityJson.Default.PasscodeRecord),
+                        JsonSerializer.SerializeToElement(passcode with { CodeHash = string.Empty, PasswordHash = null, PendingTokenHash = null, Consumed = true, Pruned = true }, IdentityJson.Default.PasscodeRecord),
                         document.Version, cancellationToken).ConfigureAwait(false))
                 {
                     deleted++;
@@ -297,10 +297,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         var issuance = recovery ? null : AuthStore.NewCredentialBinding("passcode-issuance",
             AuthStore.NaturalKeyId(instanceId, key, AuthStore.NaturalKeyId(instanceId, authStamp ?? "initial",
                 sameState ? previous!.IssueId.Length > 0 ? previous.IssueId : previous.CodeHash : "initial")));
-        // A resend keeps the live code it replaces (a sign-up keeps its account id, which binds the code's digest).
-        var carried = sameState && !recovery && !previous!.Consumed && !previous.Pruned && previous.FailedAttempts < MaxAttempts
-            && previous.Purpose == StoredPurpose(purpose) && previous.ExpiresAt > now ? previous : null;
-        userId = carried is not null && purpose is PasscodePurpose.SignUp ? carried.UserId : userId;
+        // The record holds one code: a resend replaces it, so a superseded code never redeems (QA round 4, auth:5).
         var code = Tokens.RandomDigits(6)!;
         var passcode = new PasscodeRecord(instanceId, userId, email, this.Digest(instanceId, userId, code), authEpoch, now + Lifetime,
             FailedAttempts: 0, Consumed: false, window is null ? windowStart : previousWindowStart, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash)
@@ -309,8 +306,6 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             AuthStamp = authStamp,
             IssuanceBindings = issuance is null ? [] : [.. ancestors, issuance],
             ResetsAuthentication = recovery,
-            PreviousCodeHash = carried?.CodeHash,
-            PreviousExpiresAt = carried?.ExpiresAt,
             StepUpRequestId = purpose == PasscodePurpose.StepUp ? key : null,
         };
         var record = JsonSerializer.SerializeToElement(passcode, IdentityJson.Default.PasscodeRecord);
@@ -351,9 +346,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             }
 
             var digest = this.Digest(instanceId, passcode.UserId, code);
-            var expires = Tokens.FixedTimeEquals(passcode.CodeHash, digest) ? passcode.ExpiresAt
-                : passcode.PreviousCodeHash is { } earlier && Tokens.FixedTimeEquals(earlier, digest) ? passcode.PreviousExpiresAt : null;
-            var matches = expires > now;
+            var matches = Tokens.FixedTimeEquals(passcode.CodeHash, digest);
             var charged = matches ? passcode with { Consumed = true, PasswordHash = null } : passcode with { FailedAttempts = passcode.FailedAttempts + 1 };
             var binding = matches ? AuthStore.NewCredentialBinding("passcode", AuthStore.NaturalKeyId(instanceId, key, passcode.IssueId.Length > 0 ? passcode.IssueId : passcode.CodeHash)) : null;
             List<StoreOperation> operations = [AuthStore.Replace(collection, instanceId, key,

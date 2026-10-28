@@ -109,12 +109,6 @@ public sealed record PasscodeRecord(
     /// <summary>Pruning removes code material but retains the issuance anchor.</summary>
     public bool Pruned { get; init; }
 
-    /// <summary>The live code this one replaced, still redeemable until <see cref="PreviousExpiresAt"/>, so a slow email works after a resend.</summary>
-    public string? PreviousCodeHash { get; init; }
-
-    /// <summary>Expiry of <see cref="PreviousCodeHash"/>.</summary>
-    public DateTimeOffset? PreviousExpiresAt { get; init; }
-
     /// <summary>Dedicated step-up request id; its passcode never inherits sign-in code ancestry or resets authentication.</summary>
     public string? StepUpRequestId { get; init; }
 

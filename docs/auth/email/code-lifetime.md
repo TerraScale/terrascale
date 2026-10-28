@@ -1,5 +1,7 @@
 # Emailed code lifetime and resends
 
+> The resend rule below is superseded: a new code replaces the previous one. See `superseded-codes.md`.
+
 Emailed six-digit codes (sign-in, sign-up verification and password reset) work
 for 30 minutes (`Passcodes.Lifetime`), once, and die after 5 wrong guesses. The
 hosted pages and the emails say "expires in 30 minutes". The redemption budget
