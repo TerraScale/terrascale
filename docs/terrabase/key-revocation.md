@@ -43,15 +43,15 @@ SHA-256 of the key string they came from). ts-auth caps their expiry at the key'
 
 | Transport | New requests / statements | Already running |
 |---|---|---|
-| HTTP (documents, SQL, libSQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is aborted within 2.5 s. This includes slow request bodies |
+| HTTP (documents, SQL, libSQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is cut off within 2.5 s, including slow request bodies. Before its response starts it is answered like a new request: the `401` above, or `503 auth_unavailable` with `Retry-After: 1` when the key could not be verified in time. A response already under way is aborted |
 | Change streams (SSE) | refused as above | the connection is aborted within 2.5 s |
 | Postgres | FATAL `28000 key_revoked: ...` / `key_expired: ...`, then the connection closes | the session is watched for its whole life, idle or busy. Its TCP connection is aborted within 2.5 s and unflushed rows are dropped. An open transaction rolls back |
 | Wire protocol | dashboard keys are not accepted. `tb_` keys keep CatalogGate revocation | unchanged |
 
 A request or session is watched by asking `IKeyAuthority` every 250 ms while it runs. These checks hit the same
 per-node answers, so a busy key still costs about one ts-auth call per node per second. Running work never outlives the
-last yes. If no new yes arrives before that one runs out (2 s after it was asked), the work is aborted, and waiting for
-ts-auth does not extend it. A Postgres session exchanges its key again as each 60-second token lapses, as statements
+last yes. If no new yes arrives before that one runs out (2 s after it was asked), the work is cut off, and waiting for
+ts-auth does not extend it. A slow ts-auth therefore ends long requests with `503 auth_unavailable` rather than a reset. A Postgres session exchanges its key again as each 60-second token lapses, as statements
 do, so an idle session that is still valid stays open. Clients should treat `key_revoked` and
 `key_expired` as permanent: stop retrying and ask for a new key. Treat `auth_unavailable` as retryable.
 

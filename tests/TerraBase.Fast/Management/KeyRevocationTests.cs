@@ -2,9 +2,12 @@ using System.Data;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
+using TerraBase.Engine;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -138,6 +141,51 @@ public sealed class KeyRevocationTests
     }
 
     [Test]
+    public async Task A_write_still_waiting_when_its_key_cannot_be_verified_answers_auth_unavailable_instead_of_a_reset(CancellationToken cancellationToken)
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var (_, token) = Grant(api, database, scope: "documents:read documents:write");
+        using var client = api.WithToken(token);
+        var sql = ManagementApi.Uri(database.Data + "/sql/execute");
+        var create = new { statements = new[] { new { sql = "CREATE TABLE waiting (id INTEGER PRIMARY KEY)" } } };
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>()
+            .OpenDatabaseAsync(new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), cancellationToken))!;
+        var asked = api.Issuer.StatusRequests;
+        HttpResponseMessage response;
+        await using (var held = await store.BeginTransactionAsync(write: true, cancellationToken))
+        {
+            // Admitted with a fresh yes, the statement then waits for the writer this test holds: no response has started.
+            var waiting = client.PostAsJsonAsync(sql, create, cancellationToken);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(api.Issuer.StatusRequests > asked), TimeSpan.FromSeconds(10));
+            api.Issuer.StatusAvailable = false;
+            // Past the last yes plus one poll without a wall-clock sleep: each step gives the watch one tick.
+            await TerraBaseTestServer.EventuallyAsync(_ =>
+            {
+                time.Advance(TimeSpan.FromMilliseconds(250));
+                return Task.FromResult(waiting.IsCompleted);
+            }, TimeSpan.FromSeconds(10));
+            response = await waiting;
+        }
+
+        using (response)
+        {
+            // Answered like a new request, never an empty connection reset (an edge 502 with no body).
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("error").GetProperty("code").GetString())
+                .IsEqualTo("auth_unavailable");
+            await Assert.That(response.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+        }
+
+        // The cut-off statement never ran: the same table can still be created.
+        api.Issuer.StatusAvailable = true;
+        using var retried = await client.PostAsJsonAsync(sql, create, cancellationToken);
+        await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
     public async Task Revocation_ends_an_open_postgres_session_and_refuses_new_connections()
     {
         await using var api = await ManagementApi.StartAsync();
@@ -234,14 +282,14 @@ public sealed class KeyRevocationTests
         await Assert.That(api.Issuer.StatusRequests).IsEqualTo(0);
     }
 
-    private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false)
+    private static (string Key, string Token) Grant(ManagementApi api, ManagedDatabaseRef database, bool mismatched = false, string scope = "documents:read databases:read")
     {
         var id = EntityIds.New().ToString();
         var key = id + "_" + new Faker().Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
         var token = api.Issuer.Mint(id, descriptor =>
         {
             descriptor.Claims["project_id"] = database.Project;
-            descriptor.Claims["scope"] = "documents:read databases:read";
+            descriptor.Claims["scope"] = scope;
             descriptor.Claims["key_id"] = mismatched ? EntityIds.New().ToString() : id;
             descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
         });
