@@ -25,15 +25,21 @@ const storage = (gb) => (gb < 1 ? `${number(Math.round(gb * 1000))} MB` : `${num
 const limit = (value, format = number) => (value === null ? "Custom" : format(value));
 const row = (label, cell) => `| ${label} | ${plans.map((p) => cell(p)).join(" | ")} |`;
 const table = (label) => `| ${label} | ${planNames.join(" | ")} |\n| --- | ${planNames.map(() => "---").join(" | ")} |`;
+// Paid plans list every interval they are sold at; Free needs no card and Enterprise is arranged through sales.
 const subscription = (p) => {
-  switch (p.billingInterval) {
-    case "free": return `${usd(p.priceMonthlyUsd)}; no card`;
-    case "year": return `${usd(p.priceAnnualUsd)}/year only (${usd(p.priceMonthlyUsd)}/month equivalent)`;
-    case "month": return `${usd(p.priceMonthlyUsd)}/month`;
-    case "contact": return `${usd(p.priceMonthlyUsd)}/month support + usage; contact sales`;
-    default: throw new Error(`Unknown billing interval: ${p.billingInterval}`);
-  }
+  if (p.priceMonthlyUsd === 0) return `${usd(p.priceMonthlyUsd)}; no card`;
+  if (!p.available) return `${usd(p.priceMonthlyUsd)}/month support + usage; contact sales`;
+  return p.billingIntervals.map((interval) => {
+    switch (interval) {
+      case "month": return `${usd(p.priceMonthlyUsd)}/month`;
+      case "year": return `${usd(p.priceAnnualUsd)}/year`;
+      default: throw new Error(`Unknown billing interval: ${interval}`);
+    }
+  }).join(" or ");
 };
+// Months of the monthly price that yearly billing saves; every paid plan must save the same.
+const savedMonths = [...new Set(plans.filter((p) => p.billingIntervals.includes("year")).map((p) => 12 - p.priceAnnualUsd / p.priceMonthlyUsd))];
+if (savedMonths.length !== 1 || !Number.isInteger(savedMonths[0]) || savedMonths[0] <= 0) throw new Error("Paid plans must save the same whole number of months on yearly billing");
 const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(", ");
 
 const pricingMd = `${header}
@@ -70,7 +76,8 @@ Launch regions: ${regionList}.
 Request rates, concurrency, query timeout, storage limit, point-in-time recovery, backup
 retention and support response targets per plan are in [plan entitlements](./limits.md#plan-entitlements).
 
-No trials or annual Pro/Team discounts are offered.
+Starter, Pro and Team are billed monthly or yearly. A year costs ${12 - savedMonths[0]} monthly payments, so yearly billing saves
+${savedMonths[0]} months. No trials are offered.
 
 ## Pay-as-you-go rates
 

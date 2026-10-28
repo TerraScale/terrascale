@@ -6,11 +6,11 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 const pricing = read('docs/pricing.md');
 const limits = read('docs/limits.md');
 
-test('subscription table preserves annual-only Starter and nullable annual prices', () => {
+test('subscription table offers every paid plan monthly and yearly, two months free', () => {
   assert.match(pricing, /\| Free \| Starter \| Pro \| Team \| Enterprise \|/);
-  assert.match(pricing, /\| Subscription \| \$0; no card \| \$30\/year only \(\$2\.50\/month equivalent\) \| \$20\/month \| \$50\/month \| \$999\/month support \+ usage; contact sales \|/);
-  assert.doesNotMatch(pricing, /undefined|null|\$NaN|\| Annual price \|/);
-  assert.match(pricing, /No trials or annual Pro\/Team discounts/);
+  assert.match(pricing, /\| Subscription \| \$0; no card \| \$3\/month or \$30\/year \| \$20\/month or \$200\/year \| \$50\/month or \$500\/year \| \$999\/month support \+ usage; contact sales \|/);
+  assert.doesNotMatch(pricing, /undefined|null|\$NaN|\| Annual price \||year only|annual Pro\/Team discounts/);
+  assert.match(pricing, /A year costs 10 monthly payments, so yearly billing saves\n2 months\. No trials are offered\./);
 });
 
 test('approved usage rates bill operation-unit overages and defer storage and egress', () => {
