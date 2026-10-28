@@ -37,8 +37,9 @@ npm run cf:dev
 
 ## Deployment
 
-There is no CI and no test suite. Cloudflare Workers Builds builds `main` from
-Git (`npm run build`, then `npx wrangler deploy`). `wrangler.toml` serves
+GitHub Actions runs CodeQL and secret scanning (`.github/workflows/`). `npm run
+build` runs the `scripts/*.test.mjs` tests before prerendering. Cloudflare Workers
+Builds builds `main` from Git (`npm run build`, then `npx wrangler deploy`). `wrangler.toml` serves
 `build/` as static assets only (no Worker script) on `terrascale.tech` and
 `www.terrascale.tech`. `npm run cf:dev` serves the built site locally.
 
