@@ -1,23 +1,11 @@
 # API request overhead: keyed attribution baseline, 2026-10-27
 
-This is diagnostic evidence, not qualification or a speedup claim. The original target remains server overhead
-below 10% of engine time at c=1 and c=16. The measured HTTP cells are far outside that target. The host became
-contended; no repeat was discarded. This report precedes the duplicate-ETag candidate.
-
-Source `a11f18152`, beta, 12 vCPU, .NET 11.0.0-rc.1.26425.128, production workstation/concurrent GC and tiered PGO.
-Three repeats; 256 B/4 KiB JSON, 10,000 preloaded keys, 1 s warmup and 5 s cells; 48 cells, zero operation errors.
-Synthetic project-scoped token carries key_id/key_gen and a 12 h benchmark lifetime against the test-only issuer.
-The measured server includes auth authority/watch, admission and metering. This is not a production auth-server measurement.
-
-Hosting activity wall time excludes pre-host Kestrel parsing/socket work. Engine time is GetAsync wall time inside
-the request; overhead is each request's server minus engine duration, sorted independently. At most 16,384 paired
-samples per cell. Instrumentation affects allocations and scheduling; it is identical for all HTTP lanes.
-`api` consumes bytes, `api-json` parses the JSON response, and `sdk` uses the document SDK. In-process `engine`
-unwraps the timing decorator. Server/engine/overhead columns are absent for that lane.
-
-Host start 23:26:45Z: load1 1.65, CPU pressure avg10 0.05%; end 23:32:06Z: load1 6.89, pressure avg10 7.53%.
-Full host evidence and original JSON cells were retained at `/tmp/perf-api-keyed-baseline.{md,host}` on delta;
-managed host originals are under `benchmark/bench/2026-10-27-perf-api-keyed-baseline.*` in the attribution checkout.
+Diagnostic only: no qualification or speedup. Original server-over-engine target <10% at c=1/16 remains unmet; HTTP cells are far outside it. The host became contended; every repeat is retained. This predates the duplicate-ETag candidate.
+Source `a11f18152`, beta 12 vCPU, .NET 11.0.0-rc.1.26425.128, production workstation/concurrent GC and tiered PGO. Three repeats; 256 B/4 KiB JSON, 10,000 preloaded keys, 1 s warmup, 5 s cells; all 48 cells have zero operation errors.
+Synthetic project token has key_id/key_gen and a 12 h benchmark lifetime against the test-only issuer. Auth authority/watch, admission and metering are included; production ts-auth round trips are not measured.
+Hosting activity excludes pre-host Kestrel parsing/socket work. Engine is per-request GetAsync wall time; overhead is server minus engine, sorted independently, with at most 16,384 paired samples per cell. Instrumentation affects allocation/scheduling and is identical across HTTP lanes.
+`api` consumes bytes, `api-json` parses response JSON, `sdk` uses the document SDK. In-process `engine` unwraps the decorator and has no server/engine/overhead attribution columns.
+Host 23:26:45Z→23:32:06Z: load1 1.65→6.89, CPU pressure avg10 0.05%→7.53%. Full host evidence/raw JSON retained at `/tmp/perf-api-keyed-baseline.{md,host}` on delta; managed originals `benchmark/bench/2026-10-27-perf-api-keyed-baseline.*` in the attribution checkout.
 
 | Size | c | Lane | Repeat | ops/s | Client p50/p99 µs | Server p50/p99 µs | Engine p50/p99 µs | Overhead p50/p99 µs | CPU µs/op | Alloc B/op | Errors |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
