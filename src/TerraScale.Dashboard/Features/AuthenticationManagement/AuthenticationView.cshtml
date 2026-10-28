@@ -2,7 +2,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.AuthenticationManagement
 @{
-    var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManage;
+    var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageProject;
     string Date(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
     void Card(string title, string description) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@("auth-" + current.Key + "-title")">@title</h2><p class="ts-card-description">@description</p></div></header> }
     // Confirm the button click so acceptance keeps native validation, submit and shared pending feedback.

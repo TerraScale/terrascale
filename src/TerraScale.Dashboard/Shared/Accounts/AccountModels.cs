@@ -257,6 +257,8 @@ public sealed record AccountContext(SessionRecord Session, AccountRecord Account
         TerraScale.DotNet.TerraScaleIds.IsValid(organization.Id) &&
         Project is { Status: "active", Role: "member" or "admin" } project && TerraScale.DotNet.TerraScaleIds.IsValid(project.Id) &&
         project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
+    // ts-auth's admin project role on the live project, from organization ownership/admin or an explicit grant.
+    public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;
     // When this request loaded the context from ts-auth; AccountScope reuses it while nothing has changed since.
     [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
 }

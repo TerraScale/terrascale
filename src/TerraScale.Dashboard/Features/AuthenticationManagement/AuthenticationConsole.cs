@@ -8,7 +8,7 @@ using TerraScale.DotNet;
 namespace TerraScale.Dashboard.Features.AuthenticationManagement;
 
 // The project's end-user tenant at ts-auth, managed with the signed-in user's own token.
-// ts-auth checks the project role on every call; the dashboard also requires an organization admin for changes.
+// ts-auth checks the project role on every call; the dashboard mirrors it: any project role reads, the admin project role changes.
 public static partial class AuthenticationConsole
 {
     public const string Unreachable = "ts-auth is unreachable right now. Try again shortly.";
@@ -49,7 +49,7 @@ public static partial class AuthenticationConsole
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form)) return Results.StatusCode(403);
-        if (!context.CanManage || context.Project is null) return Results.StatusCode(403);
+        if (!context.CanManageProject || context.Project is null) return Results.StatusCode(403);
         var (session, project, cancel) = (context.Session, context.Project.Id, http.RequestAborted);
         try
         {

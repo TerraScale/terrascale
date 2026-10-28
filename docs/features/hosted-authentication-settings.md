@@ -18,8 +18,9 @@ is persisted or the session/grant is revoked; later increases cannot revive it.
 `/auth/danger` is the final navigation section. It exposes the existing per-user
 delete, per-session revoke and OAuth application delete APIs. Each action requires
 the exact project name. It lists the first page of users and sessions; their
-respective sections retain paging and individual actions. Mutations require an
-owner or admin, CSRF validation, and ts-auth's project authorization with the
+respective sections retain paging and individual actions. Reads require any
+project role (`viewer`, `member` or `admin`); mutations require the effective
+`admin` project role (organization owner/admin or an explicit grant), CSRF validation, and ts-auth's project authorization with the
 signed-in user's own token. Branding replacement preserves other settings parts;
 the MCP tool preserves appearance fields when changing just name/logo/accent.
 

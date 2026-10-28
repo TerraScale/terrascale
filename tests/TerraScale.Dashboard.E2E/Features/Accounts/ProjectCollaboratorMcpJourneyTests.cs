@@ -85,8 +85,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         await McpCall(replica, secret, "select_project", new { projectId = project });
 
         foreach (var name in new[] { "get_organization", "get_billing", "list_plans", "list_invoices", "list_members", "list_invitations", "list_audit_events",
-            "get_usage", "list_api_keys",
-            "auth_get_overview", "auth_list_users", "auth_list_sessions", "auth_list_clients" })
+            "get_usage", "list_api_keys" })
             await McpDenied(replica, secret, name, new { organizationId = org, projectId = project });
         var mutations = new (string Name, object Arguments)[]
         {
@@ -100,11 +99,20 @@ public sealed partial class TsAuthPlatformJourneyTests
             ("request_organization_deletion", new { confirmName = "MCP collaborator workspace" }),
             ("leave_organization", new { }),
             ("change_plan", new { plan = "free" }),
-            ("create_database", new { name = "denied", regions = new[] { "GRU", "SFO" } }),
-            ("auth_remove_provider", new { provider = "google" })
+            ("create_database", new { name = "denied", regions = new[] { "GRU", "SFO" } })
         };
         foreach (var mutation in mutations)
             await McpDenied(replica, secret, mutation.Name, mutation.Arguments);
+        // Project authentication follows ts-auth's project role: any grant reads, only the admin project role changes.
+        var clients = await McpCall(replica, secret, "auth_list_clients", new { organizationId = org, projectId = project });
+        await Assert.That(clients.GetProperty("clients").GetArrayLength()).IsEqualTo(0);
+        var client = AccountService.NewId();
+        var deletion = (await HttpJourney.McpAsync(replica, secret, "tools/call", new { name = "auth_delete_client", arguments = new { organizationId = org, projectId = project, clientId = client } }))
+            .GetProperty("result");
+        await Assert.That(deletion.TryGetProperty("isError", out var refused) && refused.GetBoolean()).IsEqualTo(role != "admin");
+        if (role != "admin") await Assert.That(deletion.GetProperty("content")[0].GetProperty("text").GetString()).IsEqualTo("Project admin access is required.");
+        await Assert.That(platform.Producer.Count("GET", "/v1/" + project + "/clients", user.Subject)).IsEqualTo(1);
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/" + project + "/clients/" + client, user.Subject)).IsEqualTo(role == "admin" ? 1 : 0);
         var rename = new { organizationId = org, projectId = project, name = "Renamed granted project" };
         if (role == "admin") await McpCall(replica, secret, "update_project", rename);
         else await McpDenied(replica, secret, "update_project", rename);

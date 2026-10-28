@@ -15,7 +15,7 @@ public static partial class AuthenticationConsole
         var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
-        if (!Csrf.Validate(http, form) || !context.CanManage || context.Project is null) return Results.StatusCode(403);
+        if (!Csrf.Validate(http, form) || !context.CanManageProject || context.Project is null) return Results.StatusCode(403);
         if (form["project_id"] != context.Project.Id) return Results.Text("The selected project changed. Reload Users before exporting.", statusCode: 409);
         var format = form["format"].ToString();
         var after = form["after"].ToString();

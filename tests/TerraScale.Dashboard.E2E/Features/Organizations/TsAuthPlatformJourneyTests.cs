@@ -1055,7 +1055,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             producer.ObservePlan(request);
-            return request.RequestUri is { Host: "auth.terrascale.tech" } uri && uri.AbsolutePath.StartsWith("/v1/terrascale/", StringComparison.Ordinal)
+            return request.RequestUri is { Host: "auth.terrascale.tech" } uri && (uri.AbsolutePath.StartsWith("/v1/terrascale/", StringComparison.Ordinal) || producer.ServesTenant(uri.AbsolutePath))
                 ? producer.HandleAsync(request, cancellationToken)
                 : HttpForwarding.SendAsync(fallback, request, cancellationToken);
         }
@@ -1184,7 +1184,9 @@ public sealed partial class TsAuthPlatformJourneyTests
                         if (path == "/v1/terrascale/account" && refused.Status == HttpStatusCode.Conflict) { DeletionStatus = HttpStatusCode.Conflict; deletionRefused = true; }
                         return Error(refused.Status, refused.Code, refused.Message);
                     }
-                    return Route(request.Method.Method, path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2..], request.RequestUri.Query, body, caller);
+                    var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    return segments[1] == "terrascale" ? Route(request.Method.Method, segments[2..], request.RequestUri.Query, body, caller)
+                        : Tenant(request.Method.Method, segments[1..], caller.UserId);
                 }
             }
             catch (InvalidOperationException error)
@@ -1192,6 +1194,26 @@ public sealed partial class TsAuthPlatformJourneyTests
                 failures.Enqueue(error.Message);
                 return Error(HttpStatusCode.InternalServerError, "test_contract_failure", "Test-only contract failure.");
             }
+        }
+
+        public bool ServesTenant(string path)
+        {
+            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            lock (gate) return parts is ["v1", var project, "clients", ..] && organizations.Any(org => org.Projects.Any(item => item.Id == project));
+        }
+
+        // The project tenant API checks the caller's effective project role: viewer reads, admin changes.
+        private HttpResponseMessage Tenant(string method, string[] parts, string user)
+        {
+            var org = organizations.Single(item => item.Projects.Any(project => project.Id == parts[0]));
+            var role = EffectiveRole(org, org.Projects.Single(project => project.Id == parts[0]), user);
+            if (role is null) return Error(HttpStatusCode.NotFound, "not_found", "Project unavailable.");
+            return (parts[1..], method) switch
+            {
+                (["clients"], "GET") => Json(new { items = Array.Empty<object>(), next = (string?)null }),
+                (["clients", _], "DELETE") => role == "admin" ? new(HttpStatusCode.NoContent) : Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin."),
+                _ => throw new InvalidOperationException("Unexpected tenant call " + method + " " + string.Join('/', parts))
+            };
         }
 
         private HttpResponseMessage Route(string method, string[] parts, string query, string body, (string UserId, string Email) caller)
