@@ -23,6 +23,9 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 {
     private const string Collection = AuthStore.OidcApplicationCollection;
 
+    // The HttpContext.Items key of this request's copy of one client.
+    private readonly record struct RequestCopy(string Tenant, string ClientId);
+
     // The tenant of the request being served (Tenancy); the platform's outside a tenant request.
     private string Tenant => Tenancy.Current(http.HttpContext);
 
@@ -32,6 +35,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
         ArgumentNullException.ThrowIfNull(application);
         application.ClientId = TerraScaleIds.Validate(application.ClientId);
         (application.Id, application.InstanceId) = (application.ClientId, this.Tenant);
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.ClientId));
         if (http.HttpContext?.Items[TenantDirectory.ClientIssuanceCaller] is UserRecord caller)
         {
             application.SecretBindings = caller.StepUpBindings;
@@ -53,6 +57,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     public async ValueTask UpdateAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
         application.Version = await store.ReplaceAsync(Collection, this.Tenant, application.Id!, Serialize(application), application.Version!, cancellationToken).ConfigureAwait(false)
             ?? throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
     }
@@ -61,13 +66,18 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     public async ValueTask DeleteAsync(OidcApplication application, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(application);
+        http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
         if (!await store.CompareAndDeleteAsync(Collection, this.Tenant, application.Id!, application.Version!, cancellationToken).ConfigureAwait(false))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// The client, read from storage once per request: OpenIddict looks the same client up six to eight times while it
+    /// serves one token or authorization request. Entity caching stays off globally (see <see cref="OidcServer"/>), so
+    /// nothing is reused across requests; this request's own writes replace or drop its copy.
+    /// </summary>
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {
         if (!TerraScaleIds.IsValid(identifier))
@@ -75,6 +85,20 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
             return null;
         }
 
+        var items = http.HttpContext?.Items;
+        var key = new RequestCopy(this.Tenant, identifier);
+        if (items is not null && items.TryGetValue(key, out var copy))
+        {
+            return (OidcApplication?)copy;
+        }
+
+        var application = await this.ReadAsync(identifier, cancellationToken).ConfigureAwait(false);
+        items?[key] = application;
+        return application;
+    }
+
+    private async ValueTask<OidcApplication?> ReadAsync(string identifier, CancellationToken cancellationToken)
+    {
         var document = await store.GetAsync(Collection, this.Tenant, identifier, cancellationToken).ConfigureAwait(false);
         if (document is null)
         {
