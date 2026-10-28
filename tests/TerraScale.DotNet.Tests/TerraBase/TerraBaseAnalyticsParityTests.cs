@@ -17,7 +17,8 @@ public sealed class TerraBaseAnalyticsParityTests
                  "items":[{"databaseId":"01JA0000000000000000000002","databaseName":"app","region":"gru","series":[
                  {"start":"2026-10-21T23:00:00Z","requests":{"GET":9007199254740993},"operations":{"put":2},"errors":1,
                   "latency":{"p50Ms":null,"p95Ms":null,"p99Ms":null},"storageBytes":null,
-                  "clientBandwidth":{"bytesSent":9007199254740994,"bytesReceived":1},"replicationBandwidth":{"bytesSent":3,"bytesReceived":4}}]}]}
+                  "clientBandwidth":{"bytesSent":9007199254740994,"bytesReceived":1},"replicationBandwidth":{"bytesSent":3,"bytesReceived":4},
+                  "statements":{"hrana":{"statements":5,"errors":2,"latency":{"p50Ms":1.5,"p95Ms":3,"p99Ms":4}}}}]}]}
                 """));
         });
         using var http = new HttpClient(handler);
@@ -28,6 +29,7 @@ public sealed class TerraBaseAnalyticsParityTests
         await Assert.That(point.Requests["GET"]).IsEqualTo(9007199254740993L);
         await Assert.That(point.ClientBandwidth.BytesSent).IsEqualTo(9007199254740994L);
         await Assert.That(point.ReplicationBandwidth.BytesReceived).IsEqualTo(4);
+        await Assert.That(point.Statements["hrana"]).IsEqualTo(new TerraBaseStatementUsage(5, 2, new(1.5, 3, 4)));
         await Assert.That(point.Latency.P95Ms).IsNull();
         await Assert.That(point.StorageBytes).IsNull();
         await Assert.That(project.BucketSeconds).IsEqualTo(60);

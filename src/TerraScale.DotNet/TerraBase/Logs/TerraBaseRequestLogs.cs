@@ -4,7 +4,10 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>A completed authorized request observation; Route is a template, never a URL or query text.</summary>
+/// <summary>
+/// A completed authorized request observation: an HTTP request, or a PostgreSQL wire exchange (route <c>postgres</c>).
+/// Route is a template, never a URL or query text.
+/// </summary>
 /// <param name="Id">Canonical observation ULID.</param>
 /// <param name="Time">Request observation time.</param>
 /// <param name="Region">Region that recorded the request.</param>
@@ -15,8 +18,10 @@ namespace TerraScale.DotNet.TerraBase;
 /// <param name="Operations">Committed document operations.</param>
 /// <param name="IsQuery">Whether the route is a query or SQL request.</param>
 /// <param name="RequestId">Correlation identifier, or null when unavailable.</param>
+/// <param name="Statements">SQL statements the request carried.</param>
+/// <param name="StatementErrors">Failed statements among them, also inside a successful response.</param>
 public sealed record TerraBaseRequestLog(string Id, DateTimeOffset Time, string Region, string Method, string Route,
-    int Status, double LatencyMs, long Operations, bool IsQuery, string? RequestId = null)
+    int Status, double LatencyMs, long Operations, bool IsQuery, string? RequestId = null, long Statements = 0, long StatementErrors = 0)
 {
     /// <summary>Canonical observation ULID.</summary>
     public string Id { get; init; } = TerraScaleIds.IsValid(Id) ? Id : throw new JsonException("Invalid request-log ULID.");
