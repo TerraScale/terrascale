@@ -37,6 +37,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
     [Arguments("change_member_role")]
     [Arguments("remove_member")]
     [Arguments("leave_organization")]
+    [Arguments("sign_out_everywhere")]
     [Arguments("delete_account")]
     [Arguments("create_project")]
     [Arguments("list_projects")]
@@ -105,6 +106,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "change_member_role" => client.Platform.ChangeMemberRoleAsync("fixture-sign-in", organizationId, userId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRole)!, cancellationToken: cancellationToken),
             "remove_member" => client.Platform.RemoveMemberAsync("fixture-sign-in", organizationId, userId, cancellationToken: cancellationToken),
             "leave_organization" => client.Platform.LeaveOrganizationAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
+            "sign_out_everywhere" => client.Platform.SignOutEverywhereAsync("fixture-sign-in", cancellationToken),
             "delete_account" => client.Platform.DeleteAccountWithProofAsync("fixture-sign-in", "fixture-step-up", cancellationToken: cancellationToken),
             "create_project" => client.Platform.CreateProjectAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName)!, cancellationToken: cancellationToken),
             "list_projects" => client.Platform.ListProjectsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
