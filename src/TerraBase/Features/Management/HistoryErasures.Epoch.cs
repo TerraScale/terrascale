@@ -9,13 +9,14 @@ internal sealed partial class HistoryErasures
 {
     private readonly Dictionary<(string Erasure, string Peer), (int Evidence, DateTimeOffset Next, TimeSpan Delay)> _recovery = [];
 
+    // A long pull's wait is at least this many times its own duration (see RecoverEpochAsync).
+    private const int PullCostFactor = 12;
+    private static readonly TimeSpan LongPull = TimeSpan.FromSeconds(30);
+
     // Per peer, when its snapshots may be pulled again after a pull that moved no erasure on. A pull copies the peer's whole
     // auth and SYSTEM files, the same for every erasure, and holds SYSTEM's writer for the import: keyed per erasure, 150
     // stalled erasures pulled back to back and held it about 60% of the time (gru, 2026-10-28), so creates timed out.
     private readonly Dictionary<string, (DateTimeOffset Next, TimeSpan Delay)> _peerPulls = [with(StringComparer.Ordinal)];
-
-    private const int PullCostFactor = 12;
-    private static readonly TimeSpan LongPull = TimeSpan.FromSeconds(30);
 
     private static ulong Cut(IEnumerable<OriginCut> cuts, ulong replica) =>
         cuts.Where(cut => cut.Replica == replica).Select(cut => cut.Stamp).DefaultIfEmpty().Max();
