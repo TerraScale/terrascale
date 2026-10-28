@@ -19,6 +19,12 @@ public sealed record TerraBaseReplicationBandwidth(string SourceRegion, string D
 /// <param name="P99Ms">P99 Ms.</param>
 public sealed record TerraBaseLatencyPercentiles(double? P50Ms, double? P95Ms, double? P99Ms);
 
+/// <summary>One protocol's SQL statements, apart from the requests that carried them; a Hrana SQL error inside an HTTP 200 is a statement error.</summary>
+/// <param name="Statements">Statements run or refused.</param>
+/// <param name="Errors">Failed statements.</param>
+/// <param name="Latency">Statement latency percentiles.</param>
+public sealed record TerraBaseStatementUsage(long Statements, long Errors, TerraBaseLatencyPercentiles Latency);
+
 /// <summary>One UTC analytics bucket. Storage is the average of sampled on-disk bytes, or null before sampling.</summary>
 /// <param name="Start">Start.</param>
 /// <param name="Requests">Requests.</param>
@@ -28,7 +34,8 @@ public sealed record TerraBaseLatencyPercentiles(double? P50Ms, double? P95Ms, d
 /// <param name="StorageBytes">Storage Bytes.</param>
 /// <param name="ClientBandwidth">Client Bandwidth.</param>
 /// <param name="ReplicationBandwidth">Replication bytes sent and received.</param>
-public sealed record TerraBaseAnalyticsPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests, IReadOnlyDictionary<string, long> Operations, long Errors, TerraBaseLatencyPercentiles Latency, long? StorageBytes, TerraBaseBandwidthUsage ClientBandwidth, TerraBaseBandwidthUsage ReplicationBandwidth);
+/// <param name="Statements">SQL statements by protocol (postgres, hrana).</param>
+public sealed record TerraBaseAnalyticsPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests, IReadOnlyDictionary<string, long> Operations, long Errors, TerraBaseLatencyPercentiles Latency, long? StorageBytes, TerraBaseBandwidthUsage ClientBandwidth, TerraBaseBandwidthUsage ReplicationBandwidth, IReadOnlyDictionary<string, TerraBaseStatementUsage> Statements);
 
 /// <summary>A database and observing region's analytics, oldest bucket first.</summary>
 /// <param name="DatabaseId">Database Id.</param>

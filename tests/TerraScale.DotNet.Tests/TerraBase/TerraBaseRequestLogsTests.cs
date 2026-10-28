@@ -21,7 +21,7 @@ public sealed class TerraBaseRequestLogsTests
                 throw new InvalidOperationException("Unexpected request-log operation.");
             queries.Add(request.RequestUri.Query);
             return Task.FromResult(TerraBaseIntegrationFixture.Json(Body(Entry + "," + Entry.Replace("0003\"", "0004\"", StringComparison.Ordinal)
-                .Replace("\"isQuery\":true}", "\"isQuery\":false,\"requestId\":\"customer-correlation\"}", StringComparison.Ordinal))));
+                .Replace("\"isQuery\":true}", "\"isQuery\":false,\"requestId\":\"customer-correlation\",\"statements\":3,\"statementErrors\":1}", StringComparison.Ordinal))));
         });
         using var http = new HttpClient(handler);
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
@@ -37,6 +37,8 @@ public sealed class TerraBaseRequestLogsTests
         await Assert.That(logs.Items[0].IsQuery).IsTrue();
         await Assert.That(logs.Items[0].RequestId).IsNull();
         await Assert.That(logs.Items[1].RequestId).IsEqualTo("customer-correlation");
+        await Assert.That((logs.Items[0].Statements, logs.Items[0].StatementErrors)).IsEqualTo((0L, 0L));
+        await Assert.That((logs.Items[1].Statements, logs.Items[1].StatementErrors)).IsEqualTo((3L, 1L));
     }
 
     [Test]
