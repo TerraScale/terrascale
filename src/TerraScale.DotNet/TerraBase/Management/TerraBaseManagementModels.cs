@@ -117,6 +117,12 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
     [JsonRequired]
     public bool AllRegions { get; init; }
 
+    /// <summary>The name lost during a cross-region name conflict, or null when no conflict is reported.</summary>
+    public string? PreviousName { get; init; }
+
+    /// <summary>The immutable database id that kept <see cref="PreviousName"/>, or null.</summary>
+    public string? ConflictOf { get; init; }
+
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(ReplicaRegions);
 }
 
