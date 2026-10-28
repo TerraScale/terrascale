@@ -9,6 +9,7 @@ import pathlib
 import signal
 import subprocess
 import sys
+import time
 
 pid, own = os.getppid(), None
 while pid > 1:
@@ -32,15 +33,22 @@ with contextlib.ExitStack() as reservations:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             sys.exit('host has another heavy job; retry on a quiet host')
-    load = os.getloadavg()
-    pressure = pathlib.Path('/proc/pressure/cpu').read_text()
-    if load[0] > os.cpu_count() / 4 or float(pressure.split('avg10=')[1].split()[0]) > 1:
-        sys.exit('host is not quiet: load or CPU pressure exceeds admission budget')
+    observations, deadline = [], time.monotonic() + 300
+    while True:
+        load = os.getloadavg()
+        pressure = pathlib.Path('/proc/pressure/cpu').read_text()
+        observations.append(dict(at=time.time(), load=load, cpu_pressure=pressure))
+        if load[0] <= os.cpu_count() / 4 and float(pressure.split('avg10=')[1].split()[0]) <= 1:
+            break
+        if time.monotonic() >= deadline:
+            sys.exit('reserved host did not become quiet within five minutes')
+        time.sleep(5)
     output = pathlib.Path(sys.argv[1])
     output.mkdir()
     output.joinpath('admission.json').write_text(json.dumps(dict(
         at=datetime.datetime.now(datetime.timezone.utc).isoformat(), host=os.uname().nodename,
-        scheduler_locks=[str(path) for path in locks], load=load, cpu_pressure=pressure)) + '\n')
+        scheduler_locks=[str(path) for path in locks], load=load, cpu_pressure=pressure,
+        admission_observations=observations)) + '\n')
     child, pending = None, None
 
     def stop(signum, _):

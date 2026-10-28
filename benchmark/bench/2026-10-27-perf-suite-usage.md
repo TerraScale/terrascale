@@ -9,8 +9,9 @@ TS_HEAVY_HOST=mariogk-dev ts-heavy-any nice -n 19 \
 ```
 
 Admission reserves all four installed ts-heavy scheduler slots, refusing a host
-with another heavy job, starting load above one quarter of its CPU count, or
-CPU PSI some avg10 above 1%. Reservation descriptors stay out of child processes;
+with another heavy job. It holds the reservation for up to five minutes while
+waiting for starting load ≤ one quarter of CPU count and CPU PSI some avg10 ≤1%.
+Reservation descriptors stay out of child processes;
 `admission.json` records the reservation. Other scheduled heavy jobs wait until
 the suite finishes. This does not exclude ordinary host activity or unscheduled work.
 Use the same host for subsequent regression measurements. The fixed matrix is
