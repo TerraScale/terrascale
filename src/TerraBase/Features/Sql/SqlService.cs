@@ -12,6 +12,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Stats;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
@@ -500,6 +501,7 @@ internal sealed class SqlSession(
         ChangeGroupCapacityException or StorageWriteLimitException => SqlErrors.TooBig("a transaction writes at most 1024 rows and 2 MiB"),
         QueryCapacityException => SqlErrors.Interrupt,
         SqlValueTooLargeException large => SqlErrors.TooBig(large.Message),
+        DocumentValidationException invalid => invalid.TooLarge ? SqlErrors.TooBig(invalid.Message) : SqlErrors.Error("the row does not satisfy document validation"),
         SqlProgramException { Message: "syntax error" } => SqlErrors.Error("SQL syntax error"),
         SqlProgramException program => SqlErrors.Error(program.Message),
         _ => null,

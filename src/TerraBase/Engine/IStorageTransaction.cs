@@ -372,6 +372,10 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Reads the unique keys declared for a collection.</summary>
     ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken);
 
+    /// <summary>Reads at most <paramref name="limit"/> conflicting keys, including hidden contenders, without mutating state.</summary>
+    ValueTask<IReadOnlyList<(string Constraint, string Id)>> GetUniqueConflictsAsync(
+        string collection, ReadOnlyMemory<byte> json, int limit, CancellationToken cancellationToken);
+
     /// <summary>
     /// Declares unique keys for an empty collection; an unchanged declaration is idempotent. With <paramref name="reindex"/>, a
     /// collection with live documents is reindexed instead, and refused with <see cref="UniqueConstraintException"/> only when
