@@ -10,10 +10,6 @@ description: Register signed HTTPS notifications, verify deliveries and recover 
 
 # Collection change webhooks
 
-::: warning API prerequisite
-This guide describes the collection webhook API under review. The producer implementation must be merged and deployed before these calls work. Live deployment and end-to-end delivery have not been verified.
-:::
-
 Register a public HTTPS receiver to receive batches of document change identities for one existing collection. Registration starts at the current change-feed head; it does not send existing data.
 
 ## Register a receiver and save its secret
