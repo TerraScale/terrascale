@@ -10,10 +10,10 @@ nice -n 19 cargo build --locked --manifest-path clients/rust/Cargo.toml
 ```
 
 The official `terrascale` crate is pinned to ts-rust `main` commit
-[`ded5adb3b63ce4af0e3a26f95139968cdf539501`](https://git.terrascale.tech/TerraScale/ts-rust/commit/ded5adb3b63ce4af0e3a26f95139968cdf539501),
+[`ded5adb3b63ce4af0e3a26f95139968cdf539501`](https://github.com/TerraScale/ts-rust/commit/ded5adb3b63ce4af0e3a26f95139968cdf539501),
 version 0.1.0. It is a dev-dependency for SDK contract tests; the validation-only
 production binary does not compile or call the SDK. Cargo dependency resolution
-can still require Forgejo SSH repository read access. A complete load client
+fetches the public repository from GitHub over HTTPS without credentials. A complete load client
 will need the SDK as a production dependency once its APIs support the contract.
 The operating contract requires automatic first-party credential creation and
 delivery; no hand-copying step is approved. Delivery and the load client remain

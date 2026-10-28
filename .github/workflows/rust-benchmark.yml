@@ -1,0 +1,30 @@
+name: Rust benchmark client
+
+on:
+  pull_request:
+    paths:
+      - benchmark/clients/rust/**
+      - .github/workflows/rust-benchmark.yml
+  push:
+    branches: [main]
+    paths:
+      - benchmark/clients/rust/**
+      - .github/workflows/rust-benchmark.yml
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Build and test the locked SDK dependency and benchmark client
+        run: cargo +1.99.1 test --locked --all-targets --manifest-path benchmark/clients/rust/Cargo.toml

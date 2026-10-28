@@ -10,7 +10,7 @@ exits 0. Existing results remain intact.
 
 Requires Linux, Bash, Git, GNU coreutils (`timeout`), util-linux (`flock`), the .NET SDK pinned by
 [global.json](global.json) (11.0.100-rc.1.26425.128) and read access to the
-official private SDK Git repository. No SDK source is vendored. The production
+official public SDK GitHub repository. No SDK source is vendored. The production
 project references a separate checkout of the official `ts-dotnet` main build,
 pinned by [sdk.rev](sdk.rev). The CLI reports the referenced SDK assembly
 version and source revision. The checkout and build outputs are ignored.
@@ -76,10 +76,10 @@ remaining benchmark implementation gaps. The workload preflight still fails
 closed because its lifecycle and measurement contract are not implemented.
 
 Audited official `ts-dotnet` main at
-[`887d9de694bb3d9106d7d8e70029f9f7f554ff85`](https://git.terrascale.tech/TerraScale/ts-dotnet/src/commit/887d9de694bb3d9106d7d8e70029f9f7f554ff85).
-The SDK's own [migration status](https://git.terrascale.tech/TerraScale/ts-dotnet/src/commit/887d9de694bb3d9106d7d8e70029f9f7f554ff85/README.md)
+[`887d9de694bb3d9106d7d8e70029f9f7f554ff85`](https://github.com/TerraScale/ts-dotnet/commit/887d9de694bb3d9106d7d8e70029f9f7f554ff85).
+The SDK's own [migration status](https://github.com/TerraScale/ts-dotnet/blob/887d9de694bb3d9106d7d8e70029f9f7f554ff85/README.md)
 says TS-589 project JWT routes are still pending. TerraBase's producer
-[public route table](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/f5a862b15cb08f5202a46b4183b2ef647a5feb72/docs/api.md)
+public route table (terrabase-premonorepo, commit `f5a862b15cb08f5202a46b4183b2ef647a5feb72`, `docs/api.md`)
 already defines these routes.
 
 | Contract requirement | Official SDK main | Required upstream change |
@@ -117,6 +117,7 @@ receipt with throughput and latency unavailable. It cannot produce a capacity
 verdict until the SDK and load client prerequisites above are complete.
 
 [GRU-selected preflight evidence](bench/gru-preflight.md) is validation evidence,
-not a deployed benchmark. This PR lands only the preflight after green CI,
-current approval and a conflict-free state. The full TS-761 slice
-remains incomplete until the load client and live receipt are implemented.
+not a deployed benchmark. The preflight merges through the GitHub merge queue
+after CI passes on the latest head rebased on main and all reviewer findings
+are resolved. The full TS-761 slice remains incomplete until the load client
+and live receipt are implemented.

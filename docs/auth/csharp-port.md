@@ -794,12 +794,12 @@ Every auth replica reads and writes through gru's TerraBase internal listener
 (port 8081 on gru's NetBird address, with no fallback; discovery and the JWKS read its own region's,
 see "Storage endpoints") and never resends a request.
 
-The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
+The pinned server's decision 0003 (`0003-sqlite-synchronous-normal.md`, terrabase-premonorepo commit `ff256067015433c8c40b59879f1282d2a40480ce`)
 uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone
 preserves committed writes, but an OS crash or power loss can roll back
 acknowledged PUT/DELETE transactions since the WAL was last synced. Thus
 uniqueness claims and consumed-challenge records can be rolled back.
-[Decision 0005](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0005-multi-tenancy.md)
+Decision 0005 (`0005-multi-tenancy.md`, same server commit)
 states that replication `Sync` is rejected by a bootstrap stub and committed
 batches do not yet carry database identity. There is no supported replication
 or regional failover for this pin.
