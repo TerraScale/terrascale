@@ -52,7 +52,7 @@ public sealed partial class TsAuthPlatformJourneyTests
             await Assert.That(tools[name].GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean()).IsTrue();
             await McpCall(replica, secret, name, new { databaseId = database, sql = "SELECT * FROM records LIMIT 10" });
             await McpDenied(replica, secret, name, new { databaseId = database, sql = "DELETE FROM records" },
-                "Only read-only statements (SELECT, WITH, EXPLAIN, VALUES) run here.");
+                "Only read-only statements (SELECT, WITH, EXPLAIN, VALUES, introspection PRAGMA) run here.");
         }
         await McpCall(replica, secret, "list_documents", new { databaseId = database, collection = "records" });
         await McpDenied(replica, secret, "list_documents", new { databaseId = siblingDatabase, collection = "records" });
