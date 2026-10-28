@@ -3,7 +3,7 @@ namespace TerraScale.Dashboard.Features.Auth;
 public interface IProfileTokens
 {
     Task<IReadOnlyList<ProfileToken>> ListAsync(AccountContext context, CancellationToken cancellationToken);
-    Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, CancellationToken cancellationToken);
+    Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent stepUp, CancellationToken cancellationToken);
     Task RevokeAsync(AccountContext context, string id, CancellationToken cancellationToken);
 }
 

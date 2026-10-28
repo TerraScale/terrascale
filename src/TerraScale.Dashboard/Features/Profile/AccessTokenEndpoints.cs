@@ -20,7 +20,8 @@ public static class AccessTokenEndpoints
             try
             {
                 if (!int.TryParse(form["expiresInDays"], out var days)) throw new AccountAccessException("Choose a valid token expiration.", 422);
-                return await AuthEndpoints.AuthorizeAsync(http, ReturnTo, AccessTokens.Validate(form["name"].ToString(), days), days);
+                _ = AccessTokens.Validate(form["name"].ToString(), days);
+                return await StepUpFlow.StartAsync(http, context, "create_pat", "ts-dashboard");
             }
             catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
         });
@@ -40,20 +41,36 @@ public static class AccessTokenEndpoints
     // The ts-auth callback for a token flow: the fresh grant must belong to the signed-in browser's user.
     public static async Task<IResult> IssueAsync(HttpContext http, OidcFlow flow, SessionRecord fresh)
     {
-        var sessions = http.RequestServices.GetRequiredService<DashboardSessions>();
-        var tokens = http.RequestServices.GetRequiredService<IProfileTokens>();
-        var context = await AccountRequest.RequireAsync(http, sessions, http.RequestServices.GetRequiredService<AccountService>());
-        if (context is null)
-        {
-            await http.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(fresh, http.RequestAborted);
-            return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(ReturnTo));
-        }
+        var retained = false;
         try
         {
-            var created = await tokens.CreateAsync(context, flow.TokenName, flow.TokenDays, fresh, http.RequestAborted);
-            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));
+            var sessions = http.RequestServices.GetRequiredService<DashboardSessions>();
+            var tokens = http.RequestServices.GetRequiredService<IProfileTokens>();
+            var browser = await sessions.ReadAsync(http);
+            if (flow.StepUp is not { } intent || browser?.UserId != intent.UserId || StepUpFlow.Browser(http) != intent.Browser)
+                return Results.Problem(StepUpFlow.Required().Message, statusCode: 403);
+            http.Request.QueryString = new(intent.Query);
+            var context = await AccountRequest.RequireAsync(http, sessions, http.RequestServices.GetRequiredService<AccountService>());
+            if (context is null) return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(ReturnTo));
+            try
+            {
+                StepUpFlow.Validate(http, context, intent, "create_pat");
+                var created = await tokens.CreateAsync(context, flow.TokenName, flow.TokenDays, fresh, intent, http.RequestAborted);
+                // The credential now owns the grant, even if preparing/rendering its view fails.
+                retained = true;
+                return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));
+            }
+            catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
         }
-        catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
+        finally
+        {
+            if (!retained)
+            {
+                // Includes browser/workspace validation and cancellation after code exchange.
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await http.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(fresh, cleanup.Token);
+            }
+        }
     }
 
     private static async Task<IResult> FailureAsync(HttpContext http, AccountContext context, DashboardSessions sessions, IProfileTokens tokens, AccountAccessException error)

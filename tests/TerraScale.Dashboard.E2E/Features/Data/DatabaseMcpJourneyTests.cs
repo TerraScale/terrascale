@@ -230,7 +230,10 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             foreach (var id in savedIds.ToArray()) await CallAsync(replica, "delete_saved_query", new() { ["queryId"] = id });
             savedIds.Clear();
 
-            var issued = await CallAsync(client, "create_api_key", new() { ["name"] = "SDK " + suffix, ["scopes"] = new[] { "documents:read", "documents:write" }, ["databaseId"] = databaseId });
+            await ErrorAsync(client, "create_api_key", new() { ["name"] = "SDK " + suffix, ["scopes"] = new[] { "documents:read", "documents:write" }, ["databaseId"] = databaseId });
+            using var issuedResponse = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            { ["_csrf"] = csrf, ["name"] = "SDK " + suffix, ["scopes"] = "documents:read documents:write", ["databaseId"] = databaseId });
+            var issued = await ReadJsonAsync(issuedResponse);
             keyId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
             var keySecret = issued.GetProperty("secret").GetString()!;
             await Assert.That(issued.GetProperty("apiKey").GetProperty("lastFour").GetString()).IsEqualTo("");
@@ -242,7 +245,10 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(credentials.GetRawText().Contains(keySecret, StringComparison.Ordinal)).IsFalse();
             await Assert.That((await CallAsync(replica, "list_api_keys", new() { ["kind"] = "m2m" })).GetProperty("credentials").GetArrayLength()).IsEqualTo(0);
             await ErrorAsync(replica, "list_api_keys", new() { ["kind"] = "invalid" });
-            var rotated = await CallAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 3600 });
+            await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 3600 });
+            using var rotatedResponse = await HttpJourney.PostConfirmedFormAsync(replica, "/api/v1/dashboard/credentials/rotate", new()
+            { ["_csrf"] = await HttpJourney.CsrfAsync(replica), ["keyId"] = keyId, ["previousSecretTtl"] = "3600" });
+            var rotated = await ReadJsonAsync(rotatedResponse);
             await Assert.That(rotated.GetProperty("apiKey").GetProperty("keyId").GetString()).IsEqualTo(keyId);
             await Assert.That(rotated.GetProperty("apiKey").GetProperty("databaseName").GetString()).IsEqualTo(databaseName);
             var rotatedSecret = rotated.GetProperty("secret").GetString()!;

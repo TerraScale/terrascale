@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using TerraScale.DotNet;
+using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Demo;
 
@@ -13,6 +14,10 @@ namespace TerraScale.Dashboard.Demo;
 // tokens, other hosts and regional fanout are refused. One instance per environment; nothing is static.
 sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?> resolveSession, Func<string, string, string, string> role)
 {
+    public IAuthStepUpGateway? StepUp { get; set; }
+    private int createdKeys, rotatedKeys;
+    public int CreatedKeys => Volatile.Read(ref createdKeys);
+    public int RotatedKeys => Volatile.Read(ref rotatedKeys);
     private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
     private static readonly string[] Allowed = ["databases:read", "databases:write", "documents:read", "documents:write"];
     private readonly TerraScaleIdGenerator ids = new();
@@ -36,7 +41,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         [property: JsonPropertyName("created_by")] string CreatedBy, [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
         [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
         [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt,
-        [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
+        [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs,
+        [property: JsonPropertyName("last_used_at")] DateTimeOffset? LastUsedAt = null);
 
     public object Observations()
     {
@@ -69,6 +75,17 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         var rotate = match.Groups["rotate"].Success;
         var cidrsRoute = match.Groups["cidrs"].Success;
         lock (gate) requests.Add((request.Method.Method, uri.AbsolutePath, actor.UserId, token));
+        async Task<bool> ConfirmAsync(string purpose)
+        {
+            try
+            {
+                if (StepUp is null || !request.Headers.TryGetValues("X-TerraScale-Step-Up-Proof", out var proofs)) return false;
+                await StepUp.ConsumeAsync(new(actor.UserId, "Synthetic", actor.Email, token, null, DateTimeOffset.UtcNow.AddHours(1)),
+                    proofs.Single(), purpose, "ts-auth", null, cancellationToken);
+                return true;
+            }
+            catch (AccountAccessException) { return false; }
+        }
         var current = role(actor.UserId, organization, project);
         if (current.Length == 0) return Error(HttpStatusCode.NotFound, "not_found");
         var manage = current is "owner" or "admin";
@@ -115,6 +132,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         }
         if (keyId.Length == 0 && request.Method == HttpMethod.Post)
         {
+            if (!await ConfirmAsync("create_api_key")) return Error(HttpStatusCode.Forbidden, "step_up_required");
+            Interlocked.Increment(ref createdKeys);
             if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             var root = body.RootElement;
@@ -134,6 +153,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         }
         if (rotate)
         {
+            if (!await ConfirmAsync("rotate_api_key")) return Error(HttpStatusCode.Forbidden, "step_up_required");
+            Interlocked.Increment(ref rotatedKeys);
             if (request.Method != HttpMethod.Post) return Error(HttpStatusCode.MethodNotAllowed, "invalid_request");
             if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));

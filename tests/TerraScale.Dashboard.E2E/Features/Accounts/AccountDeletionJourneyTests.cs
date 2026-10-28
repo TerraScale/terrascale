@@ -131,6 +131,12 @@ public sealed class AccountDeletionJourneyTests
         var binding = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal);
         await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
         scenario.Environment.BillingPlans.SetScenario(binding.CustomerId, stripeScenario);
+        // Without a hosted step-up proof the request only starts confirmation: nothing is deleted or billed.
+        using (var unconfirmed = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/profile/delete",
+            new() { ["_csrf"] = await HttpJourney.CsrfAsync(scenario.Client, "/profile?tab=danger"), ["email"] = email }))
+            await Assert.That(unconfirmed.StatusCode).IsNotEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId))).IsTrue();
+        await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
         using (var deleted = await scenario.DeleteAsync(email))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -178,7 +184,7 @@ public sealed class AccountDeletionJourneyTests
         public async Task<HttpResponseMessage> DeleteAsync(string email)
         {
             var csrf = await HttpJourney.CsrfAsync(Client, "/profile?tab=danger");
-            return await HttpJourney.PostFormAsync(Client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = email });
+            return await HttpJourney.PostConfirmedFormAsync(Client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = email });
         }
 
         public async Task<bool> ExistsAsync(string collection, string id) => await Environment.State.GetAsync(collection, id, default) is not null;

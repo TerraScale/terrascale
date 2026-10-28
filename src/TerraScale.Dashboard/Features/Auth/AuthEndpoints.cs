@@ -14,6 +14,7 @@ public static class AuthEndpoints
     public static void AddAuth(this IServiceCollection services)
     {
         services.AddSingleton<AuthFlows>();
+        services.AddSingleton<IAuthStepUpGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<TsAuthGateway>();
         services.AddSingleton<IAuthGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IAuthOidcGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
@@ -33,6 +34,7 @@ public static class AuthEndpoints
     {
         app.MapMethods("/login", ["GET", "HEAD"], StartAsync);
         app.MapGet("/login/callback", CompleteAsync);
+        app.MapGet("/auth/step-up/callback", StepUpFlow.CallbackAsync);
         app.MapGet("/organizations/choose", OrganizationPicker.PageAsync);
         app.MapPost("/api/v1/auth/logout", (Delegate)LogoutAsync);
     }
@@ -45,11 +47,11 @@ public static class AuthEndpoints
         return await AuthorizeAsync(context, returnTo, signUp: context.Request.Query["signup"] == "1");
     }
 
-    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, bool signUp = false, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null)
+    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, bool signUp = false, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
     {
         try
         {
-            var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays, mcp);
+            var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays, mcp, stepUp);
             var authorize = await context.RequestServices.GetRequiredService<IAuthOidcGateway>().AuthorizationUrlAsync(flow, context.RequestAborted);
             return Results.Redirect(signUp ? HostedSignUp(authorize) : authorize);
         }
@@ -81,8 +83,7 @@ public static class AuthEndpoints
             if (flow.TokenName.Length != 0) return await AccessTokenEndpoints.IssueAsync(context, flow, session);
             if (flow.Mcp is not null)
             {
-                await EnsureAccountAsync(context, session);
-                return await McpOAuth.GrantAsync(context, flow.Mcp, session);
+                return await McpOAuth.GrantAsync(context, flow.Mcp, session, flow.StepUp);
             }
             var account = await EnsureAccountAsync(context, session);
             await sessions.StartAsync(context, session);
@@ -94,6 +95,8 @@ public static class AuthEndpoints
                 return HttpRedirects.SeeOther("/organizations/choose?returnTo=" + Uri.EscapeDataString(target));
             return HttpRedirects.SeeOther(target);
         }
+        catch (AccountAccessException error) when (flow.StepUp is not null || flow.Mcp is not null)
+        { return Failure(context, flow.ReturnTo, error.Message, error.StatusCode); }
         catch (SignInRejectedException)
         { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401); }
         catch (TerraScale.DotNet.TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)

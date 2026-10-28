@@ -57,7 +57,7 @@ public sealed class AccountEnrollmentJourneyTests(DashboardRootFixture fixture)
         if (stale is null)
         {
             var csrf = await HttpJourney.CsrfAsync(owner, "/profile?tab=access-tokens");
-            authorize = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/profile/access-tokens", new()
+            authorize = await HttpJourney.PostConfirmedFormAsync(owner, "/api/v1/dashboard/profile/access-tokens", new()
             { ["_csrf"] = csrf, ["name"] = "Paused enrollment", ["expiresInDays"] = "7" });
             await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         }

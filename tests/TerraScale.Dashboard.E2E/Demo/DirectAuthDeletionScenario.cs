@@ -115,7 +115,7 @@ internal sealed class DirectAuthDeletionScenario : IAsyncDisposable
     {
         var key = cookie is null ? AccountService.AccountStorageKey(Id()) : Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cookie)));
         var session = new SessionRecord(subject, "Synthetic owner", Email(subject), "synthetic-operation-grant", null, DateTimeOffset.UtcNow.AddHours(1));
-        var plaintext = JsonSerializer.SerializeToUtf8Bytes(new { Session = session, Organizations = Array.Empty<string>(), Receipt = receipt ?? "synthetic-receipt" });
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(new { Session = session, Organizations = Array.Empty<string>(), Receipt = receipt ?? "synthetic-receipt", Authorization = "synthetic-deletion-authorization", ExpiresAt = DateTimeOffset.UtcNow.AddDays(15) });
         var nonce = RandomNumberGenerator.GetBytes(12);
         var ciphertext = new byte[plaintext.Length];
         var tag = new byte[16];

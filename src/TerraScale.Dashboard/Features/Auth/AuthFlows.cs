@@ -8,15 +8,16 @@ namespace TerraScale.Dashboard.Features.Auth;
 
 // Only a random bearer travels in the browser. PKCE verifiers, state and nonce
 // are encrypted in TerraBase, shared across replicas, and never logged.
-public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity, TimeProvider time)
+public sealed partial class AuthFlows(IDashboardState state, IDashboardIdentity identity, TimeProvider time)
 {
     private const string Collection = "auth-flows";
     private const string OidcCookie = "ts-dashboard-oidc";
 
-    public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null)
+    public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
     {
         var flow = new OidcFlow(Random(), Random(), Random(), Csrf.LocalRedirect(returnTo),
-            $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10), tokenName, tokenDays, mcp);
+            $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10), tokenName, tokenDays, mcp)
+        { StepUp = stepUp };
         await EndAsync(context, OidcCookie);
         await StoreAsync(context, OidcCookie, flow, flow.ExpiresAt);
         return flow;

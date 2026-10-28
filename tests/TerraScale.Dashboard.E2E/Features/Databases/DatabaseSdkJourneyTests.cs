@@ -61,7 +61,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
             "Rejected scopes issue no credential at ts-auth");
         string keyId; string secret;
-        using (var credential = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+        using (var credential = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
         { ["_csrf"] = csrf, ["name"] = "Customer SDK", ["databaseId"] = databaseId, ["scopes"] = "documents:read,documents:write" }))
         {
             Check(credential.StatusCode == HttpStatusCode.Created, "Native issuance returns a ts-auth project key once");
@@ -80,7 +80,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             "ts-auth holds exactly the requested restrictions; the dashboard did not broaden them");
         await RunCustomerSdkAsync(fixture.Root, scenario, controls, auth, account, organizationId, projectId, "customer-sdk", secret);
         Console.WriteLine("PROTOCOL E2E: native signup/database/collection, a ts-auth issued key refused as a data bearer, and unchanged official TerraScale.DotNet SDK CRUD under the customer's exchanged documents:* project token, in-process against test-only producers; the key's client-credentials exchange and live qualification remain outstanding.");
-        using (var rotated = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "60" }))
+        using (var rotated = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "60" }))
         {
             Check(rotated.StatusCode == HttpStatusCode.OK, "Rotation returns the key's new secret once");
             using var json = JsonDocument.Parse(await rotated.Content.ReadAsStringAsync());
@@ -89,12 +89,12 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
                 (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single().GetProperty("secret").GetString() == replacement,
                 "Rotation keeps the key identity and replaces its secret at ts-auth");
         }
-        using (var pending = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId }))
+        using (var pending = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId }))
             Check(pending.StatusCode == HttpStatusCode.Conflict, "A second rotation during the old secret's grace period is refused");
         using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
             Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued key at ts-auth");
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "The revoked key is gone at its issuer");
-        using (var full = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+        using (var full = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
         { ["_csrf"] = csrf, ["name"] = "Seed script", ["scopes"] = "documents:read,documents:write,databases:read,databases:write" }))
         {
             Check(full.StatusCode == HttpStatusCode.Created, "A Full access key is issued for seed and migration scripts");
@@ -167,7 +167,10 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Invalid scope", ["scopes"] = new[] { scope } });
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
             "MCP refuses unsupported scopes before issuing any key");
-        var issued = await journey.CallAsync(client, "create_api_key", new() { ["name"] = "Public SDK key", ["scopes"] = new[] { "documents:read" }, ["databaseId"] = id });
+        await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Public SDK key", ["scopes"] = new[] { "documents:read" }, ["databaseId"] = id });
+        using var issuedResponse = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+        { ["_csrf"] = csrf, ["name"] = "Public SDK key", ["scopes"] = "documents:read", ["databaseId"] = id });
+        var issued = await issuedResponse.Content.ReadFromJsonAsync<JsonElement>();
         var publicId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
         var publicSecret = issued.GetProperty("secret").GetString()!;
         var held = (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single();

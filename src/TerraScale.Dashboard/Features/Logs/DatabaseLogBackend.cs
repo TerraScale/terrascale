@@ -55,7 +55,6 @@ public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAcces
         {
             BaseAddress = home.Api,
             Region = home.Id,
-            RequestTimeout = TimeSpan.FromSeconds(5),
             AccessTokenProvider = _ => ValueTask.FromResult(access)
         });
         var shapes = await sdk.Database(scope.ProjectId, database.Name).ListQueryShapesAsync(deadline.Token);

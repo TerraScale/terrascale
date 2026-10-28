@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet;
 
@@ -21,22 +22,36 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         var pages = 0;
         do
         {
-            var page = await SendAsync(context, HttpMethod.Get, KeysPath(scope) + "?limit=100" + (next is null ? "" : "&after=" + Uri.EscapeDataString(next)), null, cancellationToken);
-            if (!page.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) throw new HttpRequestException("Credential listing returned an invalid page.");
-            foreach (var item in items.EnumerateArray())
+            var page = await Client().ListProjectApiKeysAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, 100, next, cancellationToken);
+            if (page.Items is null) throw new HttpRequestException("Credential listing returned an invalid page.");
+            foreach (var item in page.Items)
             {
                 var key = Map(context, item);
                 if (result.Any(listed => listed.Id == key.Id)) throw new HttpRequestException("Credential listing returned a repeated key.");
                 result.Add(key);
             }
-            next = page.TryGetProperty("next", out var cursor) && cursor.ValueKind == JsonValueKind.String ? cursor.GetString() : null;
+            next = page.Next;
             if (!string.IsNullOrEmpty(next) && (!seen.Add(next) || ++pages >= 100))
                 throw new HttpRequestException("Credential pagination did not advance within its bounds.");
         } while (!string.IsNullOrEmpty(next));
         return result.OrderBy(key => key.Name, StringComparer.Ordinal).ToArray();
     }
 
-    public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
+    public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken, string stepUpProof = "")
+    {
+        var request = PrepareCreate(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs);
+        var scope = DatabaseService.Scope(context);
+        if (string.IsNullOrEmpty(stepUpProof)) throw StepUpFlow.Required();
+        var result = await ProtectedAsync(() => Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
+            request, stepUpProof, cancellationToken));
+        var key = Map(context, result.ApiKey);
+        if (key.Name != request.Name || key.DatabaseName != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
+            (request.AllowedCidrs!.Count == 0) != (key.AllowedCidrs!.Count == 0) || string.IsNullOrEmpty(result.Key))
+            throw new HttpRequestException("Credential issuance returned different restrictions.");
+        return new(key, result.Key);
+    }
+
+    internal TerraScaleAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
     {
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         name = name.Trim();
@@ -48,15 +63,9 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         if (!ExpiryChoices.Contains(expiresInDays)) throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
         // Whole seconds, so the expiry ts-auth echoes back compares exactly.
         DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
-        var scope = DatabaseService.Scope(context);
+        _ = DatabaseService.Scope(context);
         var cidrs = CheckCidrs(allowedCidrs);
-        var result = await SendAsync(context, HttpMethod.Post, KeysPath(scope), JsonContent.Create(new(name, permissions, database?.Name, expiresAt, cidrs.Length == 0 ? null : cidrs),
-            ApiKeyAuthJson.Default.AuthCreateKeyBody), cancellationToken);
-        var key = Map(context, result.TryGetProperty("api_key", out var body) ? body : default);
-        if (key.Name != name || key.DatabaseName != database?.Name || key.ExpiresAt != expiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(permissions.Order(StringComparer.Ordinal)) ||
-            (cidrs.Length == 0) != (key.AllowedCidrs!.Count == 0) || !result.TryGetProperty("key", out var secret) || secret.GetString() is not { Length: > 0 } value)
-            throw new HttpRequestException("Credential issuance returned different restrictions.");
-        return new(key, value);
+        return new(name, permissions, database?.Name, expiresAt, cidrs);
     }
 
     // Replaces the key's allowlist at ts-auth (same role as creating a key); an empty list allows any IP.
@@ -110,16 +119,21 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     internal static bool FollowUpFailure(Exception error) => error is HttpRequestException or IOException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
 
     // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
-    public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken)
+    public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken, string stepUpProof = "")
     {
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         if (previousSecretTtl is < 0 or > MaxPreviousSecretTtl) throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
+        if (string.IsNullOrEmpty(stepUpProof)) throw StepUpFlow.Required();
         var scope = DatabaseService.Scope(context);
         var client = Client();
         var current = Map(context, await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken));
         if (current.Id != keyId) throw new HttpRequestException("Credential lookup returned a different key.");
         TerraScaleAuthPlatformApiKeySecret result;
-        try { result = await client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, new(previousSecretTtl), cancellationToken); }
+        try
+        {
+            result = await ProtectedAsync(() => client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId,
+            stepUpProof, new TerraScaleAuthPlatformRotateApiKey(previousSecretTtl), cancellationToken));
+        }
         catch (TerraScaleAuthException error) when (error.ErrorCode == "rotation_pending")
         {
             throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
@@ -215,11 +229,22 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             CreatedByUserId = key.CreatedBy ?? "",
             CreatedByEmail = context.Organization?.Members.GetValueOrDefault(key.CreatedBy ?? "")?.Email ?? "",
             DatabaseName = key.Database,
+            AllowedCidrs = ValidCidrs(key.AllowedCidrs),
             ExpiresAt = key.ExpiresAt,
             LastUsedAt = key.LastUsedAt,
             IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
         };
     }
+    private static IReadOnlyList<string> ValidCidrs(IReadOnlyList<string> cidrs) =>
+        cidrs is not null && cidrs.Count <= MaxAllowedCidrs && cidrs.All(item => item is { Length: > 0 and <= 64 })
+            ? cidrs : throw new HttpRequestException("ts-auth returned an invalid allowlist.");
+
+    private static async Task<T> ProtectedAsync<T>(Func<Task<T>> send)
+    {
+        try { return await send(); }
+        catch (TerraScaleAuthException error) when (error.ErrorCode == "step_up_required") { throw StepUpFlow.Required(); }
+    }
+
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 }
 

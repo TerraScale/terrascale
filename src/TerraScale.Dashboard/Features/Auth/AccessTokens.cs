@@ -9,7 +9,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
-public sealed class AccessTokens(IDashboardState state, DashboardSessions sessions, IAuthGateway auth, AccountService accounts, TimeProvider time) : IProfileTokens
+public sealed class AccessTokens(IDashboardState state, DashboardSessions sessions, IAuthGateway auth, AccountService accounts, TimeProvider time, IAuthStepUpGateway stepUp) : IProfileTokens
 {
     public const string Collection = "dashboard_access_tokens";
     public const string IndexCollection = "dashboard_access_token_hashes";
@@ -22,10 +22,10 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
 
     // The fresh grant comes from its own ts-auth authorization round trip, so the
     // token's rotating family is never copied from the browser session.
-    public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, CancellationToken cancellationToken) =>
-        IssueAsync(context, name, expiresInDays, fresh, cancellationToken);
+    public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent proof, CancellationToken cancellationToken) =>
+        IssueAsync(context, name, expiresInDays, fresh, proof, cancellationToken);
 
-    private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, CancellationToken cancellationToken)
+    private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent proof, CancellationToken cancellationToken)
     {
         name = Validate(name, expiresInDays);
         if (fresh.UserId != context.UserId)
@@ -37,6 +37,8 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         string? credential = null;
         try
         {
+            if (proof.UserId != context.UserId || proof.Purpose != "create_pat" || proof.Audience != "ts-dashboard" || proof.Challenge.ExpiresAt <= time.GetUtcNow()) throw StepUpFlow.Required();
+            await stepUp.ConsumeAsync(context.Session, proof.Challenge.Proof, "create_pat", "ts-dashboard", null, cancellationToken);
             credential = await sessions.CreateCredentialAsync(fresh, expiresAt, cancellationToken);
             return await StoreAsync(context.UserId, name, expiresAt, credential, null, cancellationToken);
         }

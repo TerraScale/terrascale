@@ -32,15 +32,10 @@ public sealed record RotateProjectCredentialRequest([property: JsonPropertyName(
 [JsonSerializable(typeof(RotateProjectCredentialRequest))]
 internal sealed partial class ApiKeyContractJson : JsonSerializerContext;
 
-// ts-auth bodies with allowed_cidrs, which TerraScale.DotNet 0.0.6 does not model yet.
-internal sealed record AuthCreateKeyBody([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("scopes")] IReadOnlyList<string> Scopes,
-    [property: JsonPropertyName("database"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Database,
-    [property: JsonPropertyName("expires_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? ExpiresAt,
-    [property: JsonPropertyName("allowed_cidrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedCidrs);
+// Remaining allowlist update bodies are not yet exposed by the SDK.
 internal sealed record AuthAllowedCidrsBody([property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
 
 [JsonSourceGenerationOptions(RespectNullableAnnotations = true)]
-[JsonSerializable(typeof(AuthCreateKeyBody))]
 [JsonSerializable(typeof(AuthAllowedCidrsBody))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformApiKey))]
 internal sealed partial class ApiKeyAuthJson : JsonSerializerContext;

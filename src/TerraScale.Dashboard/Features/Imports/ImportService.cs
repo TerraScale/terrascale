@@ -101,7 +101,7 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
         database = Name(database);
         context = await Manage(context, ct);
         var (scope, home) = await RouteAsync(context, database, ct);
-        return Validate(scope, await Import(context, home, database, Write, TimeSpan.FromMinutes(2), token).UploadImportSourceAsync(offset, part, ct), database);
+        return Validate(scope, await Import(context, home, database, Write, granted: token).UploadImportSourceAsync(offset, part, ct), database);
     }
 
     public async Task<TerraBaseImportJob> UpdateAsync(AccountContext context, string database, IReadOnlyList<string> exclude, CancellationToken ct)
@@ -179,17 +179,15 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     }
 
     // One exchange per SDK request; the audience stays TerraBase's global one, the pin names the home region.
-    private TerraBaseDatabase Import(AccountContext context, DatabaseRegion home, string database, string[] scopes, TimeSpan? timeout = null, string? granted = null)
+    private TerraBaseDatabase Import(AccountContext context, DatabaseRegion home, string database, string[] scopes, string? granted = null)
     {
         var client = http.CreateClient("platform");
-        if (timeout is not null) client.Timeout = Timeout.InfiniteTimeSpan;
         return new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions
         {
             BaseAddress = home.Api,
             Region = home.Id,
             AccessTokenProvider = granted is not null ? _ => ValueTask.FromResult(granted)
-                : token => new(projectTokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, scopes, token)),
-            RequestTimeout = timeout ?? TimeSpan.FromSeconds(30)
+                : token => new(projectTokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, scopes, token))
         }).Database(context.Project!.Id, database);
     }
 

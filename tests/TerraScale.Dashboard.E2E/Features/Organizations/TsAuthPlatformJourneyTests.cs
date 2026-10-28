@@ -689,7 +689,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         {
             platform.Producer.RefuseNext("DELETE", "/v1/terrascale/account", HttpStatusCode.Conflict, code, "Private producer text must stay hidden.");
             var csrf = await HttpJourney.CsrfAsync(client, "/profile?tab=danger");
-            using var deletion = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete", new()
+            using var deletion = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/delete", new()
             { ["_csrf"] = csrf, ["email"] = owner.Email });
             await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             var html = await deletion.Content.ReadAsStringAsync();
@@ -703,7 +703,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         }
         platform.Producer.DeletionStatus = HttpStatusCode.Accepted;
         platform.Producer.RefuseNext("DELETE", "/v1/terrascale/account", HttpStatusCode.Accepted, "pending", "");
-        using var retry = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete", new()
+        using var retry = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/delete", new()
         { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/profile?tab=danger"), ["email"] = owner.Email });
         await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/account", owner.Subject)).IsEqualTo(2);
@@ -723,7 +723,7 @@ public sealed partial class TsAuthPlatformJourneyTests
         var personal = (await Me(client)).GetProperty("organizationId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/profile?tab=danger");
         platform.Producer.RefuseNext("DELETE", "/v1/terrascale/account", HttpStatusCode.Accepted, "pending", "");
-        using (var pending = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = owner.Email }))
+        using (var pending = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = owner.Email }))
         {
             await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             using var progress = await client.GetAsync(pending.Headers.Location);
@@ -734,7 +734,7 @@ public sealed partial class TsAuthPlatformJourneyTests
             await Assert.That(platform.Producer.ReceiptAppearsIn(html)).IsFalse();
         }
         var key = AccountService.AccountStorageKey(owner.Subject);
-        foreach (var status in new[] { HttpStatusCode.Accepted, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
+        foreach (var status in new[] { HttpStatusCode.Accepted, HttpStatusCode.Unauthorized, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
         {
             platform.Producer.DeletionStatus = status;
             using var pending = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/status", new() { ["_csrf"] = csrf });
@@ -755,8 +755,14 @@ public sealed partial class TsAuthPlatformJourneyTests
         using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         platform.Producer.DeletionStatus = HttpStatusCode.NotFound;
+        var deletes = platform.Producer.Count("DELETE", "/v1/terrascale/account", owner.Subject);
         using (var renewed = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/continue", new() { ["_csrf"] = csrf }))
-            await Assert.That(renewed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(renewed.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/account", owner.Subject)).IsEqualTo(deletes);
+        platform.Producer.DeletionStatus = HttpStatusCode.Accepted;
+        using (var fresh = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/profile/delete", new()
+        { ["_csrf"] = csrf, ["email"] = owner.Email }))
+            await Assert.That(fresh.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using (var logout = await HttpJourney.PostFormAsync(client, "/api/v1/auth/logout", new() { ["_csrf"] = csrf }))
             await Assert.That(logout.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         platform.Producer.CompleteAccountDeletion(owner.Subject);
@@ -947,7 +953,10 @@ public sealed partial class TsAuthPlatformJourneyTests
                 auth ??= (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                 state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
                 databases ??= (TestDatabases)builder.Services.Last(service => service.ServiceType == typeof(IDatabaseBackend)).ImplementationInstance!;
-                Producer ??= new(auth.ResolveAccessToken);
+                Producer ??= new(auth.ResolveAccessToken)
+                {
+                    AuthorizeDeletion = (session, receipt, grant) => environment.Workspace.AuthorizeDeletion?.Invoke(session, receipt, grant) == true
+                };
                 var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(Producer, fallback)));
                 // The production transport, not the in-memory platform used by other journeys.
@@ -1047,6 +1056,7 @@ public sealed partial class TsAuthPlatformJourneyTests
     // {"error":{"code","message"}} refusals and Bearer sign-in tokens.
     private sealed partial class PlatformProducer(Func<string, (string UserId, string Email)?> resolve)
     {
+        public Func<SessionRecord, string, string, bool>? AuthorizeDeletion { get; init; }
         private const int PageSize = 2;
         private readonly object gate = new();
         private readonly TerraScaleIdGenerator ids = new();
@@ -1153,6 +1163,9 @@ public sealed partial class TsAuthPlatformJourneyTests
                     if (path == "/v1/terrascale/account")
                     {
                         Require(receipt.Length == 43, "Account deletion carries a canonical receipt.");
+                        var grant = request.Headers.TryGetValues("X-TerraScale-Deletion-Authorization", out var grants) ? grants.Single() : "";
+                        if (AuthorizeDeletion?.Invoke(new(caller.UserId, "Synthetic", caller.Email, bearer, null, DateTimeOffset.UtcNow.AddHours(1)), receipt, grant) != true)
+                            return Error(HttpStatusCode.Forbidden, "step_up_required", "Hosted confirmation is required.");
                         deletionReceipts[receipt] = caller.UserId;
                     }
                     if (refusal is { } refused && refused.Method == request.Method.Method && refused.Path == path)

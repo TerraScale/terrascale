@@ -14,6 +14,8 @@ namespace TerraScale.Dashboard.Demo;
 // through the official Stripe SDK and validate actual provider-shaped facts.
 sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessageHandler
 {
+    private int cancellationCalls;
+    public int CancellationCalls => Volatile.Read(ref cancellationCalls);
     private readonly HttpMessageInvoker vendor = new(underlying, false);
     private readonly ConcurrentDictionary<string, JsonObject> subscriptions = new();
     private readonly ConcurrentDictionary<string, JsonObject> schedules = new();
@@ -109,6 +111,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
     {
         if (request.RequestUri?.Host != "api.stripe.com") throw new HttpRequestException("Unexpected billing plan fixture origin.");
         var path = request.RequestUri.AbsolutePath;
+        if (request.Method == HttpMethod.Delete && path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal)) Interlocked.Increment(ref cancellationCalls);
         // Stripe rejects expand strings with more than four properties.
         if (Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query).Any(item => item.Key.StartsWith("expand[", StringComparison.Ordinal) && item.Value.Any(value => value!.Split('.').Length > 4)))
             return Json(new JsonObject { ["error"] = new JsonObject { ["type"] = "invalid_request_error", ["message"] = "You cannot expand more than 4 levels of a property." } }, HttpStatusCode.BadRequest);

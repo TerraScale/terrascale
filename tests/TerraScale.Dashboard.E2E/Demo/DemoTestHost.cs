@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.E2E;
 // The application's demo host (src/TerraScale.Dashboard/Demo) plus the suite's scenario and probe routes and reference fixtures.
 public static class DemoTestHost
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DemoEnvironment, TestStepUpGateway> StepUps = new();
     public static WebApplication CreateTestHost(this DemoEnvironment environment, string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
     {
         var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, origin, builder =>
@@ -19,6 +20,15 @@ public static class DemoTestHost
             var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestTerraBasePlans(fallback, environment.Databases,
                 TerraScale.Dashboard.Platform.Persistence.TerraBaseDashboardState.Origin(builder.Environment))));
+            builder.Services.AddSingleton(services =>
+            {
+                var gateway = StepUps.GetValue(environment, _ => new(services.GetRequiredService<TimeProvider>(), environment.Auth.ResolveAccessToken));
+                environment.ApiKeys.StepUp = gateway;
+                environment.Authentication.StepUp = gateway;
+                environment.Workspace.AuthorizeDeletion = gateway.AuthorizeDeletion;
+                return gateway;
+            });
+            builder.Services.AddSingleton<IAuthStepUpGateway>(services => services.GetRequiredService<TestStepUpGateway>());
             configureScenario?.Invoke(builder);
         });
         app.Services.GetRequiredService<TestInitializerDiagnostics>().Attach(app);
@@ -27,6 +37,7 @@ public static class DemoTestHost
             try { throw new InvalidOperationException("Synthetic exception detail"); }
             catch (InvalidOperationException error) { throw new TypeInitializationException("SyntheticInitializer", error); }
         }));
+        app.Services.GetRequiredService<TestStepUpGateway>().Map(app);
         app.MapGet("/__test/unexpected-error", (Func<IResult>)(() => throw new InvalidOperationException("Synthetic exception detail")));
         app.MapGet("/__test/session", async (HttpContext context, DashboardSessions sessions) =>
             await sessions.ReadAsync(context) is { } session ? Results.Json(new { session.UserId }) : (IResult)Results.Unauthorized());

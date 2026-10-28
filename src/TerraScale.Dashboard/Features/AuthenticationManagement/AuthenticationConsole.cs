@@ -28,66 +28,71 @@ public static partial class AuthenticationConsole
             endpoints.MapGet(prefix + "/{section}", async (HttpContext http, string section, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects) =>
                 await PageAsync(http, sessions, accounts, projects, section));
         }
-        endpoints.MapPost("/api/v1/auth-management/{**path}", async (HttpContext http, string path, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects) =>
-        {
-            var parts = path.Split('/');
-            var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
-            var known = parts switch
-            {
-                ["settings" or "branding" or "configuration" or "clients"] or ["danger", "users" or "sessions" or "clients"] => true,
-                ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
-                ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete"] => true,
-                _ => false
-            };
-            if (!known) return Results.NotFound();
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null) return Results.Unauthorized();
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
-            if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
-            if (!context.CanManage || context.Project is null) return Results.StatusCode(403);
-            var (session, project, cancel) = (context.Session, context.Project.Id, http.RequestAborted);
-            try
-            {
-                switch (parts)
-                {
-                    case ["settings"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up"] == "on")), cancel);
-                        break;
-                    case ["branding"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
-                        break;
-                    case ["configuration"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Configuration: Configuration(form["redirect_urls"], form["session_lifetime_seconds"])), cancel);
-                        break;
-                    case ["danger", var family]:
-                        if (form["confirmation"] != context.Project.Name) throw new AccountAccessException("Type the project name exactly to confirm.", 422);
-                        var record = form["record_id"].ToString();
-                        if (record.Length == 0) throw new AccountAccessException("Choose a record to remove.", 422);
-                        if (family == "users") await projects.DeleteUserAsync(session, project, record, cancel);
-                        else if (family == "sessions") await projects.RevokeSessionAsync(session, project, record, cancel);
-                        else await projects.DeleteClientAsync(session, project, record, cancel);
-                        break;
-                    case ["providers", var provider]:
-                        await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"]), cancel);
-                        break;
-                    case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
-                    case ["clients"]:
-                        var created = await projects.CreateClientAsync(session, project, NewClient(form["name"], form["type"], form["redirect_uris"].ToString().Split('\n')), cancel);
-                        return await PageAsync(http, context, projects, "clients", created: created);
-                    case ["clients", var id, _]: await projects.DeleteClientAsync(session, project, id, cancel); break;
-                    case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
-                    case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
-                    case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
-                }
-            }
-            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException)
-            {
-                return await PageAsync(http, context, projects, key, error is AccountAccessException access ? access.Message : Unreachable, error is AccountAccessException { StatusCode: var code } ? code : 503);
-            }
-            return HttpRedirects.SeeOther("/auth/" + key + "?saved=1");
-        });
+        endpoints.MapPost("/api/v1/auth-management/{**path}", PostAsync);
         return endpoints;
+    }
+
+    public static async Task<IResult> PostAsync(HttpContext http, string path, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects)
+    {
+        var parts = path.Split('/');
+        var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
+        var known = parts switch
+        {
+            ["settings" or "branding" or "configuration" or "clients"] or ["danger", "users" or "sessions" or "clients"] => true,
+            ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
+            ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
+            ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete"] => true,
+            _ => false
+        };
+        if (!known) return Results.NotFound();
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return Results.Unauthorized();
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form)) return Results.StatusCode(403);
+        if (!context.CanManage || context.Project is null) return Results.StatusCode(403);
+        var (session, project, cancel) = (context.Session, context.Project.Id, http.RequestAborted);
+        try
+        {
+            switch (parts)
+            {
+                case ["settings"]:
+                    await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up"] == "on")), cancel);
+                    break;
+                case ["branding"]:
+                    await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
+                    break;
+                case ["configuration"]:
+                    await projects.UpdateSettingsAsync(session, project, new(Configuration: Configuration(form["redirect_urls"], form["session_lifetime_seconds"])), cancel);
+                    break;
+                case ["danger", var family]:
+                    if (form["confirmation"] != context.Project.Name) throw new AccountAccessException("Type the project name exactly to confirm.", 422);
+                    var record = form["record_id"].ToString();
+                    if (record.Length == 0) throw new AccountAccessException("Choose a record to remove.", 422);
+                    if (family == "users") await projects.DeleteUserAsync(session, project, record, cancel);
+                    else if (family == "sessions") await projects.RevokeSessionAsync(session, project, record, cancel);
+                    else await projects.DeleteClientAsync(session, project, record, cancel);
+                    break;
+                case ["providers", var provider]:
+                    await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"]), cancel);
+                    break;
+                case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
+                case ["clients"]:
+                    var request = NewClient(form["name"], form["type"], form["redirect_uris"].ToString().Split('\n'));
+                    var intent = StepUpFlow.Intent(http, context, "create_oauth_client");
+                    if (intent is null) return await StepUpFlow.StartAsync(http, context, "create_oauth_client", "ts-auth");
+                    var created = await projects.CreateClientAsync(session, project, request, intent.Challenge.Proof, cancel);
+                    return await PageAsync(http, context, projects, "clients", created: created);
+                case ["clients", var id, _]: await projects.DeleteClientAsync(session, project, id, cancel); break;
+                case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
+                case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
+                case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
+            }
+        }
+        catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException)
+        {
+            return await PageAsync(http, context, projects, key, error is AccountAccessException access ? access.Message : Unreachable, error is AccountAccessException { StatusCode: var code } ? code : 503);
+        }
+        return HttpRedirects.SeeOther("/auth/" + key + "?saved=1");
     }
 
     // At least one first factor stays on; ts-auth enforces the same rule.

@@ -20,7 +20,7 @@ public interface ITsAuthProjects
     Task RevokeSessionAsync(SessionRecord session, string projectId, string sessionId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
     // A confidential client's secret is in this answer only; never log or store it.
-    Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, CancellationToken cancellationToken);
+    Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken);
     Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken);
 }
 
@@ -63,8 +63,9 @@ public sealed partial class TsAuthGateway : ITsAuthProjects
     public async Task<IReadOnlyList<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken) =>
         (await ProjectAsync(() => Client().Projects.ListClientsAsync(Bearer(session), Id(projectId), cancellationToken))).Items ?? throw new IOException("ts-auth returned an invalid page.");
 
-    public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, CancellationToken cancellationToken) =>
-        ProjectAsync(() => Client().Projects.CreateClientAsync(Bearer(session), Id(projectId), request, cancellationToken));
+    public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken) =>
+        string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
+        ProjectAsync(() => Client().Projects.CreateClientAsync(Bearer(session), Id(projectId), request, proof, cancellationToken));
 
     public Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken) =>
         ProjectAsync(async () => { await Client().Projects.DeleteClientAsync(Bearer(session), Id(projectId), Id(clientId), cancellationToken); return true; });
@@ -78,6 +79,7 @@ public sealed partial class TsAuthGateway : ITsAuthProjects
         try { return await call(); }
         catch (TerraScaleAuthException error) when ((int?)error.StatusCode is >= 400 and < 500)
         {
+            if (error.ErrorCode == "step_up_required") throw StepUpFlow.Required();
             var status = (int)error.StatusCode!;
             throw new AccountAccessException(status switch
             {

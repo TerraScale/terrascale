@@ -44,13 +44,16 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
             var pat = await HttpJourney.CreatePatAsync(client);
             var reply = await HttpJourney.McpAsync(client, pat, "tools/call", new
             { name = "create_api_key", arguments = new { name = "After commit", scopes = new[] { "documents:read" } } });
-            var result = reply.GetProperty("result").GetProperty("structuredContent");
-            await Assert.That(result.GetProperty("secret").GetString() == environment.ApiKeys.Issued().Single().Secret).IsTrue();
+            await Assert.That(reply.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(reply.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()).IsEqualTo(TerraScale.Dashboard.Features.Auth.StepUpFlow.Required().Message);
+            await Assert.That(faults.IssuerWrites).IsEqualTo(0);
+            await Assert.That(environment.ApiKeys.Issued()).IsEmpty();
+            return;
         }
         else
         {
             if (surface == "html") client.DefaultRequestHeaders.Accept.ParseAdd("text/html");
-            using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key?kind=key", new()
+            using var response = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key?kind=key", new()
             { ["_csrf"] = csrf, ["name"] = "After commit", ["scopes"] = "documents:read" });
             await Assert.That(response.StatusCode).IsEqualTo(surface == "html" ? HttpStatusCode.OK : HttpStatusCode.Created);
             await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
@@ -61,7 +64,7 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
                 await Assert.That(body.Contains("key change succeeded", StringComparison.Ordinal)).IsTrue();
                 await Assert.That(body.Contains("complete key list is unavailable", StringComparison.Ordinal)).IsTrue();
                 var key = environment.ApiKeys.Issued().Single().Key;
-                using var rotated = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/rotate", new()
+                using var rotated = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/rotate", new()
                 { ["_csrf"] = csrf, ["keyId"] = key.Id, ["previousSecretTtl"] = "0" });
                 await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(rotated.Headers.CacheControl?.NoStore).IsTrue();
@@ -153,6 +156,9 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
             () => page.Locator("#create-key").GetByRole(AriaRole.Button, new() { Name = "Create key", Exact = true }).ClickAsync(),
             response => response.Request.Method == "POST" && response.Url.Contains("/api/v1/dashboard/credentials/key", StringComparison.Ordinal));
         await Assert.That(response.Headers["cache-control"]).Contains("no-store");
+        // Follow the test-only hosted approval explicitly, with the initiating browser cookie.
+        var hosted = new Uri(response.Headers["location"]);
+        await page.GotoAsync(new Uri(origin, "/__test/step-up/" + hosted.Segments.Last() + "?approve=yes").ToString());
         var secret = page.Locator("#api-key-secret");
         await secret.WaitForAsync();
         await page.WaitForLoadStateAsync();
@@ -206,7 +212,7 @@ public sealed class ApiKeyNetworkJourneyTests(DashboardRootFixture fixture)
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var csrf = await HttpJourney.CsrfAsync(client);
 
-        using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+        using var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
         { ["_csrf"] = csrf, ["name"] = "Office key", ["scopes"] = "documents:read", ["allowedCidrs"] = "203.0.113.0/24\n198.51.100.7" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var issued = JsonDocument.Parse(await created.Content.ReadAsStringAsync());

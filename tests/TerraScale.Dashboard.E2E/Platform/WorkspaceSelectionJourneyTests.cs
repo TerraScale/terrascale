@@ -46,7 +46,7 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         await Assert.That(switched.Headers.Location!.OriginalString).Contains("projectId=" + second);
         await Assert.That(switched.Headers.Location.OriginalString).Contains("#credentials");
         var scope = "?organizationId=" + organization.Id + "&projectId=" + first;
-        using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key" + scope, new()
+        using var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key" + scope, new()
         { ["_csrf"] = csrf, ["name"] = "First tab key", ["scopes"] = "documents:read" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var firstKeys = await ManagementListJourney.ReadListAllAsync(client, "/api/v1/dashboard/credentials" + scope);

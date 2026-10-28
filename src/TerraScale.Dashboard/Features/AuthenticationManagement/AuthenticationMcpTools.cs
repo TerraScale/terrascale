@@ -76,8 +76,9 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
      Description("Create an OAuth application. type is public or confidential; 1 to 10 https redirect URIs (http only on localhost and loopback). A confidential client's client_secret is returned once. Requires an owner or admin.")]
     public async Task<TerraScaleAuthProjectOAuthClient> CreateClient(string name, string type, IReadOnlyList<string> redirectUris, string? organizationId = null, string? projectId = null)
     {
-        var context = await Fresh(organizationId, projectId, true);
-        return await projects.CreateClientAsync(context.Session, context.Project!.Id, AuthenticationConsole.NewClient(name, type, redirectUris), Cancellation);
+        _ = await Fresh(organizationId, projectId, true);
+        _ = AuthenticationConsole.NewClient(name, type, redirectUris);
+        throw StepUpFlow.Required();
     }
 
     [McpServerTool(Name = "auth_delete_client", Title = "Delete an OAuth application", UseStructuredContent = false, Destructive = true, OpenWorld = false),
