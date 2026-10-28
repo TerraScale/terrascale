@@ -132,7 +132,7 @@ public sealed class TokenRateLimitTests(TerraBaseFixture fixture)
         var target = await SharedStateTarget.CreateAsync(fixture);
         await using var server = await StartAsync(target, new ManualClock(Start), rejectedStorageKey: true);
         using var unavailable = await InvalidClientAsync(server);
-        await AssertOAuthErrorAsync(unavailable, HttpStatusCode.ServiceUnavailable, "temporarily_unavailable");
+        await AssertOAuthErrorAsync(unavailable, HttpStatusCode.ServiceUnavailable, "temporarily_unavailable", TimeSpan.FromSeconds(2));
         await Assert.That(await target.CountAsync(AttemptLimiter.Collection)).IsEqualTo(0);
 
         using var health = await server.Client.GetAsync("/healthz");
@@ -159,7 +159,7 @@ public sealed class TokenRateLimitTests(TerraBaseFixture fixture)
         var target = await SharedStateTarget.CreateAsync(fixture);
         await using var server = await StartAsync(target, new ManualClock(Start), new PeerAddress(null));
         using var unavailable = await InvalidClientAsync(server, spoof: true);
-        await AssertOAuthErrorAsync(unavailable, HttpStatusCode.ServiceUnavailable, "temporarily_unavailable");
+        await AssertOAuthErrorAsync(unavailable, HttpStatusCode.ServiceUnavailable, "temporarily_unavailable", TimeSpan.FromSeconds(2));
         await Assert.That(await target.CountAsync(AttemptLimiter.Collection)).IsEqualTo(0);
     }
 

@@ -259,7 +259,7 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         }
 
         using var unavailable = await InvalidClientAsync(server, clients[1]);
-        await AssertTokenAsync(unavailable, HttpStatusCode.ServiceUnavailable, "temporarily_unavailable");
+        await AssertTokenAsync(unavailable, HttpStatusCode.ServiceUnavailable, "temporarily_unavailable", TimeSpan.FromSeconds(2));
         var buckets = (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items;
         await Assert.That(buckets.Count).IsEqualTo(failure == "client-bucket" ? 3 : 0);
         if (failure == "client-bucket")
