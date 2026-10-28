@@ -78,6 +78,37 @@ public sealed class KeyRevocationTests
     }
 
     [Test]
+    public async Task A_key_answer_too_slow_for_new_work_to_outlast_refuses_it_before_it_starts(CancellationToken cancellationToken)
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var (_, token) = Grant(api, database);
+        using var client = api.WithToken(token);
+        var route = ManagementApi.Uri(database.Data + "/collections");
+
+        // ts-auth answers 1.5 s after the question: the yes holds 0.5 s more, too little for the request's watch to renew it.
+        // The request is refused before it starts, retryable, instead of admitted and then reset mid-flight (#853).
+        api.Issuer.BeforeStatus = () => time.Advance(TimeSpan.FromSeconds(1.5));
+        using (var slow = await client.GetAsync(route, cancellationToken))
+        {
+            await Assert.That(slow.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That((await slow.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("auth_unavailable");
+            await Assert.That(slow.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+        }
+
+        // A prompt answer admits the retry: the late yes is too old to start on, so the request asks again.
+        api.Issuer.BeforeStatus = null;
+        using (var retried = await client.GetAsync(route, cancellationToken))
+        {
+            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        await Assert.That(api.Issuer.StatusRequests).IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task An_established_http_feed_ends_when_its_last_key_authority_expires(bool unavailable, CancellationToken cancellationToken)

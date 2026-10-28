@@ -133,6 +133,9 @@ public sealed class TestIssuer : IDisposable
 
     public bool StatusAvailable { get; set; } = true;
 
+    /// <summary>Runs before each key status answer: a test advances its clock here to stand in for a slow ts-auth.</summary>
+    public Action? BeforeStatus { get; set; }
+
     /// <summary>False stands in for a ts-auth that predates key status: <c>/api-keys/self</c> answers 404.</summary>
     public bool StatusServed { get; set; } = true;
 
@@ -428,6 +431,7 @@ public sealed class TestIssuer : IDisposable
         if (uri.AbsoluteUri == "https://auth.test/v1/terrascale/api-keys/self" && method == "GET")
         {
             Interlocked.Increment(ref _statusRequests);
+            BeforeStatus?.Invoke();
             if (!StatusAvailable)
             {
                 throw new HttpRequestException("test key status unavailable");

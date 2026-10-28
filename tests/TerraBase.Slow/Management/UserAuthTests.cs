@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -99,7 +100,7 @@ public sealed class UserAuthTests
         var database = $"/v1/projects/{project}/databases/ci-e2e";
 
         // A separate project-admin fixture credential provisions data; the workload receives only documents:read.
-        using var seed = tls.CreateClient(server.ClientAddress!, seedToken);
+        using var seed = KeyClient(tls, server.ClientAddress!, seedToken);
         using var created = await seed.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var databaseId = (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
@@ -122,7 +123,7 @@ public sealed class UserAuthTests
         await Assert.That(await StatusAsync(seed, otherPath, token)).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await StatusAsync(client, otherPath, token)).IsEqualTo(HttpStatusCode.NotFound);
         var (_, otherProject, otherSeedToken) = await auth.SeedProjectAsync(token);
-        using var otherSeed = tls.CreateClient(server.ClientAddress!, otherSeedToken);
+        using var otherSeed = KeyClient(tls, server.ClientAddress!, otherSeedToken);
         using var otherCreated = await otherSeed.PostAsJsonAsync(new Uri($"/v1/projects/{otherProject}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(otherCreated.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var projectCollection = await otherSeed.PostAsJsonAsync(new Uri($"/v1/projects/{otherProject}/databases/ci-e2e/collections", UriKind.Relative), new { name = "runs" }, token);
@@ -143,6 +144,43 @@ public sealed class UserAuthTests
         await Assert.That(new JsonWebToken(accessToken).GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(await StatusAsync(client, $"/v1/management/organizations/{organization}/projects/{project}/databases", token))
             .IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    // A client of an API key's token, as docs/terrabase/key-revocation.md asks clients to be: it retries 503 auth_unavailable
+    // after Retry-After. TerraBase answers it before any work starts when ts-auth's key status is too slow to admit work,
+    // as the in-process ts-auth is on a loaded runner (#853). A cut-off after work began answers it too (#867): a repeated
+    // create then fails on its conflict, visibly, never as a second success.
+    private static HttpClient KeyClient(ClientTls tls, Uri address, string token)
+    {
+        var client = new HttpClient(new AuthUnavailableRetry(tls.CreateHandler())) { BaseAddress = address, Timeout = Timeout.InfiniteTimeSpan };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private sealed class AuthUnavailableRetry(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                var response = await base.SendAsync(request, cancellationToken);
+                if (response.StatusCode != HttpStatusCode.ServiceUnavailable)
+                {
+                    return response;
+                }
+
+                // Buffered, so a caller still reads any other 503 in full.
+                await response.Content.LoadIntoBufferAsync(cancellationToken);
+                if (!(await response.Content.ReadAsStringAsync(cancellationToken)).Contains("\"auth_unavailable\"", StringComparison.Ordinal))
+                {
+                    return response;
+                }
+
+                var wait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
+                response.Dispose();
+                await Task.Delay(wait, cancellationToken);
+            }
+        }
     }
 
     private static async Task<HttpStatusCode> StatusAsync(HttpClient client, string path, CancellationToken cancellationToken = default)

@@ -118,7 +118,8 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
         string? refusal;
         try
         {
-            refusal = await keys.RefusalAsync(keyId, generation, Claim(claims, PlatformGrants.ProjectClaim), cancellationToken).ConfigureAwait(false);
+            refusal = await keys.RefusalAsync(keyId, generation, Claim(claims, PlatformGrants.OrganizationClaim), Claim(claims, PlatformGrants.ProjectClaim),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
         {
