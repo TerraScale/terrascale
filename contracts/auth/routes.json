@@ -196,6 +196,24 @@
       "sdk_method": "Platform.RemoveMemberAsync"
     },
     {
+      "operation_id": "sign_out_everywhere",
+      "method": "POST",
+      "path": "/v1/terrascale/account/sign-out",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.SignOutEverywhereAsync"
+    },
+    {
       "operation_id": "leave_organization",
       "method": "POST",
       "path": "/v1/terrascale/organizations/{organization}/leave",

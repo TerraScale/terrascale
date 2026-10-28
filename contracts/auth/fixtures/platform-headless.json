@@ -104,6 +104,10 @@
     "request": null,
     "response": null
   },
+  "sign_out_everywhere": {
+    "request": null,
+    "response": null
+  },
   "account_deletion_status": {
     "request": null,
     "response": null

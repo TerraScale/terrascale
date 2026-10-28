@@ -112,6 +112,18 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>
+    /// sign_out_everywhere: POST /v1/terrascale/account/sign-out. Ends every hosted session, refresh token and sign-in
+    /// access token of the caller's account on every device, including <paramref name="accessToken"/>; API keys stay valid.
+    /// Sent once; repeating it is harmless but needs a new sign-in.
+    /// </summary>
+    public Task SignOutEverywhereAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/account/sign-out",
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+
+    /// <summary>
     /// delete_account: DELETE /v1/terrascale/account with a fresh delete_account/ts-auth proof. Completed is true only
     /// for 204, false for 202 (pending; ts-auth finishes it in the background).
     /// The proof is single-use. Optionally retain and send a canonical 32-byte base64url deletion receipt before
