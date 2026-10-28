@@ -252,6 +252,7 @@ internal sealed class AntiEntropy : BackgroundService
         using var channel = PeerChannel.Create(new Uri(peer.PeerAddress), _credential);
         var client = new V1.Replication.ReplicationClient(channel);
         // gRPC evaluates absolute deadlines against the real clock, independently of scheduling and HLC clocks.
+        var digested = _time.GetTimestamp();
         var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation), Maintained = maintained },
             deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
@@ -275,6 +276,7 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         var differing = Enumerable.Range(0, 4096).Where(bucket => !ours.AsSpan(bucket * 16, 16).SequenceEqual(theirs.AsSpan(bucket * 16, 16))).ToHashSet();
+        var comparedAt = _time.GetTimestamp();
         if (differing.Count == 0 && !force && peer.Region != _membership.Self.Region)
         {
             // A round's peer is of another placed region: it holds every value of the snapshot compared, which proves the
@@ -299,6 +301,7 @@ internal sealed class AntiEntropy : BackgroundService
             : compared && previous.Local == local.Incarnation && previous.Source == source ? previous.At : null;
         if (repair.Count == 0)
         {
+            Phases(0);
             // Covered only if the copy compared is still the one in place: a copy recreated meanwhile was never compared.
             if (!await LocalHeldAsync(database, local.Incarnation, cancellationToken).ConfigureAwait(false))
             {
@@ -358,6 +361,7 @@ internal sealed class AntiEntropy : BackgroundService
             }
         }
 
+        Phases(repair.Count);
         // The repairs joined into whatever copy was in place: they cover only the one compared, if it still is.
         if (!await LocalHeldAsync(database, local.Incarnation, cancellationToken).ConfigureAwait(false))
         {
@@ -367,6 +371,15 @@ internal sealed class AntiEntropy : BackgroundService
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
         CatalogHeld(database, peer, held, local.Incarnation);
         return changed;
+
+        // A catalog gate's pull: where its time goes (both digests, then the differing buckets' reads and joins).
+        void Phases(int buckets)
+        {
+            if (maintained)
+            {
+                _logger.ZLogInformation($"The catalog pull from machine {peer.Name:@Peer} spent {_time.GetElapsedTime(began, digested).TotalMilliseconds:F0} ms on the local digest, {_time.GetElapsedTime(digested, comparedAt).TotalMilliseconds:F0} ms on the peer's and {_time.GetElapsedTime(comparedAt).TotalMilliseconds:F0} ms reading and joining {buckets:@Buckets} buckets");
+            }
+        }
     }
 
     // A client database's comparison traffic goes to its replication analytics, never to its billed operations.

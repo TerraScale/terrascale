@@ -1272,7 +1272,9 @@ internal sealed partial class EngineManagementService(
         await transaction.PutAsync(collection, id, EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(value, type), id, nested: true), cancellationToken).ConfigureAwait(false);
 
     // Reads see a snapshot; inside a commit, the commit's transaction. A catalog this build cannot use is unavailable(refusal).
-    private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken)
+    // The caller's file and line name its transactions (terrabase.storage.transactions{at}), as WriteAsync's do.
+    private async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         if (CommitTransaction.Value is { } commit)
         {
@@ -1298,7 +1300,7 @@ internal sealed partial class EngineManagementService(
             {
                 Done => await read(transaction).ConfigureAwait(false),
                 Unavailable stale => unavailable(stale),
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken, file, line).ConfigureAwait(false);
     }
 
     public async ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>
@@ -1306,11 +1308,12 @@ internal sealed partial class EngineManagementService(
             ? ManagementErrors.CatalogUnsupported
             : new Done();
 
-    private async ValueTask<T> ReadCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
+    private async ValueTask<T> ReadCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
         RequireNoCommit();
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken, file, line).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             return await read(transaction).ConfigureAwait(false);
