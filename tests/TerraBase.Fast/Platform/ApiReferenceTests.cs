@@ -41,7 +41,6 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
         GET /v1/projects/{project}/databases/{database} TsAuth(databases:read) getDatabase Databases
         GET /v1/projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
-        GET /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:read) getAutoIndexPolicy Indexes
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
         GET /v1/projects/{project}/databases/{database}/changes TsAuth(documents:read) streamDatabaseChanges Documents
@@ -117,7 +116,6 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
         PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
         PUT /v1/projects/{project}/buckets/{bucket}/rules TsAuth(documents:write) setFileBucketRules File storage
-        PUT /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:write) putCollectionRules Collections
@@ -307,24 +305,6 @@ public sealed class ApiReferenceTests
             if (operation.GetProperty("operationId").GetString() == "putDeclaredCollectionSchema")
             {
                 await Assert.That(responses.Any(status => status.Name == "415")).IsTrue().Because(line);
-            }
-
-            if (operation.GetProperty("operationId").GetString() is "getAutoIndexPolicy" or "setAutoIndexPolicy")
-            {
-                var example = operation.GetProperty("responses").GetProperty("200").GetProperty("content")
-                    .GetProperty("application/json").GetProperty("example");
-                await Assert.That(example.GetProperty("collection").GetString()).IsEqualTo("people");
-                await Assert.That(example.GetProperty("enabled").GetBoolean()).IsFalse();
-                if (operation.GetProperty("operationId").GetString() == "setAutoIndexPolicy")
-                {
-                    var requestExample = operation.GetProperty("requestBody").GetProperty("content")
-                        .GetProperty("application/json").GetProperty("example");
-                    await Assert.That(requestExample.GetProperty("enabled").GetBoolean()).IsFalse();
-                    await Assert.That(operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString())
-                        .Contains("auto_index_policy_limit");
-                    await Assert.That(operation.GetProperty("responses").GetProperty("403").GetProperty("description").GetString())
-                        .Contains("forbidden_role");
-                }
             }
 
             if (operation.GetProperty("operationId").GetString() == "putCollectionRules")

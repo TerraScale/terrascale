@@ -74,12 +74,6 @@ internal static class IndexErrors
 /// <summary>Secondary indexes of managed databases and recommendations from their query workload.</summary>
 public interface IIndexService
 {
-    /// <summary>Reads a collection's automatic index policy; enabled unless explicitly opted out.</summary>
-    ValueTask<GetAutoIndexPolicyResult> GetAutoIndexPolicyAsync(string userId, TenantContext database, string collection, CancellationToken cancellationToken);
-
-    /// <summary>Sets a collection's automatic index policy, rechecking membership and write permission atomically.</summary>
-    ValueTask<SetAutoIndexPolicyResult> SetAutoIndexPolicyAsync(string userId, TenantContext database, string collection, bool enabled, CancellationToken cancellationToken);
-
     /// <summary>Lists the indexes of a database, optionally of one collection.</summary>
     ValueTask<IndexListBody> ListAsync(TenantContext database, string? collection, CancellationToken cancellationToken);
 

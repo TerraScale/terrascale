@@ -437,7 +437,6 @@ tooling is open to every member whatever its role (see [Membership](#membership)
 D = `/v1/management/organizations/{organization}/projects/{project}/databases/{database}`,
 P = `/v1/management/organizations/{organization}/projects/{project}`. Every route returns `404` when the
 organization, project or database does not exist.
-A = `/v1/projects/{project}/databases/{database}` is the prefix for automatic-index policy routes.
 
 | Method | Route | Result |
 | --- | --- | --- |
@@ -451,8 +450,6 @@ A = `/v1/projects/{project}/databases/{database}` is the prefix for automatic-in
 | `GET` | `D/indexes[?collection=]` | indexes |
 | `POST` | `D/indexes` | `{collection, fields, name?}` → `201` index; `409` duplicate |
 | `DELETE` | `D/indexes/{index}` | `204` |
-| `GET` | `A/auto-index/{collection}` | `{collection, enabled}`; enabled by default |
-| `PUT` | `A/auto-index/{collection}` | `{enabled}` → collection policy; requires `databases:write` |
 | `GET` | `D/index-recommendations` | recommendations from the SQL workload |
 | `POST` | `D/index-recommendations/{recommendation}/apply` | `201` applied or `200` already applied |
 | `POST` | `D/sql` | `{sql}` → rows; `400` invalid SQL |
@@ -731,29 +728,6 @@ queries beyond the first, so it can hold fewer than `limit`.
   filter sorted only by `_id` may still read the primary key when SQLite estimates that cheaper.
 - Indexes live in the database file: branches and restores keep them. An index does not require its collection to exist,
   and dropping a collection keeps its indexes (empty), which apply again if the collection is recreated.
-
-### Automatic index policy (TS-685, first slice)
-
-The automatic-index policy routes use `/v1/projects/{project}/databases/{database}`;
-`{database}` is the database name. A ts-auth project token needs `databases:read` to read or
-`databases:write` to change the policy. Tokens narrowed to another project or database receive `404`.
-The former unversioned policy paths return `404`; no aliases are registered.
-`GET A/auto-index/{collection}` returns `{"collection":"people","enabled":true}` until explicitly opted out.
-`PUT` with `{"enabled":false}` reserves that collection's opt-out from automatic index creation and removal;
-`{"enabled":true}` removes the opt-out. The collection name follows the data API's name rules, and the collection
-need not exist yet. Omitting `enabled`, setting it to null, or sending a non-boolean returns `400`.
-
-Only opt-outs are stored, with at most 1000 per database. A new opt-out beyond the limit returns
-`400 auto_index_policy_limit`; repeating an existing opt-out or re-enabling remains allowed at the limit.
-Policies live in the management catalog under the database, survive restarts and catalog replication, and are
-deleted with the database or project. They survive collection deletion and apply if the collection is recreated.
-Branches and restored databases have their own default policy; this catalog state is not part of a database-file copy.
-Read-scoped tokens can inspect policies; write-scoped tokens can set them. Project access and database existence
-are checked again inside the catalog transaction, and a changed policy advances the organization's version.
-
-This slice stores the control for subsequent automatic maintenance. It does not enable a scheduler or change
-manual create, apply-recommendation or drop operations. Online builds, workload decisions, automatic removal and
-index provenance remain subsequent TS-685 slices.
 
 ### Index recommendations
 

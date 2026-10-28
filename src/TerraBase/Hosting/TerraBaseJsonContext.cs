@@ -75,8 +75,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(AppliedIndexRecommendation))]
 [JsonSerializable(typeof(AuditEvent))]
 [JsonSerializable(typeof(AuditRetention))]
-[JsonSerializable(typeof(AutoIndexPolicy))]
-[JsonSerializable(typeof(AutoIndexPolicyRequest))]
 [JsonSerializable(typeof(BackupPolicy))]
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupStatusRecord))]
