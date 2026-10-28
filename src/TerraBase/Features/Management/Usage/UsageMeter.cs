@@ -137,6 +137,12 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // to 300 buckets of every database saved to delete about one; flushes held the writer 0.4-0.6 s on average (2026-10-27).
     private const int PrunePage = 8;
 
+    // Per bucket collection, the oldest kept bucket a committed flush last pruned below. Buckets expire only when that moves
+    // (each minute, hour or day), so a flush prunes a collection only then: every flush listed every granularity of every
+    // database it saved under SYSTEM's writer (UsageMeter.cs:425 among gru's writer holds, 2026-10-28). Another node's
+    // replicated bucket that is already expired here waits for the next move.
+    private readonly ConcurrentDictionary<string, string> _pruned = new(StringComparer.Ordinal);
+
     // Best-effort dashboard usage, not billing: counts live only here until a flush saves them, so a crash loses at most
     // those counted since the last successful flush. A failed flush keeps them for the next; a clean shutdown flushes.
     private readonly ConcurrentDictionary<DatabaseOwner, ConcurrentDictionary<UsageKey, OpCounts>> _pending = new();
@@ -418,12 +424,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     // Returns how many databases of the batch no longer exist.
-    private ValueTask<FlushResult> WriteAsync(
+    private async ValueTask<FlushResult> WriteAsync(
         string id, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
     {
         var minute = CurrentMinute();
-        return catalog.WriteAsync<FlushResult>(async transaction =>
+        List<(string Collection, string OldestKept)> pruned = [];
+        var result = await catalog.WriteAsync<FlushResult>(async transaction =>
         {
+            pruned.Clear();
             // Billed months keep the units of databases deleted since. Lifetime-only entries are past every kept day.
             foreach (var month in batch.Where(entry => entry.Key.Scope != UsageScope.Lifetime && entry.Value.ReadUnits + entry.Value.WriteUnits != 0)
                 .GroupBy(entry => (entry.Key.Database.OrganizationId, entry.Key.Database.ProjectId, Month: MonthId(entry.Key.Hour))))
@@ -444,6 +452,11 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null)
                 {
                     dropped++;
+                    foreach (var granularity in UsageWindow.Granularities)
+                    {
+                        _ = _pruned.TryRemove(Collection(database.DatabaseId, granularity), out _);
+                    }
+
                     continue;
                 }
 
@@ -464,12 +477,26 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                         await AddAsync(transaction, buckets, Own(granularity.Id(bucket.Key)), counts, cancellationToken).ConfigureAwait(false);
                     }
 
-                    await PruneAsync(transaction, buckets, granularity.Id(oldestKept), cancellationToken).ConfigureAwait(false);
+                    var oldest = granularity.Id(oldestKept);
+                    if (!_pruned.TryGetValue(buckets, out var known) || known != oldest)
+                    {
+                        await PruneAsync(transaction, buckets, oldest, cancellationToken).ConfigureAwait(false);
+                        pruned.Add((buckets, oldest));
+                    }
                 }
             }
 
             return dropped;
-        }, static error => error, cancellationToken);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (result is int)
+        {
+            foreach (var (collection, oldest) in pruned)
+            {
+                _pruned[collection] = oldest;
+            }
+        }
+
+        return result;
     }
 
     private static async ValueTask AddAsync(IStorageTransaction transaction, string collection, string id, OpCounts counts, CancellationToken cancellationToken)
