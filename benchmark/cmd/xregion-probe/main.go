@@ -45,6 +45,7 @@ func main() {
 	database := flag.String("database", "", "database name")
 	collection := flag.String("collection", "", "collection (must exist)")
 	keyFile := flag.String("key-file", "", "file holding the API key")
+	headerFile := flag.String("header-file", "", "instead of a key, a file holding one `Name: value` header for every request (the operator credential)")
 	localKeyFile := flag.String("local-key-file", "", "file holding this region's API key, when it differs (local cells)")
 	n := flag.Int("n", 100, "probes")
 	every := flag.Duration("every", 200*time.Millisecond, "gap between probes")
@@ -52,10 +53,23 @@ func main() {
 	rttSamples := flag.Int("rtt-samples", 21, "TCP connects to the origin for the RTT")
 	load := flag.Int("load", 0, "writers that PUT new documents to the origin back to back while the probes run")
 	loadEvery := flag.Duration("load-every", 0, "with -load, each writer starts a write at most once per this interval (0: back to back), so runs compare at one rate")
+	h2c := flag.Bool("h2c", false, "HTTP/2 with prior knowledge over cleartext, for both URLs (production's internal listener)")
 	flag.Parse()
 
-	key, err := os.ReadFile(*keyFile)
-	if err != nil {
+	var key []byte
+	var err error
+	header := http.Header{}
+	if *headerFile != "" {
+		line, err := os.ReadFile(*headerFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		name, value, ok := strings.Cut(strings.TrimSpace(string(line)), ":")
+		if !ok {
+			log.Fatalf("%s: not a `Name: value` line", *headerFile)
+		}
+		header.Set(strings.TrimSpace(name), strings.TrimSpace(value))
+	} else if key, err = os.ReadFile(*keyFile); err != nil {
 		log.Fatal(err)
 	}
 	localKey := key
@@ -65,8 +79,8 @@ func main() {
 		}
 	}
 	t := replbench.Targets{Project: *project, Database: *database, Regions: map[string]replbench.RegionTarget{
-		"origin": {URL: *origin, Token: strings.TrimSpace(string(key))},
-		"local":  {URL: *local, Token: strings.TrimSpace(string(localKey))},
+		"origin": {URL: *origin, Token: strings.TrimSpace(string(key)), H2C: *h2c},
+		"local":  {URL: *local, Token: strings.TrimSpace(string(localKey)), H2C: *h2c},
 	}}
 	from, err := replbench.NewRegion("origin", t, 4)
 	if err != nil {
@@ -76,6 +90,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	from.Header, to.Header = header, header
 	ctx := context.Background()
 	out := json.NewEncoder(os.Stdout)
 
@@ -99,6 +114,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		loader.Header = header
 		writers.Go(func() {
 			var tick <-chan time.Time
 			if *loadEvery > 0 {

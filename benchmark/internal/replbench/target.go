@@ -37,6 +37,8 @@ type RegionTarget struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
 	CAPEM string `json:"ca_pem,omitempty"`
+	// H2C speaks HTTP/2 with prior knowledge over cleartext http:// (a node's internal listener on the private mesh).
+	H2C bool `json:"h2c,omitempty"`
 }
 
 // LoadTargets reads a targets file and checks it names at least two regions with a URL and token each.
@@ -78,6 +80,8 @@ type Region struct {
 	Mismatch atomic.Int64
 	// Pin, when set, asks the edge for this serving region (X-TerraScale-Region-Pin).
 	Pin string
+	// Header, when set, goes on every request (an operator credential on a node's internal listener).
+	Header http.Header
 }
 
 // NewRegion builds the client of one region of t.
@@ -94,6 +98,10 @@ func NewRegion(name string, t Targets, conns int) (*Region, error) {
 			return nil, fmt.Errorf("region %s: ca_pem holds no certificate", name)
 		}
 		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	}
+	if rt.H2C {
+		tr.Protocols = new(http.Protocols)
+		tr.Protocols.SetUnencryptedHTTP2(true)
 	}
 	region := &Region{
 		Name:   name,
@@ -132,7 +140,12 @@ func (r *Region) Do(ctx context.Context, method, path string, body []byte, conte
 	if err != nil {
 		return Response{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+*r.token.Load())
+	if token := *r.token.Load(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for name, values := range r.Header {
+		req.Header[name] = values
+	}
 	if r.Pin != "" {
 		req.Header.Set("X-TerraScale-Region-Pin", r.Pin)
 	}
