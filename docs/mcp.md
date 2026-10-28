@@ -129,13 +129,17 @@ Tools are stateless, so each call picks its tenant. Scoped tools accept
 optional `organizationId` and `projectId`:
 
 - If both are omitted, the call uses the user's saved dashboard selection.
-- `organizationId` alone uses that organization's default project, or the
-  saved project when it is the saved organization.
+- `organizationId` alone uses the saved project when it is the saved
+  organization, otherwise its default accessible project, otherwise the first
+  accessible project.
 - `projectId` alone must belong to the saved organization; otherwise the call
-  returns `Project is unavailable.`
+  returns `Project is unavailable.` `select_project` can switch across
+  organizations.
+- Explicit scopes never change the saved selection.
 
-Membership is checked on every call. `get_context` lists the organizations
-and projects the caller can use.
+Membership or an exact project grant is checked on every call. `get_context`
+lists the organizations and projects the caller can use. Project collaborators
+are covered in [Project collaborators](project-collaborators.md).
 
 ## Organization permissions
 
