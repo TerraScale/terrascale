@@ -11,3 +11,7 @@ validation, credential handling, request deadlines and existing retry rules.
 
 Negotiation and reuse are covered against isolated TLS HTTP fakes. Performance
 evidence belongs in the TerraScale monorepo under `benchmark/bench/`.
+
+The [three-pair transport control](https://github.com/TerraScale/terrascale/blob/fix/api-request-overhead/benchmark/bench/2026-10-27-perf-api-https.md)
+measured one HTTP/2 connection rather than 16 HTTP/1.1 connections at c=16 on its recorded SDK sources.
+Host contention and inconsistent latency exclude a general speedup claim. Regional document proof follows separately.
