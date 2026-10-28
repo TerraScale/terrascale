@@ -1037,10 +1037,10 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     private static async Task ScopeAsync(JsonElement observed, string organization, string[] projects, DateTimeOffset month)
     {
         var rows = observed.GetProperty("billing").GetProperty("usageRequests").EnumerateArray().ToArray();
-        await CheckAsync(rows.Length >= 7 && rows.All(row => row.GetProperty("organizationId").GetString() == organization &&
+        await CheckAsync(projects.Length > 0 && rows.Length >= projects.Length && rows.All(row => row.GetProperty("organizationId").GetString() == organization &&
             projects.Contains(row.GetProperty("projectId").GetString()) && row.GetProperty("userId").GetString() == observed.GetProperty("subject").GetString() &&
             row.GetProperty("from").GetDateTimeOffset() == month) &&
-            rows.Select(row => row.GetProperty("projectId").GetString()).Distinct().Count() == 7,
+            rows.Select(row => row.GetProperty("projectId").GetString()).Distinct().Count() == projects.Length,
             "Actual producer GETs meter every current service project under the approved principal and exact UTC month");
     }
     private static async Task<JsonElement> ObserveAsync(HttpClient producer)

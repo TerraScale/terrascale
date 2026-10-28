@@ -154,9 +154,22 @@ public sealed class CodeEditorStylingBrowserJourneyTests(DashboardRootFixture fi
                 .Because(name + ": the host surface must use --ts-surface.");
             await Assert.That(await page.Locator(host + " .monaco-editor-background").First.EvaluateAsync<string>("el => getComputedStyle(el).backgroundColor")).IsEqualTo(surfaceToken)
                 .Because(name + ": Monaco must paint the TerraScale theme background.");
-            var lineNumber = page.Locator(host + " .line-numbers").First;
-            var active = await lineNumber.EvaluateAsync<bool>("el => el.classList.contains('active-line-number')");
-            await Assert.That(await lineNumber.EvaluateAsync<string>("el => getComputedStyle(el).color")).IsEqualTo(await ResolveAsync(active ? "--ts-ink-2" : "--ts-ink-3"))
+            await page.Locator(host + " .line-numbers").First.WaitForAsync();
+            // Monaco replaces line-number nodes during layout. Resolve the current node,
+            // its active state and both colours in one browser turn to avoid detached nodes.
+            var lineColors = await page.Locator(host).EvaluateAsync<JsonElement>("""
+                host => {
+                    const line = host.querySelector('.line-numbers');
+                    const probe = document.createElement('span');
+                    probe.hidden = true;
+                    probe.style.color = line.classList.contains('active-line-number') ? 'var(--ts-ink-2)' : 'var(--ts-ink-3)';
+                    host.append(probe);
+                    const colors = { actual: getComputedStyle(line).color, expected: getComputedStyle(probe).color };
+                    probe.remove();
+                    return colors;
+                }
+                """);
+            await Assert.That(lineColors.GetProperty("actual").GetString()).IsEqualTo(lineColors.GetProperty("expected").GetString())
                 .Because(name + ": line numbers must use the TerraScale ink tokens.");
         }
         async Task AssertCursorAndSelectionAsync(string host, string name)
