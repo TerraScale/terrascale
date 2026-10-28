@@ -54,7 +54,6 @@ namespace TraceAttribution
             double first = double.MaxValue, last = 0, contentionNs = 0, promoted0 = 0;
             var suspendAt = -1.0;
             var suspendForGc = false;
-            var shown = false;
             var gcPauses = new List<double>();
             var gcSuspending = new List<double>();
             var otherPauses = new List<double>();
@@ -110,25 +109,18 @@ namespace TraceAttribution
                     }
                 }
 
-                if (name == "EventCounters" && counters.Count == 0 && !shown)
+                // EventCounters carry one unnamed struct field; its rendered form names the counter and its Increment or Mean.
+                if (name == "EventCounters" && CounterName().Match(item.ToString()) is { Success: true } counter
+                    && CounterValue().Match(item.ToString()) is { Success: true } value)
                 {
-                    shown = true;
-                    Console.WriteLine($"# counter_shape {string.Join(',', item.PayloadNames)} {item.PayloadByName("Payload")?.GetType().FullName} {item}");
-                }
-
-                // EventCounters nest their fields in a Payload member of the Payload value.
-                if (name == "EventCounters" && item.PayloadByName("Payload") is IDictionary<string, object> outer
-                    && (outer.TryGetValue("Payload", out var inner) ? inner : outer) is IDictionary<string, object> payload
-                    && payload.TryGetValue("Name", out var counter) && counter is string key)
-                {
-                    var value = payload.TryGetValue("Increment", out var increment) ? increment : payload.TryGetValue("Mean", out var mean) ? mean : null;
+                    var key = counter.Groups[1].Value;
                     if (!counters.TryGetValue(key, out var series))
                     {
                         series = [];
                         counters[key] = series;
                     }
 
-                    series.Add((item.TimeStampRelativeMSec, Convert.ToDouble(value, CultureInfo.InvariantCulture)));
+                    series.Add((item.TimeStampRelativeMSec, double.Parse(value.Groups[2].Value, CultureInfo.InvariantCulture)));
                 }
 
                 double weight;
@@ -379,6 +371,12 @@ namespace TraceAttribution
 
         [GeneratedRegex(@"\[[^\[\]]*\]")]
         private static partial Regex Brackets();
+
+        [GeneratedRegex("&quot;Name&quot;:&quot;([^&]+)&quot;")]
+        private static partial Regex CounterName();
+
+        [GeneratedRegex("&quot;(Increment|Mean)&quot;:([-0-9.Ee+]+)")]
+        private static partial Regex CounterValue();
 
         [GeneratedRegex(@"`\d+")]
         private static partial Regex Arity();
