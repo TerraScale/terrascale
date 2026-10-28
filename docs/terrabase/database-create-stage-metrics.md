@@ -41,9 +41,11 @@ Nine stages by four outcomes gives at most 36 series. The exporter's cardinality
 
 ## Boundaries
 
-- Each stage records once. It records when the next stage starts or when the creation
-  returns or throws. A stage that fails records before its cleanup starts, so cleanup
-  time is never counted in the failing stage. Cleanup records separately as `cleanup`.
+- Each timed interval records when the next stage starts or when the creation returns
+  or throws. A stage name can repeat when cleanup is attempted again. A failing stage
+  records before cleanup starts, so cleanup time is never counted in the failing stage.
+  Cleanup records separately as `cleanup`; a returned cleanup call can leave a recorded
+  intent for recovery, so `cleanup:completed` does not prove erasure or registration.
 - Cleanup inside `prepare` (finishing a published intent or releasing an unrecorded one)
   and cleanup after `quota_check` or `register` both record as `cleanup`.
 - Time spent in the HTTP endpoint before the service is called (request validation,
