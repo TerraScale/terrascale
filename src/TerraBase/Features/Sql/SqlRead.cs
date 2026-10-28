@@ -291,9 +291,15 @@ internal static class SqlRead
     public static SqlProgram Program(
         ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe, string? keyed = null)
     {
+        var key = KeyParameter(read, tables, parameters.Count, out var keyLiteral);
         SqlGuard.Apply(read.Query, tables);
         var affinities = SqlGuard.Affinity(read.Query, tables);
         parameters = [.. parameters.Select((value, i) => affinities.TryGetValue(i + 1, out var affinity) ? Bound(affinity, value) : value)];
+        if (keyLiteral is not null)
+        {
+            parameters = [.. parameters, keyLiteral];
+        }
+
         // Defense in depth: the text the engine runs must parse back to the same statement.
         var full = read.Query.ToSql();
         try
@@ -310,7 +316,7 @@ internal static class SqlRead
 
         var statement = (read.Query with { With = null }).ToSql();
         return new SqlProgram(
-            [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed, TextKey(tables[name])))],
+            [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed, TextKey(tables[name]), key))],
             read.Query.With is { } with ? string.Join(", ", with.CteTables.Select(cte => cte.ToSql())) : null,
             describe ? $"SELECT * FROM ({statement}) LIMIT 0" : statement,
             parameters, MaxRows, MaxBytes);
@@ -319,6 +325,97 @@ internal static class SqlRead
     // A single TEXT primary key is the document id verbatim.
     private static string? TextKey(SqlTableDefinition table) =>
         table.PrimaryKey is [var key] && table.Columns.First(column => column.Name == key).Affinity == SqlAffinity.Text ? key : null;
+
+    // The parameter number of a point read: a SELECT of one table with a single TEXT primary key whose WHERE holds
+    // `key = value` among its top-level AND terms, value a parameter or a '…' literal (bound as one more parameter, in
+    // `literal`). The engine filters that table's CTE on the document id with it, so the id index serves the read instead
+    // of a scan of every row (relational-sql.md section 4). The term itself stays, and the CTE's key column is that id, so
+    // the extra filter only drops rows the statement's own WHERE drops too. Only where the table is the statement's sole
+    // reference: no join, subquery or CTE of the statement could read the filtered CTE.
+    private static int? KeyParameter(ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, int count, out string? literal)
+    {
+        literal = null;
+        if (read.Query.With is not null || read.Catalog.Count > 0 || read.Tables is not [var only] || TextKey(tables[only]) is not { } key
+            || read.Query.Body is not SetExpression.SelectExpression
+            {
+                Select: { From: [{ Relation: TableFactor.Table { Name.Values: [var name] } table, Joins: null or [] }], Selection: { } where },
+            }
+            || !name.Value.Equals(only, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var subqueries = new Subqueries();
+        ((IElement)read.Query).Visit(subqueries);
+        if (subqueries.Found)
+        {
+            return null;
+        }
+
+        // SQLite resolves names without regard to case, quoted or not.
+        var alias = table.Alias?.Name.Value ?? name.Value;
+        foreach (var term in Terms(where))
+        {
+            if (term is not Expression.BinaryOp { Op: BinaryOperator.Eq, Left: var left, Right: var right })
+            {
+                continue;
+            }
+
+            switch (IsKey(left) ? right : IsKey(right) ? left : null)
+            {
+                case Expression.LiteralValue { Value: Value.Placeholder { Value: ['$', 'p', .. var digits] } }
+                    when int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number >= 1 && number <= count:
+                    return number;
+                case Expression.LiteralValue { Value: Value.SingleQuotedString { Value: var text } } when !text.Contains('\'', StringComparison.Ordinal):
+                    literal = text;
+                    return count + 1;
+            }
+        }
+
+        return null;
+
+        bool IsKey(Expression expression)
+        {
+            return expression switch
+            {
+                Expression.Identifier { Ident.Value: var column } => column.Equals(key, StringComparison.OrdinalIgnoreCase),
+                Expression.CompoundIdentifier { Idents: [var qualifier, var column] } =>
+                    qualifier.Value.Equals(alias, StringComparison.OrdinalIgnoreCase) && column.Value.Equals(key, StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            };
+        }
+
+        static IEnumerable<Expression> Terms(Expression expression)
+        {
+            switch (expression)
+            {
+                case Expression.Nested { Expression: var inner }:
+                    return Terms(inner);
+                case Expression.BinaryOp { Op: BinaryOperator.And, Left: var left, Right: var right }:
+                    return Terms(left).Concat(Terms(right));
+                default:
+                    return [expression];
+            }
+        }
+    }
+
+    // Whether a statement holds a subquery anywhere, in FROM or in an expression.
+    private sealed class Subqueries : Visitor
+    {
+        public bool Found { get; private set; }
+
+        public override ControlFlow PreVisitTableFactor(TableFactor relation)
+        {
+            Found |= relation is not TableFactor.Table;
+            return ControlFlow.Continue;
+        }
+
+        public override ControlFlow PreVisitExpression(Expression expression)
+        {
+            Found |= expression is Expression.Subquery or Expression.Exists or Expression.InSubquery;
+            return ControlFlow.Continue;
+        }
+    }
 
     // A bound parameter converted by the affinity of the column it is compared with.
     private static object? Bound(SqlAffinity affinity, object? value)

@@ -9,7 +9,8 @@ namespace TerraBase.Engine.Turso;
 /// A relational read (docs/terrabase/sql/relational-sql.md section 4): each table becomes a CTE of the same name over its
 /// collection's table, written <c>main."t"</c> so the CTE shadows it, with one <c>json_extract</c> column per field and the
 /// scan guard that charges the work budget. Column names are identifiers, so they embed safely.
-/// shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it; the
+/// shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it, except a
+/// point read by a single TEXT key, whose CTE also filters on the indexed id (docs/terrabase/sql/key-point-reads.md); the
 /// row guard (SqlProgram.RowGuard) charges each evaluated join combination, so the budget bounds joins, but the scans make
 /// reads cap at roughly 150,000 table rows. Rewrite columns to json_extract over the tables (index-served) when a customer
 /// table passes that.
@@ -80,8 +81,9 @@ internal sealed partial class TursoStorageTransaction
     // Worker-only.
     private SqlProgramResult RunProgram(SqlProgram program, CancellationToken cancellationToken)
     {
+        // A point read's key (SqlProgramTable.KeyParameter) filters its table's CTE on the indexed id before the scan guard.
         var ctes = program.Tables.Select(table => string.Create(CultureInfo.InvariantCulture,
-            $"{Table(table.Name)} AS (SELECT {(table.WithId ? "id AS \"_id\", " : "")}{string.Join(", ", table.Columns.Select(column => column == table.KeyColumn ? $"id AS \"{column}\"" : $"json_extract(doc, '$.{column}') AS \"{column}\""))} FROM main.{Table(table.Name)} WHERE tb_qos_scan(octet_length(doc)))")).ToList();
+            $"{Table(table.Name)} AS (SELECT {(table.WithId ? "id AS \"_id\", " : "")}{string.Join(", ", table.Columns.Select(column => column == table.KeyColumn ? $"id AS \"{column}\"" : $"json_extract(doc, '$.{column}') AS \"{column}\""))} FROM main.{Table(table.Name)} WHERE {(table is { KeyColumn: not null, KeyParameter: { } key } ? $"id = $p{key} AND " : "")}tb_qos_scan(octet_length(doc)))")).ToList();
         if (program.Ctes is { } own)
         {
             ctes.Add(own);
