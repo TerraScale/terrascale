@@ -172,7 +172,7 @@ public sealed class ErrorEnvelopeTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(status)
             {
-                Content = new StringContent($$"""{"error":{"code":"{{code}}","message":"synthetic"}}""", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent($$$"""{"error":{"code":"{{{code}}}","message":"synthetic"}}""", System.Text.Encoding.UTF8, "application/json"),
             });
     }
 }
