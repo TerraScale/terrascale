@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
@@ -42,26 +43,39 @@ public sealed class DatabaseCreateStageMetricsTests
     }
 
     [Test]
-    public async Task A_create_canceled_while_preparing_records_the_prepare_stage_canceled_and_its_cleanup_separately()
+    public async Task An_HTTP_create_aborted_while_preparing_records_cancellation_and_cleanup_separately()
     {
-        using var cancellation = new CancellationTokenSource();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        IHttpContextAccessor? requests = null;
         var armed = false;
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+        await using var api = await ManagementApi.StartAsync(services: services =>
         {
-            if (Volatile.Read(ref armed) && step == "create.intent")
+            services.AddHttpContextAccessor();
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
             {
-                cancellation.Cancel();
-            }
-        }));
+                if (Volatile.Read(ref armed) && step == "create.intent")
+                {
+                    // Inject cancellation at a known lifecycle boundary on the real HTTP request.
+                    var context = requests!.HttpContext!;
+                    context.Abort();
+                    throw new OperationCanceledException(context.RequestAborted);
+                }
+            });
+        }, cancellationToken: deadline.Token);
+        requests = api.Server.Services.GetRequiredService<IHttpContextAccessor>();
         var organization = await api.CreateOrganizationAsync("canceled create");
         var project = await api.CreateProjectAsync(organization, "canceled create");
         using var stages = new Stages(api);
         Volatile.Write(ref armed, true);
 
-        var management = api.Server.Services.GetRequiredService<IManagementService>();
-        await Assert.That(async () => await management.CreateDatabaseAsync(api.User, organization, project, "main", cancellation.Token)).Throws<OperationCanceledException>();
-        await Assert.That(stages.Take()).IsEqualTo("serving:completed precheck:completed replicas:completed prepare:canceled cleanup:completed");
-        // The cleanup the stage names ran: no intent, registration or file remains.
+        await Assert.That(async () =>
+        {
+            using var response = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main" }, deadline.Token);
+        }).Throws<HttpRequestException>();
+        await stages.Cleanup.WaitAsync(deadline.Token);
+        await Assert.That(stages.Take()).IsEqualTo("serving:completed precheck:completed prepare:canceled cleanup:completed");
+        // Cleanup finished after the HTTP abort: no intent, registration or file remains.
         await Assert.That(await PendingCleanupAsync(api)).IsEqualTo(0);
         await Assert.That(await ListedAsync(api, organization, project)).IsEqualTo(0);
         await Assert.That(DatabaseFiles(api, organization, project)).IsEqualTo(0);
@@ -121,6 +135,7 @@ public sealed class DatabaseCreateStageMetricsTests
     {
         private readonly MeterListener _listener = new();
         private readonly ConcurrentQueue<string> _recorded = new();
+        private readonly TaskCompletionSource _cleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _durations;
 
         public Stages(ManagementApi api)
@@ -144,11 +159,17 @@ public sealed class DatabaseCreateStageMetricsTests
                 // Only the two fixed labels, never an identifier.
                 _recorded.Enqueue(labels.Keys.SequenceEqual(Labels) && seconds >= 0 ? $"{labels["stage"]}:{labels["outcome"]}" : "unexpected");
                 Interlocked.Increment(ref _durations);
+                if (labels["stage"] == "cleanup" && labels["outcome"] == "completed")
+                {
+                    _cleanup.TrySetResult();
+                }
             });
             _listener.Start();
         }
 
         public int Durations => Volatile.Read(ref _durations);
+
+        public Task Cleanup => _cleanup.Task;
 
         public string Take()
         {
