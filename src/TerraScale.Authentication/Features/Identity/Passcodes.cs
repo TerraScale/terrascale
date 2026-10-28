@@ -382,7 +382,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             }
 
             // A write that completes after expiry grants nothing.
-            return matches && expires > clock.GetUtcNow() ? passcode with { Binding = binding, AuthenticatedUser = authenticated } : null;
+            return matches && passcode.ExpiresAt > clock.GetUtcNow() ? passcode with { Binding = binding, AuthenticatedUser = authenticated } : null;
         }
 
         return null;
