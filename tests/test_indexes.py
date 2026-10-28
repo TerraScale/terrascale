@@ -22,10 +22,6 @@ CASES = [
     ("create_index", (IndexRequest("people", ["embedding"], kind="vector", dimensions=3),), {}, "POST", "/indexes", 201,
      {"collection": "people", "fields": ["embedding"], "kind": "vector", "dimensions": 3}, VECTOR),
     ("drop_index", ("people_email",), {}, "DELETE", "/indexes/people_email", 204, None, None),
-    ("get_auto_index_policy", ("people",), {}, "GET", "/auto-index/people", 200, None,
-     {"collection": "people", "enabled": True}),
-    ("set_auto_index_policy", ("people", False), {}, "PUT", "/auto-index/people", 200, {"enabled": False},
-     {"collection": "people", "enabled": False}),
     ("list_index_recommendations", (), {}, "GET", "/index-recommendations", 200, None, {"items": [RECOMMENDATION]}),
     ("apply_index_recommendation", (RECOMMENDATION["id"],), {}, "POST",
      "/index-recommendations/people:profile.email/apply", 201, None, {"status": "applied", "index": INDEX}),
@@ -62,8 +58,6 @@ async def test_index_contract(asynchronous, method, args, kwargs, verb, suffix, 
         assert result[1].state == "building" and result[1].dimensions == 3
     elif method == "create_index":
         assert result.kind == "vector" and result.dimensions == 3
-    elif method.endswith("auto_index_policy"):
-        assert result.enabled is response["enabled"] and result.collection == "people"
     elif method == "list_index_recommendations":
         assert result[0].queries == 2**60 + 1 and result[0].id == RECOMMENDATION["id"]
     elif method == "apply_index_recommendation":
@@ -89,8 +83,7 @@ async def test_mutations_uncertain_without_replay(asynchronous, method, args, kw
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("method,response", [("list_indexes", {"items": []}), ("get_auto_index_policy",
-                                            {"collection": "people", "enabled": False}),
+@pytest.mark.parametrize("method,response", [("list_indexes", {"items": []}),
                                            ("list_index_recommendations", {"items": []})])
 async def test_read_replay(asynchronous, method, response, monkeypatch):
     requests = []
@@ -100,15 +93,13 @@ async def test_read_replay(asynchronous, method, response, monkeypatch):
         if len(requests) == 1:
             raise httpx.ReadError("fixture-only", request=r)
         return httpx.Response(200, json=response)
-    await invoke(asynchronous, respond, method, *(("people",) if method == "get_auto_index_policy" else ()))
+    await invoke(asynchronous, respond, method)
     assert len(requests) == 2
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("method,args,response", [
     ("list_indexes", (), {"items": {}}),
-    ("get_auto_index_policy", ("people",), {"collection": "people", "enabled": "false"}),
-    ("list_index_recommendations", (), {"items": [RECOMMENDATION | {"queries": True}]}),
     ("list_indexes", (), {"items": [VECTOR | {"dimensions": 3.1}]}),
 ])
 async def test_malformed_read(asynchronous, method, args, response):
