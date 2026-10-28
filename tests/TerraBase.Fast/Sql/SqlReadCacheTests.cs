@@ -56,8 +56,11 @@ public sealed class SqlReadCacheTests
         var before = await RowsAsync(api, new { sql = "SELECT * FROM t" });
         var tables = await RowsAsync(api, new { sql = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name" });
         var elsewhere = await RowsAsync(api, new { sql = "SELECT * FROM t" }, "other");
-        await SqlApi.OkAsync(api, "DROP TABLE t", "CREATE TABLE t (k TEXT PRIMARY KEY, b INTEGER, c TEXT)", "CREATE TABLE u (id INTEGER PRIMARY KEY)",
-            "INSERT INTO t VALUES ('2', 5, 'y')");
+        foreach (var statement in new[] { "DROP TABLE t", "CREATE TABLE t (k TEXT PRIMARY KEY, b INTEGER, c TEXT)", "CREATE TABLE u (id INTEGER PRIMARY KEY)", "INSERT INTO t VALUES ('2', 5, 'y')" })
+        {
+            var response = await SqlApi.ExecuteAsync(api, statement);
+            await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK).Because(response.Json.ToString());
+        }
         var after = await RowsAsync(api, new { sql = "SELECT * FROM t" });
         var more = await RowsAsync(api, new { sql = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name" });
 
