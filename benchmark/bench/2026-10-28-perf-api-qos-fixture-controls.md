@@ -64,7 +64,8 @@ passed required `test` for publication head `cdcc6cf3eab1b42f18d39d618fff8bee8d2
 Release Fast 3,162/3,162, driver 44/44, E2E checks 67/67 and 16/16, all with zero skips.
 Non-blocking Slow had 89 passed, one failed and one skipped; the sealed-shape failure
 is retained in [#838](https://github.com/TerraScale/terrascale/issues/838).
-Before merge, main advanced to `6fcb4a7a4d4f59e4191c750314312c2b13d3394e` (#832).
+Before merge, main advanced to `6fcb4a7a4d4f59e4191c750314312c2b13d3394e` (#832),
+then `9cbc00d60788ab383917cf8768879beffec4fc0c` (#825).
 Publication was rebased again; the test still matches the qualified source byte for
 byte, but that new base requires its own CI result. No post-rebase passing result is
 claimed. The retained prior Fast log is `/tmp/perf-api-qos-fast-40693733388.log`, SHA-256
