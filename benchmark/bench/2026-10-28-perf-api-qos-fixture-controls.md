@@ -66,6 +66,7 @@ Non-blocking Slow had 89 passed, one failed and one skipped; the sealed-shape fa
 is retained in [#838](https://github.com/TerraScale/terrascale/issues/838).
 Before merge, main advanced to `6fcb4a7a4d4f59e4191c750314312c2b13d3394e` (#832),
 then `9cbc00d60788ab383917cf8768879beffec4fc0c` (#825).
+The latest publication base is `18e26eaedc1209f3618302a53201709c14532809` (#834).
 Publication was rebased again; the test still matches the qualified source byte for
 byte, but that new base requires its own CI result. No post-rebase passing result is
 claimed. The retained prior Fast log is `/tmp/perf-api-qos-fast-40693733388.log`, SHA-256
