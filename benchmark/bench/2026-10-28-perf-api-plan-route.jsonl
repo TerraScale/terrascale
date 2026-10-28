@@ -1,0 +1,3 @@
+{"http":405,"curl_exit":0,"code":"method_not_allowed","peer":"ts-gru-1","observed_at":"2026-10-28T09:34:52.162766+00:00"}
+{"http":405,"curl_exit":0,"code":"method_not_allowed","peer":"ts-sjc-1","observed_at":"2026-10-28T09:34:55.567120+00:00"}
+{"http":405,"curl_exit":0,"code":"method_not_allowed","peer":"ts-fra-1","observed_at":"2026-10-28T09:34:59.923773+00:00"}
