@@ -12,6 +12,10 @@ AI MAY EDIT THIS FILE ONLY WITH HUMAN PERMISSION! If a human or the user request
   `renice` to CI workflows, Makefiles, scripts, or Containerfiles; the low
   priority is applied by whoever runs the command locally.
 
+## Pull requests
+
+- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
+
 ## Zero configuration (user decision 2026-10-09, do not revert)
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
