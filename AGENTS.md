@@ -95,14 +95,14 @@ CI is the gate: no local test/check run is required before pushing or opening a 
 - Base every task branch on freshly fetched `origin/main`, never a stale local `main`. Never implement or push task changes directly on `main`. Keep each task's changes, commits, and PR isolated.
 - Branch prefixes: `feat/{name}`, `fix/{name}`, `hotfix/{name}`, `refactor/{name}`.
 - Remove a task worktree only when it is no longer needed and holds no uncommitted changes, unpushed commits, or files to keep.
-- Use `git` for repository operations and the **`gh` CLI** for GitHub operations, including PR creation, reviewer requests, and status checks. Check CLI help when unsure; do not invent commands.
+- Use `git` for repository operations and the **`gh` CLI** for GitHub operations, including PR creation and status checks. Check CLI help when unsure; do not invent commands.
 
 ## Pull Requests
 
 - Open a PR into **`main`** when the work is ready for review. Keep it focused, with a concise change summary and the validation performed.
 - **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
 - Never merge while required checks are pending or failing.
-- Before finishing, verify the target branch, title, reviewers, previews, and current checks. Send the PR URL with the checks that passed and any unresolved blockers.
+- Before finishing, verify the target branch, title, previews, and current checks. Send the PR URL with the checks that passed and any unresolved blockers.
 
 ### PR previews (required for every visible change)
 
