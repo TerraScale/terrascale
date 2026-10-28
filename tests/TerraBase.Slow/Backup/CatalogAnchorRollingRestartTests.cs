@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -67,12 +68,15 @@ public sealed class CatalogAnchorRollingRestartTests
             }
         });
         timings.Start();
+        // The engine's own warnings by region: a writer waited on names what it queued behind (its holders' call sites).
+        var warnings = new ConcurrentQueue<string>();
+        Action<IServiceCollection> Capture(string region) => services => TerraBaseTestServer.CaptureDebugLogs(services, new EngineWarnings(region, warnings));
         await using var gru = new RestartingMachine("gru", bucket, members);
         await using var sjc = new RestartingMachine("sjc", bucket, members);
         await using var fra = new RestartingMachine("fra", bucket, members);
-        foreach (var machine in (RestartingMachine[])[gru, sjc, fra])
+        foreach (var (machine, region) in ((RestartingMachine, string)[])[(gru, "gru"), (sjc, "sjc"), (fra, "fra")])
         {
-            await machine.StartAsync();
+            await machine.StartAsync(Capture(region));
             Track(machine);
         }
 
@@ -115,7 +119,7 @@ public sealed class CatalogAnchorRollingRestartTests
                 // fra misses catalog changes and the peers' new anchors while it is down.
                 var missed = Volatile.Read(ref writes) + 50;
                 await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Volatile.Read(ref writes) >= missed), timeout: TimeSpan.FromSeconds(60));
-                await fra.StartAsync();
+                await fra.StartAsync(Capture("fra"));
                 Track(fra);
                 // The peers anchored markers fra missed: its gate opens once a revocation snapshot or their streams cover them,
                 // which a loaded runner takes longer than a minute for. Only the anchors are bounded here.
@@ -144,6 +148,11 @@ public sealed class CatalogAnchorRollingRestartTests
                 TestContext.Current!.OutputWriter.WriteLine($"WriterHold region={meters[hold.Meter]} released={hold.Released:HH:mm:ss.fff} holder={hold.Holder} at={hold.At} seconds={hold.Seconds:F3}");
             }
 
+            foreach (var warning in warnings.Where(warning => warning.Contains("writer", StringComparison.Ordinal) || warning.Contains("anchor", StringComparison.Ordinal)))
+            {
+                TestContext.Current!.OutputWriter.WriteLine(warning);
+            }
+
             foreach (var (region, started, took, held) in anchors.Where(anchor => !anchor.Held || anchor.Took >= Within))
             {
                 TestContext.Current!.OutputWriter.WriteLine($"LateAnchor region={region} started={started:HH:mm:ss.fff} seconds={took.TotalSeconds:F3} held={held}");
@@ -165,6 +174,30 @@ public sealed class CatalogAnchorRollingRestartTests
             for (var i = 0; i < count; i++)
             {
                 _ = await machine.Api.CreateOrganizationAsync("restarted load " + EntityIds.New());
+            }
+        }
+    }
+
+    private sealed class EngineWarnings(string region, ConcurrentQueue<string> lines) : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new Logger(region, categoryName, lines);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger(string region, string category, ConcurrentQueue<string> lines) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning && category.StartsWith("TerraBase.", StringComparison.Ordinal);
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (IsEnabled(logLevel) && lines.Count < 4096)
+                {
+                    lines.Enqueue($"EngineWarning region={region} at={DateTimeOffset.UtcNow:HH:mm:ss.fff} {category[(category.LastIndexOf('.') + 1)..]}: {formatter(state, null)}");
+                }
             }
         }
     }
