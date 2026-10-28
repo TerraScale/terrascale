@@ -287,4 +287,35 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
         return [.. Enumerable.Range(0, 4096).Select(index => $"person{index}@example.test").DistinctBy(limiter.Fold).Take(count)];
     }
+
+    [Test]
+    public async Task A_code_superseded_by_a_resend_never_signs_in()
+    {
+        var clock = Clock();
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await oidc.CreateUserAsync();
+        using (var first = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test" }))
+        {
+            await Assert.That(first.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var superseded = await oidc.Email.NextCodeAsync("alice@example.test");
+        clock.Advance(HostedAuth.MailCooldown);
+        using (var resend = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test" }))
+        {
+            await Assert.That(resend.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var newest = await oidc.Email.NextCodeAsync("alice@example.test");
+        // QA round 4, auth:5: the replaced code signed in. Codes collide one time in a million.
+        if (superseded != newest)
+        {
+            using var stale = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = "alice@example.test", ["code"] = superseded });
+            await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(stale)).IsNull();
+        }
+
+        using var current = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = "alice@example.test", ["code"] = newest });
+        await Assert.That(OidcHarness.SessionCookie(current)).IsNotNull();
+    }
 }
