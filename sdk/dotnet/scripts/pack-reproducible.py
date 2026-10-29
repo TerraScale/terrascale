@@ -27,7 +27,8 @@ def main(destination):
     if run("git", "status", "--porcelain", capture=True).strip():
         raise SystemExit("Commit the SDK changes before qualifying its exact clean revision.")
     output = Path(destination).resolve()
-    if output.is_relative_to(ROOT):
+    repository_root = Path(run("git", "rev-parse", "--show-toplevel", capture=True).decode().strip())
+    if output.is_relative_to(repository_root):
         raise SystemExit("Choose an artifact output directory outside the source worktree.")
     revision = run("git", "rev-parse", "HEAD", capture=True).decode().strip()
     tree = run("git", "rev-parse", "HEAD^{tree}", capture=True).decode().strip()
@@ -106,8 +107,8 @@ def main(destination):
         shutil.copy(consumer / "packages.lock.json", output / "consumer.packages.lock.json")
         metadata = {
             "package": "TerraScale.DotNet", "version": version,
-            "repository": "https://github.com/TerraScale/ts-dotnet", "sourceRevision": revision,
-            "sourceTree": tree, "sourceArchiveSha256": digest(archive), "file": name,
+            "repository": "https://github.com/TerraScale/terrascale", "sourceRevision": revision,
+            "sourceDirectory": "sdk/dotnet", "sourceTree": tree, "sourceArchiveSha256": digest(archive), "file": name,
             "sourceDateEpoch": int(timestamp),
             "sha256": digest(first), "assemblySha256ByFramework": assemblies,
             "contractSha256ByPath": contracts,

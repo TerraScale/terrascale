@@ -11,6 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TerraScale.DotNet" Version="[$(TerraScaleDotNetVersion)]" />
+    <PackageReference Include="TerraScale.DotNet" />
   </ItemGroup>
 </Project>
