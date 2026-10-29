@@ -110,6 +110,79 @@ public static class TursoBindings
         db.FtsProgressHandler = native;
     }
 
+    public static void UseManualWal(TursoDatabaseHandle db)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        RequireWalContract();
+        var status = TursoInterop.WalManual(db, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+    }
+
+    public static TursoWalState GetWalState(TursoDatabaseHandle db)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        RequireWalContract();
+        var status = TursoInterop.WalState(db, out var maxFrame, out var checkpointSequence, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+        return new TursoWalState(maxFrame, checkpointSequence);
+    }
+
+    public static unsafe void ReadWalFramePages(TursoDatabaseHandle db, ulong firstFrame, Span<uint> pageNumbers, Span<uint> databaseSizes)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        ArgumentOutOfRangeException.ThrowIfZero(firstFrame);
+        if (pageNumbers.Length != databaseSizes.Length)
+            throw new ArgumentException("Page numbers and database sizes must have the same length.", nameof(databaseSizes));
+        if (pageNumbers.IsEmpty)
+            return;
+        RequireWalContract();
+        fixed (uint* pages = pageNumbers)
+        fixed (uint* sizes = databaseSizes)
+        {
+            var status = TursoInterop.WalFramePages(db, firstFrame, (uint)pageNumbers.Length, pages, sizes, out var errorPtr);
+            ThrowIfError(status, errorPtr);
+        }
+    }
+
+    public static unsafe bool TryReadPage(TursoDatabaseHandle db, uint pageNumber, ulong watermark, Span<byte> page)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        ArgumentOutOfRangeException.ThrowIfZero(pageNumber);
+        RequireWalContract();
+        fixed (byte* buffer = page)
+        {
+            var status = TursoInterop.WalReadPage(db, pageNumber, watermark, buffer, (nuint)page.Length, out var found, out var errorPtr);
+            ThrowIfError(status, errorPtr);
+            return found != 0;
+        }
+    }
+
+    public static int GetPageSize(TursoDatabaseHandle db)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        RequireWalContract();
+        return checked((int)TursoInterop.PageSize(db));
+    }
+
+    private static void RequireWalContract()
+    {
+        try
+        {
+            if (TursoInterop.WalContract() == 1)
+                return;
+        }
+        catch (EntryPointNotFoundException)
+        {
+        }
+
+        throw new NotSupportedException("The native library must include the WAL revision contract.");
+    }
+
     public static TursoStatementHandle PrepareStatement(TursoDatabaseHandle db, string sql)
     {
         db.ThrowIfInvalid();
