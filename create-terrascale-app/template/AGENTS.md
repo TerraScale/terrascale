@@ -2,6 +2,10 @@
 
 Ships with every app scaffolded by `create-terrascale-app`.
 
+Follow the TerraScale workspace Shipping code rules when working in a TerraScale repo; downstream apps use their own shipping policy.
+
+Build: `npm run build`. The template has no separate test script; validate scaffold changes with `npm test --prefix create-terrascale-app` from ts-docs.
+
 ## Zero configuration
 
 - Every feature and region is always on. Do not add feature flags, activation settings, deploy toggles or tuning configuration.

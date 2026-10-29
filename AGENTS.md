@@ -1,40 +1,10 @@
-AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
+# ts-docs
 
-# Rules
-- No AI attribution in commits, PR titles or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` notices.
-- Use VitePress.
-- This is a public docs repo. Keep internal information out: no internal database names, hosts, accounts, topology or similar.
+Follow the workspace [Shipping code](../AGENTS.md#shipping-code-user-2026-10-29-go-fast-break-things-fast-q-trunk-q-local-check) rules in `/home/mariogk/Projects/TerraScale/AGENTS.md`.
 
-## Local CPU priority
-
-- Prefix every local build, test, lint, benchmark, dev server and watcher with `nice -n 19`, e.g. `nice -n 19 npm run build`.
-- In CI (`CI=true`), use full priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts or Containerfiles.
-
-## Pull requests
-
-- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
-- Upload PNGs with `node scripts/upload-pr-images.mjs <PR-number> <file.png> [more.png ...]`; paste its Markdown into the PR body. The helper creates the orphan `pr-assets` branch on first use and preserves existing images. Use descriptive alt text and distinct filenames for each page/revision/viewport/theme.
-
-### PR previews (required for every visible change)
-
-- Every PR that changes anything a user sees (pages, components, styles, layout, copy, emails, generated pages, maps, charts) MUST embed previews in the PR body. A visible change without previews is not ready to merge.
-- Before and after screenshots of each changed page and state, desktop (1440 px wide) and mobile (390 px wide); light and dark too where the app has both. Add a short video or GIF for interactions (toggles, menus, flows, animations).
-- Capture from the real running build of the exact PR head (dev server, preview deploy or live preview), never mockups. Use synthetic or demo accounts; no secrets, tokens or real customer data on screen.
-- Upload: commit the images to this repo's orphan branch `pr-assets` under `<pr-number>/` (first time: `git switch --orphan pr-assets`); never put them on the PR branch or `main`, never merge `pr-assets`. Embed each as `![<page> <state> after, desktop](https://raw.githubusercontent.com/TerraScale/<repo>/pr-assets/<pr-number>/<file>.png)` and check that every URL returns 200 before posting.
-- When a later push changes the visuals, replace the previews. PRs with no visible change say "No visual change" in the body.
-
-## Cloudflare: `cf` CLI
-
-- Use the `cf` CLI (npm package `cf`, v1.0.0-beta.10) for DNS, zones, origin CA and client certificates, SSL/TLS, cache, rules, analytics and API tokens. Workers deploys keep using `wrangler`.
-- Run `cf auth whoami` first. It must show `"authenticated": true`.
-- Never print tokens or the config file. Show the plan before any change. Deleting zones, production DNS records or Workers needs the user's confirmation. Record changed Cloudflare object IDs (never secrets) in the PR or runbook.
-
-## Zero configuration (user decision 2026-10-09, do not revert)
-
-- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enable keys, deploy toggles or kill switches in code, config or CI. Delete existing switches and their guarded paths.
-- Every region always serves. It starts serving as soon as its machines boot, with no per-region enable step.
-- Production secrets live in the platform secret store and are never copied by hand. Vendor-issued keys (such as Stripe and Cloudflare) are set the same way.
-- Each value has one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration. Only unavoidable third-party names get a narrow allowance, with a one-line reason.
-
-Publish this contract without private topology, credentials or internal implementation details. Production publication credentials come from the platform secret store, never this repo.
+- Public VitePress documentation lives in `docs/`; theme and routing live in `docs/.vitepress/`. Never publish private database names, hosts, accounts, topology, credentials or internal implementation details.
+- `data/canonical/` holds shared product data. `examples/` contains executable SDK examples. `create-terrascale-app/` ships a Next.js starter, including its own AGENTS.md.
+- Install: `npm ci`. Build: `npm run build`. Full tests: `npm test`. Fast: `node --test scripts/*.test.mjs`. Starter tests: `npm test --prefix create-terrascale-app` after installing its dependencies.
+- `npm run canonical:sync` regenerates pricing, LLM and translated documentation. Keep generated files current. `npm run check:links` validates built links.
+- Every feature is always on. Do not add feature flags, activation settings, deploy toggles, kill switches or tuning knobs. Keep one correct value in code. CI allowances for unavoidable third-party switch names need a one-line reason. Fakes, demo stores and skip-auth belong only in tests and test binaries.
+- Document automatic public endpoint discovery. Publish the product contract without claiming unshipped runtime behavior or inventing APIs.
