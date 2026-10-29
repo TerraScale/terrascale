@@ -36,6 +36,12 @@ boundary cases: exact/over-limit fixed and chunked bodies, statement/request
 counts, row/change-group limits, rollback and recovery. Port the tests, without
 the dated qualification report; the folded PR's current CI must qualify them.
 
+Additional local-only salvage: delta's standalone escrow fixture commit
+`fd820e875279f23b28c9f3f097c6fd58e3ba5e70` preserves donor discovery while
+partitioning real donor RPCs and observes both failed donor transfers. Retain
+main's explicit all-regions create request. Port only these test/fixture changes;
+no native dependency pin or held native-upgrade work is included.
+
 | Additional salvage source | Decision | Hold / evidence |
 | --- | --- | --- |
 | delta `fix-dependency-advisories-3086c1c81.bundle` (native upgrade) | held, not ported | Publication, ARM64 and storage-format holds remain. Source bundle stays in `~/Backups/worktree-salvage-20261029/terrascale/`; no upgrade or activation in this PR. |
