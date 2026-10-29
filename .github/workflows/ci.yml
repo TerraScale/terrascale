@@ -23,6 +23,23 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      # Pinned legacy scanner, sparse so only its policy directory lands beside the checkout.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: TerraScale/terrascale
+          ref: a2e200187ffe32084a10f2a81c9e3e1f59b49a29
+          sparse-checkout: scripts/legacy-scan
+          persist-credentials: false
+          path: legacy-scanner
+      - name: Scan for legacy references
+        run: python3 legacy-scanner/scripts/legacy-scan/scan.py --repo ts-docs --root . --output legacy-hits.md
+      - name: Upload legacy hits
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: legacy-hits
+          path: legacy-hits.md
+          if-no-files-found: error
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .node-version
@@ -71,6 +88,10 @@ jobs:
   deploy:
     needs: ci
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # A running release finishes; the newest queued main push replaces older queued ones.
+    concurrency:
+      group: ts-docs-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -81,6 +102,10 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('.node-version', '**/package-lock.json') }}
       - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
