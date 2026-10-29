@@ -137,18 +137,8 @@ internal sealed class PowerLossNode : IAsyncDisposable
         };
     }
 
-    public async Task CommitAsync(string user, JsonObject commit)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
-        {
-            Content = JsonContent.Create(commit),
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-        };
-        request.Headers.Add("X-TerraBase-User-Id", user);
-        using var response = await Client.SendAsync(request);
-        await Docs.EnsureSuccessAsync(response);
-    }
+    public Task<ManagedDatabaseRef> CreateDatabaseAsync(string user, IReadOnlyList<string>? replicas = null) =>
+        CatalogApi.CreateAsync(Client, user, "canary", replicas ?? []);
 
     public async Task<HttpStatusCode> StatusAsync(Uri uri, string? key)
     {

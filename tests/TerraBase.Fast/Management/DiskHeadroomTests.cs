@@ -28,7 +28,6 @@ public sealed class DiskHeadroomTests
                 time: time, failedStartCleanup: failedStarts.Add);
             servers.Add(first);
             var database = await first.CreateManagedDatabaseAsync();
-            await first.VerifyProjectBindingAsync(database.Organization, database.Project);
             using var upload = first.WithToken(ImportClient.Token(first, database.Project, ImportClient.AllScopes));
             var import = ManagementApi.Uri(database.Data + "/import");
             byte[] source = "{\"n\":1}\n{\"n\":2}\n"u8.ToArray();

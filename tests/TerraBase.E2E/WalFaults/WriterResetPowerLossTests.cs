@@ -23,15 +23,8 @@ public sealed class WriterResetPowerLossTests
     {
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync(nameof(WriterResetFaultHost));
-        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
-        await node.CommitAsync(EntityIds.New().ToString(), new JsonObject
-        {
-            ["id"] = EntityIds.New().ToString(),
-            ["ops"] = new JsonArray(
-                new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"reset-{organization}" },
-                new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "reset" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = EntityIds.New().ToString() }),
-        });
+        var createdDatabase = await node.CreateDatabaseAsync(EntityIds.New().ToString());
+        var project = createdDatabase.Project;
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
         string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];

@@ -16,7 +16,7 @@ internal sealed partial class EngineManagementService
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken) =>
         WriteAsync<SetDatabaseRegionsResult>(async transaction =>
         {
-            var project = await MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (project is not TenantContext tenant)
             {
                 return project switch
@@ -72,8 +72,7 @@ internal sealed partial class EngineManagementService
             ];
             var json = EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(renamed, TerraBaseJsonContext.Default.ManagedDatabase), database.Id, nested: true);
             _ = await transaction.PatchAsync(Databases(projectId), database.Id, json, fields, cancellationToken).ConfigureAwait(false);
-            await RecordAsync(transaction, tenant.OrganizationId, userId, "database.renamed", database.Id, $"{database.Name} is now {name}", cancellationToken)
-                .ConfigureAwait(false);
+
             return renamed;
         }, static error => error, cancellationToken);
 }

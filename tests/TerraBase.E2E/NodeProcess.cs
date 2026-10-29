@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Text.Json;
 using TerraBase.Primitives;
 using TerraBase.Features.Replication;
 using TerraBase.Testing;
@@ -164,28 +163,8 @@ internal sealed class NodeProcess : IAsyncDisposable
     /// <summary>Creates an organization, project and database (in this node's region) as the operator; answers the database path.</summary>
     public async Task<string> CreateTenantAsync()
     {
-        var (owner, organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-        var commit = JsonSerializer.Serialize(new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = organization, name = $"process-{organization}" },
-                new { op = "set_plan", organization, plan = "enterprise" },
-                new { op = "create_project", organization, id = project, name = "process" },
-                new { op = "create_database", organization, project, name = "canary", id = EntityIds.New().ToString() },
-            },
-        });
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
-        {
-            Content = new StringContent(commit, Encoding.UTF8, "application/json"),
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-        };
-        request.Headers.Add("X-TerraBase-User-Id", owner);
-        using var response = await Internal.SendAsync(request);
-        await Docs.EnsureSuccessAsync(response);
-        return $"/v1/projects/{project}/databases/canary";
+        var database = await CatalogApi.CreateAsync(Internal, EntityIds.New().ToString(), "canary", []);
+        return database.Data;
     }
 
     public async ValueTask DisposeAsync()

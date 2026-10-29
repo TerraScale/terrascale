@@ -54,13 +54,10 @@ public sealed class TenantLookupCacheTests
             await AssertLookupsAsync(tenants, database, registered: false, token);
             await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token) is NotFound).IsTrue();
 
-            using (var created = await gru.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+            using (var created = await gru.Client.PostAsJsonAsync(ManagementApi.Uri(path), new { name, replicaRegions = InSfo }, token))
             {
-                id = EntityIds.New().ToString(),
-                ops = new[] { new { op = "create_database", organization, project, name, id = database.DatabaseId!, replica_regions = InSfo } },
-            }, token))
-            {
-                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                database = database with { DatabaseId = (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()! };
             }
 
             var placed = RequireRecord(await AssertLookupsAsync(tenants, database, registered: true, token));

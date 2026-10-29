@@ -708,20 +708,8 @@ public sealed class CorruptChangeLogTests
         // The organization, project and both databases, placed in `replicas` besides this node's region.
         private async Task RegisterAsync(string[] replicas)
         {
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = Database.OrganizationId, name = $"corrupt-{Database.OrganizationId}" },
-                    new { op = "create_project", organization = Database.OrganizationId, id = Database.ProjectId, name = "corrupt" },
-                    new { op = "create_database", organization = Database.OrganizationId, project = Database.ProjectId, name = "main", id = Database.DatabaseId, replica_regions = replicas },
-                    new { op = "create_database", organization = Database.OrganizationId, project = Database.ProjectId, name = "second", id = Second.DatabaseId, replica_regions = replicas },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(Api, Api.User, Database, "main", replicas);
+            await CatalogFixture.RegisterAsync(Api, Api.User, Second, "second", replicas);
         }
     }
 

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Grpc.Core;
 using TerraBase.E2E;
@@ -93,20 +92,6 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
             }
 
             await cluster.RebuildLinksAsync();
-            foreach (var region in cluster.Regions)
-            {
-                await cluster.RegisterAsync(region, cluster._owner, cancellationToken);
-                var node = cluster._nodes[region];
-                using var authority = new HttpClient { BaseAddress = node.Management!.BaseAddress };
-                authority.DefaultRequestHeaders.Authorization = new("Bearer", node.Authority);
-                await cluster.UntilAsync(async token =>
-                {
-                    using var binding = await authority.PostAsJsonAsync(new Uri($"/v1/management/organizations/{cluster._organization}/projects/{cluster._project}/binding", UriKind.Relative),
-                        new { organization = cluster._organization }, token);
-                    return await AcceptedAsync(binding, token);
-                }, cancellationToken);
-            }
-
             await cluster.ReadyAsync(new Uri($"{cluster.DatabasePath}/collections", UriKind.Relative), cancellationToken);
             await cluster.UntilAsync(async token =>
             {
@@ -275,6 +260,7 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
             ["OWNER"] = _owner,
             ["ORGANIZATION"] = _organization,
             ["PROJECT"] = _project,
+            ["DATABASE"] = _database,
         })
         {
             start.Environment[FaultSoakNode.Prefix + key] = value;
@@ -299,34 +285,7 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
         _clients.Add(node.Client);
         node.Management = new HttpClient { BaseAddress = new Uri(listeners["client"]!.GetValue<string>()) };
         node.Management.DefaultRequestHeaders.Authorization = new("Bearer", listeners["projectToken"]!.GetValue<string>());
-        node.Authority = listeners["authority"]!.GetValue<string>();
         _clients.Add(node.Management);
-    }
-
-    private async Task RegisterAsync(string region, string owner, CancellationToken cancellationToken)
-    {
-        var body = JsonSerializer.Serialize(new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = _organization, name = $"soak-{_organization}" },
-                new { op = "set_plan", organization = _organization, plan = "enterprise" },
-                new { op = "create_project", organization = _organization, id = _project, name = "soak" },
-                new { op = "create_database", organization = _organization, project = _project, id = _database,
-                    name = "soak", replica_regions = Regions.Where(other => other != region).ToArray() },
-            },
-        });
-        await UntilAsync(async token =>
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
-            {
-                Content = new StringContent(body, Encoding.UTF8, "application/json"),
-            };
-            request.Headers.Add("X-TerraBase-User-Id", owner);
-            using var response = await this[region].SendAsync(request, token);
-            return await AcceptedAsync(response, token, allowTaken: true);
-        }, cancellationToken);
     }
 
     private async Task ReadyAsync(Uri uri, CancellationToken cancellationToken)
@@ -391,7 +350,6 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
         public Process? Process { get; set; }
         public HttpClient? Client { get; set; }
         public HttpClient? Management { get; set; }
-        public string? Authority { get; set; }
         public Uri? Peer { get; set; }
         public string Output
         {

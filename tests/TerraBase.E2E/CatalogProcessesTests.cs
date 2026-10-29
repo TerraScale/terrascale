@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraBase.Primitives;
+using TerraBase.Testing;
 
 namespace TerraBase.E2E;
 
@@ -75,8 +76,8 @@ public sealed class CatalogProcessesTests
 
         // fra is killed (SIGKILL) while sjc removes the replicas and deletes the database.
         await regions.KillAsync(Cluster.Fra);
-        await tenant.CommitAsync(Cluster.Sjc, new { op = "set_database_regions", organization = tenant.Organization, project = tenant.Project, database = doomed, replica_regions = Array.Empty<string>() });
-        await tenant.CommitAsync(Cluster.Sjc, new { op = "delete_database", organization = tenant.Organization, project = tenant.Project, database = doomed });
+        await tenant.ChangeDatabaseAsync(Cluster.Sjc, doomed, HttpMethod.Patch, new { replicaRegions = Array.Empty<string>() });
+        await tenant.ChangeDatabaseAsync(Cluster.Sjc, doomed, HttpMethod.Delete);
         await regions.StartAgainAsync(Cluster.Fra);
         _ = await Converge.UntilAsync(() => regions[Cluster.Fra].GetFromJsonAsync<JsonElement>(new Uri("/v1/catalog-gate", UriKind.Relative)),
             gate => gate.GetProperty("open").GetBoolean(), "fra's catalog verifies after its restart");
@@ -147,11 +148,12 @@ public sealed class CatalogProcessesTests
 
         public static async Task<Tenant> CreateAsync(RegionProcesses regions, string region)
         {
-            var tenant = new Tenant(regions, EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-            await tenant.CommitAsync(region,
-                new { op = "create_organization", id = tenant.Organization, name = $"catalog-{tenant.Organization}" },
-                new { op = "set_plan", organization = tenant.Organization, plan = "enterprise" },
-                new { op = "create_project", organization = tenant.Organization, id = tenant.Project, name = "catalog" });
+            var user = EntityIds.New().ToString();
+            var organization = await CatalogApi.CreateResourceAsync(regions[region], user, "/v1/management/organizations", new { name = "catalog" });
+            var project = await CatalogApi.CreateResourceAsync(regions[region], user, $"/v1/management/organizations/{organization}/projects", new { name = "catalog" });
+            using var plan = await CatalogApi.SendAsync(regions[region], user, HttpMethod.Put, $"/v1/management/organizations/{organization}/plan", new { plan = "enterprise" });
+            plan.EnsureSuccessStatusCode();
+            var tenant = new Tenant(regions, user, organization, project);
             foreach (var peer in regions.Regions)
             {
                 _ = await Converge.UntilAsync(async () =>
@@ -175,8 +177,9 @@ public sealed class CatalogProcessesTests
 
         public async Task<string> CreateDatabaseAsync(string region, string name, string[] replicas)
         {
-            var id = EntityIds.New().ToString();
-            await CommitAsync(region, new { op = "create_database", organization = Organization, project = Project, name, id, replica_regions = replicas });
+            using var response = await SendAsync(region, name, replicas);
+            await Docs.EnsureSuccessAsync(response);
+            var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
             foreach (var placed in replicas.Prepend(region))
             {
                 _ = await Converge.UntilAsync(() => ServesAsync(placed, name), served => served, $"the new database on {placed}");
@@ -188,15 +191,14 @@ public sealed class CatalogProcessesTests
         // The id created, or null when the region already held the name.
         public async Task<string?> TryCreateDatabaseAsync(string region, string name, string[] replicas)
         {
-            var id = EntityIds.New().ToString();
-            using var response = await SendAsync(region, new { op = "create_database", organization = Organization, project = Project, name, id, replica_regions = replicas });
+            using var response = await SendAsync(region, name, replicas);
             if (await Cluster.TakenAsync(response))
             {
                 return null;
             }
 
             await Docs.EnsureSuccessAsync(response);
-            return id;
+            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
         }
 
         // Whether the region serves the database: its collections answer 200. A region whose catalog does not hold the
@@ -209,22 +211,16 @@ public sealed class CatalogProcessesTests
 
         public Task<JsonNode?> ReadAsync(string region, Uri document) => Docs.ReadAsync(regions[region], document);
 
-        public async Task CommitAsync(string region, params object[] ops)
+        public async Task ChangeDatabaseAsync(string region, string database, HttpMethod method, object? body = null)
         {
-            using var response = await SendAsync(region, ops);
+            using var response = await CatalogApi.SendAsync(regions[region], User, method,
+                $"/v1/management/organizations/{Organization}/projects/{Project}/databases/{database}", body);
             await Docs.EnsureSuccessAsync(response);
         }
 
-        private async Task<HttpResponseMessage> SendAsync(string region, params object[] ops)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
-            {
-                Content = new StringContent(JsonSerializer.Serialize(new { id = EntityIds.New().ToString(), ops }), Encoding.UTF8, "application/json"),
-                Version = HttpVersion.Version20,
-                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            };
-            request.Headers.Add("X-TerraBase-User-Id", User);
-            return await regions[region].SendAsync(request);
-        }
+        private Task<HttpResponseMessage> SendAsync(string region, string name, string[] replicas) =>
+            CatalogApi.SendAsync(regions[region], User, HttpMethod.Post,
+                $"/v1/management/organizations/{Organization}/projects/{Project}/databases", new { name, replicaRegions = replicas });
+
     }
 }

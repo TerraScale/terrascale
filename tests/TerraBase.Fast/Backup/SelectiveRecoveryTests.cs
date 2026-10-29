@@ -287,7 +287,6 @@ public sealed class SelectiveRecoveryTests
             try
             {
                 fixture.Database = await fixture.Api.CreateManagedDatabaseAsync();
-                await fixture.Api.VerifyProjectBindingAsync(fixture.Database.Organization, fixture.Database.Project);
                 fixture.Recovery = fixture.Api.WithToken(fixture.Api.Issuer.Mint(fixture.Api.User, token =>
                 {
                     token.Claims["project_id"] = fixture.Database.Project;

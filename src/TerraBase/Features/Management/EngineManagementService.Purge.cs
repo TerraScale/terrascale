@@ -52,7 +52,7 @@ internal sealed partial class EngineManagementService
         DocumentPage page;
         do
         {
-            page = await transaction.ListAsync(CatalogGate.Members, after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            page = await transaction.ListAsync(CatalogGate.Members, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             foreach (var member in page.Documents)
             {
                 holders.Add(member.Id);
@@ -92,7 +92,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask ConvergePurgesAsync(CancellationToken cancellationToken)
     {
         var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(DatabasePurge.Collection, _purgeAfter,
-            MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+            CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
         if (page is null)
         {
             return;

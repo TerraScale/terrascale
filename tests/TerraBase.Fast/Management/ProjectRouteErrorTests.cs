@@ -17,7 +17,6 @@ public sealed class ProjectRouteErrorTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project, narrowed ? database.Id : null);
 
         using var before = await client.GetAsync(Uri(database.Data));
@@ -41,7 +40,6 @@ public sealed class ProjectRouteErrorTests
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock);
         });
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         using var seeded = await client.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "saved")), new { name = new Faker().Name.FullName() });

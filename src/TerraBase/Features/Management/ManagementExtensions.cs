@@ -1,4 +1,3 @@
-using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Indexes;
 using TerraBase.Features.Management.Queries;
@@ -15,7 +14,6 @@ namespace TerraBase.Features.Management;
 public static class ManagementExtensions
 {
     /// <summary>
-    /// Registers <see cref="IManagementService"/>, <see cref="IAccessService"/>, <see cref="IManagementCommits"/>,
     /// <see cref="ITenantDirectory"/> and the database tooling. Endpoints authenticate users with the <c>UserAuth</c> slice.
     /// </summary>
     public static IServiceCollection AddTerraBaseManagement(this IServiceCollection services)
@@ -24,9 +22,6 @@ public static class ManagementExtensions
         services.AddSingleton<EngineManagementService>();
         services.AddSingleton<DatabaseAllowance>();
         services.AddSingleton(provider => new Lazy<ICatalogGate>(provider.GetRequiredService<ICatalogGate>));
-        // Commits apply document operations; the document service reaches the catalog back through usage metering.
-        services.AddSingleton(provider => new Lazy<IDocumentService>(provider.GetRequiredService<IDocumentService>));
-        services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));
         services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
         services.AddSingleton(provider => new Lazy<IRemoteDurability>(provider.GetRequiredService<IRemoteDurability>));
         services.AddSingleton(provider => new Lazy<IWebhookErasure>(provider.GetRequiredService<IWebhookErasure>));
@@ -36,8 +31,6 @@ public static class ManagementExtensions
         services.AddHostedService<CatalogConvergence>();
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IProjectCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
-        services.AddSingleton<IAccessService>(provider => provider.GetRequiredService<EngineManagementService>());
-        services.AddSingleton<IManagementCommits>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<Platform.IPlatformCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());

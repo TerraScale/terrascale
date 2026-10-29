@@ -139,7 +139,6 @@ public sealed class CustomerBackupListingBoundaryTests
         var time = Clock();
         await using var api = await StartAsync(s3, time);
         var (database, text) = await SeedAsync(api, cancellationToken);
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
         await ShipAsync(api, time, cancellationToken);
         await PutAsync(project, database, "after", text, cancellationToken);
@@ -236,7 +235,6 @@ public sealed class CustomerBackupListingBoundaryTests
         var time = Clock();
         await using var api = await StartAsync(s3, time);
         var (database, _) = await SeedAsync(api, cancellationToken);
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
         await ShipAsync(api, time, cancellationToken);
         var client = canonical ? project : api.Client;

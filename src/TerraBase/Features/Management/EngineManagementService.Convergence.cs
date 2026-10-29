@@ -11,7 +11,6 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService
 {
     private const int MaxDatabaseName = 63;
-    private const string ConflictActor = "system";
 
     // Where the rotating stale-name pass resumes: one page of one project's name index per pass.
     private string? _namesProject;
@@ -44,7 +43,7 @@ internal sealed partial class EngineManagementService
         while (true)
         {
             var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(
-                PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+                PendingDatabaseCleanup, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
             if (page is null || page.Documents.Count == 0)
             {
                 break;
@@ -146,10 +145,9 @@ internal sealed partial class EngineManagementService
         }
         else if (winner is not null)
         {
-            // One writer per loser, its home region, so the move and its audit event are recorded once.
             if (record.Home(options.Region) == options.Region)
             {
-                await KeepLoserAsync(record, database.OrganizationId, cancellationToken).ConfigureAwait(false);
+                await KeepLoserAsync(record, cancellationToken).ConfigureAwait(false);
             }
         }
         else if (named != databaseId)
@@ -173,7 +171,7 @@ internal sealed partial class EngineManagementService
 
     // The database that lost its name keeps its id, data, backups, keys and file under the first free name every region
     // derives alike (docs/terrabase/database-name-conflicts.md). A name conflict never deletes a database.
-    private async ValueTask KeepLoserAsync(ManagedDatabase record, string organizationId, CancellationToken cancellationToken) =>
+    private async ValueTask KeepLoserAsync(ManagedDatabase record, CancellationToken cancellationToken) =>
         _ = await WriteAsync<bool>(async transaction =>
         {
             if (await GetAsync(transaction, Databases(record.ProjectId), record.Id, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not { } current
@@ -185,7 +183,7 @@ internal sealed partial class EngineManagementService
 
             // A database that loses a conflict name again keeps the name its customer chose, and the database that holds it.
             var kept = current.ConflictOf is null ? current with { PreviousName = current.Name, ConflictOf = winner } : current;
-            return await MoveToFreeNameAsync(transaction, organizationId, kept, ConflictNames(kept.PreviousName ?? current.Name, current.Id), cancellationToken)
+            return await MoveToFreeNameAsync(transaction, kept, ConflictNames(kept.PreviousName ?? current.Name, current.Id), cancellationToken)
                 .ConfigureAwait(false)
                 ? true
                 : throw new InvalidOperationException("every conflict name of a database that lost its name is held");
@@ -202,11 +200,8 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    // Moves a database that lost a name race to the first of `candidates` no other database holds, in the caller's
-    // transaction, and records the move in the organization's audit log. Its id, data, backups and file stay, and requests
-    // by id keep working; the lost name serves its holder only. False when every candidate is held.
-    private async ValueTask<bool> MoveToFreeNameAsync(
-        IStorageTransaction transaction, string organizationId, ManagedDatabase database, IEnumerable<string> candidates, CancellationToken cancellationToken)
+    private static async ValueTask<bool> MoveToFreeNameAsync(
+        IStorageTransaction transaction, ManagedDatabase database, IEnumerable<string> candidates, CancellationToken cancellationToken)
     {
         foreach (var name in candidates)
         {
@@ -224,8 +219,6 @@ internal sealed partial class EngineManagementService
             ];
             _ = await transaction.PatchAsync(Databases(database.ProjectId), database.Id, json, fields, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.Id, Id, cancellationToken).ConfigureAwait(false);
-            await RecordAsync(transaction, organizationId, ConflictActor, "database.name_conflict", database.Id,
-                $"{database.PreviousName} is held by {database.ConflictOf}; this database is kept as {name}", cancellationToken).ConfigureAwait(false);
             return true;
         }
 
@@ -272,7 +265,7 @@ internal sealed partial class EngineManagementService
     {
         var (stale, next) = await ReadAsync<(List<string> Stale, string? Next)>(async transaction =>
         {
-            var page = await transaction.ListAsync(DatabaseNames(projectId), after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            var page = await transaction.ListAsync(DatabaseNames(projectId), after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             List<string> stale = [];
             foreach (var entry in page.Documents)
             {

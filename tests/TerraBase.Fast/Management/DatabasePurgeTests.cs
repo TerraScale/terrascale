@@ -187,13 +187,9 @@ public sealed class DatabasePurgeTests
         await Assert.That(await restarted.Server.Services.GetRequiredService<SystemCatalog>().AreActiveCopiesAbsentAsync(Tenant(database), CancellationToken.None)).IsTrue();
         using var retained = await restarted.Client.GetAsync(new Uri(neighbor.Path, UriKind.Relative));
         await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var service = restarted.Service(state.User);
-        using var reused = await service.PostAsJsonAsync(new Uri("/v1/management/commits", UriKind.Relative), new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new[] { new { op = "create_database", organization = database.Organization, project = database.Project, id = database.Id, name = "reuse" } },
-        });
-        await Assert.That(reused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        var reused = await restarted.Server.Services.GetRequiredService<ITenantDirectory>().AdoptDatabaseAsync(
+            Tenant(database), "reuse", new DatabasePlacement("gru-1", [], 1), CancellationToken.None);
+        await Assert.That(reused is TerraBase.Errors.Conflict).IsTrue();
         await Assert.That(File.Exists(state.Path(database))).IsFalse();
     }
 

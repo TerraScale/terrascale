@@ -19,7 +19,6 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var email = await SeedPeopleAsync(api, database);
         var sql = $"SELECT name FROM people WHERE email = '{Literal(email)}' ORDER BY age";
 
@@ -55,7 +54,6 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var email = await SeedPeopleAsync(api, database);
         var sql = $"SELECT name FROM people WHERE email = '{Literal(email)}' ORDER BY age LIMIT 1";
         var usagePath = ManagementApi.Uri(database.Path + "/usage");
@@ -89,7 +87,6 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SeedPeopleAsync(api, database);
         using var viewer = ProjectClient(api, database.Project, scope: "documents:read  databases:read", database: database.Id, subject: EntityIds.New().ToString());
         using var anonymous = api.WithToken(null);
@@ -119,7 +116,6 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         (string? Project, string? Scope, string? Database, string RouteProject, HttpStatusCode Status)[] cases =
         [
             (null, "databases:read", null, database.Project, HttpStatusCode.Unauthorized),
@@ -155,7 +151,6 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         object?[] invalid = [null, true, 42, new[] { database.Name }, new Dictionary<string, string> { ["name"] = database.Name }];
         foreach (var name in new[] { "project_id", "database", "scope" })
         {
@@ -174,25 +169,11 @@ public sealed class ExplainSqlApiTests
     }
 
     [Test]
-    public async Task Explain_requires_a_verified_project_binding()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        await SeedPeopleAsync(api, database);
-        using var client = ProjectClient(api, database.Project);
-        await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ExplainPath(database), new { sql = "SELECT * FROM people" }),
-            HttpStatusCode.NotFound, "unknown_database", "the database does not exist");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        await Assert.That((await ExplainAsync(client, database, "SELECT * FROM people")).GetProperty("ok").GetBoolean()).IsTrue();
-    }
-
-    [Test]
     public async Task Explain_and_check_return_not_found_when_registered_storage_is_unavailable()
     {
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(services: hook.Install);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         hook.Hidden = tenant => tenant.DatabaseId == database.Id;
         await ErrorAssert.ErrorAsync(client.PostAsJsonAsync(ExplainPath(database), new { sql = "SELECT * FROM people" }),
@@ -206,9 +187,7 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var other = await api.CreateManagedDatabaseAsync(database.Name);
-        await api.VerifyProjectBindingAsync(other.Organization, other.Project);
         await SeedPeopleAsync(api, database);
         await SeedPeopleAsync(api, other);
         using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/indexes"), new { collection = "people", fields = EmailFields });
@@ -235,7 +214,6 @@ public sealed class ExplainSqlApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         const string Secret = "zzsecretzz";
         string?[] invalid =
@@ -272,7 +250,6 @@ public sealed class ExplainSqlApiTests
         await using var api = await ManagementApi.StartAsync(
             TerraBaseTestServer.UseProductionQueryBudget, services: services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SeedPeopleAsync(api, database);
         const string Sql = "SELECT * FROM people LIMIT 1";
 

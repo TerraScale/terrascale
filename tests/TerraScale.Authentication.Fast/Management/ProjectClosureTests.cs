@@ -220,28 +220,17 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("closure")]
-    [Arguments("binding")]
-    public async Task A_terrabase_refusal_changes_nothing_and_keeps_every_right_of_the_project(string refusal)
+    public async Task A_terrabase_refusal_changes_nothing_and_keeps_every_right_of_the_project()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
         var (_, token) = await oidc.SignInUserAsync("owner@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Kept");
-        if (refusal == "closure")
-        {
-            // Another closure (or organization) already fenced this id in TerraBase.
-            await fixture.Server.Management().CloseProjectAsync(project, organization, AuthStore.NewId());
-        }
-        else
-        {
-            // An unverified TerraBase namespace holds the same id: TerraBase cannot tell whose project it is.
-            await LegacyProjectAsync(AuthStore.NewId(), AuthStore.NewId(), project);
-        }
+        await fixture.Server.Management().CloseProjectAsync(project, organization, AuthStore.NewId());
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{project}", token))
-            .IsEqualTo((409, refusal == "closure" ? "closure_conflict" : "binding_conflict"));
+            .IsEqualTo((409, "closure_conflict"));
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{project}", token);
         await Assert.That(await JobAsync(oidc, "project", project)).IsNull();
         // The intent's fence is gone with it: the project takes new roles again.
@@ -439,10 +428,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         // The closure visits an organization's projects in storage id order.
         var ordered = created.OrderBy(id => AuthStore.NaturalKeyId("terrascale", AuthStore.ProjectCollection, id), StringComparer.Ordinal).ToArray();
         var (first, refused, later) = (ordered[0], ordered[1], ordered[2]);
-        // TerraBase holds the second id under an unverified namespace, so it refuses that closure.
-        await LegacyProjectAsync(AuthStore.NewId(), AuthStore.NewId(), refused);
+        await fixture.Server.Management().CloseProjectAsync(refused, solo, AuthStore.NewId());
 
-        await Assert.That(await oidc.FailAsync(HttpMethod.Delete, "/v1/terrascale/account", token)).IsEqualTo((409, "binding_conflict"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Delete, "/v1/terrascale/account", token)).IsEqualTo((409, "closure_conflict"));
         var directory = oidc.Server.App.Services.GetRequiredService<PlatformDirectory>();
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id)).IsNotNull();
         await Assert.That(await directory.ProjectAsync(first, CancellationToken.None)).IsNull();
@@ -1007,28 +995,4 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     private static async Task<ClosureJob?> JobAsync(OidcHarness oidc, string scope, string subject) =>
         (await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key(scope, subject)))
             ?.Document.Deserialize(ClosureJson.Default.ClosureJob);
-
-    // A legacy Management API commit on TerraBase's internal listener, acting as a synthetic user: a namespace whose project
-    // id equals the auth project's, never verified against ts-auth.
-    private async Task LegacyProjectAsync(string user, string organization, string project)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(fixture.Server.InternalAddress, "v1/management/commits"))
-        {
-            Content = JsonContent.Create(new
-            {
-                id = AuthStore.NewId(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = organization, name = "Legacy" },
-                    new { op = "create_project", organization, id = project, name = "legacy" },
-                },
-            }),
-        };
-        request.Headers.Add("X-TerraBase-User-Id", user);
-        // The internal listener speaks HTTP/2 only.
-        request.Version = HttpVersion.Version20;
-        request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
-        using var response = await fixture.Server.Http.SendAsync(request);
-        await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
-    }
 }

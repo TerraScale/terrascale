@@ -112,7 +112,6 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, wrongScope ? database.Project : EntityIds.New().ToString(),
             wrongScope ? "documents:read" : "databases:read");
         await RequestLogMemoryFixture.DrainAsync(api.Server);
@@ -662,7 +661,6 @@ public sealed class ExplainSqlBoundaryTests
     {
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         return database;

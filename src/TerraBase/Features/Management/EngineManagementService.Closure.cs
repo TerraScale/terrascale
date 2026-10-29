@@ -25,7 +25,7 @@ internal sealed partial class EngineManagementService
                     return ProjectClosure.ClosureConflict;
                 }
 
-                if (!await ClosureBindingMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
+                if (!await ClosureOrganizationMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
                 {
                     return ProjectClosure.BindingConflict;
                 }
@@ -40,9 +40,7 @@ internal sealed partial class EngineManagementService
                 return await ClosureStatusAsync(transaction, existing, cancellationToken).ConfigureAwait(false);
             }
 
-            // TerraBase's own mapping decides; the request's organization is only checked against a binding that names one.
-            // An enrolled binding names none (TerraBase never learns it); a never-enrolled project has no mapping at all.
-            if (!await ClosureBindingMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
+            if (!await ClosureOrganizationMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
             {
                 return ProjectClosure.BindingConflict;
             }
@@ -60,16 +58,15 @@ internal sealed partial class EngineManagementService
             return await ClosureStatusAsync(transaction, record, cancellationToken).ConfigureAwait(false);
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    private async ValueTask<bool> ClosureBindingMatchesAsync(IStorageTransaction transaction, string project, string authorityOrganization, CancellationToken token)
+    private async ValueTask<bool> ClosureOrganizationMatchesAsync(IStorageTransaction transaction, string project, string authorityOrganization, CancellationToken token)
     {
         if (await GetAsync(transaction, ProjectOrganizations, project, Id, token).ConfigureAwait(false) is not { } namespaceId)
         {
             return true;
         }
 
-        return await IsProjectBoundAsync(transaction, project, namespaceId, token).ConfigureAwait(false)
-            && (await GetAsync(transaction, Bindings(project), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, token).ConfigureAwait(false)
-                is not { AuthorityOrganizationId: { } authority } || authority == authorityOrganization);
+        return namespaceId == authorityOrganization
+            && await IsProjectRegisteredAsync(transaction, project, namespaceId, token).ConfigureAwait(false);
     }
 
     // Read by every registration and enrollment in its committing transaction.
@@ -98,7 +95,7 @@ internal sealed partial class EngineManagementService
         DocumentPage page;
         do
         {
-            page = await transaction.ListAsync(CatalogGate.Members, after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            page = await transaction.ListAsync(CatalogGate.Members, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             holders.UnionWith(page.Documents.Select(member => member.Id));
             if (holders.Count > 1024)
             {
@@ -142,7 +139,7 @@ internal sealed partial class EngineManagementService
                 .ConfigureAwait(false) is { } current
             && await OwnClosureReceiptAsync(transaction, current, cancellationToken).ConfigureAwait(false) is { EvidenceVersion: 2, Empty: true } receipt
             && receipt.ClosureId == current.ClosureId && receipt.FormatVersion == current.FormatVersion
-            && await ClosureBindingMatchesAsync(transaction, project, current.AuthorityOrganizationId, cancellationToken).ConfigureAwait(false)
+            && await ClosureOrganizationMatchesAsync(transaction, project, current.AuthorityOrganizationId, cancellationToken).ConfigureAwait(false)
             && await GetAsync(transaction, ProjectClosure.Scans(project), options.MachineId, Id, cancellationToken).ConfigureAwait(false) == "complete"
             && !await AnyAsync(transaction, ProjectClosure.Purges(project), cancellationToken).ConfigureAwait(false)
             && await IsProjectEmptyAsync(transaction, project, cancellationToken).ConfigureAwait(false);
@@ -176,7 +173,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask ConvergeClosuresAsync(CancellationToken cancellationToken)
     {
         var page = await ReadAsync<DocumentPage?>(async transaction => await transaction.ListAsync(ProjectClosure.Collection, _closuresAfter,
-            MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+            CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
         if (page is null)
         {
             return;

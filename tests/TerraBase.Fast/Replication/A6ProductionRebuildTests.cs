@@ -888,10 +888,7 @@ public sealed class A6ProductionRebuildTests
                 services.AddSingleton<IReplicaRebuild>(new Probe());
             }, userId: pair.User);
             var database = pair.Database;
-            await CommitAsync(
-                new { op = "create_organization", id = database.OrganizationId, name = $"a6-{database.OrganizationId}" },
-                new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "a6" },
-                new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "main", id = database.DatabaseId, replica_regions = replicas });
+            await CatalogFixture.RegisterAsync(Api, Api.User, database, "main", replicas);
         }
 
         public async Task<Ulid> IncarnationAsync()
@@ -903,10 +900,11 @@ public sealed class A6ProductionRebuildTests
         // A new project with one database placed on gru: a catalog write after whatever came before it on this node; its id.
         public async Task<string> CreateSentinelAsync()
         {
-            var (organization, project) = (pair.Database.OrganizationId, EntityIds.New().ToString());
-            await CommitAsync(
-                new { op = "create_project", organization, id = project, name = $"sentinel-{project}" },
-                new { op = "create_database", organization, project, name = "sentinel", id = EntityIds.New().ToString(), replica_regions = SentinelRegions });
+            var organization = pair.Database.OrganizationId;
+            var project = await Api.CreateProjectAsync(organization, "sentinel-" + EntityIds.New());
+            using var response = await Api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"),
+                new { name = "sentinel", replicaRegions = SentinelRegions });
+            response.EnsureSuccessStatusCode();
             return project;
         }
 
@@ -921,12 +919,5 @@ public sealed class A6ProductionRebuildTests
             _directory.Dispose();
         }
 
-        private async Task CommitAsync(params object[] ops)
-        {
-            var commit = JsonSerializer.Serialize(new { id = EntityIds.New().ToString(), ops });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
-        }
     }
 }

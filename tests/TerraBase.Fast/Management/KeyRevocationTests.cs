@@ -22,7 +22,6 @@ public sealed class KeyRevocationTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (key, token) = Grant(api, database);
         using var client = api.WithToken(token);
         var route = ManagementApi.Uri(database.Data + "/collections");
@@ -63,7 +62,6 @@ public sealed class KeyRevocationTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (_, token) = Grant(api, database, mismatched);
         api.Issuer.StatusAvailable = false;
         using var client = api.WithToken(token);
@@ -84,7 +82,6 @@ public sealed class KeyRevocationTests
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (_, token) = Grant(api, database);
         using var client = api.WithToken(token);
         var route = ManagementApi.Uri(database.Data + "/collections");
@@ -114,7 +111,6 @@ public sealed class KeyRevocationTests
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (key, token) = Grant(api, database);
         using var client = api.WithToken(token);
         using var writer = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -182,7 +178,6 @@ public sealed class KeyRevocationTests
                 }
             }));
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (_, token) = Grant(api, database, scope: "documents:read documents:write");
         using var client = api.WithToken(token);
         var sql = ManagementApi.Uri(database.Data + "/sql/execute");
@@ -218,7 +213,6 @@ public sealed class KeyRevocationTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (key, _) = Grant(api, database);
         var settings = new NpgsqlConnectionStringBuilder { Host = "127.0.0.1", Port = api.Server.PostgresPort, Username = "wire", Password = key, Database = database.Name, SslMode = SslMode.Disable, Pooling = false };
         await using var connection = new NpgsqlConnection(settings.ConnectionString);
@@ -259,7 +253,6 @@ public sealed class KeyRevocationTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         api.Issuer.StatusServed = false;
         var (_, token) = Grant(api, database);
         using var client = api.WithToken(token);
@@ -295,7 +288,6 @@ public sealed class KeyRevocationTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var id = EntityIds.New().ToString();
         var token = api.Issuer.Mint(id, descriptor =>
         {

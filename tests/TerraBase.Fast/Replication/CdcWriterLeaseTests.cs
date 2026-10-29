@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
@@ -23,21 +21,7 @@ public sealed class CdcWriterLeaseTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await using var api = await ManagementApi.StartAsync(settings => settings["storage-threads"] = "1");
         var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
-        var commit = JsonSerializer.Serialize(new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = database.OrganizationId, name = $"lease-{database.OrganizationId}" },
-                new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "lease" },
-                new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "main", id = database.DatabaseId },
-            },
-        });
-        using (var service = api.Service(api.User))
-        {
-            using var created = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(created.IsSuccessStatusCode).IsTrue().Because(await created.Content.ReadAsStringAsync());
-        }
+        await CatalogFixture.RegisterAsync(api, api.User, database, "main", []);
 
         var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();

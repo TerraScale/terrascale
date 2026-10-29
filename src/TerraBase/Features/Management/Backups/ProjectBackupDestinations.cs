@@ -121,7 +121,7 @@ internal sealed class ProjectBackupDestinations(
                 await BackupDestinationHistory.SaveAsync(transaction, projectId, previous, cancellationToken).ConfigureAwait(false);
             }
             await BackupDestinationHistory.SaveAsync(transaction, projectId, record, cancellationToken).ConfigureAwait(false);
-            await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
+
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             return record.Destination;
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -149,14 +149,13 @@ internal sealed class ProjectBackupDestinations(
             if (await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false) is { } previous)
             {
                 await BackupDestinationHistory.SaveAsync(transaction, projectId, previous, cancellationToken).ConfigureAwait(false);
-                await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
+
                 await transaction.DeleteAsync(Collection(projectId), Current, cancellationToken).ConfigureAwait(false);
             }
 
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    // Recheck both the project and membership in the transaction that changes its configuration.
     private static async ValueTask<WritableProject> WritableAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
@@ -167,8 +166,8 @@ internal sealed class ProjectBackupDestinations(
 
         return await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false) switch
         {
-            OrganizationMember => project,
-            Forbidden => ManagementErrors.RoleTooLow,
+            Organization => project,
+            Forbidden error => error,
             NotFound => new NotFound(),
         };
     }

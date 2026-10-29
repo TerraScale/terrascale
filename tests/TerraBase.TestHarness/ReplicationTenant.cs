@@ -92,7 +92,6 @@ internal sealed class ReplicationTenant
             ("organizations", organization.Id),
             ($"users/{user}/organization_names", "replication"),
             ($"users/{user}/organizations", organization.Id),
-            ($"organizations/{organization.Id}/members", user),
             ($"organizations/{organization.Id}/projects", project.Id),
             ($"organizations/{organization.Id}/project_names", "replication"),
         };

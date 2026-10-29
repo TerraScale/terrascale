@@ -1215,19 +1215,7 @@ public sealed class RebuildCertificationTests
                 ?? throw new InvalidOperationException("the certification fixture database ID is missing");
             Buckets.IsCertification = request => Source.IsRefill(request);
             var database = pair.Database;
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = database.OrganizationId, name = $"certify-{database.OrganizationId}" },
-                    new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "certify" },
-                    new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "main", id = database.DatabaseId, replica_regions = replicas },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"), pair.Token);
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            await CatalogFixture.RegisterAsync(Api, Api.User, database, "main", replicas);
         }
 
         public async Task RefreshMembershipAsync()

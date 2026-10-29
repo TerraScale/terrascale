@@ -167,7 +167,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         await catalog.WriteAsync<UpdateSavedQueryResult>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
-                || await MemberEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
+                || await AuthorizedEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
             {
                 return new NotFound();
             }
@@ -181,7 +181,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         await catalog.WriteAsync<DeleteSavedQueryResult>(async transaction =>
         {
             if (!await IsWriterProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
-                || await MemberEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
+                || await AuthorizedEntryAsync(transaction, userId, project, queryId, cancellationToken).ConfigureAwait(false) is not { } entry)
             {
                 return new NotFound();
             }
@@ -382,28 +382,23 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         return value;
     }
 
-    // Rechecked inside the write: the project, or the user's membership, may be gone since the request started.
-    private static async ValueTask<bool> IsMemberProjectAsync(IStorageTransaction transaction, string userId, Project project, CancellationToken cancellationToken) =>
+    private static async ValueTask<bool> IsAuthorizedProjectAsync(IStorageTransaction transaction, string userId, Project project, CancellationToken cancellationToken) =>
         await EngineManagementService.GetProjectAsync(transaction, userId, project.OrganizationId, project.Id, cancellationToken).ConfigureAwait(false) is not null;
 
-    // Inside a saved query write: the user may still change the project (a viewer may not), and the change advances the
-    // organization's version.
     private static async ValueTask<bool> IsWriterProjectAsync(IStorageTransaction transaction, string userId, Project project, CancellationToken cancellationToken)
     {
-        if (!await IsMemberProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
-            || await EngineManagementService.WritableAsync(transaction, userId, project.OrganizationId, cancellationToken).ConfigureAwait(false) is not OrganizationMember)
+        if (!await IsAuthorizedProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
+            || await EngineManagementService.WritableAsync(transaction, userId, project.OrganizationId, cancellationToken).ConfigureAwait(false) is not Organization)
         {
             return false;
         }
 
-        await EngineManagementService.TouchOrganizationAsync(transaction, project.OrganizationId, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
-    // The saved query, when the user is still a member of its project, read inside the write.
-    private static async ValueTask<SavedQueryEntry?> MemberEntryAsync(
+    private static async ValueTask<SavedQueryEntry?> AuthorizedEntryAsync(
         IStorageTransaction transaction, string userId, Project project, string queryId, CancellationToken cancellationToken) =>
-        await IsMemberProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
+        await IsAuthorizedProjectAsync(transaction, userId, project, cancellationToken).ConfigureAwait(false)
             ? await GetAsync(transaction, SavedQueries(project), queryId, TerraBaseJsonContext.Default.SavedQueryEntry, cancellationToken).ConfigureAwait(false)
             : null;
 

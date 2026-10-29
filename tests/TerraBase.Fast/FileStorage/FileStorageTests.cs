@@ -92,7 +92,6 @@ public sealed class FileStorageTests
         await using var api = await DocumentApi.StartAsync(backups.Configure, backups.Route, cancellationToken: token);
         await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
         using var owner = api.Management.As(api.Tenant.User);
-        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, descriptor =>
         {
             descriptor.Claims["project_id"] = api.Tenant.ProjectId;
@@ -133,7 +132,6 @@ public sealed class FileStorageTests
         }, backupConfigured ? backups.Route : null, cancellationToken: token);
         await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
         using var owner = api.Management.As(api.Tenant.User);
-        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, descriptor =>
         {
             descriptor.Claims["project_id"] = api.Tenant.ProjectId;

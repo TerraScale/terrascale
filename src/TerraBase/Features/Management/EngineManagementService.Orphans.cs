@@ -64,7 +64,7 @@ internal sealed partial class EngineManagementService
                         complete &= busy.HasValue;
                         owned = busy != false;
                     }
-                    if (ownership.Count == MemberPage)
+                    if (ownership.Count == CatalogPage)
                     {
                         ownership.Clear();
                     }
@@ -111,7 +111,7 @@ internal sealed partial class EngineManagementService
                 {
                     var page = await WriteAsync<DocumentPage?>(async transaction =>
                     {
-                        var records = await transaction.ListAsync(OrphanFiles, after, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                        var records = await transaction.ListAsync(OrphanFiles, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
                         foreach (var document in records.Documents)
                         {
                             if (JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is { FormatVersion: 1 } record && record.Seen != pass)

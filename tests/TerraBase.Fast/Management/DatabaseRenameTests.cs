@@ -16,7 +16,6 @@ public sealed class DatabaseRenameTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("original");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = Client(api, database.Project);
         using var restricted = Client(api, database.Project, database.Id);
         var root = $"/v1/projects/{database.Project}/databases";
@@ -79,7 +78,6 @@ public sealed class DatabaseRenameTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("original");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = Client(api, database.Project);
         using var invalid = await client.PatchAsJsonAsync(Uri(database.Data), new { name });
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);

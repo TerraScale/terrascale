@@ -167,15 +167,10 @@ public sealed class TenantDatabasePowerLossTests
 
     private static async Task<(string Path, string Wal)> CreateTenantAsync(PowerLossNode node)
     {
-        var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-        await node.CommitAsync(EntityIds.New().ToString(), new JsonObject
-        {
-            ["id"] = EntityIds.New().ToString(),
-            ["ops"] = new JsonArray(
-                new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = $"power-{organization}" },
-                new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project, ["name"] = "canary", ["id"] = database, ["replica_regions"] = new JsonArray(Cluster.Sjc) }),
-        });
+        var createdDatabase = await node.CreateDatabaseAsync(EntityIds.New().ToString());
+        var organization = createdDatabase.Organization;
+        var project = createdDatabase.Project;
+        var database = createdDatabase.Id;
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
         return (path, node.PathOf(Path.Combine(Cluster.Gru, organization, project, database + ".db-wal")));

@@ -369,22 +369,15 @@ public sealed class ImportApiTests
     }
 
     [Test]
-    public async Task A_destination_created_through_management_routes_imports_with_a_project_token_once_the_project_is_bound()
+    public async Task A_destination_created_through_management_routes_imports_with_a_project_token()
     {
         await using var client = await ImportClient.StartAsync();
         // The dashboard's path: the signed-in user creates the destination through the Management API.
         var name = "import-" + Primitives.EntityIds.New().ToString().ToLowerInvariant();
         var database = await client.Api.CreateManagedDatabaseAsync(name);
-        await using var unbound = client.For(database.Project);
         var import = $"/v1/projects/{database.Project}/databases/{name}/import";
         var file = await File.ReadAllBytesAsync(Path.Combine(Fixtures, "sqlite-notes.db"));
 
-        // Until ts-auth's binding of the project is verified, a project token reaches nothing of it.
-        var (hidden, refusal) = await unbound.CreateAsync(import, "sqlite", file);
-        await Assert.That(hidden).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(Code(refusal)).IsEqualTo("unknown_database");
-
-        await client.Api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await using var bound = client.For(database.Project);
         var (created, job) = await bound.CreateAsync(import, "sqlite", file);
         await Assert.That(created).IsEqualTo(HttpStatusCode.Created);

@@ -7,8 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary>
-/// <c>PUT /admin/projects/{project}/plan</c>: sets the plan of the storage organization a signed project enrolled. That
-/// organization has no members, so the owner route cannot reach it. Served only on the internal administrative listener,
+/// <c>PUT /admin/projects/{project}/plan</c>: sets the plan of the storage organization a signed project enrolled. Served only on the internal administrative listener,
 /// on the private network, as <c>POST /admin/api-keys</c> is.
 /// </summary>
 public sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
@@ -19,7 +18,7 @@ public sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : En
         Put("/admin/projects/{project}/plan");
         Name("setEnrolledProjectPlan");
         Summary("Sets an enrolled project's plan");
-        Description("Publishes hobby (the default), starter, pro, team or enterprise for the organization TerraBase created when a signed project token created its first database. 404 not_found for an unknown project or one bound to an existing organization, whose owners set its plan.");
+        Description("Publishes hobby (the default), starter, pro, team or enterprise for the organization TerraBase created when a signed project token created its first database. 404 not_found for an unknown project or an organization created through management routes, whose creator sets its plan.");
         Tags("Administration");
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -20,7 +20,6 @@ public sealed class ConditionalBranchTests
         hook.BeforeCopy = (source, _) => { copiedSource = source.DatabaseId; return ValueTask.CompletedTask; };
         await using var api = await ManagementApi.StartAsync(services: hook.Install);
         var source = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(source.Organization, source.Project);
         using var client = ProjectClient(api, source.Project);
         await ManagementApi.CreateCollectionAsync(client, source, "people");
         var name = new Faker().Name.FullName();
@@ -81,7 +80,6 @@ public sealed class ConditionalBranchTests
             });
         });
         var source = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(source.Organization, source.Project);
         using var client = ProjectClient(api, source.Project);
         if (scenario == "replacement")
         {
@@ -124,7 +122,6 @@ public sealed class ConditionalBranchTests
     {
         await using var api = await ManagementApi.StartAsync();
         var source = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(source.Organization, source.Project);
         using var client = restriction == "anonymous" ? api.WithToken(null)
             : ProjectClient(api, restriction == "other-project" ? EntityIds.New().ToString() : source.Project,
                 restriction == "other-source" ? EntityIds.New().ToString() : restriction == "source-only" ? source.Id : null,
@@ -140,7 +137,6 @@ public sealed class ConditionalBranchTests
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(services: hook.Install);
         var source = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(source.Organization, source.Project);
         using var client = ProjectClient(api, source.Project);
         using var gate = new UsageCommitHook.Gate(fail: false);
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();

@@ -93,19 +93,19 @@ internal sealed class ScheduledExports(
             }
 
             var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
-            if (access is not OrganizationMember)
+            if (access is not Organization)
             {
                 return access switch
                 {
-                    Forbidden => ManagementErrors.RoleTooLow,
+                    Forbidden error => error,
                     NotFound => new NotFound(),
-                    OrganizationMember => throw new UnreachableException(),
+                    Organization => throw new UnreachableException(),
                 };
             }
 
             var previous = await SystemCatalog.GetAsync(transaction, Collection, database.DatabaseId!, TerraBaseJsonContext.Default.ExportScheduleRecord, cancellationToken).ConfigureAwait(false);
             var schedule = new ExportSchedule(cron, time.GetUtcNow(), previous?.Schedule.LastRun);
-            await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
+
             await PutAsync(transaction, Collection, database.DatabaseId!, new ExportScheduleRecord(organizationId, database.ProjectId!, database.DatabaseId!, schedule),
                 TerraBaseJsonContext.Default.ExportScheduleRecord, cancellationToken).ConfigureAwait(false);
             return schedule;

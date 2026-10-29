@@ -2,7 +2,6 @@ using System.Diagnostics.Metrics;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -53,9 +52,6 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
     private readonly Counter<long> _escrowAcquisitions = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.quota.escrow_acquisitions", "{acquisition}",
         "Requests for database allowance units from other regions, by result (granted, exhausted, unreachable).");
 
-    // The serving regions as last read, for checks inside a commit's transaction, which must not wait on membership.
-    private IReadOnlyList<string> _serving = [options.Region];
-
     // The plan allowance a registration spends, as this region reads it. Registering: the time to register this region at
     // when it has no registration yet; null in a read transaction.
     private sealed record AllowanceCheck(Func<PlanTier, long> Limit, string Region, IReadOnlyList<string> Serving, DateTimeOffset? Registering = null);
@@ -78,7 +74,7 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
         new(Ulid.NewUlid(seen.Select(region => Ulid.TryParse(region.Registration, out var id) ? id.Time.AddMilliseconds(1) : now).Append(now).Max()).ToString());
 
     private async ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) =>
-        _serving = [options.Region, .. await escrowPeers.Value.RegionsAsync(cancellationToken).ConfigureAwait(false)];
+        [options.Region, .. await escrowPeers.Value.RegionsAsync(cancellationToken).ConfigureAwait(false)];
 
     // rights = genesis units + units counted from others - units granted to others - live databases on this region's units.
     private static async ValueTask<EscrowView> EscrowAsync(
@@ -240,25 +236,6 @@ internal sealed partial class EngineManagementService : IDatabaseEscrow
             .ConfigureAwait(false) is { } tenant
             ? await AcquireUnitsAsync(tenant, allowance.Limit(tenant.Plan), 1, cancellationToken).ConfigureAwait(false)
             : ManagementErrors.DatabaseAllowanceElsewhere;
-
-    // Before a commit's transaction: units for the databases it creates, organization by organization. A shortfall left
-    // is refused by the registration inside the commit.
-    private async ValueTask AcquireCommitUnitsAsync(IEnumerable<AddedDatabase> created, CancellationToken cancellationToken)
-    {
-        // Refreshed even for unbounded organizations: a set_plan in the commit can bound one before its registration.
-        _ = await ServingAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var group in created.Where(database => !database.Existing).GroupBy(database => database.Tenant.OrganizationId, StringComparer.Ordinal))
-        {
-            var tenant = group.First().Tenant;
-            var allowed = databaseAllowance.Limit(tenant.Plan);
-            if (allowed == long.MaxValue || PlatformDatabases.IsPlatform(tenant.OrganizationId))
-            {
-                continue;
-            }
-
-            _ = await AcquireUnitsAsync(tenant, allowed, group.Count(), cancellationToken).ConfigureAwait(false);
-        }
-    }
 
     // Whether this region is registered as an allowance holder; convergence registers it once its catalog gate opened.
     private bool _quotaRegistered;

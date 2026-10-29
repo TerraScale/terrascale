@@ -55,9 +55,6 @@ internal static class UserAuthExtensions
 
     public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
 
-    public static string? VerifiedEmail(this ClaimsPrincipal user) =>
-        Identity(user, UserAuthenticationHandler.SchemeName)?.FindFirst(ClaimTypes.Email)?.Value;
-
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>
         user?.Identities.FirstOrDefault(identity => identity.IsAuthenticated && identity.AuthenticationType == scheme);
 

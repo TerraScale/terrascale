@@ -57,7 +57,6 @@ public sealed class ProjectTokenTests
                     : null));
         });
         var database = await api.CreateManagedDatabaseAsync("first");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         using var created = await data.PostAsJsonAsync(Uri(database.Data + "/collections/people/documents"), new { name = "Preserved" });
@@ -191,7 +190,6 @@ public sealed class ProjectTokenTests
         }
 
         var owned = await api.CreateManagedDatabaseAsync("owned");
-        await api.VerifyProjectBindingAsync(owned.Organization, owned.Project);
         await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{owned.Project}/plan"), new { plan = "enterprise" }),
             HttpStatusCode.NotFound, "not_found", "the resource does not exist");
         await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{EntityIds.New()}/plan"), new { plan = "enterprise" }),
@@ -284,12 +282,11 @@ public sealed class ProjectTokenTests
     }
 
     [Test]
-    public async Task A_project_JWT_preserves_legacy_database_data_and_records_its_subject_as_the_actor()
+    public async Task A_project_JWT_preserves_existing_database_data()
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var legacy = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(legacy, database, "people");
         var document = ManagementApi.DocumentPath(database, "people", "existing");
@@ -310,8 +307,6 @@ public sealed class ProjectTokenTests
         await Assert.That(await StatusAsync(jwt.PostAsJsonAsync(Uri(database.Data + "/branches"), new { name = "copy" }))).IsEqualTo(HttpStatusCode.Created);
         var copied = await jwt.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/copy/collections/people/documents/by-key?id={ManagementApi.DocumentId("existing")}"));
         await Assert.That(copied.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
-        var audit = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{database.Organization}/audit-events"));
-        await Assert.That(audit.GetProperty("items").EnumerateArray().Any(item => item.GetProperty("actor").GetString() == actor)).IsTrue();
 
         await Assert.That((await api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path))).GetProperty("id").GetString()).IsEqualTo(database.Id);
         await Assert.That((await legacy.GetFromJsonAsync<JsonElement>(Uri(document))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
@@ -325,7 +320,6 @@ public sealed class ProjectTokenTests
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var actor = EntityIds.New().ToString();
         using var wrongProject = api.WithToken(Token(api, actor, EntityIds.New().ToString(), scope: null));
         using var noProject = api.WithToken(Token(api, actor, project: null, scope: AllScopes));
@@ -391,7 +385,6 @@ public sealed class ProjectTokenTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("first");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var restricted = api.WithToken(Token(api, api.User, database.Project, AllScopes, database: database.Name));
         foreach (var reference in new[] { database.Name, database.Id })
         {
@@ -406,7 +399,6 @@ public sealed class ProjectTokenTests
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
         var first = await api.CreateManagedDatabaseAsync("first");
-        await api.VerifyProjectBindingAsync(first.Organization, first.Project);
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
         using var legacy = await api.CreateClientAsync(first.Organization, "documents:read", "documents:write");
         foreach (var database in new[] { first, second })
@@ -456,7 +448,6 @@ public sealed class ProjectTokenTests
     {
         await using var api = await ManagementApi.StartAsync();
         var first = await api.CreateManagedDatabaseAsync("first");
-        await api.VerifyProjectBindingAsync(first.Organization, first.Project);
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
         var otherProject = await api.CreateProjectAsync(first.Organization, "Other project");
         var foreign = await api.CreateManagedDatabaseAsync(first.Organization, otherProject, "foreign");
@@ -487,38 +478,6 @@ public sealed class ProjectTokenTests
             .IsEqualTo(2);
         await Assert.That((await api.Client.GetFromJsonAsync<JsonElement>(Uri(foreign.ProjectPath + "/databases"))).GetProperty("items").GetArrayLength())
             .IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task A_project_JWT_cannot_promote_its_subject_through_a_pending_ownership_transfer()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        var nominee = await api.AddMemberAsync(api.Client, database.Organization, "member");
-        var organization = $"/v1/management/organizations/{database.Organization}";
-        var members = Uri(organization + "/members");
-        var before = await api.Client.GetFromJsonAsync<JsonElement>(members);
-        var membership = before.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("userId").GetString() == nominee);
-        using var offered = await api.Client.PostAsJsonAsync(Uri(organization + "/ownership-transfer"), new { userId = nominee });
-        offered.EnsureSuccessStatusCode();
-
-        using var project = api.WithToken(Token(api, nominee, database.Project, AllScopes));
-        await Assert.That(await StatusAsync(project.GetAsync(Uri(organization + "/ownership-transfer")))).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(project.PostAsync(Uri(organization + "/ownership-transfer/confirm"), null)))
-            .IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(project.PutAsJsonAsync(Uri($"{organization}/members/{nominee}/role"), new { role = "owner" })))
-            .IsEqualTo(HttpStatusCode.NotFound);
-        var unchanged = await api.Client.GetFromJsonAsync<JsonElement>(members);
-        await Assert.That(unchanged.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("userId").GetString() == nominee)
-            .GetProperty("role").GetString()).IsEqualTo("member");
-
-        using var signedIn = api.As(nominee);
-        using var confirmed = await signedIn.PostAsync(Uri(organization + "/ownership-transfer/confirm"), null);
-        confirmed.EnsureSuccessStatusCode();
-        var owner = await confirmed.Content.ReadFromJsonAsync<JsonElement>();
-        await Assert.That(owner.GetProperty("role").GetString()).IsEqualTo("owner");
-        await Assert.That(owner.GetProperty("joinedAt").GetDateTimeOffset()).IsEqualTo(membership.GetProperty("joinedAt").GetDateTimeOffset());
     }
 
     private static string Token(ManagementApi api, string actor, string? project, string? scope, string? database = null, Action<SecurityTokenDescriptor>? edit = null) =>

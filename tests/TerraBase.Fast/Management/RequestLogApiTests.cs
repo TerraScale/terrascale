@@ -21,7 +21,6 @@ public sealed class RequestLogApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         using var project = Project(api, database.Project, "databases:read");
@@ -50,7 +49,6 @@ public sealed class RequestLogApiTests
     {
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var logs = api.Server.Services.GetRequiredService<IRequestLogs>();
         // Fill the shared pending budget with other synthetic owners; no fabricated records belong to this database.
         for (var owner = 0; owner < 11; owner++)
@@ -72,7 +70,6 @@ public sealed class RequestLogApiTests
     {
         await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<IQueryShapeTracker, ThrowingShapes>());
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         // POST /sql accepts only project access tokens (TsAuth databases:read); an API key answers 401.
@@ -91,7 +88,6 @@ public sealed class RequestLogApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = Project(api, database.Project, "databases:read");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
@@ -132,7 +128,6 @@ public sealed class RequestLogApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var path = ManagementApi.Uri(database.Data + "/logs");
         using var foreign = Project(api, EntityIds.New().ToString(), "databases:read");
         using var wrongProject = await foreign.GetAsync(path);
@@ -161,7 +156,6 @@ public sealed class RequestLogApiTests
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, time: time))
             {
                 database = await api.CreateManagedDatabaseAsync();
-                await api.VerifyProjectBindingAsync(database.Organization, database.Project);
                 using var project = Project(api, database.Project, "databases:read");
                 using var data = await api.CreateClientAsync(database.Organization, "documents:read");
                 for (var i = 0; i < 110; i++)
@@ -196,7 +190,6 @@ public sealed class RequestLogApiTests
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var start = Ulid.NewUlid(time.GetUtcNow(), new byte[10]).ToString();
         async Task RequestAsync(int count)
         {

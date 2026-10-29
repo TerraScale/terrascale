@@ -15,7 +15,6 @@ public sealed class EndUserTokenTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("main");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var documents = Uri(database.Data + "/collections/items/documents");
         using (var project = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
@@ -130,7 +129,6 @@ public sealed class EndUserTokenTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("main");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
             token.Claims["project_id"] = database.Project;

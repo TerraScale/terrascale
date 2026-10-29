@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -804,19 +803,8 @@ public sealed class PeerStreamFaultIsolationTests
                 if (of is null)
                 {
                     using var service = api.Service(api.User);
-                    var commit = JsonSerializer.Serialize(new
-                    {
-                        id = EntityIds.New().ToString(),
-                        ops = new object[]
-                        {
-                            new { op = "create_organization", id = database.OrganizationId, name = "fault-isolation" },
-                            new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "main" },
-                            new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "first", id = database.DatabaseId },
-                            new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "second", id = second.DatabaseId },
-                        },
-                    });
-                    using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-                    await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+                    await CatalogFixture.RegisterAsync(api, api.User, database, "first", []);
+                    await CatalogFixture.RegisterAsync(api, api.User, second, "second", []);
                 }
 
                 foreach (var tenant in new[] { database, second })

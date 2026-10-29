@@ -67,7 +67,7 @@ internal sealed partial class EngineManagementService
             {
                 // One bounded page at a time; release the catalog connection before deleting storage.
                 var page = await ReadCatalogAsync(transaction => transaction.ListAsync(
-                    PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
+                    PendingDatabaseCleanup, after, CatalogPage, MaxPageBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
                 if (page.Documents.Count == 0)
                 {
                     break;

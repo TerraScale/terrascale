@@ -197,7 +197,6 @@ public sealed class SqlMeteringTests
         await Assert.That(await OperationsAsync(api)).IsEqualTo((2L, 1L, 1L));
 
         using var owner = api.Management.As(api.Tenant.User);
-        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, token =>
         {
             token.Claims["project_id"] = api.Tenant.ProjectId;
@@ -338,7 +337,6 @@ public sealed class SqlMeteringTests
     private static async Task<JsonElement[]> LogsAsync(DocumentApi api)
     {
         using var owner = api.Management.As(api.Tenant.User);
-        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
         using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, token =>
         {
             token.Claims["project_id"] = api.Tenant.ProjectId;

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Mail;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
@@ -39,24 +38,9 @@ internal static class ManagementRoute
     public const string Project = Projects + "/{project}";
     public const string Databases = Project + "/databases";
     public const string Database = Databases + "/{database}";
-    public const string CurrentOrganization = Prefix + "/current-organization";
-    public const string AccessTag = "Access";
-    public const string Members = Organization + "/members";
-    public const string Member = Members + "/{user}";
-    public const string Leave = Organization + "/leave";
-    public const string Invitations = Organization + "/invitations";
-    public const string AcceptInvitation = Prefix + "/invitations/accept";
-    public const string LookupInvitation = Prefix + "/invitations/lookup";
-    public const string Commits = Prefix + "/commits";
-    public const string Versions = Prefix + "/versions";
-    public const string Documents = Prefix + "/documents/{collection}";
-    public const string OwnershipTransfer = Organization + "/ownership-transfer";
-    public const string AuditRetention = Organization + "/audit-retention";
-    public const string AuditEvents = Organization + "/audit-events";
-
     public const string IdentityDescription =
         "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the internal listener only, the "
-        + "platform operator instead, with X-TerraBase-User-Id naming the acting user. Organizations the user is not a member of answer 404.";
+        + "platform operator instead, with X-TerraBase-User-Id naming the acting user. Organizations the user did not create answer 404.";
 
     public const string Sql = Database + "/sql";
     public const string SavedQueries = Project + "/saved-queries";
@@ -67,7 +51,6 @@ internal static class ManagementRoute
     public const string PageDescription = "Query: after (exclusive cursor from the previous page's next), limit (1 to 100, default 20). Items are in creation order.";
 
     private const int MaxDisplayNameLength = 128;
-    private const int MaxEmailLength = 254;
     private const int DefaultLimit = 20;
     private const int MaxLimit = 100;
 
@@ -96,7 +79,6 @@ internal static class ManagementRoute
             Unavailable error => error,
         };
 
-    /// <summary>The addressed database's tenant, resolved with membership, or why it cannot be read.</summary>
     public static async ValueTask<DatabaseTenantResult> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
         await management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken).ConfigureAwait(false) switch
         {
@@ -105,27 +87,24 @@ internal static class ManagementRoute
             Unavailable error => error,
         };
 
-    /// <summary>The database the acting user may change; a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
     public static async ValueTask<WritableDatabase> CheckWritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
         await management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext database => database,
             NotFound => new NotFound(),
-            Forbidden => ManagementErrors.RoleTooLow,
+            Forbidden error => error,
             Unavailable error => error,
         };
 
-    /// <summary>The project the acting user may change; a viewer gets <see cref="ManagementErrors.RoleTooLow"/>.</summary>
     public static async ValueTask<WritableProject> CheckWritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
         await management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken).ConfigureAwait(false) switch
         {
             Project project => project,
             NotFound => new NotFound(),
-            Forbidden => ManagementErrors.RoleTooLow,
+            Forbidden error => error,
             Unavailable error => error,
         };
 
-    // Signed project requests retain their opaque route failure without exposing catalog membership.
     public static IResult DatabaseNotFound(NotFound error) =>
         ErrorResponse.From(ProjectAccess.Current is not null ? new NotFound(Code: "unknown_route") : error);
 
@@ -155,27 +134,6 @@ internal static class ManagementRoute
 
     /// <summary>The route's organization. Membership, checked by the service, decides whether the user reaches it.</summary>
     public static string OrganizationId(HttpContext context) => Value(context, "organization");
-
-    /// <summary>A user id from a route or body, or the rule it breaks.</summary>
-    public static Valid<string> CheckUserId(string? user, string field) =>
-        !EntityIds.IsValid(user)
-            ? new Validation($"{field} must be a canonical uppercase ULID")
-            : user;
-
-    /// <summary>One email address, trimmed, or the rule it breaks.</summary>
-    public static Valid<string> CheckEmail(string? email)
-    {
-        var trimmed = email?.Trim();
-        return trimmed is { Length: <= MaxEmailLength } && MailAddress.TryCreate(trimmed, out var address) && address.Address == trimmed
-            ? trimmed
-            : new Validation("email must be one address of at most 254 characters");
-    }
-
-    /// <summary>A defined role, or the rule it breaks.</summary>
-    public static Valid<OrganizationRole> CheckRole(OrganizationRole? role) =>
-        role is { } value && Enum.IsDefined(value)
-            ? value
-            : new Validation("role must be owner, admin, member or viewer");
 
     /// <summary>An organization, project or key name, trimmed, or the rule it breaks.</summary>
     public static Valid<string> CheckDisplayName(NameRequest request)

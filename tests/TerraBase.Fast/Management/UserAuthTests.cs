@@ -447,8 +447,7 @@ public sealed class UserAuthTests
         var reads = await Task.WhenAll(
             StatusAsync(mallory, $"{Organizations}/{organization}"),
             StatusAsync(mallory, $"{Organizations}/{organization}/projects"),
-            StatusAsync(mallory, $"{Organizations}/{organization}/projects/{project}"),
-            StatusAsync(mallory, $"{Organizations}/{organization}/members"));
+            StatusAsync(mallory, $"{Organizations}/{organization}/projects/{project}"));
         using var createProject = await mallory.PostAsJsonAsync(Uri($"{Organizations}/{organization}/projects"), new { name = "Stolen" });
         using var delete = await mallory.DeleteAsync(Uri($"{Organizations}/{organization}"));
         var listed = await mallory.GetFromJsonAsync<JsonElement>(Uri(Organizations));
@@ -459,39 +458,6 @@ public sealed class UserAuthTests
         await Assert.That(delete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(0);
         await Assert.That(stillThere).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
-    public async Task Invitations_are_accepted_only_with_the_verified_email_of_the_token()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
-        var email = Faker.Internet.Email();
-        using var invited = await api.Client.PostAsJsonAsync(Uri($"{Organizations}/{organization}/invitations"), new { email, role = "member" });
-        var token = (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        var user = EntityIds.New().ToString();
-        string[] refused =
-        [
-            api.Issuer.Mint(user),
-            api.Issuer.MintWithEmail(user, email, verified: false),
-            api.Issuer.MintWithEmail(user, Faker.Internet.Email()),
-        ];
-
-        var statuses = new List<HttpStatusCode>();
-        foreach (var accessToken in refused)
-        {
-            using var client = api.WithToken(accessToken);
-            // The body's email is ignored: only the token's verified email counts.
-            using var response = await client.PostAsJsonAsync(Uri("/v1/management/invitations/accept"), new { token, email });
-            statuses.Add(response.StatusCode);
-        }
-
-        using var member = api.As(user, email);
-        using var accepted = await member.PostAsJsonAsync(Uri("/v1/management/invitations/accept"), new { token });
-
-        await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Forbidden));
-        await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await accepted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("userId").GetString()).IsEqualTo(user);
     }
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);

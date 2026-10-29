@@ -370,7 +370,6 @@ public sealed class UniqueConstraintTests
 
     private static async Task<HttpClient> SchemaClientAsync(ManagementApi api, ManagedDatabaseRef database)
     {
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         return api.WithToken(api.Issuer.Mint(api.User, token =>
         {
             token.Claims["project_id"] = database.Project;

@@ -15,7 +15,7 @@ namespace TerraBase.Fast.Replication;
 public sealed partial class OperatorRecoveryTests
 {
     [Test]
-    public async Task Recovery_requires_the_peer_credential_an_existing_admin_and_the_exact_live_tenant()
+    public async Task Recovery_requires_the_peer_credential_an_existing_owner_and_the_exact_live_tenant()
     {
         var probe = new RebuildProbe();
         await using var api = await StartAsync(probe, new Freshness());
@@ -33,16 +33,8 @@ public sealed partial class OperatorRecoveryTests
         using var unnamed = await api.Server.Client.PostAsJsonAsync(Path(database), request);
         using var stranger = api.Service(EntityIds.New().ToString());
         using var crossTenant = await stranger.PostAsJsonAsync(Path(database), request);
-        var member = EntityIds.New().ToString();
         using var owner = api.Service(api.User);
-        using var added = await owner.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/members/{member}"),
-            new { email = "member@example.test" });
-        added.EnsureSuccessStatusCode();
-        using var memberClient = api.Service(member);
-        using var denied = await memberClient.PostAsJsonAsync(Path(database), request);
-        using var promoted = await api.Client.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/members/{member}/role"), new { role = "admin" });
-        promoted.EnsureSuccessStatusCode();
-        using var admin = await memberClient.PostAsJsonAsync(Path(database), request);
+        using var admin = await owner.PostAsJsonAsync(Path(database), request);
         var other = await api.CreateManagedDatabaseAsync("other");
         using var wrongProject = await owner.PostAsJsonAsync(ManagementApi.Uri($"{database.ProjectPath}/databases/{other.Id}/recovery/retry"), request);
         using var removed = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path));
@@ -53,8 +45,7 @@ public sealed partial class OperatorRecoveryTests
         await Assert.That(publicOwner.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(unnamed.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(crossTenant.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(admin.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("an existing admin reaches the pending-record check");
+        await Assert.That(admin.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("an existing owner reaches the pending-record check");
         await Assert.That(wrongProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(probe.Calls).IsEqualTo(0);

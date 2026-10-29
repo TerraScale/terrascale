@@ -42,6 +42,7 @@ public sealed class TestIssuer : IDisposable
     private readonly List<IDisposable> _keys = [];
     private readonly Dictionary<(string Token, string Organization, string Project), ProjectAuthority> _projects = [];
     private readonly Dictionary<string, RecoveryAuthority> _recovery = [];
+    private readonly Dictionary<string, string> _projectOrganizations = [];
     private readonly Dictionary<string, Func<string>> _clients = [];
     private readonly Dictionary<string, string?> _clientStatus = [];
     private int _statusRequests;
@@ -247,6 +248,14 @@ public sealed class TestIssuer : IDisposable
     /// <summary>Publishes a new ES256 key and signs every later token with it; the old key stays published.</summary>
     public SigningCredentials Rotate() => Signing = AddKey(SecurityAlgorithms.EcdsaSha256);
 
+    internal void RegisterProject(string project, string organization)
+    {
+        lock (_gate)
+        {
+            _projectOrganizations[project] = organization;
+        }
+    }
+
     /// <summary>
     /// An access token for <paramref name="subject"/>: type <c>at+jwt</c>, this issuer, <see cref="Audience"/>, valid
     /// from a minute ago for five minutes, signed with <see cref="Signing"/>. <paramref name="edit"/> changes it first;
@@ -272,21 +281,17 @@ public sealed class TestIssuer : IDisposable
         }
 
         edit?.Invoke(descriptor);
-        // ts-auth signs every project token with the organization that owns the project.
-        if (descriptor.Claims.ContainsKey("project_id"))
+        if (descriptor.Claims.TryGetValue("project_id", out var projectId))
         {
-            descriptor.Claims.TryAdd("org_id", EntityIds.New().ToString());
+            lock (_gate)
+            {
+                descriptor.Claims.TryAdd("org_id", projectId is string project && _projectOrganizations.TryGetValue(project, out var organization)
+                    ? organization : EntityIds.New().ToString());
+            }
         }
 
         return Tokens.CreateToken(descriptor);
     }
-
-    /// <summary>An access token for <paramref name="subject"/> whose verified email is <paramref name="email"/>.</summary>
-    public string MintWithEmail(string subject, string email, bool verified = true) => Mint(subject, token =>
-    {
-        token.Claims[JwtRegisteredClaimNames.Email] = email;
-        token.Claims["email_verified"] = verified;
-    });
 
     /// <summary>An unsigned (<c>alg: none</c>) token that is otherwise valid for <paramref name="subject"/>.</summary>
     public static string MintUnsigned(string subject)

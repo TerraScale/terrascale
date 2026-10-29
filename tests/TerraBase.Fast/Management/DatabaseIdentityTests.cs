@@ -16,7 +16,6 @@ public sealed class DatabaseIdentityTests
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("original");
         var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = Client(api, database.Project);
         using var restricted = Client(api, database.Project, database.Id);
         var root = $"/v1/projects/{database.Project}/databases/";

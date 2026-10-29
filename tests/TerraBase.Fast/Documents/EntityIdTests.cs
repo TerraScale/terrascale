@@ -56,19 +56,11 @@ public sealed class EntityIdTests
     [Arguments("org_01JC9XQ1T3V5X7Z9B2D4F7HJ2K")]
     [Arguments("01jc9xq1t3v5x7z9b2d4f7hj2k")]
     [Arguments("81JC9XQ1T3V5X7Z9B2D4F7HJ2K")]
-    public async Task Entity_routes_and_commit_ids_reject_noncanonical_identifiers(string id)
+    public async Task Entity_routes_reject_noncanonical_identifiers(string id)
     {
         await using var api = await ManagementApi.StartAsync();
         using var route = await api.Client.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{id}"));
         await Assert.That(route.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        using var lookup = await api.Client.GetAsync(ManagementApi.Uri($"/v1/management/commits/{id}"));
-        await Assert.That(lookup.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        using var commit = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
-        {
-            id,
-            ops = new[] { new { op = "create_organization", name = "invalid identifier" } },
-        });
-        await Assert.That(commit.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
 
     [Test]

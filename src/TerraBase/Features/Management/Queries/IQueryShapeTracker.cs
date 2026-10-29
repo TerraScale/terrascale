@@ -57,7 +57,6 @@ public sealed record QueryShapeStats(
         milliseconds < 1 ? 0 : Math.Min(BucketCount - 1, (int)Math.Floor(Math.Log2(milliseconds)) + 1);
 }
 
-/// <summary>The bounded observed query shapes of a database or dashboard scope, including pending observations on the primary.</summary>
 /// <param name="Items">Most queried first, then collection and shape id in ordinal order.</param>
 public sealed record QueryShapeListBody(IReadOnlyList<QueryShapeStats> Items);
 
@@ -70,10 +69,9 @@ public interface IQueryShapeTracker
     /// <summary>
     /// Records a canonical shape without catalog I/O. Shapes larger than 8 KiB in UTF-8 and new shapes beyond the
     /// pending item or memory bounds are dropped; the caller must remove literals before recording.
-    /// A null database selects the management-service-only dashboard document space.
     /// </summary>
-    void Record(TenantContext? database, string collection, string shape, TimeSpan latency, long rowsScanned);
+    void Record(TenantContext database, string collection, string shape, TimeSpan latency, long rowsScanned);
 
-    /// <summary>Reads admitted statistics, adding pending observations on the primary; the caller executes or disposes the read. Null selects the dashboard scope.</summary>
-    ValueTask<QueryShapeReadResult> ReadAsync(TenantContext? database, CancellationToken cancellationToken);
+    /// <summary>Reads admitted statistics, adding pending observations on the primary; the caller executes or disposes the read.</summary>
+    ValueTask<QueryShapeReadResult> ReadAsync(TenantContext database, CancellationToken cancellationToken);
 }

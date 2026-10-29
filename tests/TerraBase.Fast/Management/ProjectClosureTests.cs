@@ -38,7 +38,7 @@ public sealed class ProjectClosureTests
             HttpStatusCode.BadRequest, "invalid_request", "version must be 1 or 2; project, closureId and authorityOrganizationId must be canonical uppercase ULIDs");
 
         // A signed project token can no longer enroll the project or create its first database.
-        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project));
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, organization));
         using (var created = await client.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
         {
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -77,7 +77,7 @@ public sealed class ProjectClosureTests
     {
         await using var api = await ManagementApi.StartAsync();
         var (project, organization) = (EntityIds.New().ToString(), EntityIds.New().ToString());
-        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project));
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, organization));
         using (var created = await client.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
         {
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -102,9 +102,7 @@ public sealed class ProjectClosureTests
             await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
-        // A legacy binding names its ts-auth organization; another one cannot close it, and an unverified namespace never.
         var owned = await api.CreateManagedDatabaseAsync("owned");
-        await api.VerifyProjectBindingAsync(owned.Organization, owned.Project);
         await ErrorAssert.ErrorAsync(PutAsync(api.Server.Client, owned.Project, EntityIds.New().ToString(), EntityIds.New().ToString()), HttpStatusCode.Conflict, "binding_conflict",
             "TerraBase binds this project id to another organization");
         await ErrorAssert.ErrorAsync(PutAsync(api.Server.Client, owned.Project, EntityIds.New().ToString(), owned.Organization), HttpStatusCode.Conflict, "not_empty",
@@ -133,7 +131,7 @@ public sealed class ProjectClosureTests
         }));
         var (project, organization) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         Volatile.Write(ref held, project);
-        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project));
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, organization));
         var creating = client.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main" });
         await Assert.That(await prepared.WaitAsync(TimeSpan.FromSeconds(30))).IsTrue();
 
@@ -158,7 +156,6 @@ public sealed class ProjectClosureTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route);
         var organization = await api.CreateOrganizationAsync("closing");
         var project = await api.CreateProjectAsync(organization, "closing");
-        await api.VerifyProjectBindingAsync(organization, project);
         var closure = EntityIds.New().ToString();
         await CloseAsync(api.Server.Client, project, closure, organization, HttpStatusCode.OK);
 
@@ -230,7 +227,6 @@ public sealed class ProjectClosureTests
         var s3 = new FakeS3();
         await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var route = $"/v1/management/organizations/{database.Organization}/projects/{database.Project}";
         using var issued = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
             new { name = "existing", scopes = ReadScope, organizationId = database.Organization, projectId = database.Project });
@@ -314,16 +310,10 @@ public sealed class ProjectClosureTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_replicated_fence_never_authorizes_erasure_of_an_unverified_or_conflicting_local_binding(bool verified)
+    public async Task A_replicated_fence_never_authorizes_erasure_of_a_conflicting_local_organization()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        if (verified)
-        {
-            await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        }
 
         var fence = new ProjectClosureRecord(database.Project, EntityIds.New().ToString(), EntityIds.New().ToString(), DateTimeOffset.UtcNow, [], FormatVersion: 2);
         var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
@@ -420,10 +410,11 @@ public sealed class ProjectClosureTests
         return await transaction.GetAsync("project_closures", project, CancellationToken.None);
     }
 
-    private static string Token(ManagementApi api, string actor, string project) =>
+    private static string Token(ManagementApi api, string actor, string project, string organization) =>
         api.Issuer.Mint(actor, token =>
         {
             token.Claims["project_id"] = project;
+            token.Claims["org_id"] = organization;
             token.Claims["scope"] = AllScopes;
         });
 }

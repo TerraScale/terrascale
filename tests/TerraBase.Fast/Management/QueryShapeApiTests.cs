@@ -23,7 +23,7 @@ public sealed class QueryShapeApiTests
     private static readonly int[] UnmatchedNumber = [999];
 
     [Test]
-    public async Task Project_JWT_statistics_require_a_verified_binding_and_database_scope_while_legacy_aliases_keep_working()
+    public async Task Project_JWT_statistics_require_database_scope_while_legacy_aliases_keep_working()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
@@ -37,12 +37,6 @@ public sealed class QueryShapeApiTests
 
         using var project = ProjectClient(api, database.Project, "databases:read");
         var canonical = ManagementApi.Uri(database.Data + "/query-shapes");
-        using (var unverified = await project.GetAsync(canonical))
-        {
-            await Assert.That(unverified.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        }
-
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var granted = await project.GetFromJsonAsync<JsonElement>(canonical);
         await Assert.That(granted.GetProperty("items").GetArrayLength()).IsEqualTo(1);
         await Assert.That(granted.GetProperty("items")[0].GetRawText()).IsEqualTo(legacy[0].GetRawText());
@@ -161,28 +155,6 @@ public sealed class QueryShapeApiTests
         {
             Directory.Delete(directory, recursive: true);
         }
-    }
-
-    [Test]
-    public async Task Dashboard_shapes_use_the_shared_tracker_but_require_the_management_service_credential()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        using var service = api.Service(api.User);
-        var document = EntityIds.New().ToString();
-        await PostAsync(service, "/v1/management/commits", new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new[] { new { op = "create", collection = "notes", id = document, document = new { text = new Faker().Lorem.Word() } } },
-        });
-        await PostAsync(service, "/v1/management/documents/notes/query", new { filter = Eq("/text", "private-dashboard-value") });
-        var stats = await service.GetFromJsonAsync<JsonElement>(ManagementApi.Uri("/management/query-shapes"));
-        await Assert.That(stats.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        var shape = stats.GetProperty("items")[0];
-        await Assert.That(shape.GetProperty("collection").GetString()).IsEqualTo("notes");
-        await Assert.That(shape.GetProperty("rowsScanned").GetInt64()).IsEqualTo(1);
-        await Assert.That(shape.GetProperty("shape").GetString()!).DoesNotContain("private-dashboard-value");
-        using var denied = await api.Client.GetAsync(ManagementApi.Uri("/management/query-shapes"));
-        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
     [Test]

@@ -18,7 +18,7 @@ public sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog) 
         Put("/admin/organizations/{organization}/plan");
         Name("setStorageOrganizationPlan");
         Summary("Sets a ts-auth organization's plan");
-        Description("Publishes hobby (the default), starter, pro, team or enterprise for the storage organization of a ts-auth organization. A paid plan for an organization with no databases yet creates its memberless record, which its projects' first database enrollment adopts with the plan. An unchanged plan writes nothing. 404 not_found for hobby on an organization with no record, a deleted organization, or one with members, whose owners set its plan.");
+        Description("Publishes hobby (the default), starter, pro, team or enterprise for the storage organization of a ts-auth organization. A paid plan for an organization with no databases yet creates its storage record, which its projects' first database enrollment adopts with the plan. An unchanged plan writes nothing. 404 not_found for hobby on an organization with no record, a deleted organization, or an organization created through management routes.");
         Tags("Administration");
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

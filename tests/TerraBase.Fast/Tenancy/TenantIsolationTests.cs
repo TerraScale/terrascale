@@ -35,22 +35,8 @@ public sealed class TenantIsolationTests
         "GET /openapi/{documentName}.json",
         "GET /readyz",
         "GET /v1/regions",
-        "GET /v1/management/current-organization",
         "GET /v1/management/organizations",
-        "POST /v1/management/invitations/accept",
         "POST /v1/management/organizations",
-        "PUT /v1/management/current-organization",
-        // Commits name organizations in their operations, each authorized like its REST route (CommitApiTests);
-        // commit records and versions are the acting user's own.
-        "POST /v1/management/commits",
-        "GET /v1/management/commits/{id}",
-        "GET /v1/management/versions",
-        // A token hash names one invitation, as the accept route's token does.
-        "POST /v1/management/invitations/lookup",
-        // The dashboard document space belongs to the dashboard, not to a tenant; API keys never reach it.
-        "GET /v1/management/documents/{collection}/by-key",
-        "POST /v1/management/documents/{collection}/query",
-        "GET /management/query-shapes",
         // The platform explore API: platform admins only, over TerraScale's own databases, never a tenant's (PlatformExploreTests).
         "GET /v1/platform/databases",
         "GET /v1/platform/databases/{database}/collections",
@@ -67,8 +53,6 @@ public sealed class TenantIsolationTests
         using var b = await api.CreateTenantAsync("documents:read", "documents:write");
         using var aDashboard = api.As(a.User);
         using var bDashboard = api.As(b.User);
-        await api.VerifyProjectBindingAsync(a.OrganizationId, a.ProjectId, aDashboard);
-        await api.VerifyProjectBindingAsync(b.OrganizationId, b.ProjectId, bDashboard);
         HttpClient ProjectClient(Tenant tenant)
         {
             return api.WithToken(api.Issuer.Mint(tenant.User, token =>
@@ -80,12 +64,10 @@ public sealed class TenantIsolationTests
 
         using var aProject = ProjectClient(a);
         using var bProject = ProjectClient(b);
-        // Both have a database "secret" with a document, a pending invitation and an ownership transfer: everything a route can name.
-        var aSecret = await SeedAsync(api, a, aDashboard);
-        var bSecret = await SeedAsync(api, b, bDashboard);
+        var aSecret = await SeedAsync(a);
+        var bSecret = await SeedAsync(b);
         // Canonical management addresses database names: this name exists only in B's project.
         var bForeign = await CreateDatabaseAsync(b, "foreign");
-        var bInvitation = await InviteAsync(b, bDashboard);
         // And the database tooling of the Management API: a saved query, an index, a backup and a recommendation.
         var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
         var bTooling = await SeedToolingAsync(b, bDashboard, bSecret);
@@ -115,21 +97,18 @@ public sealed class TenantIsolationTests
         var withProject = addressing.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)).ToList();
         List<(string Request, HttpStatusCode Status)> answers =
         [
-            // A's credentials (its API key, or its member on the dashboard) with B's organization and B's project.
-            .. await SendAsync(addressing, aDashboard, a.Data, aProject, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+            .. await SendAsync(addressing, aDashboard, a.Data, aProject, b.OrganizationId, b.ProjectId, bSecret, b.User, bTooling),
             // A's organization, where A is an owner, with B's project.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)),
-                aDashboard, a.Data, aProject, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
-            // B's organization with A's project: A's member on B's organization, and B's key (whose organization is B) on A's project.
-            .. await SendAsync(withProject, aDashboard, b.Data, bProject, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
+                aDashboard, a.Data, aProject, a.OrganizationId, b.ProjectId, bSecret, b.User, bTooling),
+            .. await SendAsync(withProject, aDashboard, b.Data, bProject, b.OrganizationId, a.ProjectId, aSecret, b.User, aTooling),
             // A's organization and project with B's database.
             .. await SendAsync(foreignDatabases,
-                aDashboard, a.Data, aProject, a.OrganizationId, a.ProjectId, bForeign, b.User, bInvitation, bTooling, databaseName: "foreign"),
+                aDashboard, a.Data, aProject, a.OrganizationId, a.ProjectId, bForeign, b.User, bTooling, databaseName: "foreign"),
         ];
 
         // Routes that address no tenant show A only its own organization.
         using var listed = JsonDocument.Parse(await aDashboard.GetStringAsync(new Uri("/v1/management/organizations", UriKind.Relative)));
-        using var switched = await aDashboard.PutAsJsonAsync(new Uri("/v1/management/current-organization", UriKind.Relative), new { organizationId = b.OrganizationId });
 
         // Five data routes and twenty-eight management routes today.
         await Assert.That(addressing.Count).IsGreaterThanOrEqualTo(33);
@@ -138,7 +117,6 @@ public sealed class TenantIsolationTests
             .IsEqualTo(string.Join("\n", answers.Select(answer => $"{answer.Request} -> 404")));
         await Assert.That(listed.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
             .IsEquivalentTo([a.OrganizationId]);
-        await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await SnapshotAsync(api, a, aDashboard, aSecret)).IsEquivalentTo(aBefore);
         await Assert.That(await SnapshotAsync(api, b, bDashboard, bSecret)).IsEquivalentTo(bBefore);
     }
@@ -275,7 +253,7 @@ public sealed class TenantIsolationTests
     // Project management takes a project JWT, hidden identity routes a dashboard token, and legacy data an API key.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(
         IEnumerable<(string Method, string Pattern, bool ProjectManagement)> routes, HttpClient dashboard, HttpClient data, HttpClient projectToken,
-        string organization, string project, string database, string user, string invitation, Tooling tooling, string databaseName = "secret")
+        string organization, string project, string database, string user, Tooling tooling, string databaseName = "secret")
     {
         var sent = new List<(string Request, HttpStatusCode Status)>();
         foreach (var (method, pattern, projectManagement) in routes)
@@ -289,7 +267,6 @@ public sealed class TenantIsolationTests
                 .Replace("{collection}", "people", StringComparison.Ordinal)
                 .Replace("{id}", DocumentId, StringComparison.Ordinal)
                 .Replace("{user}", user, StringComparison.Ordinal)
-                .Replace("{invitation}", invitation, StringComparison.Ordinal)
                 .Replace("{query}", tooling.Query, StringComparison.Ordinal)
                 .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
                 .Replace("{webhook}", DocumentId, StringComparison.Ordinal)
@@ -337,20 +314,11 @@ public sealed class TenantIsolationTests
         return sent;
     }
 
-    // A database "secret" holding document p1, a pending invitation and an ownership transfer; returns the database id.
-    private static async Task<string> SeedAsync(ManagementApi api, Tenant tenant, HttpClient dashboard)
+    private static async Task<string> SeedAsync(Tenant tenant)
     {
         var id = await CreateDatabaseAsync(tenant, "secret");
         (await tenant.Data.PutAsJsonAsync(tenant.Database("secret", $"/collections/people/documents/by-key?id={DocumentId}"), new { owner = tenant.OrganizationId }))
             .EnsureSuccessStatusCode();
-        await InviteAsync(tenant, dashboard);
-        var nominee = await api.AddMemberAsync(dashboard, tenant.OrganizationId, "member");
-        var transfer = new Uri($"/v1/management/organizations/{tenant.OrganizationId}/ownership-transfer", UriKind.Relative);
-        using var started = await dashboard.PostAsJsonAsync(transfer, new { userId = nominee });
-        await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var pending = await dashboard.GetAsync(transfer);
-        await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await pending.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("toUserId").GetString()).IsEqualTo(nominee);
         return id;
     }
 
@@ -372,16 +340,6 @@ public sealed class TenantIsolationTests
         var index = (await PostAsync($"{path}/indexes", new { collection = "people", fields = NameField })).GetProperty("name").GetString()!;
         await PostAsync($"{path}/sql", new { sql = "SELECT * FROM people WHERE owner = 'nobody'" });
         return new Tooling(query, backup, index, "people:owner");
-    }
-
-    // A pending invitation; returns its id.
-    private static async Task<string> InviteAsync(Tenant tenant, HttpClient dashboard)
-    {
-        using var invited = await dashboard.PostAsJsonAsync(
-            new Uri($"/v1/management/organizations/{tenant.OrganizationId}/invitations", UriKind.Relative),
-            new { email = $"{EntityIds.New()}@example.com", role = "member" });
-        invited.EnsureSuccessStatusCode();
-        return (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("invitation").GetProperty("id").GetString()!;
     }
 
     private static Uri Database(string project, string name, string path = "") => new($"/v1/projects/{project}/databases/{name}{path}", UriKind.Relative);
@@ -418,8 +376,6 @@ public sealed class TenantIsolationTests
             .Order(),
     ];
 
-    // Everything of a tenant that another could have read, changed or deleted: its organization, members, invitations,
-    // ownership transfer, audit log, projects, databases, documents and files.
     private static async Task<List<string>> SnapshotAsync(ManagementApi api, Tenant b, HttpClient bDashboard, string secret)
     {
         var organization = $"/v1/management/organizations/{b.OrganizationId}";
@@ -428,8 +384,7 @@ public sealed class TenantIsolationTests
         var snapshot = new List<string>();
         foreach (var path in new[]
         {
-            organization, $"{organization}/projects", project, $"{project}/databases", $"{organization}/members", $"{organization}/invitations",
-            $"{organization}/ownership-transfer", $"{organization}/audit-retention", $"{organization}/audit-events",
+            organization, $"{organization}/projects", project, $"{project}/databases",
             $"{project}/saved-queries", $"{database}/indexes", $"{database}/backups", $"{database}/backup-policy",
             $"{database}/index-recommendations",
         })

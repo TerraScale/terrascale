@@ -782,7 +782,6 @@ public sealed class CollectionDropConvergenceTests
     private static async Task DeclareDefinitionsAsync(ManagementApi api, ReplicationTenant tenant, ManagedDatabaseRef managed)
     {
         using var owner = api.As(tenant.UserId);
-        await api.VerifyProjectBindingAsync(tenant.OrganizationId, tenant.ProjectId, owner);
         var managementToken = api.Issuer.Mint(tenant.UserId, token =>
         {
             token.Claims["project_id"] = tenant.ProjectId;

@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -560,21 +559,7 @@ public sealed partial class A6LocalRebuildE2ETests
         private async Task RegisterAsync(CancellationToken token)
         {
             var database = pair.Database;
-            var commit = JsonSerializer.Serialize(new
-            {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
-                {
-                    new { op = "create_organization", id = database.OrganizationId, name = $"a6-{database.OrganizationId}" },
-                    new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "a6" },
-                    new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId,
-                        name = "main", id = database.DatabaseId, replica_regions = replicas },
-                },
-            });
-            using var service = Api.Service(Api.User);
-            using var content = new StringContent(commit, Encoding.UTF8, "application/json");
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), content, token);
-            response.EnsureSuccessStatusCode();
+            await CatalogFixture.RegisterAsync(Api, Api.User, database, "main", replicas, token);
         }
     }
 }

@@ -22,14 +22,6 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
     private const int MaxResponseBytes = 64 * 1024;
     private int _inFlight;
 
-    public ValueTask<ProjectAuthorityResult> IsProjectAdministratorAsync(string token, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        CheckAsync(token, async (client, issuer) =>
-        {
-            var project = await FetchAsync(client, ProjectAddress(issuer, organizationId, projectId), token,
-                TerraBaseJsonContext.Default.TsAuthProjectAuthority, cancellationToken).ConfigureAwait(false);
-            return project is { Role: "admin" } && project.Id == projectId && project.OrganizationId == organizationId;
-        }, cancellationToken);
-
     public ValueTask<ProjectAuthorityResult> IsRecoveryAdministratorAsync(
         string token, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
         CheckAsync(token, async (client, issuer) =>

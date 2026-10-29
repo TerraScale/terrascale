@@ -83,7 +83,6 @@ public sealed class CustomerBackupTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var writer = ProjectClient(api, database.Project, "databases:read databases:write documents:write");
         using var reader = ProjectClient(api, database.Project, "databases:read", database.Id);
         await ManagementApi.CreateCollectionAsync(writer, database, "before");
@@ -191,7 +190,6 @@ public sealed class CustomerBackupTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SetAsync(api, database, "customer");
         await ShipAsync(api, time);
         var latest = await LatestAsync(api.Client, database, "customer");
@@ -229,10 +227,6 @@ public sealed class CustomerBackupTests
         var siblingProject = await api.CreateProjectAsync(database.Organization, "Destination sibling");
         var sibling = await api.CreateManagedDatabaseAsync(database.Organization, siblingProject, "main");
         var otherTenant = await api.CreateManagedDatabaseAsync();
-        foreach (var target in new[] { database, sibling, otherTenant })
-        {
-            await api.VerifyProjectBindingAsync(target.Organization, target.Project);
-        }
 
         var route = Uri($"/v1/projects/{database.Project}/backup-destination");
         using var writer = ProjectClient(api, database.Project, "databases:write");
@@ -383,9 +377,7 @@ public sealed class CustomerBackupTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task An_empty_project_with_a_customer_backup_destination_requires_detach_before_deletion(bool viaCommit)
+    public async Task An_empty_project_with_a_customer_backup_destination_requires_detach_before_deletion()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var s3 = new FakeS3();
@@ -413,10 +405,9 @@ public sealed class CustomerBackupTests
         await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         using var unconfigured = await api.Client.GetAsync(destinationRoute, cancellationToken);
         await Assert.That(unconfigured.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        // System catalog scans retain the engine safety budget, even inside a Hobby management commit.
         queryClock.Armed = true;
         using var deleted = await DeleteProjectAsync();
-        await Assert.That(deleted.StatusCode).IsEqualTo(viaCommit ? HttpStatusCode.OK : HttpStatusCode.NoContent)
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent)
             .Because(await deleted.Content.ReadAsStringAsync(cancellationToken));
         using var gone = await api.Client.GetAsync(projectRoute, cancellationToken);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -424,66 +415,7 @@ public sealed class CustomerBackupTests
 
         Task<HttpResponseMessage> DeleteProjectAsync()
         {
-            return viaCommit
-                ? api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
-                {
-                    id = Ulid.NewUlid().ToString(),
-                    ops = new[] { new { op = "delete_project", organization, project } },
-                }, cancellationToken)
-                : api.Client.DeleteAsync(projectRoute, cancellationToken);
-        }
-    }
-
-    [Test]
-    public async Task Creating_replacing_and_detaching_a_backup_destination_advances_the_organization_fence()
-    {
-        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var s3 = new FakeS3();
-        var time = Clock();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route, time);
-        var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
-        var project = await api.CreateProjectAsync(organization, "Backup fencing");
-        var route = Uri($"/v1/management/organizations/{organization}/projects/{project}/backup-destination");
-
-        foreach (var mode in new[] { "customer", "both" })
-        {
-            var before = await VersionAsync();
-            using var saved = await api.Client.PutAsJsonAsync(route, Destination(mode), cancellationToken);
-            saved.EnsureSuccessStatusCode();
-            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(cancellationToken), mode);
-            await AssertChangedAndStaleFenceAsync(before);
-        }
-
-        var beforeDetach = await VersionAsync();
-        using var detached = await api.Client.DeleteAsync(route, cancellationToken);
-        await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await AssertChangedAndStaleFenceAsync(beforeDetach);
-
-        var beforeRepeatedDelete = await VersionAsync();
-        using var repeated = await api.Client.DeleteAsync(route, cancellationToken);
-        await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        await Assert.That(await VersionAsync()).IsEqualTo(beforeRepeatedDelete);
-
-        async Task<string> VersionAsync()
-        {
-            using var response = await api.Client.GetAsync(Uri($"/v1/management/versions?organization={organization}"), cancellationToken);
-            response.EnsureSuccessStatusCode();
-            var versions = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-            return versions.GetProperty("organizations").GetProperty(organization).GetString()!;
-        }
-
-        async Task AssertChangedAndStaleFenceAsync(string before)
-        {
-            var after = await VersionAsync();
-            await Assert.That(after).IsNotEqualTo(before);
-            using var rejected = await api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
-            {
-                id = Ulid.NewUlid().ToString(),
-                ops = new[] { new { op = "fence", organization, version = before } },
-            }, cancellationToken);
-            await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
-            var body = await rejected.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-            await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("precondition_failed");
+            return api.Client.DeleteAsync(projectRoute, cancellationToken);
         }
     }
 
@@ -552,15 +484,7 @@ public sealed class CustomerBackupTests
 
         await Assert.That(s3.CustomerObjects.Count).IsEqualTo(0);
         await SetAsync(api, database, "both");
-        var viewerId = await api.AddMemberAsync(api.Client, database.Organization, "viewer");
-        using var viewer = api.As(viewerId);
         using var outsider = api.As(Ulid.NewUlid().ToString());
-        using var viewerPut = await viewer.PutAsJsonAsync(route, valid, cancellationToken);
-        using var viewerDelete = await viewer.DeleteAsync(route, cancellationToken);
-        using var viewerRestore = await viewer.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "customer" }, cancellationToken);
-        await Assert.That(viewerPut.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(viewerDelete.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(viewerRestore.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         using var outsiderGet = await outsider.GetAsync(route, cancellationToken);
         using var outsiderPut = await outsider.PutAsJsonAsync(route, valid, cancellationToken);
         using var outsiderDelete = await outsider.DeleteAsync(route, cancellationToken);
@@ -1244,8 +1168,6 @@ public sealed class CustomerBackupTests
         }
 
         var sibling = await api.CreateProjectAsync(databases[0].Organization, "Admission sibling");
-        var viewerId = await api.AddMemberAsync(api.Client, databases[0].Organization, "viewer");
-        using var viewer = api.As(viewerId);
         using var outsider = api.As(Ulid.NewUlid().ToString());
         var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fourEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1278,9 +1200,7 @@ public sealed class CustomerBackupTests
             using var duplicate = await api.Client.PutAsJsonAsync(
                 Uri($"/v1/management/organizations/{databases[0].Organization}/projects/{sibling}/backup-destination"), Destination("both"), stop.Token);
             await AssertUnavailableAsync(duplicate, "customer backup configuration request limit reached");
-            using var forbidden = await viewer.PutAsJsonAsync(firstRoute, Destination("both"), stop.Token);
             using var hidden = await outsider.PutAsJsonAsync(firstRoute, Destination("both"), stop.Token);
-            await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
             await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             for (var index = 1; index < 4; index++)
             {

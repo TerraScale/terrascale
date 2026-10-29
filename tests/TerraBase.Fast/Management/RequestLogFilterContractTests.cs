@@ -25,7 +25,6 @@ public sealed class RequestLogFilterContractTests
         await Assert.That(string.Join(',', allowed)).IsEqualTo("2xx,3xx,4xx,5xx");
 
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = database.Project;

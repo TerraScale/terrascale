@@ -30,7 +30,6 @@ public sealed class CustomerBackupResolutionTests
             ManualBackupHosting.Configure(services);
         }, time);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
         var record = new ProjectBackupDestinationRecord(failure == "unsupported-version" ? 2 : 1, Ulid.NewUlid().ToString(),
             new(new Uri(FakeS3.CustomerEndpoint), "test-region-1", FakeS3.CustomerBucket, "customer", time.GetUtcNow()),
@@ -72,7 +71,6 @@ public sealed class CustomerBackupResolutionTests
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
         using (var saved = await project.PutAsJsonAsync(Uri($"/v1/projects/{database.Project}/backup-destination"), new
         {

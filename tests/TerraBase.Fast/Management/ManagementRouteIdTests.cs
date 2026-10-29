@@ -12,11 +12,8 @@ public sealed class ManagementRouteIdTests
     [Arguments("organization")]
     [Arguments("project")]
     [Arguments("database")]
-    [Arguments("user")]
-    [Arguments("invitation")]
     [Arguments("query")]
     [Arguments("backup")]
-    [Arguments("id")]
     public async Task Malformed_route_ids_return_the_validation_envelope_without_mutating_the_catalog(string field)
     {
         var cancellationToken = TestContext.Current!.Execution.CancellationToken;
@@ -28,14 +25,11 @@ public sealed class ManagementRouteIdTests
         {
             var (method, path) = field switch
             {
-                "organization" => (HttpMethod.Patch, $"/v1/management/organizations/{invalid}"),
-                "project" => (HttpMethod.Patch, $"/v1/management/organizations/{database.Organization}/projects/{invalid}"),
+                "organization" => (HttpMethod.Get, $"/v1/management/organizations/{invalid}"),
+                "project" => (HttpMethod.Get, $"/v1/management/organizations/{database.Organization}/projects/{invalid}"),
                 "database" => (HttpMethod.Delete, $"{database.ProjectPath}/databases/{invalid}"),
-                "user" => (HttpMethod.Delete, $"/v1/management/organizations/{database.Organization}/members/{invalid}"),
-                "invitation" => (HttpMethod.Delete, $"/v1/management/organizations/{database.Organization}/invitations/{invalid}"),
                 "query" => (HttpMethod.Delete, $"{database.ProjectPath}/saved-queries/{invalid}"),
                 "backup" => (HttpMethod.Post, $"{database.Path}/backups/{invalid}/restore"),
-                "id" => (HttpMethod.Get, $"/v1/management/commits/{invalid}"),
                 _ => throw new ArgumentOutOfRangeException(nameof(field)),
             };
             using var request = new HttpRequestMessage(method, ManagementApi.Uri(path))
@@ -64,7 +58,6 @@ public sealed class ManagementRouteIdTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var signed = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
             token.Claims!["project_id"] = database.Project;

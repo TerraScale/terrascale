@@ -10,7 +10,6 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
 using TerraBase.Fast.Replication;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -215,41 +214,21 @@ public sealed class CatalogGateTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task An_anchor_failure_refuses_destructive_management_but_not_tenant_writes(bool commitEnvelope)
+    public async Task An_anchor_failure_refuses_destructive_management_but_not_tenant_writes()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var host = await BackupShippingHost.StartAsync();
         host.S3.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
         await host.PutAsync("people", "independent", "tenant writes continue", token);
-        var request = new
-        {
-            id = EntityIds.New().ToString(),
-            ops = new[] { new { op = "delete_database", organization = host.Database.Organization, project = host.Database.Project, database = host.Database.Id } },
-        };
-        using var refused = commitEnvelope
-            ? await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), request, token)
-            : await host.Api.Client.DeleteAsync(ManagementApi.Uri(host.Database.Path), token);
+        using var refused = await host.Api.Client.DeleteAsync(ManagementApi.Uri(host.Database.Path), token);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var error = await refused.Content.ReadFromJsonAsync<JsonElement>(token);
         await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("catalog_anchor_unavailable");
 
         host.S3.FailPut = _ => false;
-        if (commitEnvelope)
-        {
-            using var replay = await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), request, token);
-            replay.EnsureSuccessStatusCode();
-            await Assert.That(replay.Headers.Contains(CommitEndpoint.ReplayedHeader)).IsTrue();
-        }
-        else
-        {
-            await Assert.That(await host.Api.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(token)).IsTrue();
-        }
+        await Assert.That(await host.Api.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(token)).IsTrue();
     }
 
-    // A change that commits while another anchor write is in flight (the periodic one, or another change's) waits for it and
-    // is acknowledged, rather than answering catalog_anchor_unavailable for a change that committed.
     [Test]
     public async Task An_anchor_write_waits_for_the_one_in_flight_and_a_deletion_behind_it_succeeds()
     {

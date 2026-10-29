@@ -118,7 +118,7 @@ public sealed class BenchmarkProcessHost
             await WriteAsync(listening, new JsonObject { ["peer_url"] = api.Server.PeerAddress!.ToString() }.ToJsonString(), cancellationToken);
             await WriteAsync(member, $"{region}\n{advertised ?? api.Server.PeerAddress!.ToString()}", cancellationToken);
             await RegisterAsync(api, config, cancellationToken);
-            await WaitForProjectBindingAsync(api, Get("organization"), Get("project"), cancellationToken);
+            await WaitForProjectAsync(api, Get("organization"), Get("project"), cancellationToken);
             var token = api.Issuer.Mint(api.User, descriptor =>
             {
                 descriptor.Claims["project_id"] = Get("project");
@@ -286,21 +286,20 @@ public sealed class BenchmarkProcessHost
         }
     }
 
-    internal static async Task WaitForProjectBindingAsync(ManagementApi api, string organization, string project, CancellationToken cancellationToken)
+    internal static async Task WaitForProjectAsync(ManagementApi api, string organization, string project, CancellationToken cancellationToken)
     {
         using var client = api.As(api.User);
         await TerraBaseTestServer.EventuallyAsync(async cancel =>
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellationToken);
-            try
-            {
-                await api.VerifyProjectBindingAsync(organization, project, client).WaitAsync(linked.Token);
-                return true;
-            }
-            catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.ServiceUnavailable)
+            using var response = await client.GetAsync(new Uri($"/v1/management/organizations/{organization}/projects/{project}", UriKind.Relative), linked.Token);
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.ServiceUnavailable)
             {
                 return false;
             }
+
+            response.EnsureSuccessStatusCode();
+            return true;
         }, TimeSpan.FromMinutes(2));
     }
 
@@ -362,62 +361,17 @@ public sealed class BenchmarkProcessHost
             return config[name]!.GetValue<string>();
         }
         var (organization, project) = (Get("organization"), Get("project"));
-        var replicas = new JsonArray([.. Regions.Where(region => region != Get("region")).Select(region => (JsonNode?)JsonValue.Create(region))]);
-        var commit = new JsonObject
-        {
-            ["id"] = EntityIds.New().ToString(),
-            ["ops"] = new JsonArray
-            {
-                new JsonObject { ["op"] = "create_organization", ["id"] = organization, ["name"] = "benchmark" },
-                new JsonObject { ["op"] = "set_plan", ["organization"] = organization, ["plan"] = "enterprise" },
-                new JsonObject { ["op"] = "create_project", ["organization"] = organization, ["id"] = project, ["name"] = "benchmark" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = organization, ["project"] = project,
-                    ["id"] = Get("database"), ["name"] = "canary", ["replica_regions"] = replicas },
-            },
-        };
-        await SendCommitAsync(api, commit, cancellationToken);
+        string[] replicas = [.. Regions.Where(region => region != Get("region"))];
+        await CatalogFixture.RegisterProjectAsync(api, api.User, organization, project, cancellationToken);
+        await api.SetPlanAsync(api.User, organization, "enterprise", cancellationToken);
+        var database = new TenantContext(organization, PlanTier.Enterprise, project, Get("database"));
+        await CatalogFixture.RegisterAsync(api, api.User, database, "canary", replicas, cancellationToken);
         var extra = config["extra_databases"]?.AsArray() ?? [];
-        for (var offset = 0; offset < extra.Count; offset += 16)
+        for (var index = 0; index < extra.Count; index++)
         {
-            var operations = new JsonArray();
-            for (var index = offset; index < Math.Min(offset + 16, extra.Count); index++)
-            {
-                operations.Add(new JsonObject
-                {
-                    ["op"] = "create_database",
-                    ["organization"] = organization,
-                    ["project"] = project,
-                    ["id"] = extra[index]!.GetValue<string>(),
-                    ["name"] = $"idle-{index + 1}",
-                    ["replica_regions"] = replicas.DeepClone(),
-                });
-            }
-            await SendCommitAsync(api, new JsonObject { ["id"] = EntityIds.New().ToString(), ["ops"] = operations }, cancellationToken);
+            await CatalogFixture.RegisterAsync(api, api.User, database with { DatabaseId = extra[index]!.GetValue<string>() },
+                $"idle-{index + 1}", replicas, cancellationToken);
         }
-    }
-
-    private static async Task SendCommitAsync(ManagementApi api, JsonObject commit, CancellationToken cancellationToken)
-    {
-        var payload = commit.ToJsonString();
-        using var service = api.Service(api.User);
-        await TerraBaseTestServer.EventuallyAsync(async cancel =>
-        {
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellationToken);
-            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), content, linked.Token);
-            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
-            {
-                return false;
-            }
-
-            var body = await response.Content.ReadAsStringAsync(linked.Token);
-            if (response.StatusCode != HttpStatusCode.Conflict || (!body.Contains("\"id_taken\"", StringComparison.Ordinal) && !body.Contains("\"name_taken\"", StringComparison.Ordinal)))
-            {
-                response.EnsureSuccessStatusCode();
-            }
-
-            return true;
-        }, TimeSpan.FromMinutes(2));
     }
 
     internal static async Task WaitForBootstrapAsync(ManagementApi api, string root, string directory,

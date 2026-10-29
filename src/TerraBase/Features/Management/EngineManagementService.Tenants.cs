@@ -20,7 +20,7 @@ internal sealed partial class EngineManagementService
     public ValueTask<ResolveProjectDatabaseResult> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken) =>
         ReadAsync<ResolveProjectDatabaseResult>(async transaction =>
             await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } organizationId
-                && await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
+                && await IsProjectRegisteredAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
                 && await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
                 && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                     .ConfigureAwait(false) is { } record && record.Id == tenant.DatabaseId && record.ProjectId == projectId
@@ -112,15 +112,9 @@ internal sealed partial class EngineManagementService
 
     // Every catalog commit invalidates the caches above, and every request of a fan-out (a thousand shape readers) then misses
     // together: concurrent misses of one key at one sequence share one read instead of each reading the same rows. The read runs
-    // without the first caller's ambient context and cancellation; a caller inside a commit transaction reads its own.
     private async ValueTask<T> ShareMissAsync<T>(
         string kind, (string, string, string) key, long sequence, Func<CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken)
     {
-        if (CommitTransaction.Value is not null)
-        {
-            return await read(cancellationToken).ConfigureAwait(false);
-        }
-
         var id = (kind, key.Item1, key.Item2, key.Item3);
         Task<T> shared;
         lock (_missGate)
@@ -163,7 +157,6 @@ internal sealed partial class EngineManagementService
         string name, ConcurrentDictionary<(string, string, string), (long Sequence, T Value)> cache, TenantContext database,
         Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, Func<T, bool> admit, CancellationToken cancellationToken)
     {
-        RequireNoCommit();
         // Taken before the read: a commit racing it leaves the entry stale-tagged, never an older snapshot under a newer tag.
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
@@ -309,7 +302,7 @@ internal sealed partial class EngineManagementService
 
             // At most 100 identities, each with three ULIDs: under 22 KiB of character data. Storage scan pages are
             // separately bounded to 100 documents and 1 MiB. Release the reader before WAN requests or cleanup writes.
-            var records = new List<TenantContext>(MemberPage);
+            var records = new List<TenantContext>(CatalogPage);
             string? afterProject = after?.ProjectId;
             if (afterProject is not null
                 && await GetAsync(transaction, ProjectOrganizations, afterProject, Id, cancellationToken).ConfigureAwait(false) is { } organization
@@ -322,7 +315,7 @@ internal sealed partial class EngineManagementService
             DocumentPage projects;
             do
             {
-                projects = await transaction.ListAsync(ProjectOrganizations, afterProject, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                projects = await transaction.ListAsync(ProjectOrganizations, afterProject, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
                 foreach (var project in projects.Documents)
                 {
                     if (await ReadProjectAsync(project.Id, JsonSerializer.Deserialize(project.Json.Span, Id)!, afterDatabase: null).ConfigureAwait(false))
@@ -342,7 +335,7 @@ internal sealed partial class EngineManagementService
                 DocumentPage databases;
                 do
                 {
-                    databases = await transaction.ListAsync(Databases(project), afterDatabase, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                    databases = await transaction.ListAsync(Databases(project), afterDatabase, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
                     foreach (var document in databases.Documents)
                     {
                         var database = EntityPayload.Read(document, TerraBaseJsonContext.Default.ManagedDatabase)!;
@@ -350,7 +343,7 @@ internal sealed partial class EngineManagementService
                             && !await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
                         {
                             records.Add(new TenantContext(organizationId, PlanTier.Hobby, project, database.Id));
-                            if (records.Count == MemberPage)
+                            if (records.Count == CatalogPage)
                             {
                                 return true;
                             }
@@ -430,7 +423,7 @@ internal sealed partial class EngineManagementService
                 await PutAsync(transaction, DatabaseNames(database.ProjectId), name, database.DatabaseId, Id, cancellationToken).ConfigureAwait(false);
                 await PutAsync(transaction, Databases(database.ProjectId), database.DatabaseId, record, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                     .ConfigureAwait(false);
-                await TouchOrganizationAsync(transaction, tenant.OrganizationId, cancellationToken).ConfigureAwait(false);
+
             }
 
             return check switch
@@ -483,7 +476,6 @@ internal sealed partial class EngineManagementService
                 _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false);
             }
 
-            await TouchOrganizationAsync(transaction, database.OrganizationId, cancellationToken).ConfigureAwait(false);
             return new PlacementUpdate(Updated: true);
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
@@ -657,10 +649,6 @@ internal sealed partial class EngineManagementService
     // Unsupported catalogs are never interpreted or migrated.
     private static bool Interprets(string? version) => version == CatalogVersion;
 
-    /// <summary>
-    /// Whether an organization, one of its projects and one database of that project (each optional after the first)
-    /// exist, inside a catalog transaction and without a membership check: the scope of an API key.
-    /// </summary>
     internal static async ValueTask<bool> ScopeExistsUncheckedAsync(
         IStorageTransaction transaction, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken)
     {

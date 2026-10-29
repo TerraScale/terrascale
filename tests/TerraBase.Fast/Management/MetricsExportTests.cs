@@ -82,7 +82,6 @@ public sealed class MetricsExportTests
     private static async Task<ManagedDatabaseRef> ManagedDatabaseWithRequestsAsync(ManagementApi api)
     {
         var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = UsageAnalyticsTests.ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
         var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one"));
