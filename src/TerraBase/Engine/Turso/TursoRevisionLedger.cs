@@ -181,9 +181,9 @@ internal sealed class TursoRevisionLedger(string path)
                     revision = _manifest.Current(snapshot.MaxFrame);
                 }
 
-                var pages = plan.Full is null
-                    ? plan.Pages.Where(number => number <= size).Order().ToArray()
-                    : Enumerable.Range(1, (int)size).Select(number => (uint)number).ToArray();
+                uint[] pages = plan.Full is null
+                    ? [.. plan.Pages.Where(number => number <= size).Order()]
+                    : [.. Enumerable.Range(1, (int)size).Select(number => (uint)number)];
                 var buffer = ArrayPool<byte>.Shared.Rent(reader.PageSize);
                 try
                 {
