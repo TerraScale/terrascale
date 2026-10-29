@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TerraBase.Engine;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -88,8 +89,6 @@ public sealed class KeyRevocationTests
         using var client = api.WithToken(token);
         var route = ManagementApi.Uri(database.Data + "/collections");
 
-        // ts-auth answers 1.5 s after the question: the yes holds 0.5 s more, too little for the request's watch to renew it.
-        // The request is refused before it starts, retryable, instead of admitted and then reset mid-flight (#853).
         api.Issuer.BeforeStatus = () => time.Advance(TimeSpan.FromSeconds(1.5));
         using (var slow = await client.GetAsync(route, cancellationToken))
         {
@@ -98,7 +97,6 @@ public sealed class KeyRevocationTests
             await Assert.That(slow.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
         }
 
-        // A prompt answer admits the retry: the late yes is too old to start on, so the request asks again.
         api.Issuer.BeforeStatus = null;
         using (var retried = await client.GetAsync(route, cancellationToken))
         {
@@ -155,7 +153,6 @@ public sealed class KeyRevocationTests
             api.Issuer.RevokeClient(key);
         }
 
-        // Drive the unchanged two-second freshness plus one poll bound without a wall-clock sleep.
         time.Advance(TimeSpan.FromSeconds(2));
         try
         {
@@ -165,7 +162,6 @@ public sealed class KeyRevocationTests
         }
         catch (IOException)
         {
-            // An aborted HTTP response can end with a transport error rather than EOF.
         }
 
         await Assert.That(deadline.IsCancellationRequested).IsFalse();
@@ -175,7 +171,16 @@ public sealed class KeyRevocationTests
     public async Task A_write_still_waiting_when_its_key_cannot_be_verified_answers_auth_unavailable_instead_of_a_reset(CancellationToken cancellationToken)
     {
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken);
+        var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? target = null;
+        await using var api = await ManagementApi.StartAsync(time: time, cancellationToken: cancellationToken, services: services =>
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, tenant) =>
+            {
+                if (step == "writer.waiting" && tenant.DatabaseId == Volatile.Read(ref target))
+                {
+                    queued.TrySetResult();
+                }
+            }));
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var (_, token) = Grant(api, database, scope: "documents:read documents:write");
@@ -184,33 +189,25 @@ public sealed class KeyRevocationTests
         var create = new { statements = new[] { new { sql = "CREATE TABLE waiting (id INTEGER PRIMARY KEY)" } } };
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>()
             .OpenDatabaseAsync(new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id), cancellationToken))!;
-        var asked = api.Issuer.StatusRequests;
+        Volatile.Write(ref target, database.Id);
         HttpResponseMessage response;
         await using (var held = await store.BeginTransactionAsync(write: true, cancellationToken))
         {
-            // Admitted with a fresh yes, the statement then waits for the writer this test holds: no response has started.
             var waiting = client.PostAsJsonAsync(sql, create, cancellationToken);
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(api.Issuer.StatusRequests > asked), TimeSpan.FromSeconds(10));
+            await queued.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             api.Issuer.StatusAvailable = false;
-            // Past the last yes plus one poll without a wall-clock sleep: each step gives the watch one tick.
-            await TerraBaseTestServer.EventuallyAsync(_ =>
-            {
-                time.Advance(TimeSpan.FromMilliseconds(250));
-                return Task.FromResult(waiting.IsCompleted);
-            }, TimeSpan.FromSeconds(10));
-            response = await waiting;
+            time.Advance(TimeSpan.FromSeconds(2));
+            response = await waiting.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
         }
 
         using (response)
         {
-            // Answered like a new request, never an empty connection reset (an edge 502 with no body).
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("error").GetProperty("code").GetString())
                 .IsEqualTo("auth_unavailable");
             await Assert.That(response.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
         }
 
-        // The cut-off statement never ran: the same table can still be created.
         api.Issuer.StatusAvailable = true;
         using var retried = await client.PostAsJsonAsync(sql, create, cancellationToken);
         await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -260,7 +257,6 @@ public sealed class KeyRevocationTests
     [Test]
     public async Task An_older_ts_auth_without_key_status_keeps_keys_working_on_http_and_postgres()
     {
-        // Deploy order must not matter: a ts-auth that predates key status answers 404 and issues tokens without key_id.
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -297,7 +293,6 @@ public sealed class KeyRevocationTests
     [Test]
     public async Task A_token_issued_before_key_status_keeps_reading_without_a_status_check()
     {
-        // Keys and tokens that predate key status keep working after TerraBase starts checking it.
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);

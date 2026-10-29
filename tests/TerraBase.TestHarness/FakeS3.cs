@@ -30,6 +30,8 @@ public sealed partial class FakeS3
     private const string R2Storage = "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com";
     private const string PlatformAccessKey = "test-access-key";
     private const string PlatformSecretKey = "test-secret-key";
+    private const string ShapeAccessKey = "test-shape-access-key";
+    private const string ShapeSecretKey = "test-shape-secret-key";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
     private static readonly IComparer<byte[]> S3KeyOrder = Comparer<byte[]>.Create((left, right) => left.AsSpan().SequenceCompareTo(right));
 
@@ -275,11 +277,14 @@ public sealed partial class FakeS3
     {
         ArgumentNullException.ThrowIfNull(settings);
         settings["backup-endpoint"] = ObjectStorage;
+        settings["shapes-access-key-id"] = ShapeAccessKey;
+        settings["shapes-secret-access-key"] = ShapeSecretKey;
+        settings["shapes-cdn-api-token"] = FakeCloudflare.Token;
+
         if (R2)
         {
             settings["cloudflare-api-token"] = FakeCloudflare.Token;
         }
-
         settings["backup-region"] = "test-region-1";
         settings["backup-bucket"] = Bucket;
         settings["backup-access-key-id"] = PlatformAccessKey;
@@ -304,7 +309,23 @@ public sealed partial class FakeS3
     public void RoutePlatform(IServiceCollection services)
     {
         services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
+        RouteShapes(services);
         services.Replace(ServiceDescriptor.Singleton<IMasterKey>(provider => new CountingMasterKey(new MasterKey(provider.GetRequiredService<BackupSettings>().MasterKey), this)));
+    }
+
+    public void RouteShapes(IServiceCollection services)
+    {
+        services.AddSingleton(new ShapeStorageSettings
+        {
+            Endpoint = new Uri(ObjectStorage),
+            Region = "test-region-1",
+            Bucket = Bucket,
+            AccessKeyId = ShapeAccessKey,
+            SecretKey = ShapeSecretKey,
+            CloudflareApiToken = FakeCloudflare.Token,
+            Cdn = R2 ? new Uri("https://" + ShapeStorageSettings.CdnHost + "/") : null,
+        });
+        services.AddHttpClient("shapes-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
 
     // One exact allocation for a body of known length (ReadAsByteArrayAsync buffers it, then copies): parts are 128 MiB, and
@@ -355,6 +376,12 @@ public sealed partial class FakeS3
         if (bucket != (customer ? CustomerBucket : Bucket) && !IsPurgeBucket(customer, bucket))
         {
             return S3Error(HttpStatusCode.NotFound, "NoSuchBucket");
+        }
+
+        if (!customer && key.StartsWith("v1/shapes/", StringComparison.Ordinal) && !uri.Query.Contains("X-Amz-", StringComparison.OrdinalIgnoreCase)
+            && !S3SignatureVerifies(request, body, ShapeAccessKey, ShapeSecretKey))
+        {
+            return S3Error(HttpStatusCode.Forbidden, "SignatureDoesNotMatch");
         }
 
         if (customer && !S3SignatureVerifies(request, body))
@@ -729,7 +756,9 @@ public sealed partial class FakeS3
         var uri = request.RequestUri!;
         var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
         var credential = query["X-Amz-Credential"]?.Split('/');
-        if (query["X-Amz-Algorithm"] != "AWS4-HMAC-SHA256" || credential is not [PlatformAccessKey, _, "test-region-1", "s3", "aws4_request"]
+        var shape = uri.AbsolutePath.Contains("/v1/shapes/", StringComparison.Ordinal);
+        if (query["X-Amz-Algorithm"] != "AWS4-HMAC-SHA256" || credential is not [var accessKey, _, "test-region-1", "s3", "aws4_request"]
+            || accessKey != (shape ? ShapeAccessKey : PlatformAccessKey)
             || query["X-Amz-SignedHeaders"] != "host" || query["X-Amz-Signature"] is not { } signature
             || query["X-Amz-Date"] is not { } date || !DateTimeOffset.TryParseExact(date, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var signedAt)
             || query["X-Amz-Expires"] is not { } expires || !int.TryParse(expires, NumberStyles.None, CultureInfo.InvariantCulture, out var lifetime) || lifetime is < 1 or > 600)
@@ -742,13 +771,13 @@ public sealed partial class FakeS3
             return false;
         }
 
-        return signature == SigV4Signature(request, PlatformSecretKey, credential, date, "host", "UNSIGNED-PAYLOAD", CanonicalQuery(uri, "X-Amz-Signature"));
+        return signature == SigV4Signature(request, shape ? ShapeSecretKey : PlatformSecretKey, credential, date, "host", "UNSIGNED-PAYLOAD", CanonicalQuery(uri, "X-Amz-Signature"));
     }
 
     // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
     // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
     // extend before testing keys or query values requiring percent encoding.
-    private static bool S3SignatureVerifies(HttpRequestMessage request, byte[] body)
+    private static bool S3SignatureVerifies(HttpRequestMessage request, byte[] body, string accessKey = CustomerAccessKey, string secretKey = CustomerSecretKey)
     {
         if (Header(request, "authorization") is not { } authorization || !authorization.StartsWith("AWS4-HMAC-SHA256 ", StringComparison.Ordinal))
         {
@@ -758,7 +787,7 @@ public sealed partial class FakeS3
         var fields = authorization["AWS4-HMAC-SHA256 ".Length..].Split(',')
             .Select(field => field.Trim().Split('=', 2)).ToDictionary(field => field[0], field => field[1], StringComparer.Ordinal);
         var credential = fields.GetValueOrDefault("Credential")?.Split('/');
-        if (credential is not [CustomerAccessKey, _, "test-region-1", "s3", "aws4_request"]
+        if (credential is not [var suppliedKey, _, "test-region-1", "s3", "aws4_request"] || suppliedKey != accessKey
             || fields.GetValueOrDefault("SignedHeaders") is not { } signedHeaders || fields.GetValueOrDefault("Signature") is not { } signature
             || Header(request, "x-amz-date") is not { } date || Header(request, "x-amz-content-sha256") is not { } payloadHash)
         {
@@ -770,7 +799,7 @@ public sealed partial class FakeS3
             return false;
         }
 
-        return signature == SigV4Signature(request, CustomerSecretKey, credential, date, signedHeaders, payloadHash, CanonicalQuery(request.RequestUri!, null));
+        return signature == SigV4Signature(request, secretKey, credential, date, signedHeaders, payloadHash, CanonicalQuery(request.RequestUri!, null));
     }
 
     // The query in SigV4 canonical form: percent-encoded names and values, sorted, without the excluded parameter name.

@@ -83,7 +83,7 @@ public sealed class FakeCloudflare : IDisposable
 
     private HttpResponseMessage Purge(JsonElement body)
     {
-        foreach (var file in body.GetProperty("files").EnumerateArray())
+        foreach (var file in body.GetProperty("prefixes").EnumerateArray())
         {
             _purged.Enqueue(file.GetString()!);
         }

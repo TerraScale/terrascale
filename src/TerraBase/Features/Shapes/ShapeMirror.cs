@@ -855,24 +855,24 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 internal sealed record ShapeObjectHead(string Owner, string ObjectHash, string Sha256, long Size, long Epoch,
     string KeyId, long SealedAt, long FloorOffset);
 
-/// <summary>S3 features absent from the backup interface, sharing its bucket, credentials and named transport.</summary>
 internal sealed class ShapeObjectStore : IDisposable
 {
     internal const string CacheControl = "public, max-age=31536000, immutable";
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
+    internal const string HttpClientName = "shapes-s3";
     private readonly AmazonS3Client _s3;
-    private readonly BackupSettings _settings;
-    private readonly IObjectStore _objects;
+    private readonly ShapeStorageSettings _settings;
+    private readonly S3ObjectStore _objects;
     private readonly TimeProvider _time;
     private readonly Uri? _cdn;
     private readonly IShapeCdnPurge _purge;
 
-    public ShapeObjectStore(BackupSettings settings, IHttpClientFactory http, IObjectStore objects, TimeProvider time, IShapeCdnPurge purge)
+    public ShapeObjectStore(ShapeStorageSettings settings, IHttpClientFactory http, TimeProvider time, IShapeCdnPurge purge)
     {
         _settings = settings;
         _purge = purge;
-        _cdn = Cdn(settings);
-        _objects = objects;
+        _cdn = settings.Cdn;
+        _objects = new S3ObjectStore(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId, settings.SecretKey, http, HttpClientName, time);
         _time = time;
         _s3 = new(new BasicAWSCredentials(settings.AccessKeyId, settings.SecretKey), new AmazonS3Config
         {
@@ -978,16 +978,6 @@ internal sealed class ShapeObjectStore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Free reads T2: an R2 bucket serves its shape objects through Cloudflare's cache at its custom domain
-    /// <c>shapes-&lt;bucket&gt;.terrascale.tech</c> (docs/terrabase/free-reads-cdn.md). The link is the object's path alone, so
-    /// every reader at one Cloudflare location shares one cached copy; the bytes are TBS1 ciphertext, opened only with the
-    /// key from <c>GET …/shape/keys</c>. Any other bucket is linked by a presigned URL (T1).
-    /// </summary>
-    internal static Uri? Cdn(BackupSettings settings) =>
-        settings.Endpoint.Scheme == Uri.UriSchemeHttps && settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase)
-            ? new Uri("https://shapes-" + settings.Bucket + ".terrascale.tech/") : null;
-
     /// <summary>The object's URL and when the manifest that names it should be read again: the start of the next epoch.</summary>
     public (string Url, DateTimeOffset ExpiresAt) Link(string key)
     {
@@ -1013,7 +1003,11 @@ internal sealed class ShapeObjectStore : IDisposable
         return (url, expires);
     }
 
-    public void Dispose() => _s3.Dispose();
+    public void Dispose()
+    {
+        _s3.Dispose();
+        _objects.Dispose();
+    }
 
     private static string Number(long value) => value.ToString(CultureInfo.InvariantCulture);
     private static long? Decimal(string? text) => long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
@@ -1022,6 +1016,6 @@ internal sealed class ShapeObjectStore : IDisposable
 
     private sealed class NamedClient(IHttpClientFactory http) : HttpClientFactory
     {
-        public override HttpClient CreateHttpClient(IClientConfig clientConfig) => http.CreateClient(S3ObjectStore.HttpClientName);
+        public override HttpClient CreateHttpClient(IClientConfig clientConfig) => http.CreateClient(HttpClientName);
     }
 }

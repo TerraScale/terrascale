@@ -378,6 +378,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 start.Environment["BUCKET_NAME"] = "terrabase-test";
                 start.Environment["AWS_ACCESS_KEY_ID"] = "test";
                 start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
+                start.Environment["TERRABASE_SHAPES_ACCESS_KEY_ID"] = "synthetic-shapes-access-key";
+                start.Environment["TERRABASE_SHAPES_SECRET_ACCESS_KEY"] = "synthetic-shapes-secret-key";
+                start.Environment["TERRABASE_SHAPES_CDN_API_TOKEN"] = "synthetic-shapes-cdn-token";
             }
 
             // Database encryption needs the same test master across restarts, independently of backups.

@@ -563,6 +563,11 @@ internal sealed partial class TursoDatabaseStore(
         var outcome = "and took it";
         try
         {
+            if (_writer.CurrentCount == 0 && Tenant is { } tenant)
+            {
+                Checkpoint?.Invoke("writer.waiting", tenant);
+            }
+
             if (!await _writer.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false))
             {
                 outcome = "and gave up";
