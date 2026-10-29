@@ -1,0 +1,57 @@
+[
+  {
+    "id": "collections",
+    "pattern": "(?i:\\bcollections?\\b)|\\b(?:[A-Za-z_]\\w*)?Collections?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_collections?(?:_[a-z_]+)?\\b|\\bcollections?(?:[A-Z_]\\w*)?\\b",
+    "owner": "E4"
+  },
+  {
+    "id": "documents",
+    "pattern": "(?i:\\bdocuments?\\b)|\\b(?:[A-Za-z_]\\w*)?Documents?(?:[A-Z_]\\w*)?\\b|\\b[a-z_]+_documents?(?:_[a-z_]+)?\\b|\\bdocuments?(?:[A-Z_]\\w*)?\\b",
+    "owner": "E4"
+  },
+  {
+    "id": "document-feeds",
+    "pattern": "(?i)\\b(?:document[ _-]?)?feeds?\\b|_tb_feed\\w*",
+    "owner": "E4/F1"
+  },
+  {
+    "id": "lattices",
+    "pattern": "(?i)lattices?",
+    "owner": "E4"
+  },
+  {
+    "id": "leaderless",
+    "pattern": "(?i)leaderless|last[ _-]writer[ _-]wins|\\bLWW\\b",
+    "owner": "E5"
+  },
+  {
+    "id": "hrana",
+    "pattern": "(?i)hrana",
+    "owner": "E4"
+  },
+  {
+    "id": "libsql",
+    "pattern": "(?i)/?libsql",
+    "owner": "E4/E7"
+  },
+  {
+    "id": "custom-wire",
+    "pattern": "(?i)custom[ _-]wire|\\bwire[ _-]protocol\\b|\\b(?:TerraBaseWire|WireClient|WireServer|WireFrame|WireOpcode)\\w*",
+    "owner": "E4"
+  },
+  {
+    "id": "webhooks",
+    "pattern": "(?i)webhooks?",
+    "owner": "E4"
+  },
+  {
+    "id": "fly",
+    "pattern": "(?i)fly\\.io|fly\\.dev|\\bflyctl\\b|\\bfly[ ._-](?:machines?|apps?|deploy|toml)\\b",
+    "owner": "E9"
+  },
+  {
+    "id": "engine-brand",
+    "pattern": "(?i)turso|pyturso|tursodatabase",
+    "owner": "E7/Q3"
+  }
+]
