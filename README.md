@@ -2,7 +2,7 @@
 
 TerraScale is one monorepo for the platform's core code: **TerraBase** (leaderless, multi-region document database), **ts-auth** (hosted identity provider), the shared .NET libraries (endpoints, logging) and the benchmarks. The ts-dashboard and the SDKs (ts-go, ts-dotnet, ts-js, ts-rust, ts-cli) live in separate repositories.
 
-Agent and contributor rules: [`AGENTS.md`](AGENTS.md).
+Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping from a dev host: [`ts-ship`](docs/dev/shipping.md).
 
 ## Layout
 
