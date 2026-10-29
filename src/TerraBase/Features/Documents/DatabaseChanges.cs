@@ -572,15 +572,15 @@ internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudg
 
     private static async Task SendAsync(HttpContext context, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-
+        cancellationToken.ThrowIfCancellationRequested();
         using var timeout = new CancellationTokenSource(SendTimeout);
-        using var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        using var send = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, timeout.Token);
         try
         {
             await context.Response.Body.WriteAsync(bytes, send.Token).ConfigureAwait(false);
             await context.Response.Body.FlushAsync(send.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !context.RequestAborted.IsCancellationRequested)
         {
             throw new IOException("the client took no bytes for 10 s");
         }

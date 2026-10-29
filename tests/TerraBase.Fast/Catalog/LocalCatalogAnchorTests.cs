@@ -3,7 +3,6 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Catalog;
 using TerraBase.Primitives;
@@ -57,16 +56,18 @@ public sealed class LocalCatalogAnchorTests
     public async Task A_restored_catalog_cannot_resurrect_a_revoked_credential_or_release_shape_keys(string evidence, CancellationToken cancellationToken)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-local-rollback-").FullName;
+        var scratch = Directory.CreateTempSubdirectory("terrabase-local-rollback-snapshot-").FullName;
         var s3 = new FakeS3();
         var time = new FakeTimeProvider();
-        var snapshot = Path.Combine(directory, ".before-revocation.db");
+        var snapshot = Path.Combine(scratch, "before-revocation.db");
+        var user = EntityIds.New().ToString();
         try
         {
             string secret;
             string id;
             string shape;
             byte[]? replacement = null;
-            await using (var api = await StartAsync(directory, s3, time, EntityIds.New().ToString()))
+            await using (var api = await StartAsync(directory, s3, time, user))
             {
                 var database = await api.CreateManagedDatabaseAsync();
                 shape = $"/v1/projects/{database.Project}/databases/{database.Name}/collections/people/shape";
@@ -76,12 +77,12 @@ public sealed class LocalCatalogAnchorTests
                 var key = await created.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
                 secret = key.GetProperty("secret").GetString()!;
                 id = key.GetProperty("id").GetString()!;
-                await using (var tap = await api.Server.Services.GetRequiredService<IWalBackup>().OpenTapAsync(null, cancellationToken))
-                {
-                    using var log = new MemoryStream();
-                    await tap!.SnapshotAsync(log, snapshot, cancellationToken);
-                }
+            }
 
+            File.Copy(Path.Combine(directory, "_system.db"), snapshot);
+            File.Copy(Path.Combine(directory, "_system.db.key"), snapshot + ".key");
+            await using (var api = await StartAsync(directory, s3, time, user))
+            {
                 using var revoked = await api.Server.Client.DeleteAsync(ManagementApi.Uri($"/admin/api-keys/{id}"), cancellationToken);
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 if (evidence == "missing")
@@ -126,6 +127,7 @@ public sealed class LocalCatalogAnchorTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+            Directory.Delete(scratch, recursive: true);
         }
     }
 

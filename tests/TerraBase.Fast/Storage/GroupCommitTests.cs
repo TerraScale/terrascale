@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Data;
 using System.Net;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -223,7 +224,7 @@ public sealed class GroupCommitTests
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
 
-        var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        var (held, heldAt) = await BeginWriteTransactionAsync(store);
         Task<ApiResponse> waiting;
         try
         {
@@ -238,7 +239,7 @@ public sealed class GroupCommitTests
 
         await Assert.That((await waiting).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(logs.Messages).Contains(
-            "Waited 6 s for a database's writer and took it: a group commit batch (an engine caller) queued behind a write transaction (GroupCommitTests.cs:241), which had held it for 6 s and was between storage calls");
+            $"Waited 6 s for a database's writer and took it: a group commit batch (an engine caller) queued behind a write transaction ({heldAt}), which had held it for 6 s and was between storage calls");
     }
 
     [Test]
@@ -253,18 +254,20 @@ public sealed class GroupCommitTests
         });
         var store = await StoreAsync(api);
 
-        await using (var brief = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        var (brief, briefAt) = await BeginWriteTransactionAsync(store);
+        await using (brief)
         {
             clock.Advance(TursoDatabaseStore.LongWriterHold / 2);
         }
 
-        await using (var held = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        var (held, heldAt) = await BeginWriteTransactionAsync(store);
+        await using (held)
         {
             clock.Advance(TursoDatabaseStore.LongWriterHold + TimeSpan.FromSeconds(0.5));
         }
 
-        await Assert.That(logs.Messages).Contains("A database's writer was held 1.5 s by a write transaction (GroupCommitTests.cs:277)");
-        await Assert.That(logs.Messages).DoesNotContain("A database's writer was held 0.5 s by a write transaction (GroupCommitTests.cs:272)");
+        await Assert.That(logs.Messages).Contains($"A database's writer was held 1.5 s by a write transaction ({heldAt})");
+        await Assert.That(logs.Messages).DoesNotContain($"A database's writer was held 0.5 s by a write transaction ({briefAt})");
     }
 
     [Test]
@@ -616,6 +619,10 @@ public sealed class GroupCommitTests
             await busy;
         }
     }
+
+    private static async Task<(IStorageTransaction Transaction, string At)> BeginWriteTransactionAsync(
+        TursoDatabaseStore store, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        (await store.BeginTransactionAsync(write: true, CancellationToken.None, file, line), $"{Path.GetFileName(file)}:{line}");
 
     private static async Task<TursoDatabaseStore> StoreAsync(DocumentApi api)
     {

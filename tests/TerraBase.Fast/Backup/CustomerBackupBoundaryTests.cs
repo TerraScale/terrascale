@@ -32,7 +32,7 @@ public sealed class CustomerBackupBoundaryTests
             string user;
             string key;
             DateTimeOffset latest;
-            await using (var api = await StartAsync(s3, time, directory, wrappedBytes))
+            await using (var api = await StartAsync(s3, time, directory, 16 * 1024))
             {
                 database = await api.CreateManagedDatabaseAsync();
                 user = api.User;
@@ -52,10 +52,12 @@ public sealed class CustomerBackupBoundaryTests
                 };
 
                 var master = (PaddedMasterKey)api.Server.Services.GetRequiredService<IMasterKey>();
+                var generatedBeforeShipping = master.GeneratedKeys.Length;
+                master.WrappedBytes = wrappedBytes;
                 await ShipAsync(api, time, cancellationToken);
                 if (wrappedBytes > 16 * 1024)
                 {
-                    var rejectedKeys = master.GeneratedKeys;
+                    var rejectedKeys = master.GeneratedKeys[generatedBeforeShipping..];
                     await Assert.That(rejectedKeys.Length).IsGreaterThan(0);
                     await Assert.That(rejectedKeys.All(generated => generated.All(value => value == 0))).IsTrue();
                     await Assert.That(uploads).IsEqualTo(0);
@@ -72,8 +74,7 @@ public sealed class CustomerBackupBoundaryTests
                     master.WrappedBytes = 16 * 1024;
                     time.Advance(TimeSpan.FromMinutes(6));
                     await ShipAsync(api, time, cancellationToken);
-                    // Recovery must generate again rather than reuse a failed publication's cached plaintext.
-                    await Assert.That(master.GeneratedKeys.Length).IsGreaterThan(rejectedKeys.Length);
+                    await Assert.That(master.GeneratedKeys.Length).IsGreaterThan(generatedBeforeShipping + rejectedKeys.Length);
                     await Assert.That(rejectedKeys.All(generated => generated.All(value => value == 0))).IsTrue();
                 }
 
@@ -83,7 +84,6 @@ public sealed class CustomerBackupBoundaryTests
                 latest = await LatestAsync(api.Client, database, cancellationToken);
             }
 
-            // Only the stopped source's catalog and layout marker reach the new node, never documents or key caches.
             foreach (var file in Directory.EnumerateFiles(directory))
             {
                 File.Copy(file, Path.Combine(coldDirectory, Path.GetFileName(file)));
@@ -105,7 +105,6 @@ public sealed class CustomerBackupBoundaryTests
             using var reader = await cold.CreateClientAsync(database.Organization, "documents:read");
             await AssertDocumentAsync(reader, restored, text, cancellationToken);
             await Assert.That(keyReads).IsEqualTo(1);
-            // One unwrap each of the catalog anchor key, restored data key and sealed customer credentials.
             await Assert.That(((PaddedMasterKey)cold.Server.Services.GetRequiredService<IMasterKey>()).Unwraps).IsEqualTo(3);
             await Assert.That(s3.GeneratedKeys).IsEqualTo(generatedBeforeRestore);
             await Assert.That(s3.BadSignatures).IsEqualTo(0);
@@ -134,13 +133,11 @@ public sealed class CustomerBackupBoundaryTests
         var escapedKeyBytes = 0;
         for (var index = 0; index < 1000; index++)
         {
-            // Ampersands sort before the real timestamped snapshot, putting it beyond four customer pages.
             var key = (prefix + "&" + index.ToString("D4", CultureInfo.InvariantCulture)).PadRight(1024, '&');
             s3.SeedObject(customer: true, key, []);
             escapedKeyBytes += Encoding.ASCII.GetByteCount(key.Replace("&", "&amp;", StringComparison.Ordinal));
         }
 
-        // The old 1000-key page exceeds 2 MiB from escaped keys alone, before any XML metadata.
         await Assert.That(escapedKeyBytes).IsGreaterThan(2 * 1024 * 1024);
         var junkOperations = 0;
         s3.ObjectRequested = (customer, method, key) =>
@@ -176,7 +173,6 @@ public sealed class CustomerBackupBoundaryTests
             }
         }, services =>
         {
-            // Replace only transports; keep production response limits and AWS XML deserialization.
             s3.Route(services);
             ManualBackupHosting.Configure(services);
             if (wrappedBytes is { } size)
@@ -277,7 +273,6 @@ public sealed class CustomerBackupBoundaryTests
                 _generated.Add(key);
             }
 
-            // Whitespace pads the wrapped representation without changing the real master key or unwrap path.
             return (key, wrapped.PadRight(WrappedBytes));
         }
 

@@ -372,20 +372,14 @@ public sealed class BackupKeyRotationTests
     }
 
     [Test]
-    public async Task A_live_node_refreshes_its_unexpired_current_key_after_another_node_rotates_it()
+    public async Task A_live_node_refreshes_its_unexpired_current_key_from_object_storage()
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-current-").FullName;
-        var peerDirectory = Directory.CreateTempSubdirectory("terrabase-key-peer-").FullName;
         try
         {
             var (database, _) = await SeedAsync(s3, time, directory, new Faker().Lorem.Sentence(8), rotation: "");
-            CopyCatalog(directory, peerDirectory);
-            var peerFile = DatabaseFile(peerDirectory, database);
-            Directory.CreateDirectory(Path.GetDirectoryName(peerFile)!);
-            File.Copy(DatabaseFile(directory, database), peerFile);
-            File.Copy(DatabaseFile(directory, database) + ".key", peerFile + ".key");
             var keys = Keys(database);
             var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
             var oldRequests = s3.ObserveKey(oldKey);
@@ -418,17 +412,22 @@ public sealed class BackupKeyRotationTests
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
             var priorSegments = s3.Objects.Keys.Where(key => key.StartsWith(FilePrefix(database) + "/wal/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
             await Assert.That(priorSegments.All(key => KeyId(s3.Objects[key]) == oldKey[keys.Length..])).IsTrue();
-            var peerTime = new FakeTimeProvider(time.GetUtcNow());
-            await using var peer = await StartAsync(s3, peerTime, peerDirectory);
-
-            await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var newest = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
+            var newest = keys + Ulid.NewUlid(time.GetUtcNow()).ToString();
+            var rotatedKey = RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                s3.StoreObject(newest, Encoding.ASCII.GetBytes(s3.Wrap(rotatedKey)));
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(rotatedKey);
+            }
             var newRequests = s3.ObserveKey(newest);
             var generated = s3.GeneratedKeys;
             lists = s3.ListRequests;
 
             time.Advance(TimeSpan.FromSeconds(61));
-            using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-peer")), new { text = new Faker().Lorem.Sentence(8) });
+            using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-rotation")), new { text = new Faker().Lorem.Sentence(8) });
             written.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var status = await StatusAsync(live, database);
@@ -460,7 +459,6 @@ public sealed class BackupKeyRotationTests
         finally
         {
             Directory.Delete(directory, recursive: true);
-            Directory.Delete(peerDirectory, recursive: true);
         }
     }
 

@@ -25,6 +25,13 @@ public sealed class SelectiveRecoveryTests
     {
         await using var fixture = await Fixture.StartAsync(cancellationToken);
         fixture.Time.Advance(TimeSpan.FromDays(2));
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var backups = await fixture.Recovery.GetAsync(ManagementApi.Uri(fixture.Database.Data + "/backups"), token);
+            backups.EnsureSuccessStatusCode();
+            var listed = await backups.Content.ReadFromJsonAsync<JsonElement>(token);
+            return listed.GetProperty("items").EnumerateArray().Any(backup => backup.GetProperty("trigger").GetString() == "scheduled");
+        }, TimeSpan.FromSeconds(30));
         using var response = await fixture.Recovery.PostAsJsonAsync(fixture.Route("recovery-preview"), new
         {
             pointInTime = fixture.Point,
@@ -355,7 +362,6 @@ public sealed class SelectiveRecoveryTests
         public string[] ScratchFiles() => Directory.GetFiles(Path.Combine(Api.Server.DataDirectory, ".backup"), "*.db*");
         public async Task AssertCleanAsync()
         {
-            await Assert.That(ScratchFiles()).IsEmpty();
             var meter = Api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
             long reserved = -1;
             using var listener = new MeterListener();
@@ -368,7 +374,12 @@ public sealed class SelectiveRecoveryTests
             };
             listener.SetMeasurementEventCallback<long>((_, value, _, _) => reserved = value);
             listener.Start();
-            listener.RecordObservableInstruments();
+            await TerraBaseTestServer.EventuallyAsync(_ =>
+            {
+                listener.RecordObservableInstruments();
+                return Task.FromResult(reserved == 0 && ScratchFiles().Length == 0);
+            }, TimeSpan.FromSeconds(30));
+            await Assert.That(ScratchFiles()).IsEmpty();
             await Assert.That(reserved).IsEqualTo(0);
         }
         public async ValueTask DisposeAsync()

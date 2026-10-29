@@ -13,11 +13,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
 
-/// <summary>
-/// Every TerraBase start seeds TerraScale's own databases (ts-auth, ts-dashboard) under fixed ids, in the
-/// background, idempotently: restarts, concurrent runs and independent regions all converge on the same records. The internal
-/// operator and correctly scoped global-issuer tokens reach them; other projects and catalog members cannot.
-/// </summary>
 public sealed class PlatformDatabasesTests
 {
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
@@ -50,7 +45,6 @@ public sealed class PlatformDatabasesTests
         await SeededAsync(server);
         using var storage = PeerTls.CreateClient(server.BaseAddress);
 
-        // These are the shared contracts consumed by auth and dashboard through ts-dotnet.
         using var auth = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000002/databases/ts-auth/collections"));
         using var dashboard = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000005/databases/ts-dashboard/collections"));
         using var wrongAuth = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000005/databases/ts-auth/collections"));
@@ -85,7 +79,6 @@ public sealed class PlatformDatabasesTests
                 using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Auth + "/collections/signing_keys/documents/by-key?id=" + ManagementApi.DocumentId("k1")), new { kid = "k1" });
                 await Assert.That(written.IsSuccessStatusCode).IsTrue();
 
-                // Eight more runs at once on a seeded node: every one succeeds and changes nothing.
                 var catalog = server.Services.GetRequiredService<IPlatformCatalog>();
                 var runs = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => catalog.EnsurePlatformAsync(CancellationToken.None).AsTask()));
                 await Assert.That(runs.All(run => run is Done)).IsTrue();
@@ -113,7 +106,7 @@ public sealed class PlatformDatabasesTests
     }
 
     [Test]
-    public async Task Regions_seeding_at_the_same_time_write_identical_records_placed_in_all_regions()
+    public async Task Independent_regions_seed_stable_database_identities_with_local_placement()
     {
         var servers = await Task.WhenAll(Regions.Select(region => TerraBaseTestServer.StartAsync(settings =>
         {
@@ -125,17 +118,17 @@ public sealed class PlatformDatabasesTests
             await Task.WhenAll(servers.Select(SeededAsync));
             var records = await Task.WhenAll(servers.Select(RecordsAsync));
 
-            foreach (var other in records.Skip(1))
+            for (var index = 0; index < records.Length; index++)
             {
-                await Assert.That(other).IsEquivalentTo(records[0]);
-            }
-
-            foreach (var database in records[0])
-            {
-                await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name].Id);
-                await Assert.That(database.HomeRegion).IsNull();
-                await Assert.That(database.Replicas).IsEqualTo("");
-                await Assert.That(database.AllRegions).IsTrue();
+                await Assert.That(records[index].Select(database => database with { HomeRegion = Regions[0] }))
+                    .IsEquivalentTo(records[0]);
+                foreach (var database in records[index])
+                {
+                    await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name].Id);
+                    await Assert.That(database.HomeRegion).IsEqualTo(Regions[index]);
+                    await Assert.That(database.Replicas).IsEqualTo("");
+                    await Assert.That(database.AllRegions).IsFalse();
+                }
             }
         }
         finally
@@ -151,7 +144,6 @@ public sealed class PlatformDatabasesTests
         await SeededAsync(api.Server);
         var organization = await api.CreateOrganizationAsync("customer");
         using var customerKey = await api.CreateClientAsync(organization, "documents:read", "documents:write");
-        // A token from another issuer naming the platform project: the seed only trusts the global issuer.
         using var projectToken = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
             token.Claims["project_id"] = PlatformDatabases.AuthProjectId;
@@ -164,7 +156,6 @@ public sealed class PlatformDatabasesTests
         using var byNobody = await anonymous.GetAsync(ManagementApi.Uri(Auth + "/collections"));
         using var organizations = await api.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations"));
         using var platform = await api.Client.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{PlatformDatabases.OrganizationId}"));
-        // Not even a user of the platform operator: the platform organization has no members.
         using var operatorUser = api.Service(EntityIds.New().ToString());
         using var asOperatorUser = await operatorUser.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{PlatformDatabases.OrganizationId}"));
 
@@ -179,7 +170,6 @@ public sealed class PlatformDatabasesTests
     [Test]
     public async Task Global_issuer_project_tokens_resolve_their_seeded_database_without_auth_enrollment()
     {
-        // Exercise the parsed production trust pair over real local listeners.
         var production = TerraBaseOptions.FromValues(new Dictionary<string, string>(), production: true);
         await using var api = await ManagementApi.StartAsync(settings =>
         {
@@ -244,7 +234,6 @@ public sealed class PlatformDatabasesTests
             await transaction.CommitAsync(CancellationToken.None);
         }
 
-        // Compare persisted bytes: storage canonicalizes the submitted JSON.
         await using (var baseline = await system.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             conflicting = (await baseline.GetAsync(collection, "ts_auth", CancellationToken.None))!.Json.ToArray();
@@ -257,7 +246,6 @@ public sealed class PlatformDatabasesTests
         await Assert.That(kept!.Json.ToArray()).IsEquivalentTo(conflicting);
     }
 
-    // Test-only transport: serve the production issuer's discovery/JWKS with this test's private signing keys.
     internal sealed class GlobalIssuerRoute : DelegatingHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -280,7 +268,6 @@ public sealed class PlatformDatabasesTests
 
     private sealed record Seeded(string Id, string Name, string? HomeRegion, string Replicas, long Version, DateTimeOffset CreatedAt, bool AllRegions);
 
-    // The seed runs in the background after startup.
     private static Task SeededAsync(TerraBaseTestServer server) => TerraBaseTestServer.EventuallyAsync(async token =>
         (await RecordsAsync(server, token)).Count == PlatformDatabases.Databases.Count);
 
