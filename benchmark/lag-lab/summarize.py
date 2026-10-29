@@ -53,6 +53,7 @@ def audit(path):
         lag = [(b[-1] - a[3]) / 1e6 for a, b in zip(source, endpoint)]
         due = [(b[-1] - a[1]) / 1e6 for a, b in zip(source, endpoint)]
         results.append({'profile': 'FULL' if run['synchronous'] == 2 else 'NORMAL', 'delay': key[0], 'rate': key[1], 'repeat': key[2], 'mode': key[3], 'n': n, 'source_cps': n * 1e9 / (source[-1][3] - source[0][1] + 1e9 / case['rate']), 'source_span_cps': (n - 1) * 1e9 / (source[-1][3] - source[0][3]), 'destination_span_cps': (n - 1) * 1e9 / (endpoint[-1][-1] - endpoint[0][-1]), 'p50_ms': percentile(lag, .5), 'p99_ms': percentile(lag, .99), 'due_p99_ms': percentile(due, .99), 'writer_queue': case['source']['metrics']['writer_queue_max'], 'stream_queue': case['source']['metrics']['stream_queue_max']})
+    assert seen == {(d, r, t, m) for d in (70, 90) for r in (100, 1000) for t in (1, 2, 3) for m in ('page', 'push', 'direct', 'combined')}
     return results
 
 
