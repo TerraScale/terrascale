@@ -10,7 +10,7 @@ using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Authentication.Fast.Management;
+namespace TerraScale.Authentication.Slow.Management;
 
 /// <summary>
 /// TS-873 shared-history erasure end to end: ts-auth on its platform database of a real TerraBase (built from this commit, its

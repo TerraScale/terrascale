@@ -71,111 +71,126 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("sub", null)]
-    [Arguments("sub", "")]
-    [Arguments("sub", "repo:TerraScale/terrascale:environment:production")]
-    [Arguments("repository_id", "1")]
-    [Arguments("repository_owner_id", "1")]
-    [Arguments("repository", "TerraScale/other")]
-    [Arguments("ref", "refs/heads/feature")]
-    [Arguments("ref", "refs/pull/1/merge")]
-    [Arguments("event_name", "pull_request")]
-    [Arguments("event_name", "push")]
-    [Arguments("workflow_ref", "TerraScale/terrascale/.github/workflows/other.yml@refs/heads/main")]
-    [Arguments("job_workflow_ref", "Attacker/repo/.github/workflows/reusable.yml@refs/heads/main")]
-    [Arguments("job_workflow_ref", "TerraScale/terrascale/.github/workflows/reusable.yml@refs/heads/main")]
-    [Arguments("job_workflow_ref", "TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/feature")]
-    [Arguments("job_workflow_ref", "")]
-    [Arguments("job_workflow_ref", GitHubActionsGrant.WorkflowRef)]
-    [Arguments("environment", null)]
-    [Arguments("environment", "")]
-    [Arguments("environment", "staging")]
-    [Arguments("sub", "repo:TerraScale/ts-orchestrator:ref:refs/heads/main")]
-    [Arguments("sub", "repo:TerraScale/ts-orchestrator:environment:Production")]
-    [Arguments("repository_id", "1414527764")]
-    [Arguments("repository", "terrascale/ts-orchestrator")]
-    [Arguments("workflow_ref", "TerraScale/ts-orchestrator/.github/workflows/e2e.yml@refs/heads/feature")]
-    [Arguments("event_name", "pull_request_target")]
-    [Arguments("ref", "refs/tags/main")]
-    [Arguments("jti", null)]
-    [Arguments("run_id", null)]
-    [Arguments("run_id", "")]
-    [Arguments("jti", "")]
-    [Arguments("repository_id", null)]
-    [Arguments("repository_owner_id", null)]
-    [Arguments("repository", null)]
-    [Arguments("ref", null)]
-    [Arguments("event_name", null)]
-    [Arguments("workflow_ref", null)]
-    [Arguments("repository_id", "")]
-    [Arguments("workflow_ref", "terrascale/terrascale/.github/workflows/ci.yml@refs/heads/main")]
-    public async Task A_token_outside_the_trust_policy_is_refused(string claim, string? value)
+    public async Task A_token_outside_the_trust_policy_is_refused()
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         await BindAsync(oidc);
 
-        var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience, new Dictionary<string, string?> { [claim] = value })));
+        foreach (var (claim, value) in new (string Claim, string? Value)[]
+        {
+            ("sub", null),
+            ("sub", ""),
+            ("sub", "repo:TerraScale/terrascale:environment:production"),
+            ("repository_id", "1"),
+            ("repository_owner_id", "1"),
+            ("repository", "TerraScale/other"),
+            ("ref", "refs/heads/feature"),
+            ("ref", "refs/pull/1/merge"),
+            ("event_name", "pull_request"),
+            ("event_name", "push"),
+            ("workflow_ref", "TerraScale/terrascale/.github/workflows/other.yml@refs/heads/main"),
+            ("job_workflow_ref", "Attacker/repo/.github/workflows/reusable.yml@refs/heads/main"),
+            ("job_workflow_ref", "TerraScale/terrascale/.github/workflows/reusable.yml@refs/heads/main"),
+            ("job_workflow_ref", "TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/feature"),
+            ("job_workflow_ref", ""),
+            ("job_workflow_ref", GitHubActionsGrant.WorkflowRef),
+            ("environment", null),
+            ("environment", ""),
+            ("environment", "staging"),
+            ("sub", "repo:TerraScale/ts-orchestrator:ref:refs/heads/main"),
+            ("sub", "repo:TerraScale/ts-orchestrator:environment:Production"),
+            ("repository_id", "1414527764"),
+            ("repository", "terrascale/ts-orchestrator"),
+            ("workflow_ref", "TerraScale/ts-orchestrator/.github/workflows/e2e.yml@refs/heads/feature"),
+            ("event_name", "pull_request_target"),
+            ("ref", "refs/tags/main"),
+            ("jti", null),
+            ("run_id", null),
+            ("run_id", ""),
+            ("jti", ""),
+            ("repository_id", null),
+            ("repository_owner_id", null),
+            ("repository", null),
+            ("ref", null),
+            ("event_name", null),
+            ("workflow_ref", null),
+            ("repository_id", ""),
+            ("workflow_ref", "terrascale/terrascale/.github/workflows/ci.yml@refs/heads/main"),
+        })
+        {
+            var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience, new Dictionary<string, string?> { [claim] = value })));
 
-        await Assert.That(error).IsEqualTo("invalid_grant");
+            await Assert.That(error).IsEqualTo("invalid_grant").Because(claim + " must match the trust policy");
+        }
     }
 
     [Test]
-    [Arguments("null")]
-    [Arguments("42")]
-    [Arguments("true")]
-    [Arguments("{}")]
-    [Arguments("[\"TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/main\"]")]
-    public async Task A_present_job_workflow_ref_is_refused_in_every_json_form(string json)
+    public async Task A_present_job_workflow_ref_is_refused_in_every_json_form()
     {
         // Present in any non-string JSON form, job_workflow_ref is not "absent": it is refused, never read as a plain workflow.
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         await BindAsync(oidc);
-        using var value = JsonDocument.Parse(json);
+        foreach (var json in new[]
+        {
+            "null",
+            "42",
+            "true",
+            "{}",
+            "[\"TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/main\"]",
+        })
+        {
+            using var value = JsonDocument.Parse(json);
 
-        var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience,
-            json: new Dictionary<string, JsonElement> { ["job_workflow_ref"] = value.RootElement.Clone() })));
+            var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience,
+                json: new Dictionary<string, JsonElement> { ["job_workflow_ref"] = value.RootElement.Clone() })));
 
-        await Assert.That(error).IsEqualTo("invalid_grant");
+            await Assert.That(error).IsEqualTo("invalid_grant").Because("job_workflow_ref must reject " + json);
+        }
     }
 
     [Test]
-    [Arguments("iss")]
-    [Arguments("aud")]
-    [Arguments("sub")]
-    [Arguments("environment")]
-    [Arguments("repository_id")]
-    [Arguments("repository_owner_id")]
-    [Arguments("repository")]
-    [Arguments("ref")]
-    [Arguments("event_name")]
-    [Arguments("workflow_ref")]
-    [Arguments("jti")]
-    [Arguments("run_id")]
-    public async Task Required_claims_must_be_scalar_strings(string claim)
+    public async Task Required_claims_must_be_scalar_strings()
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         await BindAsync(oidc);
-        var valid = new JsonWebToken(github.Mint(GitHubActionsGrant.Audience));
-        var expected = valid.GetClaim(claim).Value;
-        var invalid = new List<JsonElement>
+        foreach (var claim in new[]
         {
-            JsonSerializer.SerializeToElement(new[] { expected }),
-            JsonSerializer.SerializeToElement<object?>(null),
-            JsonSerializer.SerializeToElement(true),
-        };
-        if (long.TryParse(expected, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+            "iss",
+            "aud",
+            "sub",
+            "environment",
+            "repository_id",
+            "repository_owner_id",
+            "repository",
+            "ref",
+            "event_name",
+            "workflow_ref",
+            "jti",
+            "run_id",
+        })
         {
-            invalid.Add(JsonSerializer.SerializeToElement(number));
-        }
+            var valid = new JsonWebToken(github.Mint(GitHubActionsGrant.Audience));
+            var expected = valid.GetClaim(claim).Value;
+            var invalid = new List<JsonElement>
+            {
+                JsonSerializer.SerializeToElement(new[] { expected }),
+                JsonSerializer.SerializeToElement<object?>(null),
+                JsonSerializer.SerializeToElement(true),
+            };
+            if (long.TryParse(expected, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+            {
+                invalid.Add(JsonSerializer.SerializeToElement(number));
+            }
 
-        foreach (var value in invalid)
-        {
-            var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience,
-                json: new Dictionary<string, JsonElement> { [claim] = value })));
-            await Assert.That(error).IsEqualTo("invalid_grant").Because(claim + " must be a scalar string");
+            foreach (var value in invalid)
+            {
+                var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience,
+                    json: new Dictionary<string, JsonElement> { [claim] = value })));
+                await Assert.That(error).IsEqualTo("invalid_grant").Because(claim + " must be a scalar string");
+            }
         }
     }
 
@@ -313,50 +328,55 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments("organization")]
-    [Arguments("project")]
-    [Arguments("database")]
-    public async Task Explicit_mismatched_targets_are_refused(string parameter)
+    public async Task Explicit_mismatched_targets_are_refused()
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         var (organization, project, database, _) = await BindAsync(oidc);
-        var assertion = github.Mint(GitHubActionsGrant.Audience);
-        var bad = await ErrorAsync(await RequestAsync(oidc, assertion, extra: new Dictionary<string, string> { [parameter] = AuthStore.NewId() }));
-        await Assert.That(bad.Error).IsEqualTo("invalid_target");
-        using var good = await RequestAsync(oidc, assertion, "documents:read", new Dictionary<string, string>
+        foreach (var parameter in new[]
         {
-            ["organization"] = organization,
-            ["project"] = project,
-            ["database"] = database,
-        });
-        await Assert.That((int)good.StatusCode).IsEqualTo(200);
+            "organization",
+            "project",
+            "database",
+        })
+        {
+            var assertion = github.Mint(GitHubActionsGrant.Audience);
+            var bad = await ErrorAsync(await RequestAsync(oidc, assertion, extra: new Dictionary<string, string> { [parameter] = AuthStore.NewId() }));
+            await Assert.That(bad.Error).IsEqualTo("invalid_target");
+            using var good = await RequestAsync(oidc, assertion, "documents:read", new Dictionary<string, string>
+            {
+                ["organization"] = organization,
+                ["project"] = project,
+                ["database"] = database,
+            });
+            await Assert.That((int)good.StatusCode).IsEqualTo(200);
+        }
     }
 
     [Test]
-    [Arguments("documents:write")]
-    [Arguments("databases:read")]
-    [Arguments("databases:write")]
-    [Arguments("api-keys:write")]
-    [Arguments("openid")]
-    [Arguments("offline_access")]
-    public async Task Every_scope_outside_documents_read_is_refused(string scope)
+    public async Task Every_scope_outside_documents_read_is_refused()
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
         await BindAsync(oidc);
-        var result = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience), scope));
-        await Assert.That(result.Status).IsGreaterThanOrEqualTo(400);
-        await Assert.That(result.Error is "invalid_request" or "invalid_scope").IsTrue();
+        foreach (var scope in new[]
+        {
+            "documents:write",
+            "databases:read",
+            "databases:write",
+            "api-keys:write",
+            "openid",
+            "offline_access",
+        })
+        {
+            var result = await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience), scope));
+            await Assert.That(result.Status).IsGreaterThanOrEqualTo(400);
+            await Assert.That(result.Error is "invalid_request" or "invalid_scope").IsTrue();
+        }
     }
 
     [Test]
-    [Arguments(GitHubActionsGrant.OrganizationProperty)]
-    [Arguments(GitHubActionsGrant.ProjectProperty)]
-    [Arguments(GitHubActionsGrant.DatabaseProperty)]
-    [Arguments(GitHubActionsGrant.ActivatedProperty)]
-    [Arguments(GitHubActionsGrant.ExpiresProperty)]
-    public async Task Missing_or_malformed_binding_properties_fail_closed(string property)
+    public async Task Missing_or_malformed_binding_properties_fail_closed()
     {
         using var github = new FakeGitHubActions();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
@@ -365,16 +385,26 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         var manager = scope.ServiceProvider.GetRequiredService<IOpenIddictApplicationManager>();
         var application = (await manager.FindByClientIdAsync(GitHubActionsGrant.ClientId))!;
         var original = await manager.GetPropertiesAsync(application);
-        foreach (var value in new[] { "null", "42", "true", "{}", "[]", "\"\"", "\"/invalid\"" })
+        foreach (var property in new[]
         {
-            var properties = original.ToBuilder();
-            properties[property] = JsonSerializer.Deserialize<JsonElement>(value);
-            await UpdateBindingAsync(manager, application, properties.ToImmutable());
+            GitHubActionsGrant.OrganizationProperty,
+            GitHubActionsGrant.ProjectProperty,
+            GitHubActionsGrant.DatabaseProperty,
+            GitHubActionsGrant.ActivatedProperty,
+            GitHubActionsGrant.ExpiresProperty,
+        })
+        {
+            foreach (var value in new[] { "null", "42", "true", "{}", "[]", "\"\"", "\"/invalid\"" })
+            {
+                var properties = original.ToBuilder();
+                properties[property] = JsonSerializer.Deserialize<JsonElement>(value);
+                await UpdateBindingAsync(manager, application, properties.ToImmutable());
+                await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience)))).Error).IsEqualTo("invalid_client");
+            }
+
+            await UpdateBindingAsync(manager, application, original.Remove(property));
             await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience)))).Error).IsEqualTo("invalid_client");
         }
-
-        await UpdateBindingAsync(manager, application, original.Remove(property));
-        await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience)))).Error).IsEqualTo("invalid_client");
     }
 
     [Test]

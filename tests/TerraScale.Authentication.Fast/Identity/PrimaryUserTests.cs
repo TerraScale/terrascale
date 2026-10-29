@@ -70,10 +70,10 @@ public sealed class PrimaryUserTests(TerraBaseFixture fixture)
         return new TotpCredentials(store, new Users(store, clock), new AttemptLimiter(new TerraBaseDocumentStore(store), clock, options), options, clock);
     }
 
-    // Once armed, holds each storage request until another is in flight (or a short wait passes) and records the most seen at once.
+    // Once armed, holds the first reads until three are in flight and records the most seen at once.
     private sealed class PairingHandler() : DelegatingHandler(TerraBaseFixture.NewHandler())
     {
-        private static readonly TimeSpan Wait = TimeSpan.FromMilliseconds(500);
+        private readonly TaskCompletionSource paired = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int inFlight;
         private int most;
 
@@ -96,11 +96,12 @@ public sealed class PrimaryUserTests(TerraBaseFixture fixture)
 
             try
             {
-                var deadline = DateTimeOffset.UtcNow + Wait;
-                while (Volatile.Read(ref this.inFlight) < 3 && DateTimeOffset.UtcNow < deadline)
+                if (now >= 3)
                 {
-                    await Task.Delay(10, cancellationToken);
+                    this.paired.TrySetResult();
                 }
+
+                await this.paired.Task.WaitAsync(cancellationToken);
 
                 return await base.SendAsync(request, cancellationToken);
             }

@@ -177,54 +177,71 @@ public sealed class EmailTests
     }
 
     [Test]
-    [Arguments(200, AcceptedResponse, EmailDeliveryOutcome.Accepted)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"permanent_bounces\":[\"suppressed\"]}}", EmailDeliveryOutcome.Rejected)]
-    [Arguments(403, "{}", EmailDeliveryOutcome.Rejected)]
-    [Arguments(429, "{}", EmailDeliveryOutcome.Retryable)]
-    [Arguments(500, "{}", EmailDeliveryOutcome.Unknown)]
-    public async Task A_failing_log_provider_does_not_change_the_delivery_outcome(int status, string body, EmailDeliveryOutcome expected)
+    public async Task A_failing_log_provider_does_not_change_the_delivery_outcome()
     {
-        await using var cloudflare = await FakeCloudflare.StartAsync(status: (HttpStatusCode)status, body: body);
+        await using var cloudflare = await FakeCloudflare.StartAsync();
         await using var server = await StartAsync(new ThrowingLogs("CloudflareEmailSender"), cloudflare);
 
-        using var response = await server.Client.PostAsync("/__test/email", null);
+        foreach (var (status, body, expected) in new (int Status, string Body, EmailDeliveryOutcome Expected)[]
+        {
+            (200, AcceptedResponse, EmailDeliveryOutcome.Accepted),
+            (200, "{\"success\":true,\"result\":{\"permanent_bounces\":[\"suppressed\"]}}", EmailDeliveryOutcome.Rejected),
+            (403, "{}", EmailDeliveryOutcome.Rejected),
+            (429, "{}", EmailDeliveryOutcome.Retryable),
+            (500, "{}", EmailDeliveryOutcome.Unknown),
+        })
+        {
+            cloudflare.Status = (HttpStatusCode)status;
+            cloudflare.ResponseBody = body;
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(expected.ToString());
+            using var response = await server.Client.PostAsync("/__test/email", null);
+
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(expected.ToString());
+        }
     }
 
     [Test]
-    [Arguments(429, "provider response containing secrets", "429", EmailDeliveryOutcome.Retryable)]
-    [Arguments(500, "provider response containing secrets", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":false}", "error", EmailDeliveryOutcome.Rejected)]
-    [Arguments(200, "invalid JSON", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "null", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "[]", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":null,\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true,\"result\":null}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[],\"delivered\":[]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"someone-else@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[null,\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"permanent_bounces\":[null]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":false,\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"suppressed_recipients\":[\"private-person@example.test\"]}}", "bounced", EmailDeliveryOutcome.Rejected)]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"suppressed_recipients\":null}}", "error", EmailDeliveryOutcome.Unknown)]
-    public async Task Provider_errors_have_one_safe_information_outcome(int status, string body, string outcome, EmailDeliveryOutcome expected)
+    public async Task Provider_errors_have_one_safe_information_outcome()
     {
         var logs = new EmailLogs();
-        await using var cloudflare = await FakeCloudflare.StartAsync(status: (HttpStatusCode)status, body: body);
+        await using var cloudflare = await FakeCloudflare.StartAsync();
         await using var server = await StartAsync(logs, cloudflare);
 
-        using var response = await server.Client.PostAsync("/__test/email", null);
+        foreach (var (status, body, outcome, expected) in new (int Status, string Body, string Outcome, EmailDeliveryOutcome Expected)[]
+        {
+            (429, "provider response containing secrets", "429", EmailDeliveryOutcome.Retryable),
+            (500, "provider response containing secrets", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":false}", "error", EmailDeliveryOutcome.Rejected),
+            (200, "invalid JSON", "error", EmailDeliveryOutcome.Unknown),
+            (200, "null", "error", EmailDeliveryOutcome.Unknown),
+            (200, "[]", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":null,\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true,\"result\":null}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true,\"result\":{\"queued\":[],\"delivered\":[]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true,\"result\":{\"queued\":[\"someone-else@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true,\"result\":{\"queued\":[null,\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"permanent_bounces\":[null]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":false,\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"]}}", "error", EmailDeliveryOutcome.Unknown),
+            (200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"suppressed_recipients\":[\"private-person@example.test\"]}}", "bounced", EmailDeliveryOutcome.Rejected),
+            (200, "{\"success\":true,\"result\":{\"queued\":[\"private-person@example.test\"],\"suppressed_recipients\":null}}", "error", EmailDeliveryOutcome.Unknown),
+        })
+        {
+            cloudflare.Status = (HttpStatusCode)status;
+            cloudflare.ResponseBody = body;
+            logs.Outcomes.Clear();
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(expected.ToString());
-        await AssertOutcomeAsync(logs, outcome);
-        await Assert.That(logs.Text).DoesNotContain(body);
-        await AssertNoMessageDataAsync(logs.Text);
+            using var response = await server.Client.PostAsync("/__test/email", null);
+
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(expected.ToString());
+            await AssertOutcomeAsync(logs, outcome);
+            await Assert.That(logs.Text).DoesNotContain(body);
+            await AssertNoMessageDataAsync(logs.Text);
+        }
     }
 
     [Test]
@@ -364,13 +381,17 @@ public sealed class EmailTests
 
         public int Calls { get; private set; }
 
+        public HttpStatusCode Status { get; set; }
+
+        public string ResponseBody { get; set; } = AcceptedResponse;
+
         public static async Task<FakeCloudflare> StartAsync(HttpStatusCode status = HttpStatusCode.OK, bool abort = false, string body = AcceptedResponse)
         {
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Logging.ClearProviders();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
-            var provider = new FakeCloudflare(builder.Build());
-            MapProvider(provider, status, abort, body);
+            var provider = new FakeCloudflare(builder.Build()) { Status = status, ResponseBody = body };
+            MapProvider(provider, abort);
             try
             {
                 await provider.app.StartAsync();
@@ -384,7 +405,7 @@ public sealed class EmailTests
             }
         }
 
-        private static void MapProvider(FakeCloudflare provider, HttpStatusCode status, bool abort, string body) => provider.app.Run(async context =>
+        private static void MapProvider(FakeCloudflare provider, bool abort) => provider.app.Run(async context =>
         {
             provider.Authorization = context.Request.Headers.Authorization.ToString();
             provider.Calls++;
@@ -396,9 +417,9 @@ public sealed class EmailTests
                 return;
             }
 
-            context.Response.StatusCode = (int)status;
+            context.Response.StatusCode = (int)provider.Status;
             context.Response.ContentType = "application/json";
-            await context.Response.WriteAsync(body, context.RequestAborted);
+            await context.Response.WriteAsync(provider.ResponseBody, context.RequestAborted);
         });
 
         public ValueTask DisposeAsync() => this.app.DisposeAsync();

@@ -7,9 +7,8 @@ RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
-# Parallel cap of each Fast runner, overridable for a shared machine (for example AUTH_TEST_PARALLEL=16).
-# Matches the 4-vCPU runners. At 2 the auth suite averaged under one busy core.
-AUTH_TEST_PARALLEL ?= 4
+# Match Auth Fast concurrency to the available CPUs on dev hosts and CI runners.
+AUTH_TEST_PARALLEL ?= $(shell nproc)
 TERRABASE_TEST_PARALLEL ?= 16
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=

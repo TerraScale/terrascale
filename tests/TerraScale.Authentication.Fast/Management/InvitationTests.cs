@@ -1,8 +1,11 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Store;
+using TerraScale.DotNet.TerraBase;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
 
@@ -86,10 +89,16 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
         var id = await oidc.CreateOrganizationAsync(aliceToken);
         var invitations = $"{Organizations}/{id}/invitations";
-        for (var i = 0; i < TerraScale.Authentication.Features.Platform.Invitations.PerOrganizationPerHour; i++)
-        {
-            await oidc.OkAsync(HttpMethod.Post, invitations, aliceToken, new { email = $"guest{i}@example.test", role = "viewer" }, HttpStatusCode.Created);
-        }
+        var existing = (await oidc.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        await oidc.OkAsync(HttpMethod.Post, invitations, aliceToken, new { email = "first@example.test", role = "viewer" }, HttpStatusCode.Created);
+        var bucket = (await oidc.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items.Single(item => !existing.Contains(item.Id));
+        var state = JsonNode.Parse(bucket.Document.GetRawText())!.AsObject();
+        // Exercise the last admitted request and the first refusal without repeating 98 identical invitations.
+        state["used"] = TerraScale.Authentication.Features.Platform.Invitations.PerOrganizationPerHour - 1;
+        await oidc.Database.PutDocumentAsync(AttemptLimiter.Collection, bucket.Id, JsonSerializer.SerializeToElement(state), TerraBasePrecondition.Matches(bucket.Version));
+        await oidc.OkAsync(HttpMethod.Post, invitations, aliceToken, new { email = "last@example.test", role = "viewer" }, HttpStatusCode.Created);
+        await Assert.That((await oidc.Database.GetDocumentAsync(AttemptLimiter.Collection, bucket.Id))!.Document.GetProperty("used").GetInt32())
+            .IsEqualTo(TerraScale.Authentication.Features.Platform.Invitations.PerOrganizationPerHour);
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, invitations, aliceToken, new { email = "one-more@example.test", role = "viewer" })).IsEqualTo((429, "rate_limited"));
 

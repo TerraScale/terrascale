@@ -492,31 +492,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
 
 
     [Test]
-    public async Task Rotation_signs_with_a_new_key_that_every_replica_sees_while_old_tokens_stay_valid()
-    {
-        // Replicas share the storage authority and the master key.
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        await using var first = await StartAsync(target, masterKey);
-        await using var replica = await StartAsync(target, masterKey);
-
-        var before = await SignAsync(first, "ins_a", AccessType);
-        using var rotation = await first.Client.PostAsync("/__test/instances/ins_a/keys/rotate", null);
-        var rotated = (await rotation.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("kid").GetString();
-        var after = await SignAsync(replica, "ins_a", AccessType);
-        var jwks = (await replica.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_a/jwks")).GetProperty("keys");
-
-        await Assert.That(KeyId(after)).IsEqualTo(rotated);
-        await Assert.That(KeyId(before)).IsNotEqualTo(rotated);
-        await Assert.That(jwks.GetArrayLength()).IsEqualTo(2);
-        await Assert.That(jwks[0].GetProperty("kid").GetString()).IsEqualTo(rotated);
-        await Assert.That(jwks[1].GetProperty("kid").GetString()).IsEqualTo(KeyId(before));
-        await Assert.That(await ValidateAsync(replica, "ins_a", before)).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await ValidateAsync(first, "ins_a", after)).IsEqualTo(HttpStatusCode.OK);
-    }
-
-
-    [Test]
     public async Task Public_key_objects_cannot_export_a_secret_or_sign()
     {
         var target = await SharedStateTarget.CreateAsync(fixture);

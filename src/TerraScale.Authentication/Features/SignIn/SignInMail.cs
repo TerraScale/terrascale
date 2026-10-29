@@ -141,7 +141,6 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         // Not stoppingToken: accepted codes are still delivered while the host shuts down.
         while (true)
         {
-            var drained = this.Drained;
             var full = false;
             try
             {
@@ -177,7 +176,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 }
             }
 
-            if (drained)
+            // Processing can release the last accepted row while shutdown is waiting.
+            // Observe that release before entering the next polling interval.
+            if (this.Drained)
             {
                 return;
             }

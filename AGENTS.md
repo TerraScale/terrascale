@@ -68,7 +68,7 @@
 ## Tests
 
 - Use TUnit and Bogus. Service tests are integration/end-to-end only. Run TUnit through `dotnet run --project` (the Makefile does this).
-- Tests must be safe alongside every other test. Keep default parallelism; no `NotInParallel`, `ParallelLimiter`, sequential execution or lower parallelism to hide isolation bugs. Each test owns its servers, ephemeral ports, directories, buckets/prefixes, databases and synthetic data, then cleans up. No ordering dependencies, mutable static state, fixed ports or wall-clock sleeps.
+- Tests must be safe alongside every other test. Keep default parallelism; no `NotInParallel`, `ParallelLimiter`, sequential execution or lower parallelism to hide isolation bugs. Servers may be shared per assembly or in a small pool; each test owns its database, tenant or prefix and synthetic data, then cleans up. Server fixtures own their ephemeral ports, directories and lifecycle. No ordering dependencies, mutable static state outside fixture-owned resources, fixed ports or wall-clock sleeps.
 - Auth and TerraBase each have Fast and Slow integration suites plus source-linked TestHarness utilities; the harness is not another suite. Library tests stay in `tests/TerraScale.Endpoints.Tests` and `tests/TerraScale.Logging.Tests`.
 - Put critical/common behavior in Fast, expensive/exhaustive scenarios in Slow. Cover new functionality. Never skip, disable or weaken tests to bypass failures.
 - Slow runs independently and is non-blocking, with visible failures. A failure must create or update a matching GitHub issue with tests, SHA, environment, reproduction, expected/actual behavior, redacted logs and run URL, even when tests fail. Sensitive vulnerability details use the approved private channel.

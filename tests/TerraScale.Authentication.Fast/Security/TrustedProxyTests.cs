@@ -67,57 +67,58 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
     [Arguments(Proxy, "127.0.0.1", "rightmost", false)]
     [Arguments(Proxy, "::1", "rightmost", false)]
     [Arguments(Proxy, "10.0.0.2", "rightmost", false)]
-    [Arguments(Proxy, Proxy, "rightmost", true)]
-    [Arguments(Proxy, Proxy, "missing", true)]
-    [Arguments(Proxy, Proxy, "malformed", true)]
-    [Arguments(Proxy, Proxy, "empty", true)]
-    [Arguments(Proxy, Proxy, "trailing", true)]
-    [Arguments(Proxy, Proxy, "quoted-empty", true)]
-    [Arguments(Proxy, Proxy, "quoted-whitespace", true)]
-    [Arguments(Proxy, Proxy, "duplicate-rightmost", true)]
-    [Arguments(Proxy, Proxy, "duplicate-empty", true)]
-    [Arguments(Proxy, Proxy, "duplicate-blank", true)]
-    [Arguments(Proxy, Proxy, "duplicate-whitespace", true)]
+    [Arguments(Proxy, Proxy, "rightmost|missing|malformed|empty|trailing|quoted-empty|quoted-whitespace|duplicate-rightmost|duplicate-empty|duplicate-blank|duplicate-whitespace", true)]
     public async Task Only_an_exact_trusted_peer_can_supply_one_rightmost_hop_and_invalid_tails_share_the_socket_budget(
         string? proxies, string socket, string header, bool trusted)
     {
         var target = await SharedStateTarget.CreateAsync(fixture);
-        await using var server = await StartAsync(target, new ManualClock(Start), new PeerAddress(IPAddress.Parse(socket)), proxies);
-        for (var attempt = 0; attempt <= Capacity; attempt++)
+        var clock = new ManualClock(Start);
+        await using var server = await StartAsync(target, clock, new PeerAddress(IPAddress.Parse(socket)), proxies);
+        foreach (var tailCase in header.Split('|'))
         {
-            if (header.StartsWith("duplicate-", StringComparison.Ordinal))
+            for (var attempt = 0; attempt <= Capacity; attempt++)
             {
-                var tail = header switch
+                if (tailCase.StartsWith("duplicate-", StringComparison.Ordinal))
                 {
-                    "duplicate-empty" => "\"\"",
-                    "duplicate-blank" => string.Empty,
-                    "duplicate-whitespace" => " \t ",
-                    _ => "198.51.100.200",
+                    var tail = tailCase switch
+                    {
+                        "duplicate-empty" => "\"\"",
+                        "duplicate-blank" => string.Empty,
+                        "duplicate-whitespace" => " \t ",
+                        _ => "198.51.100.200",
+                    };
+                    var (status, retryAfter) = await RawHttp.DuplicateForwardedAsync(server.BaseAddress, TokenPath, $"203.0.113.{attempt + 1}", tail, attempt);
+                    await Assert.That(status).IsEqualTo(attempt < Capacity ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests);
+                    await Assert.That(retryAfter).IsEqualTo(attempt < Capacity ? null : (TimeSpan?)TimeSpan.FromSeconds(55));
+                    continue;
+                }
+
+                var forwarded = tailCase switch
+                {
+                    "missing" => null,
+                    "empty" => string.Empty,
+                    "malformed" => $"203.0.113.{attempt + 1}, not-an-ip",
+                    "trailing" => $"203.0.113.{attempt + 1}, ",
+                    "quoted-empty" => $"203.0.113.{attempt + 1}, \"\"",
+                    "quoted-whitespace" => $"203.0.113.{attempt + 1}, \" \t \"",
+                    // A forged leftmost hop varies; exactly the rightmost hop must be used.
+                    _ => $"203.0.113.{attempt + 1}, 198.51.100.200",
                 };
-                var (status, retryAfter) = await RawHttp.DuplicateForwardedAsync(server.BaseAddress, TokenPath, $"203.0.113.{attempt + 1}", tail, attempt);
-                await Assert.That(status).IsEqualTo(attempt < Capacity ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests);
-                await Assert.That(retryAfter).IsEqualTo(attempt < Capacity ? null : (TimeSpan?)TimeSpan.FromSeconds(55));
-                continue;
+                using var response = await InvalidClientAsync(server, forwarded, attempt);
+                await AssertTokenAsync(response, attempt < Capacity ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests,
+                    attempt < Capacity ? "invalid_client" : "rate_limited", attempt < Capacity ? null : TimeSpan.FromSeconds(55));
             }
 
-            var forwarded = header switch
+            var perGuard = IPAddress.Parse(socket).AddressFamily == AddressFamily.InterNetworkV6 ? 2 : 1;
+            await Assert.That(await target.CountAsync(AttemptLimiter.Collection)).IsEqualTo(perGuard * (trusted ? 2 : 1));
+            // Each parser case starts with empty buckets on the same isolated test database.
+            foreach (var bucket in (await target.Database.ListDocumentsAsync(AttemptLimiter.Collection)).Items)
             {
-                "missing" => null,
-                "empty" => string.Empty,
-                "malformed" => $"203.0.113.{attempt + 1}, not-an-ip",
-                "trailing" => $"203.0.113.{attempt + 1}, ",
-                "quoted-empty" => $"203.0.113.{attempt + 1}, \"\"",
-                "quoted-whitespace" => $"203.0.113.{attempt + 1}, \" \t \"",
-                // A forged leftmost hop varies; exactly the rightmost hop must be used.
-                _ => $"203.0.113.{attempt + 1}, 198.51.100.200",
-            };
-            using var response = await InvalidClientAsync(server, forwarded, attempt);
-            await AssertTokenAsync(response, attempt < Capacity ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests,
-                attempt < Capacity ? "invalid_client" : "rate_limited", attempt < Capacity ? null : TimeSpan.FromSeconds(55));
-        }
+                await target.Database.DeleteDocumentAsync(AttemptLimiter.Collection, bucket.Id);
+            }
 
-        var perGuard = IPAddress.Parse(socket).AddressFamily == AddressFamily.InterNetworkV6 ? 2 : 1;
-        await Assert.That(await target.CountAsync(AttemptLimiter.Collection)).IsEqualTo(perGuard * (trusted ? 2 : 1));
+            clock.Advance(TimeSpan.FromMinutes(1));
+        }
     }
 
     [Test]

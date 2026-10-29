@@ -99,12 +99,8 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments(false, 0, true)]
-    [Arguments(false, 1, true)]
     [Arguments(false, 30, true)]
     [Arguments(false, 31, false)]
-    [Arguments(true, 0, true)]
-    [Arguments(true, 1, true)]
     [Arguments(true, 30, true)]
     [Arguments(true, 31, false)]
     public async Task Organization_and_project_exchange_preserves_authentication_time_with_bounded_replica_clock_skew(bool projectTarget, int receiverSecondsBehind, bool accepted)

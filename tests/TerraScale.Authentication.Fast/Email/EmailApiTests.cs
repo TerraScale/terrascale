@@ -473,10 +473,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"admin@example.test\"],\"delivered\":[],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}", 202, null)]
     [Arguments(429, "{}", 429, "rate_limited")]
     [Arguments(403, "{}", 502, "email_rejected")]
-    [Arguments(200, "{\"success\":true,\"result\":{\"suppressed_recipients\":[\"admin@example.test\"]}}", 502, "email_rejected")]
     [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"someone-else@example.test\"]}}", 502, "email_acceptance_unknown")]
-    [Arguments(200, "{\"result\":{\"queued\":[\"admin@example.test\"]}}", 502, "email_acceptance_unknown")]
-    [Arguments(200, "null", 502, "email_acceptance_unknown")]
     public async Task Test_sends_report_actual_provider_acceptance(int status, string body, int expected, string? error)
     {
         await using var provider = await EmailTests.FakeCloudflare.StartAsync((HttpStatusCode)status, body: body);

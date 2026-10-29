@@ -38,6 +38,7 @@ ts-auth is the hosted identity provider. Prioritize security, tenant isolation, 
 
 ## Tests
 
+- Auth Fast must finish in at most 5 minutes; keep it there.
 - Integration/end-to-end suites: `tests/TerraScale.Authentication.Fast` and `.Slow`; shared source utilities in `.TestHarness`. Cover changed behavior through real HTTP, authentication and ts-dotnet persistence boundaries; do not mock critical paths. Use isolated synthetic accounts and clean up. Delivery/federation use sandboxes or controlled services, never real users. Browser tests use Playwright Chromium.
 - Fast covers signup/verification, login/access/logout, invalid credentials, expired/revoked sessions, cross-tenant denial, recovery/single-use challenges, token issuance/validation/refresh/replay, OpenAPI/Scalar and critical Datastar interactions.
 - Slow covers concurrency, recovery, federation, key rotation, dependency failures and expensive browser scenarios independently.
