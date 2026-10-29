@@ -33,7 +33,7 @@ public sealed class WalRevisionContractTests
                 await Assert.That(() => reader.TryReadSnapshotPage(1, page)).Throws<TursoException>();
 
                 Execute(reader, "BEGIN; SELECT count(*) FROM sqlite_schema;");
-                var leaf = FindPage(writer, reader, first.MaxFrame, "marker-before");
+                var leaf = FindPage(reader, first.MaxFrame, "marker-before");
                 await Assert.That(leaf).IsGreaterThan(1U);
                 Execute(writer, "UPDATE t SET v = 'marker-after!' WHERE id = 1;");
                 await Assert.That(reader.TryReadSnapshotPage(leaf, page)).IsTrue();
@@ -127,11 +127,11 @@ public sealed class WalRevisionContractTests
         return (info.Length, info.LastWriteTimeUtc);
     }
 
-    private static uint FindPage(SqliteConnection writer, SqliteConnection reader, ulong frames, string marker)
+    private static uint FindPage(SqliteConnection reader, ulong frames, string marker)
     {
         var pages = new uint[(int)frames];
         var sizes = new uint[(int)frames];
-        writer.ReadWalFramePages(1, pages, sizes);
+        reader.ReadWalFramePages(1, pages, sizes);
         if (sizes[^1] == 0)
         {
             throw new InvalidOperationException("the last frame is not a commit frame");
