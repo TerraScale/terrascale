@@ -86,3 +86,6 @@ dotnet_diagnostic.IDE0055.severity = error
 dotnet_diagnostic.IDE0059.severity = error
 dotnet_diagnostic.IDE0061.severity = error
 dotnet_diagnostic.IDE0078.severity = error
+
+dotnet_style_prefer_conditional_expression_over_return = true:error
+dotnet_style_prefer_conditional_expression_over_assignment = true:error
