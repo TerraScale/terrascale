@@ -1,0 +1,68 @@
+{
+  "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "issuer": "https://auth.example.test/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "discovery_url": "https://auth.example.test/01ARZ3NDEKTSV4RRFFQ69G5FAV/.well-known/openid-configuration",
+  "sign_in_url": "https://auth.example.test/ui/01ARZ3NDEKTSV4RRFFQ69G5FAV/sign-in",
+  "methods": {
+    "passcode": true,
+    "password": false,
+    "sign_up": false
+  },
+  "branding": {
+    "name": null,
+    "logo_url": null,
+    "theme_color": null,
+    "title_size": null,
+    "default_theme": null,
+    "footer_links": null,
+    "background_color": null,
+    "text_color": null,
+    "email_message": null
+  },
+  "counts": {
+    "users": 9007199254740993,
+    "clients": 9223372036854775807
+  },
+  "providers": [
+    {
+      "provider": "google",
+      "configured": false,
+      "client_id": null,
+      "issuer": null,
+      "team_id": null,
+      "key_id": null,
+      "callback_url": "https://auth.example.test/ui/01ARZ3NDEKTSV4RRFFQ69G5FAV/social/google/callback"
+    },
+    {
+      "provider": "github",
+      "configured": false,
+      "client_id": null,
+      "issuer": null,
+      "team_id": null,
+      "key_id": null,
+      "callback_url": "https://auth.example.test/ui/01ARZ3NDEKTSV4RRFFQ69G5FAV/social/github/callback"
+    },
+    {
+      "provider": "apple",
+      "configured": false,
+      "client_id": null,
+      "issuer": null,
+      "team_id": null,
+      "key_id": null,
+      "callback_url": "https://auth.example.test/ui/01ARZ3NDEKTSV4RRFFQ69G5FAV/social/apple/callback"
+    },
+    {
+      "provider": "oidc",
+      "configured": false,
+      "client_id": null,
+      "issuer": null,
+      "team_id": null,
+      "key_id": null,
+      "callback_url": "https://auth.example.test/ui/01ARZ3NDEKTSV4RRFFQ69G5FAV/social/oidc/callback"
+    }
+  ],
+  "configuration": {
+    "redirect_urls": [],
+    "session_lifetime_seconds": 1209600
+  }
+}

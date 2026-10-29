@@ -1,0 +1,225 @@
+package main
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	v1 "terrascale.tech/sdk/v1"
+)
+
+// functionFlags are the flags of the functions commands, accepted anywhere
+// after the command name.
+type functionFlags struct {
+	name, collection, events, cron, data string
+	limit                                int
+	limitSet                             bool
+}
+
+// parse returns the operands left after the command's flags.
+func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	switch cmd {
+	case "functions deploy":
+		fs.StringVar(&f.name, "name", "", "")
+		fs.StringVar(&f.collection, "trigger-collection", "", "")
+		fs.StringVar(&f.events, "events", "", "")
+		fs.StringVar(&f.cron, "cron", "", "")
+	case "functions invoke":
+		fs.StringVar(&f.data, "data", "", "")
+	case "functions logs":
+		fs.IntVar(&f.limit, "limit", 0, "")
+	}
+	var operands []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, parserError(err)
+		}
+		if args = fs.Args(); len(args) == 0 {
+			break
+		}
+		operands, args = append(operands, args[0]), args[1:]
+	}
+	fs.Visit(func(fl *flag.Flag) { f.limitSet = f.limitSet || fl.Name == "limit" })
+	if f.events != "" && f.collection == "" {
+		return nil, fmt.Errorf("-events needs -trigger-collection: %w", errUsage)
+	}
+	if f.limitSet && (f.limit < 1 || f.limit > 100) {
+		return nil, &cliError{code: "invalid_arguments", message: "-limit must be from 1 to 100", err: errUsage}
+	}
+	return operands, nil
+}
+
+// functions runs a functions command on db; args follow the database operand.
+func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags, args []string, out io.Writer) error {
+	switch cmd {
+	case "functions deploy":
+		path, name, err := functionSource(args[0])
+		if err != nil {
+			return err
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		req := v1.FunctionRequest{Source: string(source), Cron: f.cron}
+		if f.collection != "" {
+			req.Trigger = &v1.FunctionTrigger{Collection: f.collection}
+			if f.events != "" {
+				req.Trigger.Events = strings.Split(f.events, ",")
+			}
+		}
+		fn, err := db.DeployFunction(ctx, cmp.Or(f.name, name), req)
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, fn)
+		}
+		_, err = fmt.Fprintf(out, "Deployed function %s\n", fn.Name)
+		return err
+	case "functions list":
+		list, err := db.Functions(ctx)
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			if list == nil {
+				list = []v1.Function{}
+			}
+			return emitJSON(out, list)
+		}
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		if _, err := fmt.Fprintln(w, "NAME\tTRIGGER\tCRON\tUPDATED"); err != nil {
+			return err
+		}
+		for _, fn := range list {
+			trigger, cron := "none", "none"
+			if fn.Trigger != nil {
+				trigger = fn.Trigger.Collection + ":" + cmp.Or(strings.Join(fn.Trigger.Events, ","), "upsert,delete")
+			}
+			if fn.Cron != nil {
+				cron = *fn.Cron
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", fn.Name, trigger, cron, fn.UpdatedAt.Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+		return w.Flush()
+	case "functions invoke":
+		var body []byte
+		if f.data != "" {
+			var err error
+			if body, err = jsonOperand(f.data); err != nil {
+				return err
+			}
+		}
+		response, err := db.InvokeFunction(ctx, args[0], body, nil)
+		var res []byte
+		if response != nil {
+			res = response.Body
+		}
+		if jsonMode(out) {
+			if err != nil {
+				return err
+			} // Never emit a failure body before the error envelope.
+			return emitFunctionResponse(out, res)
+		}
+		// A handler's non-2xx body, unlike a TerraBase error, has no error envelope.
+		if api := (*v1.APIError)(nil); errors.As(err, &api) {
+			var env struct{ Error json.RawMessage }
+			if json.Unmarshal(api.Body, &env) != nil || len(env.Error) == 0 {
+				res = api.Body
+			}
+		}
+		if len(res) > 0 {
+			if _, writeErr := out.Write(res); writeErr != nil {
+				return errors.Join(err, writeErr)
+			}
+			if !bytes.HasSuffix(res, []byte("\n")) {
+				if _, writeErr := fmt.Fprintln(out); writeErr != nil {
+					return errors.Join(err, writeErr)
+				}
+			}
+		}
+		return err
+	case "functions logs":
+		logs, err := db.FunctionLogs(ctx, args[0], f.limit)
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			if logs == nil {
+				logs = []v1.FunctionLog{}
+			}
+			return emitJSON(out, logs)
+		}
+		enc := json.NewEncoder(out)
+		for _, l := range logs {
+			if err := enc.Encode(l); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "functions delete":
+		if err := db.DeleteFunction(ctx, args[0]); err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, struct {
+				Name    string `json:"name"`
+				Deleted bool   `json:"deleted"`
+			}{args[0], true})
+		}
+		_, err := fmt.Fprintf(out, "Deleted function %s\n", args[0])
+		return err
+	}
+	return errUsage
+}
+
+// A handler can return JSON or arbitrary bytes. Preserve its payload as typed
+// JSON when valid, otherwise as base64; this never parses CLI status prose.
+func emitFunctionResponse(out io.Writer, body []byte) error {
+	result := struct {
+		Body       json.RawMessage `json:"body,omitempty"`
+		BodyBase64 string          `json:"bodyBase64,omitempty"`
+	}{}
+	switch {
+	case len(body) == 0:
+		result.Body = json.RawMessage("null")
+	case json.Valid(body):
+		result.Body = body
+	default:
+		result.BodyBase64 = base64.StdEncoding.EncodeToString(body)
+	}
+	return emitJSON(out, result)
+}
+
+// functionSource returns the source file a deploy reads, a dir's index.js,
+// and the default function name: the file name without .js, or the dir name.
+func functionSource(arg string) (path, name string, err error) {
+	abs, err := filepath.Abs(arg)
+	if err != nil {
+		return "", "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", "", err
+	}
+	if info.IsDir() {
+		return filepath.Join(abs, "index.js"), filepath.Base(abs), nil
+	}
+	return abs, strings.TrimSuffix(filepath.Base(abs), ".js"), nil
+}

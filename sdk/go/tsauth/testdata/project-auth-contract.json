@@ -1,0 +1,50 @@
+{
+  "producer": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "capture_sha256": "9169acfa9f683dd6b861eb43e430c6f87a4dd09fb5251f00efefdb2f5f6c466c",
+  "wire_authority": "Features/ProjectTenants/ProjectTenantEndpoint.cs: ProjectTenantJson SnakeCaseLower; generated camelCase and patch requiredness discrepancy tracked by TS1274.",
+  "operations": [
+    {
+      "method": "GET",
+      "path": "/v1/{project}/settings",
+      "operation_id": "get_project_settings",
+      "role": "viewer"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/{project}/settings",
+      "operation_id": "update_project_settings",
+      "role": "admin"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/{project}/providers/{provider}",
+      "operation_id": "delete_project_provider",
+      "role": "admin"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/{project}/providers/{provider}",
+      "operation_id": "set_project_provider",
+      "role": "admin"
+    }
+  ],
+  "security": "platformUser sign-in JWT; project/API-key tokens refused",
+  "media_type": "application/json",
+  "success_status": 200,
+  "retry": "none; no mutation replay or pagination",
+  "errors": {
+    "get/delete": [
+      401,
+      403,
+      404,
+      503
+    ],
+    "put": [
+      400,
+      401,
+      403,
+      404,
+      503
+    ]
+  }
+}

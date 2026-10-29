@@ -1,0 +1,27 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "baseline": "a3cbf8b1c73d304189a489fa8033d41f3b508de3",
+  "verification": "Relevant Documents and Sql endpoint/model sources unchanged between baseline and revision; source evidence, not live proof.",
+  "sql": {
+    "method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql/execute", "operation": "executeSql",
+    "request_media": "application/json", "response_media": "application/json",
+    "scope": "documents:read; documents:write for mutations and DDL",
+    "source": "src/TerraBase/Features/Sql/SqlExecuteEndpoint.cs; SqlModels.cs",
+    "success": {"results":[{"columns":[{"name":"id","decltype":"TEXT"}],"rows":[["customer/chosen"]],"rows_affected":0,"last_insert_rowid":null}]},
+    "retry": "No mutation replay; no idempotency support. One transaction; one result per statement."
+  },
+  "query": {
+    "method": "POST", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/query", "operation": "queryDocuments",
+    "request_media": "application/json", "response_media": "application/json", "scope": "documents:read",
+    "source": "src/TerraBase/Features/Documents/DocumentModels.cs; QueryDocumentsEndpoint.cs",
+    "request": {"explain":true},
+    "success": {"items":[],"next_cursor":null,"explain":{"plan":["SCAN items"],"indexes":[],"full_scan":true,"rows_scanned":9007199254740993,"work_units":1,"elapsed_ms":0.125,"suggested_index":["status"]}},
+    "pagination": "next_cursor bound to filter/sort/project; explain does not change pagination. Counters int64; suggestion optional."
+  },
+  "stored_keys": {
+    "decision": "2026-10-22: SQL/PostgreSQL primary keys are user-chosen; document point IDs remain ULIDs",
+    "source": "src/TerraBase/Features/Documents/DocumentRoute.cs: CheckStoredId and CheckDocumentId; docs/terrabase/sql/relational-sql.md section 3",
+    "validation": "1..256 UTF-16 code units, no Unicode control characters; preserve bytes and case"
+  }
+}
