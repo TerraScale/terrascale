@@ -130,16 +130,16 @@ int main(void) {
     state(writer, &first, &first_seq);
     assert(first > 0 && first < 64);
     uint32_t pages[64], sizes[64];
-    expect(turso_terrascale_wal_frame_pages(writer, 1, (uint32_t)first, pages, sizes, &error), TURSO_OK);
-    assert(sizes[first - 1] > 0);
-    expect(turso_terrascale_wal_frame_pages(writer, 1, (uint32_t)first + 1, pages, sizes, &error), TURSO_MISUSE);
-    expect(turso_terrascale_wal_frame_pages(writer, (1ULL << 61) + 1, 1, pages, sizes, &error), TURSO_MISUSE);
-    expect(turso_terrascale_wal_frame_pages(writer, UINT64_MAX, 2, pages, sizes, &error), TURSO_MISUSE);
-    expect(turso_terrascale_wal_frame_pages(writer, 1, 2, pages, pages + 1, &error), TURSO_MISUSE);
-
     int32_t found = 0;
+    expect(turso_terrascale_wal_frame_pages(reader, 1, 1, pages, sizes, &error), TURSO_MISUSE);
     expect(turso_terrascale_snapshot_read_page(reader, 1, page, length, &found, &error), TURSO_MISUSE);
     begin_snapshot(reader);
+    expect(turso_terrascale_wal_frame_pages(reader, 1, (uint32_t)first, pages, sizes, &error), TURSO_OK);
+    assert(sizes[first - 1] > 0);
+    expect(turso_terrascale_wal_frame_pages(reader, 1, (uint32_t)first + 1, pages, sizes, &error), TURSO_MISUSE);
+    expect(turso_terrascale_wal_frame_pages(reader, (1ULL << 61) + 1, 1, pages, sizes, &error), TURSO_MISUSE);
+    expect(turso_terrascale_wal_frame_pages(reader, UINT64_MAX, 2, pages, sizes, &error), TURSO_MISUSE);
+    expect(turso_terrascale_wal_frame_pages(reader, 1, 2, pages, pages + 1, &error), TURSO_MISUSE);
     uint32_t leaf = 0;
     for (uint64_t frame = first; frame > 0 && leaf == 0; frame--) {
         if (read_contains(reader, pages[frame - 1], page, length, "marker-before")) leaf = pages[frame - 1];
@@ -196,6 +196,34 @@ int main(void) {
     begin_snapshot(reader);
     assert(marked_pages(reader, page, length, "marker-after!") == 1);
     expect(run(reader, "ROLLBACK"), TURSO_DONE);
+
+    expect(run(writer, "INSERT INTO t VALUES(-1, 'after-truncate')"), TURSO_DONE);
+    uint64_t committed = 0;
+    uint32_t committed_seq = 0;
+    state(writer, &committed, &committed_seq);
+    assert(committed > 0);
+    expect(run(reader, "PRAGMA wal_checkpoint(TRUNCATE)"), TURSO_DONE);
+    state(writer, &max_frame, &seq);
+    assert(max_frame == committed && seq == committed_seq);
+    begin_snapshot(writer);
+    state(writer, &max_frame, &seq);
+    assert(max_frame == 0);
+    expect(turso_terrascale_wal_frame_pages(writer, 1, 1, pages, sizes, &error), TURSO_MISUSE);
+    expect(run(writer, "ROLLBACK"), TURSO_DONE);
+
+    begin_snapshot(reader);
+    expect(run(writer, "PRAGMA cache_size = 10"), TURSO_DONE);
+    expect(run(writer, "BEGIN IMMEDIATE"), TURSO_DONE);
+    for (int i = 0; i < 300; i++) {
+        char sql[128];
+        assert(snprintf(sql, sizeof(sql), "INSERT INTO t VALUES(%d, hex(randomblob(2000)))", 10000 + i) < (int)sizeof(sql));
+        expect(run(writer, sql), TURSO_DONE);
+    }
+    state(reader, &max_frame, &seq);
+    assert(max_frame == 0);
+    expect(turso_terrascale_wal_frame_pages(reader, 1, 3, pages, sizes, &error), TURSO_MISUSE);
+    expect(run(writer, "ROLLBACK"), TURSO_DONE);
+    expect(run(reader, "ROLLBACK"), TURSO_DONE);
     disconnect(reader);
     disconnect(writer);
     turso_database_deinit(database);
@@ -205,6 +233,6 @@ int main(void) {
     assert(unlink(path) == 0);
     (void)unlink(wal);
     assert(rmdir(directory) == 0);
-    printf("wal contract smoke: marker=1, %llu frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions and bad ranges refused, explicit TRUNCATE resets frames\n", (unsigned long long)reopened);
+    printf("wal contract smoke: marker=1, %llu frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions, checkpoints and spills of other connections and bad ranges refused, explicit TRUNCATE resets frames\n", (unsigned long long)reopened);
     return 0;
 }

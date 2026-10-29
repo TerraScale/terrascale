@@ -1,8 +1,8 @@
 diff --git a/core/connection.rs b/core/connection.rs
-index 3bfb72b..5a88a73 100644
+index 3bfb72b..be427dd 100644
 --- a/core/connection.rs
 +++ b/core/connection.rs
-@@ -4956,6 +4956,14 @@ impl Connection {
+@@ -4956,6 +4956,18 @@ impl Connection {
          matches!(self.get_tx_state(), TransactionState::Write { .. })
      }
  
@@ -14,14 +14,18 @@ index 3bfb72b..5a88a73 100644
 +        matches!(self.get_tx_state(), TransactionState::None | TransactionState::Read)
 +    }
 +
++    pub fn wal_snapshot_position(&self) -> (u32, u64) {
++        self.pager.load().wal_pos()
++    }
++
      pub(crate) fn get_mv_tx_id(&self) -> Option<u64> {
          self.mv_tx.read().map(|(tx_id, _)| tx_id)
      }
 diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
-index 0c265bc..e3622d7 100644
+index 0c265bc..0958f92 100644
 --- a/sdk-kit/src/capi.rs
 +++ b/sdk-kit/src/capi.rs
-@@ -25,6 +25,145 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
+@@ -25,6 +25,154 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
      1
  }
  
@@ -66,16 +70,19 @@ index 0c265bc..e3622d7 100644
 +    if !core.is_idle_or_in_read_tx() {
 +        return wal_misuse("WAL state is only defined outside a write transaction", error_opt_out);
 +    }
-+    match core.wal_state() {
-+        Ok(state) => {
-+            unsafe {
-+                *max_frame = state.max_frame;
-+                *checkpoint_seq = state.checkpoint_seq_no;
-+            }
-+            c::turso_status_code_t::TURSO_OK
-+        }
-+        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    let (seq, frames) = core.wal_snapshot_position();
++    if seq == u32::MAX {
++        return wal_misuse("the database has no WAL", error_opt_out);
 +    }
++    unsafe {
++        *max_frame = frames;
++        *checkpoint_seq = seq;
++    }
++    c::turso_status_code_t::TURSO_OK
++}
++
++fn wal_restarted(core: &turso_core::Connection, seq: u32) -> Result<bool, turso_core::LimboError> {
++    Ok(core.wal_state()?.checkpoint_seq_no != seq)
 +}
 +
 +#[no_mangle]
@@ -95,13 +102,10 @@ index 0c265bc..e3622d7 100644
 +        return wal_misuse("invalid WAL frame range", error_opt_out);
 +    }
 +    let core = connection.core();
-+    if !core.is_idle_or_in_read_tx() {
-+        return wal_misuse("WAL frames are only readable outside a write transaction", error_opt_out);
++    if !core.is_in_read_tx() {
++        return wal_misuse("WAL frames are only readable inside a read transaction", error_opt_out);
 +    }
-+    let max_frame = match core.wal_state() {
-+        Ok(state) => state.max_frame,
-+        Err(err) => return unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
-+    };
++    let (seq, max_frame) = core.wal_snapshot_position();
 +    match first_frame.checked_add(u64::from(count)) {
 +        Some(end) if end - 1 <= max_frame => {}
 +        _ => return wal_misuse("WAL frame range is past the last frame", error_opt_out),
@@ -110,6 +114,11 @@ index 0c265bc..e3622d7 100644
 +    let (pages_at, sizes_at) = (page_numbers as usize, db_sizes as usize);
 +    if count > 0 && pages_at < sizes_at.saturating_add(bytes) && sizes_at < pages_at.saturating_add(bytes) {
 +        return wal_misuse("WAL frame output buffers overlap", error_opt_out);
++    }
++    match wal_restarted(core, seq) {
++        Ok(false) => {}
++        Ok(true) => return wal_misuse("the WAL restarted after the read snapshot began", error_opt_out),
++        Err(err) => return unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
 +    }
 +    let mut frame = vec![0u8; 24 + core.get_page_size().get() as usize];
 +    let pages = unsafe { std::slice::from_raw_parts_mut(page_numbers, count as usize) };
@@ -123,7 +132,11 @@ index 0c265bc..e3622d7 100644
 +            Err(err) => return unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
 +        }
 +    }
-+    c::turso_status_code_t::TURSO_OK
++    match wal_restarted(core, seq) {
++        Ok(false) => c::turso_status_code_t::TURSO_OK,
++        Ok(true) => wal_misuse("the WAL restarted while its frames were read", error_opt_out),
++        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    }
 +}
 +
 +#[no_mangle]
