@@ -25,22 +25,11 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: TerraScale/terrascale
-          ref: 7a53ac89686cd6bbe2025aaeaa9d370c0efc331e
+          ref: a2e200187ffe32084a10f2a81c9e3e1f59b49a29
           persist-credentials: false
           path: legacy-scanner
       - name: Run legacy scan
-        shell: bash
-        run: |
-          set +e
-          python3 legacy-scanner/scripts/legacy-scan/scan.py --repo ts-landing --root target --output legacy-hits.md
-          status=$?
-          set -e
-          test -f legacy-hits.md
-          case "$(tr -d '[:space:]' < target/.legacy-scan-mode)" in
-            report) ;;
-            fail) exit "$status" ;;
-            *) echo "Unknown legacy scan mode" >&2; exit 1 ;;
-          esac
+        run: python3 legacy-scanner/scripts/legacy-scan/scan.py --repo ts-landing --root target --output legacy-hits.md
       - name: Upload legacy hits
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
