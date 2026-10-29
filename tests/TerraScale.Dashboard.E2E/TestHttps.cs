@@ -16,6 +16,8 @@ namespace TerraScale.Dashboard.E2E
 
         public static void Configure(WebApplicationBuilder builder)
         {
+            // Concurrent ephemeral hosts share the thread pool instead of creating 16 I/O threads per host.
+            builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets.SocketTransportOptions>(options => options.IOQueueCount = 0);
             using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
             var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256);
             var names = new SubjectAlternativeNameBuilder();
