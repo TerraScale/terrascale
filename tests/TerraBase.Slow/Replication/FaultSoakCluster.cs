@@ -104,6 +104,7 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
         }
         catch
         {
+            Console.Error.WriteLine(cluster.Diagnostics);
             await cluster.DisposeAsync();
             throw;
         }

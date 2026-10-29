@@ -737,12 +737,12 @@ public sealed class Cluster : IAsyncDisposable
                 await StartNodeAsync(node);
             }
 
-            // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
-            // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
-            foreach (var node in _nodes.Values)
+            var home = _nodes[Gru].Api!;
+            var database = new TenantContext(OrganizationId, PlanTier.Hobby, _project, _database);
+            await CatalogFixture.RegisterAsync(home, home.User, database, "canary", [.. regions.Where(region => region != Gru)]);
+            foreach (var node in _nodes.Values.Where(node => node.Region != Gru))
             {
-                await CatalogFixture.RegisterAsync(node.Api!, node.Api!.User,
-                    new TenantContext(OrganizationId, PlanTier.Hobby, _project, _database), "canary", [.. regions.Where(region => region != node.Region)]);
+                await CatalogFixture.MaterializeAsync(node.Api!, database, "canary");
             }
 
             foreach (var node in _nodes.Values)

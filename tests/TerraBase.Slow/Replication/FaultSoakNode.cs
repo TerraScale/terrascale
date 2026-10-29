@@ -55,11 +55,26 @@ public sealed class FaultSoakNode
             ["projectToken"] = projectToken,
         }.ToJsonString(), cancellationToken);
         File.Move(info + ".partial", info!, overwrite: true);
-        await CatalogFixture.RegisterProjectAsync(api, api.User, Read("ORGANIZATION"), Read("PROJECT"), cancellationToken);
-        await api.SetPlanAsync(api.User, Read("ORGANIZATION"), "enterprise", cancellationToken);
-        await CatalogFixture.RegisterAsync(api, api.User,
-            new TerraBase.Tenancy.TenantContext(Read("ORGANIZATION"), TerraBase.Tenancy.PlanTier.Enterprise, Read("PROJECT"), Read("DATABASE")),
-            "soak", [.. Regions.Where(region => region != Read("REGION"))], cancellationToken);
+        try
+        {
+            var database = new TerraBase.Tenancy.TenantContext(Read("ORGANIZATION"), TerraBase.Tenancy.PlanTier.Enterprise, Read("PROJECT"), Read("DATABASE"));
+            if (Read("REGION") == "gru")
+            {
+                await CatalogFixture.RegisterProjectAsync(api, api.User, database.OrganizationId, database.ProjectId!, cancellationToken);
+                await api.SetPlanAsync(api.User, database.OrganizationId, "enterprise", cancellationToken);
+                await CatalogFixture.RegisterAsync(api, api.User, database, "soak", [.. Regions.Where(region => region != "gru")], cancellationToken);
+            }
+            else
+            {
+                await CatalogFixture.MaterializeAsync(api, database, "soak", cancellationToken);
+            }
+        }
+        catch (Exception error)
+        {
+            await using var output = Console.OpenStandardError();
+            await output.WriteAsync(System.Text.Encoding.UTF8.GetBytes(error + Environment.NewLine), CancellationToken.None);
+            throw;
+        }
         await Task.Delay(Timeout.Infinite, cancellationToken);
     }
 

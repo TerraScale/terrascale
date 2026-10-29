@@ -28,22 +28,26 @@ internal static class CatalogFixture
             if (existing is ResolvedProjectDatabase registered && registered.Database.OrganizationId == database.OrganizationId
                 && registered.Database.DatabaseId == database.DatabaseId)
             {
-                var region = api.Server.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().Region;
-                if (!registered.Placement.Includes(region))
-                {
-                    return true;
-                }
-
-                return await directory.EnsureLocalDatabaseAsync(registered.Database, linked.Token) switch
-                {
-                    Done => true,
-                    Unavailable => false,
-                    NotFound => throw new InvalidOperationException("The fixture database registration disappeared"),
-                };
+                return await EnsureLocalAsync(api, directory, registered, linked.Token);
             }
 
             var result = await directory.AdoptDatabaseAsync(database, name,
                 new DatabasePlacement(api.Server.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().Region, replicas, 1), linked.Token);
+            if (result is Conflict)
+            {
+                var concurrent = await directory.ResolveProjectDatabaseAsync(database.ProjectId!, name, linked.Token);
+                if (concurrent is Unavailable)
+                {
+                    return false;
+                }
+
+                if (concurrent is ResolvedProjectDatabase matching && matching.Database.OrganizationId == database.OrganizationId
+                    && matching.Database.DatabaseId == database.DatabaseId)
+                {
+                    return await EnsureLocalAsync(api, directory, matching, linked.Token);
+                }
+            }
+
             return result switch
             {
                 Done => true,
@@ -52,6 +56,46 @@ internal static class CatalogFixture
                 Conflict error => throw new InvalidOperationException(error.ToString()),
             };
         }, TimeSpan.FromMinutes(2));
+    }
+
+    public static async Task MaterializeAsync(ManagementApi api, TenantContext database, string name, CancellationToken cancellationToken = default)
+    {
+        api.Issuer.RegisterProject(database.ProjectId!, database.OrganizationId);
+        var directory = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken);
+            var existing = await directory.ResolveProjectDatabaseAsync(database.ProjectId!, name, linked.Token);
+            if (existing is Unavailable or NotFound)
+            {
+                return false;
+            }
+
+            if (existing is ResolvedProjectDatabase registered && registered.Database.OrganizationId == database.OrganizationId
+                && registered.Database.DatabaseId == database.DatabaseId)
+            {
+                return await EnsureLocalAsync(api, directory, registered, linked.Token);
+            }
+
+            throw new InvalidOperationException("The fixture database registration has a different identity");
+        }, TimeSpan.FromMinutes(2));
+    }
+
+    private static async Task<bool> EnsureLocalAsync(ManagementApi api, ITenantDirectory directory, ResolvedProjectDatabase registered,
+        CancellationToken cancellationToken)
+    {
+        var region = api.Server.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().Region;
+        if (!registered.Placement.Includes(region))
+        {
+            return true;
+        }
+
+        return await directory.EnsureLocalDatabaseAsync(registered.Database, cancellationToken) switch
+        {
+            Done => true,
+            Unavailable => false,
+            NotFound => throw new InvalidOperationException("The fixture database registration disappeared"),
+        };
     }
 
     public static async Task RegisterProjectAsync(ManagementApi api, string user, string organizationId, string projectId,

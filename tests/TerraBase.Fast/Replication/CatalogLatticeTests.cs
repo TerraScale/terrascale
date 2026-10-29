@@ -135,7 +135,7 @@ public sealed class CatalogLatticeTests
         await Assert.That(File.Exists(gru.FileOf(tenant))).IsTrue();
 
         await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
-        await CatalogFixture.RegisterAsync(sjc.Api, user, tenant, "main", ["gru"]);
+        await CatalogFixture.MaterializeAsync(sjc.Api, tenant, "main");
         await Assert.That(File.Exists(sjc.FileOf(tenant))).IsTrue();
         var version = await gru.VersionAsync($"projects/{project}/databases", database);
         await CatalogFixture.RegisterAsync(gru.Api, user, tenant, "main", Sjc);
