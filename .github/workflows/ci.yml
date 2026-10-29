@@ -421,6 +421,8 @@ jobs:
 
   terrabase-build:
     needs: [changes, native]
+    outputs:
+      fast-verified: ${{ steps.fast-proof.outputs.verified }}
     if: >-
       contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -437,9 +439,35 @@ jobs:
       - *nuget-cache
       - *locked-restore
       - *save-nuget
+      - id: fast-proof
+        name: Verify exact-commit TerraBase Fast evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Public metadata needs no additional token permission. An unavailable or untrusted proof runs all shards.
+          if curl --fail --silent --show-error --max-time 20 \
+               "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" |
+             jq -e '[.[] | select(.context == "ts-ship/terrabase")] | max_by(.id) | .state == "success" and ((.creator.login // "" | ascii_downcase) == "mariogk")' > /dev/null; then
+            echo 'verified=true' >> "$GITHUB_OUTPUT"
+            echo "TerraBase Fast passed on the dev host for $GITHUB_SHA, verified through ts-ship/terrabase by MarioGK." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'verified=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Checked build and single-file packaging proof
         working-directory: terrascale
         run: bash scripts/ci/test-area.sh build terrabase
+      - name: Qualify integration proofs outside the dev-host Fast target
+        if: steps.fast-proof.outputs.verified == 'true'
+        working-directory: terrascale
+        run: >-
+          make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release
+          'TERRABASE_E2E_RUN=dotnet tests/TerraBase.E2E/bin/Release/net11.0/TerraBase.E2E.dll'
+      - name: Retain local integration proof results
+        if: ${{ always() && hashFiles('terrascale/tests/TerraBase.E2E/bin/e2e-results.jsonl') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terrabase-e2e-results
+          path: terrascale/tests/TerraBase.E2E/bin/e2e-results.jsonl
+          retention-days: 7
       - name: Reuse the checked TerraBase build for both runtime payloads
         if: github.event_name != 'pull_request'
         working-directory: terrascale
@@ -456,6 +484,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
       - name: Pack this commit's build outputs
+        if: steps.fast-proof.outputs.verified != 'true'
         working-directory: terrascale
         # Only shard executables are consumed: their output directories contain every referenced assembly and native asset.
         # RID-specific publish outputs are packaging proofs, not shard inputs. Fast gzip avoids spending a runner CPU on them.
@@ -466,6 +495,7 @@ jobs:
           tests/TerraBase.E2E/bin/Release/net11.0
           | gzip -1 > "$RUNNER_TEMP/terrabase-build.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.fast-proof.outputs.verified != 'true'
         with:
           name: terrabase-build
           path: ${{ runner.temp }}/terrabase-build.tar.gz
@@ -475,31 +505,39 @@ jobs:
 
   terrabase:
     needs: [changes, terrabase-build]
+    name: ${{ needs.terrabase-build.outputs.fast-verified == 'true' && 'TerraBase Fast (dev proof)' || format('TerraBase Fast shard {0}/4', matrix.shard) }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: ${{ fromJSON(needs.terrabase-build.outputs.fast-verified == 'true' && '[1]' || '[1,2,3,4]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - *checkout
+      - name: Retain verified dev-host Fast provenance
+        if: needs.terrabase-build.outputs.fast-verified == 'true'
+        run: echo "All TerraBase Fast tests already passed for $GITHUB_SHA through ts-ship/terrabase by MarioGK." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
         with:
           global-json-file: terrascale/global.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
         with:
           name: terrabase-build
           path: ${{ runner.temp }}
       - name: Unpack this commit's build outputs
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
         working-directory: terrascale
         run: tar -xzf "$RUNNER_TEMP/terrabase-build.tar.gz"
       - name: Fast shard and assigned integration proofs
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
         working-directory: terrascale
         run: make terrabase-test-shard SHARD=${{ matrix.shard }}
       - name: Retain test durations and failures
-        if: always()
+        if: ${{ always() && needs.terrabase-build.outputs.fast-verified != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: terrabase-results-${{ matrix.shard }}

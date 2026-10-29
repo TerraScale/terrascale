@@ -49,6 +49,12 @@ package_job = workflow.split("\n  auth-package:\n", 1)[1].split("\n  terrabase-b
 assert "make auth-publish RUNTIME=linux-x64" in package_job
 assert "*nuget-cache" in package_job and "*locked-restore" in package_job
 assert "native-audit:" not in workflow, "Remove the temporary executor comparison"
+terrabase_build = workflow.split("\n  terrabase-build:\n", 1)[1].split("\n  terrabase:\n", 1)[0]
+assert 'select(.context == "ts-ship/terrabase")' in terrabase_build
+assert 'max_by(.id)' in terrabase_build and 'ascii_downcase) == "mariogk"' in terrabase_build
+assert 'statuses?per_page=100' in terrabase_build and 'statuses: read' not in terrabase_build
+assert 'make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release' in terrabase_build
+assert "needs.terrabase-build.outputs.fast-verified == 'true' && '[1]' || '[1,2,3,4]'" in workflow
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
 stages = {
