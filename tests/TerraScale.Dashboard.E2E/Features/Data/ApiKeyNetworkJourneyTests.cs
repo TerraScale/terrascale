@@ -1,12 +1,9 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Playwright;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Data

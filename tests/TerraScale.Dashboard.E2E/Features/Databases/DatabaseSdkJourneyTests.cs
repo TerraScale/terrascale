@@ -1,15 +1,12 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {

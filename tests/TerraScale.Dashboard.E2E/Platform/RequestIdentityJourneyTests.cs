@@ -2,7 +2,6 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using TerraScale.Dashboard.Platform.Http;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Platform

@@ -177,7 +177,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             if (operation == "remove")
             {
                 try { await sessions.RevokeUserAsync(userId, cancellationToken); }
-                catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException)
+                catch (Exception error) when (error is IOException or HttpRequestException or OperationCanceledException)
                 { logger.RevokeDashboardSessionsAfterCommittedMember(userId, error.GetType().Name); }
             }
         }

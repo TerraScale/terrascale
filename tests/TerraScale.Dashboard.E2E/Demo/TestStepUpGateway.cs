@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E

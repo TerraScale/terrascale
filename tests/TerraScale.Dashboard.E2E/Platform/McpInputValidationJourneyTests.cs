@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
