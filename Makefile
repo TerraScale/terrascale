@@ -13,7 +13,7 @@ TERRABASE_TEST_PARALLEL ?= $(shell nproc)
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
-TS_DOTNET_DIR ?= ../ts-dotnet
+TS_DOTNET_DIR ?= sdk/dotnet
 # ts-auth's tests start the TerraBase built from this same commit (ts-dotnet's TerraBaseTestServer runs TERRABASE_BINARY).
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
@@ -77,7 +77,7 @@ test: test-fast test-slow
 # Everything required before a push.
 check: lint libs-check auth-check terrabase-check benchmark-check test-fast
 
-# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Needs ts-dotnet next to this checkout.
+# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Uses sdk/dotnet from this checkout.
 docker-test:
 	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --build-arg TERRABASE_REVISION=$(shell git rev-parse HEAD) --target test .
 

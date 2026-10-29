@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and merge groups (.github/workflows/ci.yml);
 # `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages publish to GHCR for ts-orch.
-# ts-auth builds ts-dotnet from source (named context `ts-dotnet`, a checkout); its tests start the TerraBase built from
+# ts-auth builds ts-dotnet from source (named context `ts-dotnet`, sdk/dotnet); its tests start the TerraBase built from
 # this same tree (Makefile TERRABASE_BINARY).
 
 # Match global.json and keep the SDK's targeting packs aligned with locked NuGet dependencies.
@@ -30,7 +30,7 @@ RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
 # .git is excluded: its packs and index differ per clone and would invalidate every later cached layer.
-COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
+COPY --from=ts-dotnet --exclude=.git . /src/terrascale/sdk/dotnet
 WORKDIR /src/terrascale
 
 # COPY from this filtered stage keys restore on manifest contents, not changes to application source.

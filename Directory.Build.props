@@ -27,6 +27,8 @@
     <!-- ts-libs tests use real cultures (fr-FR), so the invariant mode stays with TerraBase and ts-auth. -->
     <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
+    <!-- The pinned compiler retains invalid Razor generator state across shared compilations. -->
+    <UseSharedCompilation>false</UseSharedCompilation>
     <Authors>TerraScale</Authors>
     <!-- Container tooling builds Linux images; the release binaries are linux-x64 and linux-arm64. -->
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
@@ -46,10 +48,8 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-    <!-- ts-dotnet (the TerraScale .NET SDK) is a separate repository, consumed as source by ts-auth.
-         It is checked out next to this repository; override with -p:TsDotnetRoot=<the ts-dotnet checkout>
-         (or the TsDotnetRoot environment variable) when it lives elsewhere. -->
-    <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)../ts-dotnet</TsDotnetRoot>
+    <!-- Services consume the SDK source from the same monorepo revision. -->
+    <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)sdk/dotnet</TsDotnetRoot>
   </PropertyGroup>
 
 </Project>
