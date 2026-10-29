@@ -1,0 +1,89 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+@using TerraScale.Dashboard.Features.Accounts
+@inject AssetUrls Assets
+@if (Model.Tab is "members" or "invitations")
+{
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Members.OrganizationAccessPage, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
+}
+else
+{
+<main class="ts-page ts-org-page @(Model.Tab == "audit" ? "ts-audit-page" : "")">
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
+    @if (Model.Notice.Length > 0)
+    {
+        <section class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">@(Model.NoticeStatus == 403 ? "Access required" : Model.Tab == "billing" ? "Billing unavailable" : "Could not open organization")</p><p class="ts-alert-body">@Model.Notice</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p>
+        @if (Model.Tab == "billing" && Model.NoticeStatus >= 500) { <a class="ts-link" href="/organization?tab=billing">Retry billing</a> }
+        else { <a class="ts-link" href="/organization">Back to organization</a> }
+        </section>
+    }
+    else
+    {
+    @if (Model.Shell.Context.Organization is { } limited && TerraScale.Dashboard.Common.Accounts.PlanCatalog.ResourceLimits(limited).Projects is > 0 and var allowed && limited.Projects.Count > allowed)
+    { <div class="ts-alert ts-alert-warning" role="status" id="project-limit-exceeded"><p class="ts-alert-title">More projects than the plan allows</p><p class="ts-alert-body">This organization has @ValueFormat.Plural(limited.Projects.Count, "project"); its plan allows @allowed. Existing projects keep working, but new projects are refused. <a class="ts-link" href="/organization?tab=billing">Upgrade the plan</a> or delete projects.</p></div> }
+    @if (Model.Shell.Context.Organization is not { } org)
+    { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Building2", 16)</span><p class="ts-empty-title">Select an organization</p><p class="ts-empty-detail">Choose an organization from the workspace menu.</p></div> }
+    else if (Model.Tab == "billing")
+    {
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingSummary, TerraScale.Dashboard.Features.Billing.BillingPage>(Model.Billing!))
+    }
+    else if (Model.Tab == "organization")
+    {
+        var current = Model.Shell.Context.Project;
+        var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Common.Accounts.PlanCatalog.For(org);
+        var pending = Model.InvitationRows.Count(item => item.Status == "pending");
+        <dl class="ts-kpis" aria-label="Organization summary">
+            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("FolderKanban", 16)</span>Projects</dt><dd class="ts-kpi-value">@org.Projects.Count</dd><dd class="ts-kpi-detail">@(current is null ? "No project selected" : current.Name + " is current") · @ValueFormat.Plural(org.Projects.Values.Sum(project => project.Databases.Count), "database")</dd></div>
+            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("Users", 16)</span>Members</dt><dd class="ts-kpi-value">@Model.MemberTotal</dd><dd class="ts-kpi-detail">@ValueFormat.Plural(pending, "invitation") pending</dd></div>
+            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("CreditCard", 16)</span>Plan</dt><dd class="ts-kpi-value">@(plan?.Name ?? (org.BillingStatus == "billing_required" ? "None" : "Not reported"))</dd><dd class="ts-kpi-detail">@(plan is null ? "" : plan.Price + " " + plan.PriceUnit + " · ")@(org.BillingStatus == "billing_required" ? "No active plan" : TerraScale.Dashboard.Features.Organizations.OrganizationPage.RoleLabel(org.BillingStatus))</dd></div>
+            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("Calendar", 16)</span>Created</dt><dd class="ts-kpi-value">@org.CreatedAt.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)</dd><dd class="ts-kpi-detail">Organization record</dd></div>
+        </dl>
+        <div class="ts-org-grid"><div class="ts-org-col">
+        <section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="overview-projects-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="overview-projects-title">Projects</h2><p class="ts-card-description">Projects in this @(org.Kind == "personal" ? "personal" : "business") organization</p></div>@if (Model.CanProvision) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=projects">@Icons.Render("Plus", 14)<span>Create project</span></a> }</header><div class="ts-card-body">
+        @if (org.Projects.Count == 0) { <div class="ts-empty"><p class="ts-empty-title">No projects returned</p></div> }
+        else { <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Projects preview"><table class="ts-table"><thead><tr><th>Project</th><th>Regions</th><th class="ts-table-num">Databases</th><th>Status</th></tr></thead><tbody>@foreach (var project in org.Projects.Values.OrderBy(item => item.Name).Take(5)) { var isCurrent = current?.Id == project.Id; <tr><td><div class="ts-row ts-org-cell"><span class="ts-org-initial" aria-hidden="true">@(project.Name.Length > 0 ? char.ToUpperInvariant(project.Name[0]) : '?')</span><div class="ts-list-main"><span class="ts-strong ts-truncate">@project.Name</span><span class="ts-meta ts-mono ts-truncate">@project.Id</span></div></div></td><td>@if (project.Regions.Count == 0) { <span class="ts-meta">None</span> } else { foreach (var code in project.Regions.Select(item => item.ToLowerInvariant()).OrderBy(Regions.Rank)) { var country = Regions.Country(code); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@code</span></span> } }</td><td class="ts-table-num">@project.Databases.Count</td><td><span class="ts-badge @(isCurrent ? "ts-badge-info" : "ts-badge-neutral")">@(isCurrent ? "Current" : "Available")</span></td></tr> }</tbody></table></div> }
+        <div class="ts-org-card-foot"><a class="ts-link" href="/organization?tab=projects">Manage projects</a></div>
+        </div></section>
+        <section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="overview-members-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="overview-members-title">Members</h2><p class="ts-card-description">@ValueFormat.Plural(Model.MemberTotal, "person", "people") with organization access · @ValueFormat.Plural(pending, "invitation") pending</p></div>@if (Model.CanManage) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=members#team-invite">@Icons.Render("UserPlus", 14)<span>Invite member</span></a> }</header><div class="ts-card-body">
+        @if (Model.MemberTotal == 0) { <div class="ts-empty"><p class="ts-empty-title">No members returned</p></div> }
+        else { <ul class="ts-org-preview">@foreach (var member in (Model.Access?.Members ?? []).OrderBy(member => member.Name).Take(5)) { var row = new TerraScale.Dashboard.Features.Organizations.OrganizationMemberModel(Model, member); <li><div class="ts-row ts-org-cell"><span class="ts-avatar" aria-hidden="true">@(row.Initials.Length > 0 ? row.Initials : "?")</span><div class="ts-list-main"><span class="ts-strong ts-truncate">@(row.DisplayName)@if (member.UserId == Model.Shell.Context.UserId) { <span class="ts-meta"> (you)</span> }</span><span class="ts-meta ts-truncate">@member.Email</span></div></div><span class="ts-badge ts-badge-neutral">@(member.Role == "owner" ? "Organization Owner" : TerraScale.Dashboard.Features.Organizations.OrganizationPage.RoleLabel(member.Role))</span></li> }</ul> }
+        <div class="ts-org-card-foot"><a class="ts-link" href="/organization?tab=members">View all @Model.MemberTotal members and invitations</a></div>
+        </div></section></div>
+        <div class="ts-org-col">
+        <section class="ts-card ts-card-boxed" aria-labelledby="overview-billing-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="overview-billing-title">Plan &amp; billing</h2></div><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=billing">View billing</a></header><div class="ts-card-body"><div class="ts-org-plan-row"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("CreditCard", 16)</span><strong>@(plan?.Name ?? (org.BillingStatus == "billing_required" ? "No active plan" : "Not reported"))</strong><span class="ts-badge @(org.BillingStatus == "active" ? "ts-badge-success" : "ts-badge-neutral")">@(org.BillingStatus == "billing_required" ? "No active plan" : TerraScale.Dashboard.Features.Organizations.OrganizationPage.RoleLabel(org.BillingStatus))</span>@if (plan is not null) { <span class="ts-org-price">@plan.Price <small>@plan.PriceUnit</small></span> }</div>@if (plan is not null) { <dl class="ts-kv"><dt>Databases</dt><dd>@plan.DatabaseAllowance</dd><dt>Storage</dt><dd>@plan.StorageAllowance</dd><dt>Team members</dt><dd>@plan.MemberAllowance</dd><dt>Operation units</dt><dd>@plan.OperationsAllowance</dd></dl> }</div><div class="ts-org-card-foot"><a class="ts-link" href="/usage">View usage</a></div></section>
+        <section class="ts-card ts-card-boxed" id="organization-details" aria-labelledby="organization-details-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-details-title">Details</h2></div>@if (Model.CanManage) { <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="rename-organization">@Icons.Render("Pencil", 14)<span>Edit name</span></button> }</header><div class="ts-card-body"><dl class="ts-kv"><dt>Name</dt><dd>@org.Name</dd><dt>Organization ID</dt><dd class="ts-mono">@org.Id</dd><dt>Current project</dt><dd class="ts-mono">@(current?.Id ?? "Not selected")</dd><dt>Created</dt><dd>@org.CreatedAt.ToString("MMM d, yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture)</dd><dt>Signed-in user</dt><dd>@Model.Shell.Context.Account.Email</dd><dt>Your role</dt><dd><span class="ts-badge ts-badge-neutral">@(Model.Shell.Context.Role == "owner" ? "Organization Owner" : TerraScale.Dashboard.Features.Organizations.OrganizationPage.RoleLabel(Model.Shell.Context.Role))</span></dd></dl><p class="ts-meta">Organization access is enforced by the API session and project context.</p>
+        @if (Model.CanManage) { <dialog id="rename-organization" class="ts-dialog" closedby="any" aria-labelledby="rename-organization-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="rename-organization-title">Rename organization</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="rename-organization">@Icons.Render("X", 18)</button></header><form method="post" action="/api/v1/dashboard/organization/rename" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="organizationName">Organization name</label><input class="ts-input" id="organizationName" name="name" value="@org.Name" required /></div><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="rename-organization">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save name</button></div></form></div></dialog> }
+        </div></section>
+        @if (Model.RequireMfa is { } requireMfa)
+        {
+            <section class="ts-card ts-card-boxed" id="organization-mfa" aria-labelledby="organization-mfa-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-mfa-title">Two-factor authentication</h2><p class="ts-card-description">When required, members without two-factor cannot open this organization until they set it up.</p></div></header><div class="ts-card-body"><dl class="ts-kv"><dt>Require two-factor for members</dt><dd><span class="ts-badge @(requireMfa ? "ts-badge-success" : "ts-badge-neutral")">@(requireMfa ? "Required" : "Not required")</span></dd></dl><form method="post" action="/api/v1/dashboard/organization/mfa-policy" class="ts-form-actions"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="requireMfa" value="@(requireMfa ? "false" : "true")" /><button class="ts-btn @(requireMfa ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-sm" type="submit">@(requireMfa ? "Stop requiring two-factor" : "Require two-factor for members")</button><a class="ts-link" href="@TerraScale.Dashboard.Features.Auth.TsAuthGateway.ManageMfaUrl">Manage your own two-factor</a></form></div></section>
+        }
+        </div></div>
+    }
+    else if (Model.Tab == "projects")
+    {
+        <section class="ts-card ts-card-boxed ts-card-flush" id="projects" aria-labelledby="projects-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="projects-title">Projects</h2><p class="ts-card-description">@(org.Kind == "personal" ? "Personal workspace" : "Business workspace") · Projects returned by the TerraScale Dashboard API</p></div>@if (Model.CanProvision) { <div class="ts-card-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-project">@Icons.Render("Plus", 16)<span>Create project</span></button></div> }</header><div class="ts-card-body">
+        @if (org.Projects.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No projects returned</p><p class="ts-empty-detail">The API did not return projects for this organization.</p></div> }
+        else { <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Organization projects"><table class="ts-table"><thead><tr><th>Project</th><th>Slug</th><th>Regions</th><th>Primary</th><th>Backup</th><th class="ts-table-num">Databases</th><th>Status</th><th>Created</th><th class="ts-table-actions">Actions</th></tr></thead><tbody>@foreach (var project in org.Projects.Values.OrderBy(item => item.Name))
+        { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.OrganizationProjectRow, TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>(new(Model, project))) }
+        </tbody></table></div> }</div></section>
+
+    }
+    else if (Model.Tab is "members" or "invitations")
+    {
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationMembers, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
+    }
+    else if (Model.Tab == "sso") { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Sso.OrganizationSsoSection, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
+    else if (Model.Tab == "audit") { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Audit.OrganizationAuditView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
+    else if (Model.Tab == "danger")
+    {
+        <section class="ts-card ts-card-boxed ts-org-danger" id="organization-danger" aria-labelledby="organization-danger-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-danger-title">Danger zone</h2><p class="ts-card-description">Leave, transfer, or delete this organization.</p></div></header><div class="ts-card-body">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Lifecycle.OrganizationOwnershipView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))</div></section>
+    }
+    @if (Model.Tab == "projects" && Model.CanProvision) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialog, TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>(new(Model))) }
+    @if (Model.OpenCreateOrganization) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Wizard.OrganizationWizardView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
+    }
+</main>
+}
+@functions {
+    public ShellModel LayoutModel => Model.Shell;
+}

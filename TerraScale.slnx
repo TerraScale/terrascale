@@ -37,4 +37,8 @@
     <Project Path="benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
   </Folder>
+  <Folder Name="/dashboard/">
+    <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+    <Project Path="tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj" />
+  </Folder>
 </Solution>

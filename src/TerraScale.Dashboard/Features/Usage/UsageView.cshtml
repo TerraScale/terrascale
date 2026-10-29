@@ -1,0 +1,18 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Usage.UsagePage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page ts-usage"><header class="ts-usage-header"><h1>Usage</h1><p class="ts-meta">Plan allowance, reads, writes and storage.</p></header><div class="ts-toolbar"><nav class="ts-tabs" aria-label="Usage sections">@foreach (var tab in new[] { (Key: "overview", Label: "Overview"), (Key: "settings", Label: Model.InternalBill is not null ? "Report-only cap" : "Spending") }) { <a class="ts-tab" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "", tab.Key)" aria-current="@(tab.Key == Model.Tab ? "page" : null)"><span>@tab.Label</span></a> }</nav>
+@if (Model.Tab == "overview")
+{
+    <form class="ts-filters ts-usage-filters" method="get" action="/usage" role="search" aria-label="Filter usage"><input type="hidden" name="tab" value="overview" />
+        <div class="ts-field"><label class="ts-label" for="usage-project">Project</label><select class="ts-select" id="usage-project" name="project" data-on:change="el.form.elements.namedItem('database').value = ''; el.form.requestSubmit()">@foreach (var project in Model.Projects) { <option value="@project.Spending.Id" selected="@(project.Selected ? "selected" : null)">@project.Spending.Name</option> }</select></div>
+        <div class="ts-field"><label class="ts-label" for="usage-database">Database</label><select class="ts-select" id="usage-database" name="database"><option value="">All databases</option>@foreach (var database in Model.Selection.Context.Project!.Databases.Values.OrderBy(item => item.Name, StringComparer.Ordinal)) { <option value="@database.Id" selected="@(database.Id == Model.Selection.DatabaseId ? "selected" : null)">@database.Name</option> }</select></div>
+        <div class="ts-field"><label class="ts-label" for="usage-range">Period</label><select class="ts-select" id="usage-range" name="range">@foreach (var range in new[] { (Key: "1h", Label: "1h"), (Key: "24h", Label: "Last 24 hours"), (Key: "7d", Label: "Last 7 days"), (Key: "30d", Label: "Last 30 days") }) { <option value="@range.Key" selected="@(range.Key == Model.Selection.Range ? "selected" : null)">@range.Label</option> }</select></div><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Apply</button>
+    </form>
+}
+</div>
+@if (Model.InternalBill is not null && Model.Saved == "ok") { <div class="ts-spending-notice" data-signals="{spendingSaved: true}" data-attr:hidden="!$spendingSaved"><div class="ts-alert ts-alert-success" role="alert"><div class="ts-row-between"><div class="ts-stack-sm"><p class="ts-alert-title">Changes saved</p><p class="ts-alert-body">Report-only cap saved.</p></div><button class="ts-icon-btn" type="button" aria-label="Dismiss save confirmation" data-on:click="$spendingSaved = false">@Icons.Render("X", 16)</button></div></div></div> }
+@if (Model.InternalBill is not null && Model.Saved == "invalid") { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">Enter a non-negative dollar amount with at most two decimal places.</p></div> }
+@if (Model.Tab == "overview") { <p class="ts-meta ts-measurement-loading" role="status">Loading usage and replication…</p>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.UsageOverviewView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model))@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.UsageReplicationView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model)) }
+else { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingView, TerraScale.Dashboard.Features.Usage.UsagePage>(Model)) }
+</main>
+@functions { public ShellModel LayoutModel => Model.Shell; }

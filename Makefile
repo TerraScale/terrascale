@@ -240,3 +240,19 @@ sdk-python-test-fast:
 
 sdk-rust-test-fast:
 	cd sdk/rust && bash scripts/test-fast.sh
+
+.PHONY: dashboard-build dashboard-lint dashboard-test-fast dashboard-test-slow dashboard-check
+dashboard-build:
+	$(MAKE) -f scripts/dashboard/Makefile build
+
+dashboard-lint:
+	$(MAKE) -f scripts/dashboard/Makefile lint
+
+dashboard-test-fast:
+	bash scripts/dashboard/test-fast.sh
+
+dashboard-test-slow:
+	$(MAKE) -f scripts/dashboard/Makefile test-slow
+
+dashboard-check:
+	$(MAKE) -f scripts/dashboard/Makefile check
