@@ -37,20 +37,4 @@ public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
             .IsEquivalentTo(ProjectNames);
     }
 
-    private static async Task<string> SnapshotAsync(SharedStateTarget target)
-    {
-        var records = new List<string>();
-        foreach (var collection in new[] { AuthStore.UserCollection, AuthStore.OrganizationCollection, AuthStore.ProjectCollection, AuthStore.MembershipCollection, AuthStore.ProjectMemberCollection, AuthStore.AuditEventCollection, AuthStore.UniqueCollection })
-        {
-            records.AddRange((await target.Database.ListDocumentsAsync(collection)).Items.Select(document => document.Document.GetRawText()));
-        }
-
-        return string.Join('\n', records.Order(StringComparer.Ordinal));
-    }
-
-    private static TotpCredentials Credentials(AuthStore store, Users users)
-    {
-        var options = AuthOptions.Load(AuthTestServer.DefaultSettings());
-        return new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseDocumentStore(store), TimeProvider.System, options), options, TimeProvider.System);
-    }
 }

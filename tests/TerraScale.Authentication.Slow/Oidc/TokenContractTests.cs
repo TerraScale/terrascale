@@ -155,24 +155,9 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         return oidc.Client.SendAsync(request);
     }
 
-    private static async Task<string?> ErrorAsync(HttpResponseMessage response) =>
-        JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync()).GetProperty("error").GetString();
 
     private static async Task<JsonWebKeySet> KeysAsync(OidcHarness oidc) =>
         new(await oidc.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"));
 
     // Validated as TerraBase does: ES256 only, exact issuer and audience, published keys.
-    private static async Task<JsonWebToken> ValidateAsync(string token, JsonWebKeySet keys, string audience)
-    {
-        var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, new TokenValidationParameters
-        {
-            ValidIssuer = OidcHarness.Issuer,
-            ValidAudience = audience,
-            IgnoreTrailingSlashWhenValidatingAudience = false,
-            ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
-            IssuerSigningKeys = keys.GetSigningKeys(),
-            ClockSkew = TimeSpan.Zero,
-        });
-        return result.IsValid ? (JsonWebToken)result.SecurityToken : throw new InvalidOperationException($"Token rejected: {result.Exception?.GetType().Name}");
-    }
 }

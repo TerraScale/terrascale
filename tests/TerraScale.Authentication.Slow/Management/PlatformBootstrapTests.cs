@@ -14,8 +14,6 @@ namespace TerraScale.Authentication.Slow.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
 {
-    private static readonly string[] ProjectIds = [PlatformBootstrap.AuthProjectId, PlatformBootstrap.DashboardProjectId];
-    private static readonly string[] ProjectNames = ["ts-auth", "ts-dashboard"];
 
     [Test]
     public async Task Concurrent_bootstraps_seed_one_owner_and_exactly_two_projects()

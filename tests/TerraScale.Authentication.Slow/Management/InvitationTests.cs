@@ -16,7 +16,6 @@ namespace TerraScale.Authentication.Slow.Management;
 public sealed partial class InvitationTests(TerraBaseFixture fixture)
 {
     // The dashboard's accept page, on the origin of the harness's first dashboard redirect URI.
-    private static readonly string AcceptPage = $"{new Uri(OidcHarness.RedirectUri).GetLeftPart(UriPartial.Authority)}/invitations/";
 
     [Test]
     public async Task An_organization_sends_at_most_a_hundred_invitations_an_hour()
@@ -132,18 +131,4 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) =>
         OidcHarness.StartAsync(fixture, clock: clock);
 
-    private static async Task<(string Recipient, TerraScale.Authentication.Features.Email.EmailMessage Message)> NextInvitationAsync(OidcHarness oidc)
-    {
-        while (true)
-        {
-            var (recipient, message) = await oidc.Email.NextAsync();
-            if (message.Text.Contains(AcceptPage, StringComparison.Ordinal))
-            {
-                return (recipient, message);
-            }
-        }
-    }
-
-    [GeneratedRegex("^tsi_[0-9a-hjkmnp-tv-z]{52}$")]
-    private static partial Regex Token();
 }

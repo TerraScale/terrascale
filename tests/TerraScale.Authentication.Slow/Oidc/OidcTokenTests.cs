@@ -304,11 +304,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         return await OidcHarness.JsonAsync(polled);
     }
 
-    private static async Task AssertReplayRejectedAsync(HttpResponseMessage response)
-    {
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await AssertConflictNoticeAsync(await OidcHarness.JsonAsync(response));
-    }
 
     private static async Task AssertConflictNoticeAsync(JsonElement error)
     {

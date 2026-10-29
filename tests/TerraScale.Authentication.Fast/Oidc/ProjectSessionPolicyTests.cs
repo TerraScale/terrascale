@@ -18,7 +18,6 @@ namespace TerraScale.Authentication.Fast.Oidc;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
 {
-    private const string Callback = "https://app.example.test/callback";
 
 
 
@@ -65,50 +64,10 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
 
 
 
-    private static long AuthenticationTime(JsonElement tokens) =>
-        new JsonWebToken(tokens.GetProperty("access_token").GetString()!).GetPayloadValue<long>("auth_time");
 
-    private static async Task<DateTimeOffset> RefreshExpiryAsync(OidcHarness oidc, string project) =>
-        (await oidc.Database.ListDocumentsAsync("oidc_tokens", limit: 1000)).Items.Select(item => item.Document)
-            .Single(token => token.GetProperty("instanceId").GetString() == project && token.GetProperty("type").GetString() == TokenTypeIdentifiers.RefreshToken
-                && token.GetProperty("status").GetString() == "valid").GetProperty("expirationDate").GetDateTimeOffset();
 
-    private static async Task<Dictionary<string, string>> GrantAsync(OidcHarness oidc, string project, string client, string session, bool refresh)
-    {
-        var (verifier, challenge) = OidcHarness.Pkce();
-        using var authorize = await AuthorizeAsync(oidc, project, client, session, challenge, Callback);
-        Dictionary<string, string> grant = new()
-        {
-            ["grant_type"] = "authorization_code",
-            ["code"] = OidcHarness.Query(authorize.Headers.Location!)["code"]!,
-            ["client_id"] = client,
-            ["redirect_uri"] = Callback,
-            ["code_verifier"] = verifier,
-        };
-        if (!refresh)
-        {
-            return grant;
-        }
 
-        using var redeemed = await oidc.PostTokenAsync(grant, null, null, tenant: project);
-        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        return new() { ["grant_type"] = "refresh_token", ["refresh_token"] = (await OidcHarness.JsonAsync(redeemed)).GetProperty("refresh_token").GetString()!, ["client_id"] = client };
-    }
 
-    private static async Task AssertInvalidGrantAsync(HttpResponseMessage response)
-    {
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((await OidcHarness.JsonAsync(response)).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
-    }
-
-    private static async Task<string> RenewOwnerAsync(OidcHarness oidc, string token)
-    {
-        var session = await oidc.SignInAsync(new JsonWebToken(token).GetPayloadValue<string>("email"));
-        var (verifier, challenge) = OidcHarness.Pkce();
-        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
-        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        return (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
-    }
 
     private static async Task<(string OwnerToken, string Project)> ProjectAsync(OidcHarness oidc)
     {
@@ -120,16 +79,5 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
         await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/settings", token,
             new { configuration = new { redirect_urls = redirects, session_lifetime_seconds = seconds } });
 
-    private static async Task<string> ClientAsync(OidcHarness oidc, string token, string project, params string[] redirects) =>
-        (await oidc.OkAsync(HttpMethod.Post, $"/v1/{project}/clients", token,
-            new { name = "Policy app", type = "public", redirect_uris = redirects }, HttpStatusCode.Created)).GetProperty("client_id").GetString()!;
 
-    private static async Task<HttpResponseMessage> AuthorizeAsync(OidcHarness oidc, string project, string client, string session, string challenge,
-        string redirect, string? extra = null, string scope = "openid email offline_access")
-    {
-        var path = OidcHarness.AuthorizePath(challenge, redirectUri: redirect, clientId: client, extra: extra, scope: scope)
-            .Replace($"/{OidcIssuer.Slug}/", $"/{project}/", StringComparison.Ordinal);
-        using var request = new HttpRequestMessage(HttpMethod.Get, path) { Headers = { { "Cookie", $"tsauth_session_{project}={session}" } } };
-        return await oidc.Client.SendAsync(request);
-    }
 }

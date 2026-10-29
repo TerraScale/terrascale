@@ -55,25 +55,8 @@ public sealed partial class EmailChangeTests(TerraBaseFixture fixture)
     }
 
 
-    private static async Task<string> SignInAgainAsync(OidcHarness oidc, string email)
-    {
-        var session = await oidc.SignInAsync(email);
-        var (verifier, challenge) = OidcHarness.Pkce();
-        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
-        return (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
-    }
 
     // The outbox delivers the new address's code and the old address's notice in either order.
-    private static async Task<(string Code, EmailMessage Notice)> ChangeMailsAsync(OidcHarness oidc, string newAddress, string oldAddress)
-    {
-        (string Recipient, EmailMessage Message)[] mails = [await oidc.Email.NextAsync(), await oidc.Email.NextAsync()];
-        await Assert.That(mails.Select(mail => mail.Recipient).Order().ToArray()).IsEquivalentTo(new[] { newAddress, oldAddress }.Order().ToArray());
-        return (SixDigits().Match(mails.Single(mail => mail.Recipient == newAddress).Message.Text).Value, mails.Single(mail => mail.Recipient == oldAddress).Message);
-    }
 
-    [GeneratedRegex(@"\b[0-9]{6}\b")]
-    private static partial Regex SixDigits();
 
-    [GeneratedRegex(@"https?://\S+/ui/terrascale/email-change/cancel\?user=[0-9A-Z]{26}&token=[A-Za-z0-9_-]{43}")]
-    private static partial Regex CancelLink();
 }

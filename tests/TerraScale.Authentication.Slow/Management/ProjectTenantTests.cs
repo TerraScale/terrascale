@@ -18,7 +18,6 @@ namespace TerraScale.Authentication.Slow.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class ProjectTenantTests(TerraBaseFixture fixture)
 {
-    private static readonly string[] InsecureRedirect = ["http://app.example.test/cb"];
 
     private readonly Faker faker = new();
 

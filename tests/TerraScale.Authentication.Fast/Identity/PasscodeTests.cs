@@ -164,46 +164,12 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
 
 
 
-    private static string Wrong(string code, int offset) =>
-        ((int.Parse(code, CultureInfo.InvariantCulture) + offset) % 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
-
-    private sealed class ExpiringClock(DateTimeOffset live, DateTimeOffset expired) : TimeProvider
-    {
-        private int observations;
-
-        // Only the first observation (eligibility) sees the live instant.
-        public override DateTimeOffset GetUtcNow() => Interlocked.Increment(ref this.observations) == 1 ? live : expired;
-    }
-
-    private sealed class PausingClock(DateTimeOffset now) : TimeProvider, IDisposable
-    {
-        private readonly ManualResetEventSlim released = new();
-        private int observations;
-
-        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public void Release() => this.released.Set();
-
-        // The first observation is the eligibility check right after the passcode read; hold it there.
-        public override DateTimeOffset GetUtcNow()
-        {
-            if (Interlocked.Increment(ref this.observations) == 1)
-            {
-                this.Reached.SetResult();
-                this.released.Wait(TimeSpan.FromSeconds(30));
-            }
-
-            return now;
-        }
-
-        public void Dispose() => this.released.Dispose();
-    }
 
 
 
 
-    private static string Code(TotpEnrollment enrollment, StoreTestClock clock) =>
-        new Totp(Base32Encoding.ToBytes(enrollment.Secret)).ComputeTotp(clock.UtcNow.UtcDateTime);
+
+
 
     private (Users Users, Sessions Sessions, Passcodes Passcodes) Stack(TerraBaseTestTenant tenant, TimeProvider clock, AuthOptions options)
     {

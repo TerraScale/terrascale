@@ -24,9 +24,6 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
     private static readonly string[] ReadOnly = ["documents:read"];
-    private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
-    private static readonly string[] WithShapes = ["documents:read", "shapes:read"];
-    private static readonly string[] Browse = ["databases:read", "documents:read"];
 
     [Test]
     [Arguments(false)]
@@ -400,6 +397,4 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         return ((int)response.StatusCode, body.TryGetProperty("error", out var error) ? error.GetString() : null);
     }
 
-    [GeneratedRegex("^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")]
-    private static partial Regex KeyString();
 }

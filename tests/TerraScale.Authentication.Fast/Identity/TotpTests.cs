@@ -87,8 +87,6 @@ public sealed class TotpTests(TerraBaseFixture fixture)
     private static string Code(TotpEnrollment enrollment, StoreTestClock clock) =>
         new Totp(Base32Encoding.ToBytes(enrollment.Secret)).ComputeTotp(clock.UtcNow.UtcDateTime);
 
-    private static bool Accepts(TotpEnrollment enrollment, string code, DateTimeOffset at) =>
-        new Totp(Base32Encoding.ToBytes(enrollment.Secret)).VerifyTotp(at.UtcDateTime, code, out _, new VerificationWindow(previous: 1, future: 1));
 
 
 }

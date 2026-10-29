@@ -87,28 +87,4 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/members", bobToken)).GetProperty("items").GetArrayLength()).IsEqualTo(1);
     }
 
-    private sealed class InterleavedAccountCommit : DelegatingHandler
-    {
-        private int interleaved;
-
-        public Func<CancellationToken, Task>? BeforeCommit { get; set; }
-
-        public bool Interleaved => Volatile.Read(ref this.interleaved) != 0;
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            if (this.BeforeCommit is { } beforeCommit && request.Method == HttpMethod.Post
-                && request.RequestUri!.AbsolutePath.EndsWith("/transactions", StringComparison.Ordinal))
-            {
-                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
-                if (body.RootElement.GetProperty("ops").EnumerateArray().Any(operation => operation.GetProperty("collection").GetString() == AuthStore.ClosureCommitCollection)
-                    && Interlocked.CompareExchange(ref this.interleaved, 1, 0) == 0)
-                {
-                    await beforeCommit(cancellationToken);
-                }
-            }
-
-            return await base.SendAsync(request, cancellationToken);
-        }
-    }
 }

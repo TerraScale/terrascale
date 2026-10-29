@@ -89,7 +89,6 @@ public sealed class StepUpProofTests(TerraBaseFixture fixture)
         await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
     }
 
-    private static string Receipt() => Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
     private static async Task<JsonElement> BeginAsync(OidcHarness oidc, string token)
     {
         using var response = await RawAsync(oidc, Root, token, new { purpose = "create_pat", audience = "ts-dashboard", return_uri = Callback });

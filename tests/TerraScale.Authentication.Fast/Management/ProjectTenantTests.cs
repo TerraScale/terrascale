@@ -203,46 +203,6 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.Server.App.Services.GetRequiredService<ProjectAuthSettings>().GetAsync(project)).TitleSize).IsEqualTo(30);
     }
 
-    private static JsonElement ResponseSchema(JsonElement operation, string status) =>
-        operation.GetProperty("responses").GetProperty(status).GetProperty("content").GetProperty("application/json").GetProperty("schema");
-
-    // Follow the served references, including nullable nested DTOs and array elements.
-    private static async Task SchemaMatchesAsync(JsonElement schemas, JsonElement schema, JsonElement body)
-    {
-        if (body.ValueKind == JsonValueKind.Null)
-        {
-            return;
-        }
-
-        if (schema.TryGetProperty("$ref", out var reference))
-        {
-            schema = schemas.GetProperty(reference.GetString()!.Split('/')[^1]);
-        }
-
-        if (schema.TryGetProperty("oneOf", out var alternatives))
-        {
-            await SchemaMatchesAsync(schemas, alternatives.EnumerateArray().Single(item => !item.TryGetProperty("type", out var type) || type.GetString() != "null"), body);
-            return;
-        }
-
-        if (body.ValueKind == JsonValueKind.Object)
-        {
-            var properties = schema.GetProperty("properties");
-            foreach (var property in body.EnumerateObject())
-            {
-                await Assert.That(properties.TryGetProperty(property.Name, out _)).IsTrue();
-                await SchemaMatchesAsync(schemas, properties.GetProperty(property.Name), property.Value);
-            }
-        }
-        else if (body.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in body.EnumerateArray())
-            {
-                await SchemaMatchesAsync(schemas, schema.GetProperty("items"), item);
-            }
-        }
-    }
-
     private string Email(int index) =>
         this.faker.Internet.Email(provider: "example.test", uniqueSuffix: index.ToString(CultureInfo.InvariantCulture)).ToLowerInvariant();
 

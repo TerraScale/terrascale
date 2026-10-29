@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="TerraScale.Authentication.Fast" />
+    <InternalsVisibleTo Include="TerraScale.Authentication.Slow" />
   </ItemGroup>
 
   <ItemGroup>

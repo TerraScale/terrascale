@@ -222,31 +222,9 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
 
     // Descending, so an unexpected status leads the failure message.
 
-    private static string Outcomes((HttpStatusCode Status, string? Error, string Body)[] race) =>
-        string.Join(" | ", race.Select(result => $"{(int)result.Status}{(result.Error is null ? string.Empty : " " + result.Error)}").OrderDescending(StringComparer.Ordinal));
 
-    private static async Task<(HttpStatusCode Status, string? Error, string Body)[]> Race(Func<int, Task<HttpResponseMessage>> send)
-    {
-        using var start = new ManualResetEventSlim();
-        var attempts = Enumerable.Range(0, 8).Select(index => Task.Run(async () =>
-        {
-            start.Wait();
-            using var response = await send(index);
-            var body = await response.Content.ReadAsStringAsync();
-            // A non-OAuth body (for example the 500 error envelope) is kept whole so a failure shows it.
-            var error = response.StatusCode == HttpStatusCode.OK ? null
-                : JsonSerializer.Deserialize<JsonElement>(body).TryGetProperty("error", out var code) && code.ValueKind == JsonValueKind.String ? code.GetString() : body;
-            return (response.StatusCode, error, body);
-        })).ToArray();
-        start.Set();
-        return await Task.WhenAll(attempts);
-    }
 
     // The instance's stored signing key documents, read directly from TerraBase.
-    private static async Task<List<TerraBaseDocument>> KeyDocumentsAsync(OidcHarness oidc, string instance = OidcIssuer.InstanceId) =>
-        [.. (await oidc.Database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Where(document => document.Document.GetProperty("instanceId").GetString() == instance)];
 
     // Overwrites a stored key as a storage writer could; returns the new version.
-    private static async Task<string> OverwriteAsync(OidcHarness oidc, TerraBaseDocument stored, JsonNode record) =>
-        (await oidc.Database.PutDocumentAsync(AuthStore.SigningKeyCollection, stored.Id, JsonSerializer.SerializeToElement(record), TerraBasePrecondition.Matches(stored.Version))).Version;
 }

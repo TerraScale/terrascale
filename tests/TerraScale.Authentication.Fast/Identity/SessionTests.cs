@@ -143,15 +143,7 @@ public sealed class SessionTests(TerraBaseFixture fixture)
 
 
 
-    private static string Code(TotpEnrollment enrollment, StoreTestClock clock) =>
-        new Totp(Base32Encoding.ToBytes(enrollment.Secret)).ComputeTotp(clock.UtcNow.UtcDateTime);
 
-    private sealed class ExpiringClock(DateTimeOffset live, DateTimeOffset expired, int liveObservations) : TimeProvider
-    {
-        private int observations;
-
-        public override DateTimeOffset GetUtcNow() => Interlocked.Increment(ref this.observations) <= liveObservations ? live : expired;
-    }
 
     private (Users Users, Sessions Sessions) Stack(TerraBaseTestTenant tenant, TimeProvider clock)
     {

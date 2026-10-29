@@ -77,19 +77,6 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         await Assert.That(await restartedStore.GetAsync(AuthStore.DeletionJobCollection, "terrascale", job.Id)).IsNull();
     }
 
-    private static DeletionJob NewJob(StoreTestClock clock, string scope, string? subject = null)
-    {
-        subject ??= AuthStore.NewId();
-        var now = clock.UtcNow;
-        return new(DeletionJob.Key("terrascale", scope, subject), "terrascale", scope, subject, null, now, now.AddDays(30), now,
-            AuthLogicalVerifiedAt: now, FenceExpiresAt: now + DeletionJob.CredentialBound, ErasureId: AuthStore.NewId());
-    }
-
-    private static DashboardDeletionProof Proof(DeletionJob job) => new(job.ErasureId!, job.Scope, job.SubjectId, job.Scope == "organization" ? job.SubjectId : job.OrganizationId);
-
-    private static async Task SaveAsync(AuthStore store, DeletionJob job) =>
-        _ = await store.CreateAsync(AuthStore.DeletionJobCollection, job.InstanceId, job.Id, JsonSerializer.SerializeToElement(job, DeletionJson.Default.DeletionJob));
-
     private static async Task<DeletionJob> JobAsync(AuthStore store, DashboardDeletionProof proof) =>
         (await store.GetAsync(AuthStore.DeletionJobCollection, "terrascale", DeletionJob.Key("terrascale", proof.Scope, proof.SubjectId)))!.Document.Deserialize(DeletionJson.Default.DeletionJob)!;
 

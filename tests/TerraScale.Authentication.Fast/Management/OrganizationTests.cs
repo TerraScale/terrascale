@@ -262,10 +262,4 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
         await Assert.That(left.EnumerateArray().Select(member => member.GetProperty("user_id").GetString()!).ToArray()).IsEquivalentTo([alice.Id]);
     }
 
-    private static async Task<(int Status, string Body)> OnReplicaAsync(OidcHarness oidc, AuthTestServer replica, HttpMethod method, string path, string token, object? body = null)
-    {
-        using var response = await oidc.CallAsync(method, path, token, body, client: replica.Client);
-        return ((int)response.StatusCode, await response.Content.ReadAsStringAsync());
-    }
-
 }

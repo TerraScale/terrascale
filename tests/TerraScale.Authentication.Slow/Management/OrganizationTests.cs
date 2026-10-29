@@ -18,8 +18,6 @@ namespace TerraScale.Authentication.Slow.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class OrganizationTests(TerraBaseFixture fixture)
 {
-    private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
-    private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
 
     [Test]
     public async Task Project_lists_use_the_fresh_inherited_role_after_an_admin_is_demoted()

@@ -94,10 +94,7 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 
 
 
-    private static string Code(string secret, DateTimeOffset at) => new Totp(Base32Encoding.ToBytes(secret)).ComputeTotp(at.UtcDateTime);
 
-    [GeneratedRegex("name=\"challenge\" value=\"([^\"]+)\"")]
-    private static partial Regex ChallengePattern();
 
     private static async Task UnchangedAsync(Users users, UserRecord expected) =>
         await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))

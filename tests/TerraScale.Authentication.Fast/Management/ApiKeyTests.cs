@@ -317,20 +317,6 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) => OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
 
-    private Task<AuthTestServer> StartReplicaAsync(OidcHarness oidc, ManualClock clock) =>
-        OidcHarness.StartServerAsync(fixture, oidc.Tenant, oidc.Email, values =>
-        {
-            values["master-key"] = Convert.ToBase64String(oidc.Server.App.Services.GetRequiredService<AuthOptions>().MasterKey);
-            values["access-token-audiences"] = Audience;
-        }, clock: clock);
-
-    private static HttpRequestMessage KeyTokenRequest(string key)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/terrascale/oauth/token") { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["grant_type"] = "client_credentials" }) };
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{key[..26]}:{key}")));
-        return request;
-    }
-
     private static async Task<(int Status, string? Error)> TokenErrorAsync(Task<HttpResponseMessage> call)
     {
         using var response = await call;

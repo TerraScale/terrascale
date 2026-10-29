@@ -113,25 +113,9 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
 
     private static string Keys(string organization, string? project) => $"{Organizations}/{organization}" + (project is null ? string.Empty : $"/projects/{project}") + "/api-keys";
 
-    private static string[] LargeRoles(int characters, char value) => Enumerable.Range(0, 64)
-        .Select(index => index.ToString("D2", CultureInfo.InvariantCulture) + new string(value, Math.Clamp(characters - index * 126, 0, 126))).ToArray();
 
     private static async Task<string> KeyAsync(OidcHarness oidc, string owner, string organization, string? project, string? database = null, string[]? scopes = null, DateTimeOffset? expires = null) =>
         (await oidc.OkAsync(HttpMethod.Post, Keys(organization, project), owner,
             new { name = "backend", scopes = scopes ?? ReadWrite, database, expires_at = expires }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
 
-    private sealed class AfterContinueContent(byte[] body, Func<Task> beforeWrite) : HttpContent
-    {
-        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-        {
-            await beforeWrite();
-            await stream.WriteAsync(body);
-        }
-
-        protected override bool TryComputeLength(out long length)
-        {
-            length = body.Length;
-            return true;
-        }
-    }
 }

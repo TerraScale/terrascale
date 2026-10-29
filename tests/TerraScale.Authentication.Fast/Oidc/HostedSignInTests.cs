@@ -194,20 +194,9 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
 
     // Starts a hosted sign-up and returns the pending token its verify page carries.
 
-    private static async Task<string> SignUpAsync(OidcHarness oidc, string address, string password)
-    {
-        using var response = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });
-        return response.StatusCode == HttpStatusCode.OK
-            ? PendingToken().Match(await response.Content.ReadAsStringAsync()).Groups[1].Value
-            : throw new InvalidOperationException($"Sign-up answered {response.StatusCode}.");
-    }
 
-    private static Task<HttpResponseMessage> SignUpVerifyAsync(OidcHarness oidc, string address, string code, string pending, HttpClient? client = null) =>
-        oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new() { ["email"] = address, ["code"] = code, ["pending_token"] = pending, ["next"] = string.Empty }, client: client);
 
     // Every hosted email-code start shares the same mail cooldown.
-    private static Task<HttpResponseMessage> MailStartAsync(OidcHarness oidc, string path, string address, HttpClient? client = null) =>
-        oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/{path}", new() { ["email"] = address, ["password"] = "correct horse battery", ["next"] = string.Empty }, client: client);
 
     private static async Task<string?> PasswordSignInAsync(OidcHarness oidc, string address, string password)
     {
@@ -249,35 +238,6 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     }
 
 
-    private static async Task ExpectReadableTextAsync(IPage page)
-    {
-        var contrast = await page.EvaluateAsync<double[]>("""
-            () => {
-              const lum = c => { const v = c.match(/[\d.]+/g).slice(0,3).map(Number).map(v => v / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126*v[0]+.7152*v[1]+.0722*v[2]; };
-              const ratio = (a,b) => (Math.max(lum(a),lum(b))+.05)/(Math.min(lum(a),lum(b))+.05);
-              const background = el => {
-                for (; el; el = el.parentElement) {
-                  const color = getComputedStyle(el).backgroundColor;
-                  if (color !== 'rgba(0, 0, 0, 0)') return color;
-                }
-                throw new Error('No painted background');
-              };
-              const results = [];
-              for (const selector of ['.brand span', 'h1', '.sub', '.card label', '.card input:not([type=hidden])', '.card button', '.card a', '.hint', '.alt', '.chip span', '.foot-links a', '.auth-powered', '.auth-powered b', '.theme-picker']) {
-                document.querySelectorAll(selector).forEach((el, index) => {
-                  results.push(ratio(getComputedStyle(el).color, background(el)));
-                  if (el.matches('input[placeholder]')) results.push(ratio(getComputedStyle(el, '::placeholder').color, background(el)));
-                });
-              }
-              return results;
-            }
-            """);
-        await Assert.That(contrast).IsNotEmpty();
-        for (var index = 0; index < contrast.Length; index++)
-        {
-            await Assert.That(contrast[index]).IsGreaterThanOrEqualTo(4.5).Because($"{page.Url}: contrast measurement {index}");
-        }
-    }
 
     /// <summary>
     /// Opens the real sign-in page. The browser never reaches the loopback listener directly: every request to the
@@ -324,10 +284,4 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         return page;
     }
 
-    /// <summary>Waits for the effective colour scheme, so the OS change event has run before the assertion.</summary>
-    private static async Task ExpectSchemeAsync(IPage page, string expected)
-    {
-        await page.WaitForFunctionAsync("scheme => getComputedStyle(document.documentElement).colorScheme === scheme", expected);
-        await Assert.That(await page.EvaluateAsync<string>("getComputedStyle(document.documentElement).colorScheme")).IsEqualTo(expected);
-    }
 }
