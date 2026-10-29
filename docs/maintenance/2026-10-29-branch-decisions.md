@@ -2,7 +2,7 @@
 
 Audit of all 194 refs in the cleanup list against main `4bacd8a818cff3fab76f3f0558bdc4585361e617` (#877). Every row identifies the original branch tip so decisions remain traceable after ref deletion. `ported` can mean only the still-wanted subset; the reason states what was preserved or excluded. `superseded` includes intentionally rejected/replaced designs and frozen benchmark stacks. No performance, interoperability or qualification success is inferred from a source port; the folded PR must pass current CI and review.
 
-Rejected claims/hash candidates (#814/#816), cached-open concerns (#836), unresolved CORS tail concerns and unlaunched auth experiment holds remain closed/held. No StorageFormat change, migration or retired SQLite engine is introduced. Auth changes require current security review; hosted form previews must be attached for the exact final PR head before merge.
+Rejected claims/hash candidates (#814/#816), cached-open concerns (#836), unresolved CORS tail concerns and unlaunched auth experiment holds remain closed/held. No StorageFormat change, migration or retired SQLite engine is introduced. The CORS/auth security review approved head `165c7a94e`; its residual Wire identity finding is addressed separately. Current-head CI and review still gate merge. Hosted-form previews are attached to the PR.
 
 The local recovery bundle `~/Backups/merge-back-20261029/terrascale-194-branches.bundle` preserves all source refs. Delete source refs only after the folded PR merges, excluding any current open-PR branch and any branch owned by another author. The initial historical-PR audit found only MarioGK among listed branch PR authors; refresh ownership and open PRs before deletion.
 
@@ -25,8 +25,8 @@ claim general EF compatibility from this single introspection operation.
 Additional local-only salvage: beta's `fix/client-sql-libsql-cors` at
 `1d99fa8252c15b8816e20440f230f6898670b297` adds bearer-only CORS for exact SQL
 execute and libSQL HTTP routes. Port it with main's public probe policy and
-listener boundaries intact. This is a security-sensitive surface expansion and
-remains on hold until security review explicitly approves it. It is independent
+listener boundaries intact. This security-sensitive surface expansion was
+cleared by [security review](https://github.com/TerraScale/terrascale/pull/884#issuecomment-6497909188). It is independent
 of the rejected/unresolved CORS span-matcher performance experiment; that runtime
 matcher remains excluded.
 

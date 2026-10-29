@@ -31,6 +31,7 @@ public sealed class OidcCodeReplayTests(TerraBaseFixture fixture)
             await oidc.RedeemCodeAsync(code, verifier, OidcHarness.LoopbackRedirectUri),
             await oidc.PostTokenAsync(Form(code, verifier, OidcIssuer.CliClientId), null, null),
             await oidc.TokenAsync(Form(code, verifier), secret: "wrong-secret"),
+            await oidc.PostTokenAsync(Form(code, verifier, OidcIssuer.DashboardClientId), null, null),
         };
         foreach (var response in refused)
         {

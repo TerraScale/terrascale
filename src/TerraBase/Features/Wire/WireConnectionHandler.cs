@@ -277,7 +277,8 @@ internal sealed class WireConnectionHandler(IServiceProvider services)
 
         return await services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(key.OrganizationId, project, database, cancellationToken).ConfigureAwait(false) switch
         {
-            TenantContext tenant => new Grant(key, tenant, sequence),
+            TenantContext tenant when tenant.DatabaseId == record.Id && key.Reaches(tenant) => new Grant(key, tenant, sequence),
+            TenantContext => DocumentRoute.UnknownDatabase,
             Unavailable error => error,
             _ => DocumentRoute.UnknownDatabase,
         };
