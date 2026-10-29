@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using Bogus;
-using Npgsql;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
