@@ -144,68 +144,6 @@ internal static class SqlText
         return true;
     }
 
-    public static List<List<SqlToken>> Statements(List<SqlToken> tokens)
-    {
-        ArgumentNullException.ThrowIfNull(tokens);
-        var statements = new List<List<SqlToken>>();
-        var current = new List<SqlToken>();
-        var body = 0;
-        var bodyDone = false;
-        foreach (var token in tokens)
-        {
-            if (token.Kind == SqlTokenKind.Semicolon && body == 0)
-            {
-                if (current.Count > 0)
-                {
-                    statements.Add(current);
-                    current = [];
-                }
-
-                bodyDone = false;
-                continue;
-            }
-
-            current.Add(token);
-            if (token.Kind != SqlTokenKind.Word || bodyDone || !IsTrigger(current))
-            {
-                continue;
-            }
-
-            if (body == 0 && token.Is("BEGIN"))
-            {
-                body = 1;
-            }
-            else if (body > 0 && token.Is("CASE"))
-            {
-                body++;
-            }
-            else if (body > 0 && token.Is("END") && --body == 0)
-            {
-                bodyDone = true;
-            }
-        }
-
-        if (current.Count > 0)
-        {
-            statements.Add(current);
-        }
-
-        return statements;
-    }
-
-    public static string Text(string sql, List<SqlToken> statement)
-    {
-        ArgumentNullException.ThrowIfNull(sql);
-        ArgumentNullException.ThrowIfNull(statement);
-        return statement.Count == 0 ? "" : sql[statement[0].Start..statement[^1].End];
-    }
-
-    public static bool IsOneStatement(string sql) => TryTokenize(sql, out var tokens) && Statements(tokens).Count == 1;
-
-    private static bool IsTrigger(List<SqlToken> statement) =>
-        statement.Count > 2 && statement[0].Is("CREATE")
-        && (statement[1].Is("TRIGGER") || (statement.Count > 3 && (statement[1].Is("TEMP") || statement[1].Is("TEMPORARY")) && statement[2].Is("TRIGGER")));
-
     private static bool TryQuoted(string sql, ref int i, char quote, out string value)
     {
         var text = new System.Text.StringBuilder();

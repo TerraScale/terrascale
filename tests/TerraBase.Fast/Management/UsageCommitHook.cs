@@ -397,6 +397,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         ValueTask<SqlStatementResult> IStorageTransaction.ExecuteStatementAsync(SqlStatement statement, CancellationToken cancellationToken) => inner.ExecuteStatementAsync(statement, cancellationToken);
         ValueTask<SqlStatementShape> IStorageTransaction.DescribeStatementAsync(string sql, CancellationToken cancellationToken) => inner.DescribeStatementAsync(sql, cancellationToken);
         void IStorageTransaction.InterruptStatement() => inner.InterruptStatement();
+        ValueTask<long> IStorageTransaction.MeasureSqlStorageAsync(CancellationToken cancellationToken) => inner.MeasureSqlStorageAsync(cancellationToken);
+        ValueTask IStorageTransaction.AddSqlStorageAsync(long delta, CancellationToken cancellationToken) => inner.AddSqlStorageAsync(delta, cancellationToken);
         public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) => inner.DeleteCollectionsAsync(prefix, cancellationToken);
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) => inner.ListIndexesAsync(cancellationToken);
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) => inner.CreateIndexAsync(index, cancellationToken);

@@ -134,6 +134,10 @@ public interface IStorageTransaction : IAsyncDisposable
 
     internal void InterruptStatement();
 
+    internal ValueTask<long> MeasureSqlStorageAsync(CancellationToken cancellationToken);
+
+    internal ValueTask AddSqlStorageAsync(long delta, CancellationToken cancellationToken);
+
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
 
     ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken);

@@ -25,7 +25,8 @@ internal enum SqlWriteVerb
 }
 
 internal sealed record SqlStatementPlan(
-    string Sql, SqlStatementKind Kind, SqlWriteVerb Verb, bool ReadsTables, bool IsExplain, bool ReadOnly, IReadOnlyList<string?> Params, IReadOnlyList<string> Names)
+    string Sql, SqlStatementKind Kind, SqlWriteVerb Verb, bool ReadsTables, bool IsExplain, bool ReadOnly, IReadOnlyList<string?> Params, IReadOnlyList<string> Names,
+    string? Savepoint)
 {
     public bool IsControl => Kind is SqlStatementKind.Begin or SqlStatementKind.Commit or SqlStatementKind.Rollback;
 
@@ -33,8 +34,6 @@ internal sealed record SqlStatementPlan(
 }
 
 internal readonly union SqlPlanOutcome(SqlStatementPlan, SqlError);
-
-internal readonly union SqlScriptOutcome(List<string>, SqlError);
 
 internal static class SqlScript
 {
@@ -54,20 +53,39 @@ internal static class SqlScript
 
     public static bool IsReservedName(string name) => IsReservedTable(name) || name.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase);
 
-    public static SqlScriptOutcome Split(string script)
+    public static int CountAtMost(string script)
     {
-        ArgumentNullException.ThrowIfNull(script);
         if (!SqlText.TryTokenize(script, out var tokens))
         {
-            return SqlErrors.Error("SQL syntax error: unterminated string, quoted name or comment");
+            return 1;
         }
 
-        return SqlText.Statements(tokens).Select(statement => SqlText.Text(script, statement)).ToList();
+        var count = 0;
+        var open = false;
+        foreach (var token in tokens)
+        {
+            count += !open && token.Kind != SqlTokenKind.Semicolon ? 1 : 0;
+            open = token.Kind != SqlTokenKind.Semicolon;
+        }
+
+        return count;
     }
 
-    public static SqlPlanOutcome Classify(string? sql)
+    public static bool HasStatement(string script) =>
+        !SqlText.TryTokenize(script, out var tokens) || tokens.Exists(token => token.Kind != SqlTokenKind.Semicolon);
+
+    public static bool IsSimple(string script) =>
+        SqlText.TryTokenize(script, out var tokens) && tokens.Find(token => token.Kind != SqlTokenKind.Semicolon) is { Kind: SqlTokenKind.Word, Value: { } first }
+        && first.ToUpperInvariant() is "BEGIN" or "START" or "COMMIT" or "END" or "ROLLBACK" or "SAVEPOINT" or "RELEASE" or "PRAGMA";
+
+    public static int SimpleLength(string script) =>
+        SqlText.TryTokenize(script, out var tokens) && tokens.FindIndex(token => token.Kind == SqlTokenKind.Semicolon) is var end and >= 0
+            ? tokens[end].End
+            : script.Length;
+
+    public static SqlPlanOutcome Classify(string? sql, bool bounded = true)
     {
-        if (string.IsNullOrWhiteSpace(sql) || sql.Length > MaxSqlLength)
+        if (string.IsNullOrWhiteSpace(sql) || (bounded && sql.Length > MaxSqlLength))
         {
             return SqlErrors.Error("sql must be 1 to 16384 characters");
         }
@@ -77,12 +95,13 @@ internal static class SqlScript
             return SqlErrors.Error("SQL syntax error: unterminated string, quoted name or comment");
         }
 
-        var statements = SqlText.Statements(all);
-        if (statements is not [var tokens])
+        var start = all.FindIndex(token => token.Kind != SqlTokenKind.Semicolon);
+        if (start < 0)
         {
-            return SqlErrors.Error(statements.Count == 0 ? "the statement is empty" : "run one statement at a time, or send a script");
+            return SqlErrors.Error("the statement is empty");
         }
 
+        var tokens = all[start..(all.FindLastIndex(token => token.Kind != SqlTokenKind.Semicolon) + 1)];
         var names = new List<string>();
         foreach (var token in tokens)
         {
@@ -99,13 +118,14 @@ internal static class SqlScript
             names.Add(token.Value.ToLowerInvariant());
         }
 
-        var text = SqlText.Text(sql, tokens);
+        var text = sql[tokens[0].Start..tokens[^1].End];
+        var savepoint = tokens[^1].IsName ? tokens[^1].Value : null;
         var parameters = Parameters(tokens);
         var first = tokens[0];
         var verb = first.Kind == SqlTokenKind.Word ? first.Value.ToUpperInvariant() : "";
         SqlStatementPlan Plan(SqlStatementKind kind, SqlWriteVerb write = SqlWriteVerb.None, bool readsTables = false, bool explain = false, bool readOnly = false)
         {
-            return new(text, kind, write, readsTables, explain, readOnly, parameters, names);
+            return new(text, kind, write, readsTables, explain, readOnly, parameters, names, savepoint);
         }
 
         return verb switch

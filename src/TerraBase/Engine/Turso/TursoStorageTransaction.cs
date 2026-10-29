@@ -1285,6 +1285,13 @@ internal sealed partial class TursoStorageTransaction(
                 _faulted = true;
                 throw new SqlStatementException(SqlFailure.Interrupted, "the commit was interrupted before it took effect", transactionEnded: true, error);
             }
+            catch (SqliteException error) when (committing && !_committed && error.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase))
+            {
+                _faulted = true;
+                var foreignKey = error.Message.Contains("FOREIGN KEY", StringComparison.OrdinalIgnoreCase);
+                throw new SqlStatementException(
+                    foreignKey ? SqlFailure.ForeignKey : SqlFailure.Constraint, foreignKey ? "FOREIGN KEY constraint failed" : "constraint failed", transactionEnded: true, error);
+            }
             catch
             {
                 _faulted = true;
@@ -1303,7 +1310,7 @@ internal sealed partial class TursoStorageTransaction(
                     store.ForgetCollections();
                 }
 
-                if (committing && (_offset is not null || _feedChanged))
+                if (committing && (_offset is not null || _feedChanged || _sqlChanged))
                 {
                     store.MoveCommitCount();
                 }
@@ -1320,7 +1327,7 @@ internal sealed partial class TursoStorageTransaction(
             {
 
                 NoteCopyFault("the commit marker could not be read after COMMIT");
-                if (_offset is not null || _feedChanged)
+                if (_offset is not null || _feedChanged || _sqlChanged)
                 {
                     Follow("the commit notification", committed);
                 }
@@ -1344,7 +1351,7 @@ internal sealed partial class TursoStorageTransaction(
             return result;
         }, cancellationToken).ConfigureAwait(false);
 
-        if (_offset is not null || _feedChanged)
+        if (_offset is not null || _feedChanged || _sqlChanged)
         {
             Follow("the commit notification", committed);
         }

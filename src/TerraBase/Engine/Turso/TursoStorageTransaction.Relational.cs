@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 using TerraBase.Features.Qos;
 using Turso.Raw.Public;
@@ -16,7 +15,10 @@ internal sealed partial class TursoStorageTransaction
         "malformed JSON", "must be",
     ];
 
+    internal const string SqlStatsCollection = "_sql";
+
     private long _pageSize;
+    private bool _sqlChanged;
 
     ValueTask<SqlStatementResult> IStorageTransaction.ExecuteStatementAsync(SqlStatement statement, CancellationToken cancellationToken)
     {
@@ -57,6 +59,75 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
+    ValueTask<long> IStorageTransaction.MeasureSqlStorageAsync(CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            var native = session.Native;
+            try
+            {
+                return (Counter(native, "PRAGMA page_count;") - Counter(native, "PRAGMA freelist_count;")) * PageSize(native);
+            }
+            catch (TursoException error)
+            {
+                throw Failure(native, error);
+            }
+        }, cancellationToken);
+
+    async ValueTask IStorageTransaction.AddSqlStorageAsync(long delta, CancellationToken cancellationToken) =>
+        _ = await RunAsync(() =>
+        {
+            if (!write || store.IsSystem)
+            {
+                throw new InvalidOperationException("SQL storage belongs to a client database's write transaction");
+            }
+
+            var command = Command(TursoStatements.AddCollectionStats, SqlStatsCollection);
+            command.Parameters.AddWithValue("$documents", 0L);
+            command.Parameters.AddWithValue("$bytes", delta);
+            _ = command.ExecuteNonQuery();
+            _sqlChanged = true;
+            return true;
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+
+    private SqlStatementResult RunStatement(SqlStatement statement, CancellationToken cancellationToken)
+    {
+        var native = session.Native;
+        _ranPlain |= write;
+        _sqlChanged |= write;
+        _queryBudget!.Charge(statement.Sql);
+        CountRead("query");
+        try
+        {
+            var pages = write ? Counter(native, "PRAGMA page_count;") : 0L;
+            var (prepared, consumed) = Prepare(native, statement.Sql, statement.First);
+            (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) stepped;
+            TursoBindings.SetQueryTimeout(native, statement.Timeout);
+            TursoBindings.SetMaxValueLength(native, statement.MaxBytes);
+            OpenInterruptWindow(native);
+            try
+            {
+                using (cancellationToken.Register(static state => ((TursoStorageTransaction)state!).InterruptCustomerStatement(), this))
+                {
+                    stepped = Step(prepared, statement, cancellationToken);
+                }
+            }
+            finally
+            {
+                CloseInterruptWindow(native);
+                TursoBindings.SetQueryTimeout(native, TimeSpan.Zero);
+                TursoBindings.SetMaxValueLength(native, long.MaxValue);
+            }
+
+            var rowid = Counter(native, "SELECT last_insert_rowid();");
+            var grown = write ? Counter(native, "PRAGMA page_count;") - pages : 0L;
+            return new SqlStatementResult(stepped.Columns, stepped.Rows, stepped.Affected, rowid, grown * PageSize(native), stepped.Truncated, consumed);
+        }
+        catch (TursoException error)
+        {
+            throw Failure(native, error);
+        }
+    }
+
     private void OpenInterruptWindow(TursoDatabaseHandle native)
     {
         lock (_interruptGate)
@@ -75,47 +146,23 @@ internal sealed partial class TursoStorageTransaction
         TursoBindings.ClearInterrupt(native);
     }
 
-    private SqlStatementResult RunStatement(SqlStatement statement, CancellationToken cancellationToken)
+    private static (TursoStatementHandle Prepared, int Consumed) Prepare(TursoDatabaseHandle native, string sql, bool first)
     {
-        RequireOneStatement(statement.Sql);
-        var native = session.Native;
-        _ranPlain |= write;
-        _queryBudget!.Charge(statement.Sql);
-        CountRead("query");
-        try
+        var prepared = TursoBindings.PrepareFirst(native, sql, out var tail)
+            ?? throw new SqlStatementException(SqlFailure.Error, "the statement is empty", transactionEnded: false);
+        var consumed = sql.Length - tail;
+        if (!first && !(SqlText.TryTokenize(sql[consumed..], out var rest) && rest.TrueForAll(token => token.Kind == SqlTokenKind.Semicolon)))
         {
-            var (changes, pages) = write ? (Counter(native, "SELECT total_changes();"), Counter(native, "PRAGMA page_count;")) : (0L, 0L);
-            (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) stepped;
-            TursoBindings.SetQueryTimeout(native, statement.Timeout);
-            OpenInterruptWindow(native);
-            try
-            {
-                using (cancellationToken.Register(static state => ((TursoStorageTransaction)state!).InterruptCustomerStatement(), this))
-                {
-                    stepped = Step(native, statement, cancellationToken);
-                }
-            }
-            finally
-            {
-                CloseInterruptWindow(native);
-                TursoBindings.SetQueryTimeout(native, TimeSpan.Zero);
-            }
+            Release(prepared);
+            throw new SqlStatementException(SqlFailure.Error, "an engine call runs exactly one SQL statement", transactionEnded: false);
+        }
 
-            var (columns, rows, affected, truncated) = stepped;
-            var rowid = Counter(native, "SELECT last_insert_rowid();");
-            var (changed, grown) = write ? (Counter(native, "SELECT total_changes();") - changes, Counter(native, "PRAGMA page_count;") - pages) : (0L, 0L);
-            return new SqlStatementResult(columns, rows, affected, changed, rowid, grown * PageSize(native), truncated);
-        }
-        catch (TursoException error)
-        {
-            throw Failure(native, error);
-        }
+        return (prepared, consumed);
     }
 
     private (List<SqlStatementColumn> Columns, List<object?[]> Rows, long Affected, bool Truncated) Step(
-        TursoDatabaseHandle native, SqlStatement statement, CancellationToken cancellationToken)
+        TursoStatementHandle prepared, SqlStatement statement, CancellationToken cancellationToken)
     {
-        var prepared = TursoBindings.PrepareStatement(native, statement.Sql);
         try
         {
             Bind(prepared, statement);
@@ -131,8 +178,33 @@ internal sealed partial class TursoStorageTransaction
                     throw new QueryCapacityException("query execution budget exceeded");
                 }
 
-                var row = new object?[columns.Count];
                 long size = 0;
+                for (var i = 0; i < columns.Count; i++)
+                {
+                    size += TursoBindings.GetValueType(prepared, i) switch
+                    {
+                        TursoValueType.Text or TursoValueType.Blob => Math.Max(0, TursoBindings.GetValueByteCount(prepared, i)),
+                        TursoValueType.Null or TursoValueType.Empty => 0,
+                        _ => 8,
+                    };
+                }
+
+                if (rows.Count == statement.MaxRows || size > statement.MaxBytes - bytes)
+                {
+                    return (columns, rows, TursoBindings.RowsAffected(prepared), true);
+                }
+
+                var held = checked((2 * size) + (16L * columns.Count) + 64);
+                if (held > reserved)
+                {
+                    var block = Math.Max(held, 256 * 1024);
+                    QosContext.ReserveResult(block, store.IsSystem ? null : QosContext.Current);
+                    reserved += block;
+                }
+
+                reserved -= held;
+                bytes += size;
+                var row = new object?[columns.Count];
                 for (var i = 0; i < row.Length; i++)
                 {
                     row[i] = TursoBindings.GetValue(prepared, i) switch
@@ -143,30 +215,8 @@ internal sealed partial class TursoStorageTransaction
                         { ValueType: TursoValueType.Blob } value => value.BlobValue,
                         _ => null,
                     };
-                    size += row[i] switch
-                    {
-                        string text => Encoding.UTF8.GetByteCount(text),
-                        byte[] blob => blob.Length,
-                        null => 0,
-                        _ => 8,
-                    };
                 }
 
-                if (rows.Count == statement.MaxRows || bytes + size > statement.MaxBytes)
-                {
-                    return (columns, rows, TursoBindings.RowsAffected(prepared), true);
-                }
-
-                var held = checked((2 * size) + (16L * row.Length) + 64);
-                if (held > reserved)
-                {
-                    var block = Math.Max(held, 256 * 1024);
-                    QosContext.ReserveResult(block, store.IsSystem ? null : QosContext.Current);
-                    reserved += block;
-                }
-
-                reserved -= held;
-                bytes += size;
                 rows.Add(row);
             }
 
@@ -180,11 +230,10 @@ internal sealed partial class TursoStorageTransaction
 
     private SqlStatementShape DescribeStatement(string sql)
     {
-        RequireOneStatement(sql);
         var native = session.Native;
         try
         {
-            var prepared = TursoBindings.PrepareStatement(native, sql);
+            var (prepared, _) = Prepare(native, sql, first: false);
             try
             {
                 var parameters = new string?[TursoBindings.GetParameterCount(prepared)];
@@ -203,14 +252,6 @@ internal sealed partial class TursoStorageTransaction
         catch (TursoException error)
         {
             throw Failure(native, error);
-        }
-    }
-
-    private static void RequireOneStatement(string sql)
-    {
-        if (!SqlText.IsOneStatement(sql))
-        {
-            throw new SqlStatementException(SqlFailure.Error, "an engine call runs exactly one SQL statement", transactionEnded: false);
         }
     }
 

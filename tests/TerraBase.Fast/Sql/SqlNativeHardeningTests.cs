@@ -4,8 +4,12 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
+using TerraBase.Engine;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 using static TerraBase.Fast.Sql.SqlNativeDatabase;
 
@@ -69,6 +73,125 @@ public sealed class SqlNativeHardeningTests
         await Assert.That(interrupted).IsEqualTo("57014");
         await Assert.That(clock.Elapsed).IsLessThan(TimeSpan.FromSeconds(15));
         await Assert.That(await ScalarAsync(other, "SELECT count(*) FROM notes WHERE id = 1")).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task A_deferred_foreign_key_violation_fails_the_commit_and_the_database_keeps_accepting_writes()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync(
+            "CREATE TABLE teams (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE players (id INTEGER PRIMARY KEY, team INTEGER REFERENCES teams (id) DEFERRABLE INITIALLY DEFERRED)");
+
+        var rest = await db.RefusedAsync("INSERT INTO players VALUES (1, 99)");
+        await using var connection = await db.Postgres.OpenConnectionAsync();
+        await PostgresSql.ExecuteAsync(connection, "BEGIN");
+        await PostgresSql.ExecuteAsync(connection, "INSERT INTO players VALUES (2, 98)");
+        var postgres = await StateAsync(connection, "COMMIT");
+        await db.OkAsync("INSERT INTO teams VALUES (7)", "INSERT INTO players VALUES (3, 7)");
+        await PostgresSql.ExecuteAsync(connection, "INSERT INTO teams VALUES (8)");
+
+        await Assert.That(rest.Code).IsEqualTo("SQLITE_CONSTRAINT_FOREIGNKEY");
+        await Assert.That(postgres).IsEqualTo("23503");
+        await Assert.That(await db.CountAsync("players")).IsEqualTo(1);
+        await Assert.That(await db.CountAsync("teams")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task Values_past_the_result_bound_are_refused_before_they_are_built()
+    {
+        await using var db = await StartAsync();
+
+        var zeroblob = await db.RefusedAsync("SELECT zeroblob(536870912)");
+        var randomblob = await db.RefusedAsync("SELECT length(randomblob(536870912))");
+        var doubling = await db.RefusedAsync("WITH RECURSIVE s(x, n) AS (SELECT 'x', 0 UNION ALL SELECT x || x, n + 1 FROM s WHERE n < 40) SELECT max(length(x)) FROM s");
+        var hex = await db.RefusedAsync("SELECT length(hex(randomblob(5000000)))");
+        var fits = await db.OkAsync("SELECT length(zeroblob(1048576))");
+
+        foreach (var refused in new[] { zeroblob, randomblob, doubling, hex })
+        {
+            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "SQLITE_TOOBIG"));
+        }
+
+        await Assert.That(fits[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1048576);
+    }
+
+    [Test]
+    public async Task Sql_storage_counts_against_the_quota_and_deletes_free_it()
+    {
+        await using var db = await StartAsync(services => services.AddSingleton<IStorageQuota>(provider =>
+            new StorageQuota(provider.GetRequiredService<IStorageEngine>(), provider.GetRequiredService<ITenantDirectory>(),
+                plan => plan == PlanTier.Hobby ? 64 * 1024 : long.MaxValue)));
+        await db.OkAsync("CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB NOT NULL)");
+
+        string? full = null;
+        for (var i = 0; i < 64 && full is null; i++)
+        {
+            var (status, body) = await db.PostAsync(db.Writer, Stmt("INSERT INTO files (data) VALUES (randomblob(3000))"));
+            full = status == HttpStatusCode.OK ? null : body.GetProperty("error").GetProperty("sqlite_code").GetString();
+        }
+
+        var rows = await db.CountAsync("files");
+        await db.OkAsync("DELETE FROM files");
+        await db.OkAsync("INSERT INTO files (data) VALUES (randomblob(3000))");
+
+        await Assert.That(full).IsEqualTo("SQLITE_FULL");
+        await Assert.That(rows).IsGreaterThan(0).And.IsLessThan(64);
+        await Assert.That(await db.CountAsync("files")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task An_explicit_transaction_and_an_autocommit_writer_of_the_same_organization_both_complete()
+    {
+        await using var db = await StartAsync();
+        await using var explicitWriter = await db.Postgres.OpenConnectionAsync();
+        await using var autocommit = await db.Postgres.OpenConnectionAsync();
+        await PostgresSql.ExecuteAsync(explicitWriter, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+        var clock = Stopwatch.StartNew();
+
+        await using var transaction = await explicitWriter.BeginTransactionAsync();
+        await PostgresSql.ExecuteAsync(explicitWriter, "INSERT INTO notes (id, body) VALUES (1, $1)", Faker.Lorem.Sentence());
+        var waiting = StateAsync(autocommit, "INSERT INTO notes (id, body) VALUES (2, $1)", Faker.Lorem.Sentence());
+        await PostgresSql.ExecuteAsync(explicitWriter, "INSERT INTO notes (id, body) VALUES (3, $1)", Faker.Lorem.Sentence());
+        await transaction.CommitAsync();
+
+        await Assert.That(await waiting).IsNull();
+        await Assert.That(clock.Elapsed).IsLessThan(TimeSpan.FromSeconds(4));
+        await Assert.That(await ScalarAsync(autocommit, "SELECT count(*) FROM notes")).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task Rows_undone_by_rollback_to_a_savepoint_are_not_billed()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+        var before = await WritesAsync(db);
+
+        await db.OkAsync(
+            Stmt("SAVEPOINT s"), Stmt("INSERT INTO notes (body) VALUES (?)", Faker.Lorem.Sentence()), Stmt("ROLLBACK TO s"),
+            Stmt("INSERT INTO notes (body) VALUES (?)", Faker.Lorem.Sentence()));
+
+        await Assert.That(await WritesAsync(db) - before).IsEqualTo(1);
+        await Assert.That(await db.CountAsync("notes")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task A_trigger_body_with_an_end_column_and_nested_case_runs_as_one_statement()
+    {
+        await using var db = await StartAsync();
+        await db.OkAsync("CREATE TABLE spans (id INTEGER PRIMARY KEY, end INTEGER, kind TEXT)", "CREATE TABLE log (label TEXT)");
+
+        await db.OkAsync("""
+            CREATE TRIGGER close_span AFTER INSERT ON spans BEGIN
+                UPDATE spans SET end = 2 WHERE id = new.id;
+                INSERT INTO log VALUES (CASE WHEN new.kind = 'a' THEN CASE WHEN new.id > 0 THEN 'positive' ELSE 'other' END ELSE 'b' END);
+            END
+            """);
+        await db.OkAsync("INSERT INTO spans (id, kind) VALUES (1, 'a')");
+        var span = await db.OkAsync("SELECT end FROM spans WHERE id = 1", "SELECT label FROM log");
+
+        await Assert.That(span[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(2);
+        await Assert.That(span[1].GetProperty("rows")[0][0].GetString()).IsEqualTo("positive");
     }
 
     [Test]
@@ -151,5 +274,25 @@ public sealed class SqlNativeHardeningTests
         }
 
         await Assert.That(answers.Count(answer => answer == 1)).IsEqualTo(50);
+    }
+
+    private static async Task<long> WritesAsync(SqlNativeDatabase db)
+    {
+        var meter = db.Api.Server.Services.GetRequiredService<UsageMeter>();
+        var tenant = new TenantContext(db.Database.Organization, PlanTier.Hobby, db.Database.Project, db.Database.Id);
+        long writes = -1;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            await meter.FlushAsync(token);
+            var window = new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+            if (await meter.GetAsync(tenant, window, token) is not UsageCounts counts || meter.PendingDatabases != 0)
+            {
+                return false;
+            }
+
+            writes = counts.Lifetime.Writes;
+            return true;
+        }, timeout: TimeSpan.FromSeconds(30));
+        return writes;
     }
 }
