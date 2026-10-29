@@ -53,7 +53,8 @@ jobs:
           uv pip sync --python "$RUNNER_TEMP/ts-audit"/bin/python --require-hashes --only-binary :all: requirements-audit.txt
       - name: audit runtime, dev, build and audit graphs (all severities)
         if: matrix.python == '3.12'
-        run: "$RUNNER_TEMP/ts-audit"/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
+        run: |
+          "$RUNNER_TEMP/ts-audit"/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
       - run: uv pip install --no-deps --no-build-isolation -e '.[dev]' && uv pip check
       # Both tools target Python 3.10 in pyproject.toml; their result is interpreter-independent.
       - run: ruff check src tests
