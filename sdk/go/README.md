@@ -33,7 +33,7 @@ alignment requires no stored-data deletion or migration.
 
 ## Source and module availability
 
-The published [`v0.0.6`](https://github.com/TerraScale/ts-go/releases/tag/v0.0.6)
+The published [`v0.0.6`](https://github.com/TerraScale/terrascale/releases/tag/history/ts-go/v0.0.6)
 module and CLI include streaming document export, guarded database branch/delete,
 stable JSON output, SQL stdin/shell, and API-key rotation and metadata. Install the
 module with `go get terrascale.tech/sdk@v0.0.6`; follow the
@@ -510,7 +510,7 @@ The connection contract is pinned to the implemented
 [credential/database authorization](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs),
 [issued key syntax](https://github.com/TerraScale/terrascale/blob/a3cbf8b1c73d304189a489fa8033d41f3b508de3/src/TerraScale.Authentication/Features/Platform/ApiKeys.cs),
 [public TLS edge](https://github.com/TerraScale/ts-orchestrator/blob/4c8093d0fed4b69fd31d83daa62b78301c2015e8/internal/edge/postgres.go),
-and [public connection guide](https://github.com/TerraScale/ts-docs/blob/894161603ff0cdeb18bb6f4a489394d197844b1f/docs/guides/postgres-clients.md).
+and [public connection guide](https://github.com/TerraScale/terrascale/blob/894161603ff0cdeb18bb6f4a489394d197844b1f/docs/guides/postgres-clients.md).
 After SSLRequest, ALPN may be absent or `postgresql`. Source and fixture checks
 do not establish live authorization.
 
