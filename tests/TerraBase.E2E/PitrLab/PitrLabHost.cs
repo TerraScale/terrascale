@@ -149,6 +149,9 @@ public sealed class PitrLabHost
                     break;
                 }
 
+            case "prepare-target":
+                await PitrTarget.RunAsync(job, cancellationToken);
+                break;
             case "self-check":
                 await PitrSelfCheck.RunAsync(Required(job.Root, "root"), cancellationToken);
                 break;
@@ -184,7 +187,7 @@ public sealed class PitrLabHost
                 }
 
             default:
-                throw new InvalidDataException("mode must be s3-serve, download, audit, mutate, inventory or self-check");
+                throw new InvalidDataException("mode must be s3-serve, download, audit, mutate, inventory, prepare-target or self-check");
         }
     }
 

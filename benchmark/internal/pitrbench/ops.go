@@ -48,10 +48,10 @@ func Adopt(ctx context.Context, r *Run) error {
 		ID string `json:"id"`
 	}
 	if _, err := c.JSON(ctx, http.MethodGet, r.ManagementPath(), nil, &database); err != nil {
-		return fmt.Errorf("recover the source catalog before adopting this run: %w", err)
+		return fmt.Errorf("prepare the isolated target catalog with PitrLab prepare-target before adopting this run: %w", err)
 	}
 	if database.ID != r.DatabaseID {
-		return fmt.Errorf("the recovered database does not match the run")
+		return fmt.Errorf("the prepared database does not match the run")
 	}
 	return createCollections(ctx, c, r)
 }

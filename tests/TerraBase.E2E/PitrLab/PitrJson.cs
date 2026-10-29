@@ -19,7 +19,9 @@ internal sealed record PitrJob(
     string? Out = null,
     string? From = null,
     string? To = null,
-    PitrMutation? Mutation = null);
+    PitrMutation? Mutation = null,
+    string? DataDirectory = null,
+    PitrTargetIdentity? Target = null);
 
 /// <summary>
 /// s3-serve fault injection, applied to object PUTs and multipart parts whose key matches <see cref="KeyRegex"/> (all
@@ -32,6 +34,8 @@ internal sealed record PitrFaults(
 
 /// <summary>Where objects are read from: <c>s3</c> (credentials from the environment) or <c>dir</c> (a local root).</summary>
 internal sealed record PitrSource(string Kind, string? Root = null);
+
+internal sealed record PitrTargetIdentity(string Organization, string Project, string Database, string Name, string Owner);
 
 internal sealed record PitrMutation(string Kind, string Key);
 
@@ -82,6 +86,7 @@ internal sealed record InventoryReport(long Objects, long Bytes, long ListReques
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(PitrJob))]
+[JsonSerializable(typeof(PitrTargetIdentity))]
 [JsonSerializable(typeof(ReadyFile))]
 [JsonSerializable(typeof(List<ManifestEntry>))]
 [JsonSerializable(typeof(AuditReport))]
