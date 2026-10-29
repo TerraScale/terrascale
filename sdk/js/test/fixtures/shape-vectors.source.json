@@ -1,0 +1,8 @@
+{
+  "repository": "TerraScale/terrascale",
+  "path": "docs/terrabase/shape-vectors.json",
+  "commit": "0d2582d1d6cc73972b49f6b6089b6f9ed0848da9",
+  "sha256": "b6700e87ed164fc580fa1b31d498f5a472611f9a9b10460311e3fb27850b68e6",
+  "bytes": 148191,
+  "notes": "Exact copy of the upstream blob at the commit above; sha256 and size verified. Vector id presigned-manifest is skipped by test/support/shape-vectors.js (owner-deferred FR-22)."
+}
