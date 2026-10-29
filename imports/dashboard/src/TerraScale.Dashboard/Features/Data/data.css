@@ -1,0 +1,518 @@
+/* Database data tabs: documents, history, SQL console, schema, and indexes. */
+
+.ts-data-grow {
+  flex: 1 1 200px;
+}
+
+/* Documents: the collection list beside the open collection's documents. */
+.ts-data-browser {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s8);
+}
+
+.ts-data-browser-main {
+  display: grid;
+  gap: var(--ts-s4);
+  min-width: 0;
+}
+
+.ts-data-nav {
+  display: grid;
+  gap: var(--ts-s3);
+  min-width: 0;
+}
+
+.ts-data-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2);
+}
+
+.ts-data-nav-title {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+/* Long lists scroll inside the column instead of stretching the page. */
+.ts-data-nav-list {
+  display: grid;
+  gap: 1px;
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ts-data-nav-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: 6px var(--ts-s2);
+  border-radius: 8px;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+/* Document counts sit at the row end in mono. */
+.ts-data-nav-link > .ts-meta {
+  margin-left: auto;
+  color: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-data-nav-link:hover {
+  background: color-mix(in srgb, var(--ts-ink) 4%, transparent);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+/* Neutral active row: a faint white tint, not a brand fill. */
+.ts-data-nav-link[aria-current="page"] {
+  background: color-mix(in srgb, var(--ts-ink) 8%, transparent);
+  color: var(--ts-ink);
+}
+
+/* Narrow pages choose the collection from a select. */
+.ts-data-nav-select {
+  display: none;
+  gap: var(--ts-s2);
+}
+
+.ts-data-nav-select > .ts-select {
+  flex: 1;
+  min-width: 0;
+}
+
+@container page (width < 768px) {
+  .ts-data-browser {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+
+  .ts-data-nav {
+    padding: 0 0 var(--ts-s4);
+    border-right: 0;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-data-nav-list,
+  .ts-data-nav-filter {
+    display: none;
+  }
+
+  .ts-data-nav-select {
+    display: flex;
+  }
+}
+
+/* Tab toolbar: collection scope and view switches, actions on the right. */
+.ts-data-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3) var(--ts-s6);
+}
+
+.ts-data-bar > .ts-data-scope {
+  flex: 1 1 420px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.ts-data-collection {
+  position: relative;
+  display: flex;
+  flex: 0 1 220px;
+  min-width: 140px;
+}
+
+.ts-data-collection > .ts-input {
+  width: 100%;
+  padding-left: calc(var(--ts-s3) + 22px);
+}
+
+.ts-data-collection-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-s3);
+  display: flex;
+  color: var(--ts-ink-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.ts-data-scope > .ts-input-group {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+/* View switches scroll sideways instead of widening the page. */
+.ts-data-bar > .ts-segmented {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* A text link back to the parent list, flush with the content edge. */
+.ts-data-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+.ts-data-back:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-data-bar > .ts-data-scope {
+    flex-wrap: wrap;
+  }
+
+  .ts-data-collection,
+  .ts-data-scope > .ts-input-group {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+}
+
+/* Documents: IDs stay on one line; the JSON preview takes the remaining
+   width and never widens the table. */
+.ts-data-documents td:first-child {
+  white-space: nowrap;
+}
+
+.ts-data-documents td:nth-child(2) {
+  width: 100%;
+  max-width: 0;
+}
+
+.ts-data-doc-id {
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-data-doc-id:hover {
+  color: var(--ts-link);
+  text-decoration: none;
+}
+
+.ts-data-json {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Document grid: sortable column headings. */
+.ts-data-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  color: inherit;
+}
+
+.ts-data-sort:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+th[aria-sort] > .ts-data-sort {
+  color: var(--ts-ink);
+}
+
+.ts-num > .ts-data-sort {
+  flex-direction: row-reverse;
+}
+
+.ts-data-grid td.ts-data-result-id {
+  white-space: nowrap;
+}
+
+/* Result cells clip their text; the row menu must open past its cell. */
+.ts-data-grid td.ts-table-actions {
+  max-width: none;
+  overflow: visible;
+}
+
+/* SQL console: editor and results beside the saved queries. */
+.ts-data-sql-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  align-items: start;
+  gap: var(--ts-s10);
+}
+
+.ts-data-queries {
+  display: grid;
+  list-style: none;
+}
+
+.ts-data-queries > li {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s3) 0;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-data-query {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  color: var(--ts-ink);
+}
+
+.ts-data-query:hover {
+  text-decoration: none;
+}
+
+.ts-data-query:hover > .ts-strong {
+  color: var(--ts-link);
+}
+
+.ts-data-query > code {
+  overflow: hidden;
+  padding: 0;
+  background: none;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 79.99rem) {
+  .ts-data-sql-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s6);
+  }
+}
+
+/* Query results: one row per document and one column per field. The table
+   scrolls inside a bounded frame and keeps its header in view. */
+.ts-data-result-wrap {
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+/* Separate borders move with the sticky header; collapsed ones stay behind
+   in the table grid. The header draws its divider as a shadow. */
+.ts-data-result {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ts-data-result thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 0;
+  background: var(--ts-canvas);
+  box-shadow: inset 0 -1px 0 var(--ts-line-strong);
+}
+
+.ts-data-result td {
+  max-width: 32ch;
+  overflow: hidden;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-data-result .ts-data-result-id {
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+/* Numeric columns align right and grow to fit instead of cutting digits. */
+.ts-data-result td.ts-num {
+  max-width: none;
+}
+
+.ts-data-result td[data-kind="null"],
+.ts-data-result td[data-kind="missing"],
+.ts-data-result td[data-kind="object"],
+.ts-data-result td[data-kind="array"] {
+  color: var(--ts-ink-3);
+}
+
+.ts-data-raw > summary {
+  width: fit-content;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  cursor: pointer;
+}
+
+.ts-data-raw[open] {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.ts-data-raw > .ts-code {
+  max-height: 480px;
+  overflow: auto;
+}
+
+/* SQL check results. */
+.ts-data-checks {
+  display: grid;
+  gap: var(--ts-s2);
+  list-style: none;
+}
+
+.ts-data-checks > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s2);
+}
+
+.ts-data-checks > li > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ts-success);
+}
+
+.ts-data-checks > .ts-data-check-warn > svg {
+  color: var(--ts-warning);
+}
+
+/* Create-index form: a field sized for a name, not the whole row. */
+.ts-data-index-form {
+  max-width: 560px;
+}
+
+/* Index fields: one neutral row per index, field name in mono, delete at the end. */
+.ts-data-chips {
+  display: grid;
+  list-style: none;
+}
+
+.ts-data-chips > li {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-data-chips > li > svg {
+  flex: none;
+  color: var(--ts-ink-3);
+}
+
+.ts-data-chips > li > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Native progress styled to match .ts-progress. */
+.ts-data-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  appearance: none;
+}
+
+.ts-data-progress::-webkit-progress-bar {
+  background: var(--ts-surface-3);
+}
+
+.ts-data-progress::-webkit-progress-value {
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-accent);
+}
+
+.ts-data-progress::-moz-progress-bar {
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-accent);
+}
+
+/* Document revisions as a timeline. */
+.ts-data-history {
+  display: grid;
+  gap: var(--ts-s4);
+  padding-left: var(--ts-s5);
+  border-left: 2px solid var(--ts-line-strong);
+  list-style: none;
+}
+
+.ts-data-history > li {
+  position: relative;
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+.ts-data-history > li::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: calc(-1 * var(--ts-s5) - 6px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ts-ink-3);
+  box-shadow: 0 0 0 3px var(--ts-surface);
+}
+
+/* The SQL console's run history sits at the start of its actions. */
+.ts-data-sql-history {
+  width: auto;
+  max-width: 18rem;
+  margin-right: auto;
+}
+
+.ts-data-sql-side {
+  min-width: 0;
+}
+
+.ts-data-sql-grid #sql-editor .ts-form-actions > [commandfor="save-query"] {
+  margin-left: auto;
+}
+
+.ts-data-nav .ts-input-group > svg,
+.ts-data-scope .ts-input-group > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-s3);
+  color: var(--ts-ink-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.ts-data-nav .ts-input-group > .ts-input,
+.ts-data-scope .ts-input-group > .ts-input {
+  width: 100%;
+  padding-left: calc(var(--ts-s3) + 22px);
+  padding-right: var(--ts-s3);
+}
+
+.ts-data-checks > .ts-data-check-info > svg {
+  color: var(--ts-ink-3);
+}

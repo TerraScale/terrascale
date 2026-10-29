@@ -1,0 +1,32 @@
+name: Dashboard dependencies
+description: Restore locked .NET and npm dependencies; only main saves the cache.
+outputs:
+  cache-key:
+    description: Dependency cache key
+    value: ${{ steps.cache.outputs.cache-primary-key }}
+  cache-hit:
+    description: Exact dependency cache hit
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget" >> "$GITHUB_ENV"
+    - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+      with:
+        global-json-file: global.json
+    - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: 24.21.0
+    - id: cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ${{ runner.temp }}/nuget
+          ~/.npm
+        key: dashboard-deps-${{ runner.os }}-${{ hashFiles('global.json', '**/packages.lock.json', 'src/TerraScale.Dashboard/web/package-lock.json') }}
+        # Locked restore still verifies the graph; reuse unchanged packages after lock updates.
+        restore-keys: dashboard-deps-${{ runner.os }}-
+    - shell: bash
+      working-directory: src/TerraScale.Dashboard/web
+      run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline

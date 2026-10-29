@@ -1,0 +1,133 @@
+/* Notification inbox. */
+
+/* The dialog's filter tabs are buttons that fetch the filtered inbox through
+   Datastar instead of links, so they lose the native button chrome. */
+#ts-notifications-body button.ts-tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Page header: title and organization on the left, read-all on the right. */
+.ts-notifications-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-s3) var(--ts-s4);
+}
+
+.ts-notifications-header > .ts-stack-sm {
+  flex: 1 1 280px;
+  min-width: 0;
+  gap: var(--ts-s2);
+}
+
+.ts-notifications-header h1 {
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
+}
+
+.ts-notifications-header > .ts-page-actions {
+  margin-left: auto;
+}
+
+/* Narrow screens: read-all drops under the title, aligned with it. */
+@media (max-width: 767px) {
+  .ts-notifications-header > .ts-page-actions {
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+}
+
+/* Filter tabs on the left, summary on the right, no hairline under the tabs. */
+.ts-notifications-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2) var(--ts-s3);
+}
+
+.ts-notifications-toolbar > .ts-tabs {
+  border-bottom: 0;
+}
+
+/* Dialog only: read-all sits beside the summary as one right-aligned group. */
+.ts-notifications-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ts-s3);
+}
+
+.ts-notification-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ts-s3);
+  list-style: none;
+}
+
+.ts-notification {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--ts-s4);
+  padding: var(--ts-s4) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+/* Long titles and bodies wrap inside the row instead of widening the card. */
+.ts-notification > .ts-stack-sm {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Titles stay ink rather than link blue; unread is bold, read recedes. */
+.ts-notification .ts-strong {
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+.ts-notification:not(.ts-notification-unread) .ts-strong {
+  color: var(--ts-ink-2);
+  font-weight: 400;
+}
+
+.ts-notification[data-tone="danger"] {
+  --tone: var(--ts-danger);
+}
+
+.ts-notification[data-tone="warning"] {
+  --tone: var(--ts-warning);
+}
+
+.ts-notification[data-tone="success"] {
+  --tone: var(--ts-success);
+}
+
+.ts-notification[data-tone="info"] {
+  --tone: var(--ts-info);
+}
+
+.ts-notification-marker {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+
+@media (max-width: 47.99rem) {
+  .ts-notification {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ts-notification > form {
+    grid-column: 2;
+  }
+}

@@ -1,0 +1,45 @@
+--- a/src/TerraScale.Dashboard/Features/Billing/StripeBilling.cs
++++ b/src/TerraScale.Dashboard/Features/Billing/StripeBilling.cs
+@@ -270,6 +270,7 @@
+                 // Keep Stripe's canonical subscription binding for portal and
+                 // replacement decisions, but revoke an unqualified plan even
+                 // when this organization previously held paid entitlements.
++                if (org.Kind == "personal") org.PlanId = OrganizationRecord.FreePlanId;
+                 org.BillingStatus = "billing_required";
+                 binding.EffectivePlan = "";
+                 binding.EffectiveInterval = "";
+--- a/src/TerraScale.Dashboard/Features/Billing/InvoiceHistory.cs
++++ b/src/TerraScale.Dashboard/Features/Billing/InvoiceHistory.cs
+@@ -68,10 +68,18 @@
+
+     public static string SafeUrl(string? raw) => Uri.TryCreate(raw, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+         uri.Host.Length > 0 && uri.UserInfo.Length == 0 ? uri.AbsoluteUri : "";
++    public static string Amount(long minorUnits, string currency)
++    {
++        // Stripe invoice amounts use charge units; ISK and UGX retain the API's two-decimal representation.
++        var zeroDecimal = currency.ToLowerInvariant() is "bif" or "clp" or "djf" or "gnf" or "jpy" or "kmf" or "krw" or
++            "mga" or "pyg" or "rwf" or "vnd" or "vuv" or "xaf" or "xof" or "xpf";
++        return (minorUnits / (zeroDecimal ? 1m : 100m)).ToString(zeroDecimal ? "F0" : "F2", CultureInfo.InvariantCulture);
++    }
++
+     public static string Money(long cents, string currency = "usd") => currency.Equals("usd", StringComparison.OrdinalIgnoreCase)
+-        ? "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture)
+-        : currency.Length == 0 ? (cents / 100m).ToString("F2", CultureInfo.InvariantCulture) + " (currency unreported)"
+-        : currency.ToUpperInvariant() + " " + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture);
++        ? "$" + Amount(cents, currency)
++        : currency.Length == 0 ? Amount(cents, currency) + " (currency unreported)"
++        : currency.ToUpperInvariant() + " " + Amount(cents, currency);
+
+     public static InvoiceSummary Summarize(IReadOnlyList<BillingInvoice> invoices, DateTimeOffset now)
+     {
+--- a/src/TerraScale.Dashboard/Features/Billing/BillingHistoryView.cshtml
++++ b/src/TerraScale.Dashboard/Features/Billing/BillingHistoryView.cshtml
+@@ -57,7 +57,7 @@
+             {
+                 <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Recent invoices table. Scroll horizontally to see all columns."><table class="ts-table"><caption class="ts-sr-only">Invoices for this organization matching the current filters</caption><thead><tr><th scope="col">Invoice</th><th scope="col">Issued</th><th scope="col">Period</th><th scope="col" class="ts-num">Amount</th><th scope="col">Status</th><th scope="col" class="ts-table-actions">Actions</th></tr></thead><tbody>@foreach (var invoice in invoicePage.Listing.Invoices)
+                 {
+-                    <tr><td class="ts-table-strong ts-mono">@invoice.Number</td><td><time datetime="@invoice.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)">@Date(invoice.CreatedAt)</time></td><td class="ts-meta">@Date(invoice.PeriodStart) – @Date(invoice.PeriodEnd)</td><td class="ts-num">@invoice.Currency.ToUpperInvariant() @((invoice.AmountCents / 100m).ToString("F2", CultureInfo.InvariantCulture))</td><td><span class="ts-badge ts-badge-@Tone(invoice.Status)">@invoice.Status</span></td><td class="ts-table-actions">@if (invoice.HostedUrl.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@invoice.HostedUrl" target="_blank" rel="noopener noreferrer">Open</a> }@if (invoice.PdfUrl.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@invoice.PdfUrl" target="_blank" rel="noopener noreferrer">PDF</a> }</td></tr>
++                    <tr><td class="ts-table-strong ts-mono">@invoice.Number</td><td><time datetime="@invoice.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)">@Date(invoice.CreatedAt)</time></td><td class="ts-meta">@Date(invoice.PeriodStart) – @Date(invoice.PeriodEnd)</td><td class="ts-num">@invoice.Currency.ToUpperInvariant() @InvoiceHistory.Amount(invoice.AmountCents, invoice.Currency)</td><td><span class="ts-badge ts-badge-@Tone(invoice.Status)">@invoice.Status</span></td><td class="ts-table-actions">@if (invoice.HostedUrl.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@invoice.HostedUrl" target="_blank" rel="noopener noreferrer">Open</a> }@if (invoice.PdfUrl.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@invoice.PdfUrl" target="_blank" rel="noopener noreferrer">PDF</a> }</td></tr>
+                 }</tbody></table></div>
+                 <nav class="ts-pager" aria-label="Payment history pages"><span>Showing @invoicePage.First–@(invoicePage.First + invoicePage.Listing.Invoices.Count - 1) of @invoicePage.Listing.Total</span>@if (invoicePage.Listing.PageCount > 1) { <div class="ts-row">@if (invoicePage.Listing.Page > 1) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@invoicePage.Href(Model.Shell.Context.Project?.Id ?? "", invoicePage.Listing.Page - 1)" rel="prev">Previous</a> }@for (var number = 1; number <= invoicePage.Listing.PageCount; number++) { <a class="ts-btn ts-btn-ghost ts-btn-sm ts-usage-page" href="@invoicePage.Href(Model.Shell.Context.Project?.Id ?? "", number)" aria-current="@(number == invoicePage.Listing.Page ? "page" : null)">@number</a> }@if (invoicePage.Listing.Page < invoicePage.Listing.PageCount) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@invoicePage.Href(Model.Shell.Context.Project?.Id ?? "", invoicePage.Listing.Page + 1)" rel="next">Next</a> }</div> }</nav>
+             }

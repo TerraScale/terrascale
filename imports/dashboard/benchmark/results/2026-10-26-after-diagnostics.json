@@ -1,0 +1,154 @@
+{
+  "phase": "after-incomplete-diagnostic",
+  "dashboardSource": "5fa431a671f0eeb2c0018635f1760eb8190e76bf",
+  "dashboardImage": "sha256:153d2828671181554eb6fdb1017ff37d0cc195b32ad47ce33cc859a77900c033",
+  "running": false,
+  "rows": [
+    {
+      "repeat": 1,
+      "path": "/",
+      "status": 200,
+      "ttfbMs": 4183.29999999702,
+      "totalMs": 4378.199999999255,
+      "timing": "app;dur=4154.8, local;dur=123.3;desc=\"render and application work outside upstream waits\", auth;dur=6993.6;desc=\"12 calls\", auth_wall;dur=3609.9;desc=\"overlapping calls counted once\", state;dur=122.8;desc=\"6 calls\", state_wall;dur=122.8;desc=\"overlapping calls counted once\", terrabase;dur=1042.0;desc=\"5 calls\", terrabase_wall;dur=426.1;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 153010,
+      "requestId": "01M5X33WJV3SXHJFPX7QSFW8NM"
+    },
+    {
+      "repeat": 1,
+      "path": "/databases",
+      "status": 200,
+      "ttfbMs": 7090.5,
+      "totalMs": 7124.20000000298,
+      "timing": "app;dur=7065.9, local;dur=163.4;desc=\"render and application work outside upstream waits\", auth;dur=10335.7;desc=\"12 calls\", auth_wall;dur=6464.0;desc=\"overlapping calls counted once\", state;dur=575.8;desc=\"6 calls\", state_wall;dur=376.2;desc=\"overlapping calls counted once\", terrabase;dur=652.5;desc=\"8 calls\", terrabase_wall;dur=290.3;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 77696,
+      "requestId": "01M5X340VN8KVFKPPP2VX01JMZ"
+    },
+    {
+      "repeat": 1,
+      "path": "/analytics",
+      "status": 200,
+      "ttfbMs": 2373.60000000149,
+      "totalMs": 2467.699999999255,
+      "timing": "app;dur=2346.9, local;dur=22.1;desc=\"render and application work outside upstream waits\", auth;dur=4006.2;desc=\"11 calls\", auth_wall;dur=2069.7;desc=\"overlapping calls counted once\", state;dur=121.1;desc=\"6 calls\", state_wall;dur=116.9;desc=\"overlapping calls counted once\", terrabase;dur=221.4;desc=\"3 calls\", terrabase_wall;dur=221.4;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 544645,
+      "requestId": "01M5X347T804Q1G0BP78AP00M1"
+    },
+    {
+      "repeat": 1,
+      "path": "/usage",
+      "status": 200,
+      "ttfbMs": 5098.800000000745,
+      "totalMs": 5149.800000000745,
+      "timing": "app;dur=5073.2, local;dur=63.2;desc=\"render and application work outside upstream waits\", auth;dur=7011.2;desc=\"12 calls\", auth_wall;dur=4787.4;desc=\"overlapping calls counted once\", state;dur=171.6;desc=\"6 calls\", state_wall;dur=171.6;desc=\"overlapping calls counted once\", terrabase;dur=5288.9;desc=\"10 calls\", terrabase_wall;dur=1871.2;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 172449,
+      "requestId": "01M5X34A7C4RNSN7ZFK3WSSSAX"
+    },
+    {
+      "repeat": 1,
+      "path": "/organization",
+      "status": 200,
+      "ttfbMs": 2075.89999999851,
+      "totalMs": 2108.300000000745,
+      "timing": "app;dur=2050.2, local;dur=35.7;desc=\"render and application work outside upstream waits\", auth;dur=4989.3;desc=\"11 calls\", auth_wall;dur=1948.1;desc=\"overlapping calls counted once\", state;dur=239.2;desc=\"6 calls\", state_wall;dur=182.9;desc=\"overlapping calls counted once\", terrabase;dur=45.0;desc=\"1 calls\", terrabase_wall;dur=45.0;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 63501,
+      "requestId": "01M5X34F8A12YWTRG6BX02ESGB"
+    },
+    {
+      "repeat": 1,
+      "path": "/organization?tab=billing",
+      "status": 200,
+      "ttfbMs": 1890,
+      "totalMs": 1940.300000000745,
+      "timing": "app;dur=1864.2, local;dur=33.5;desc=\"render and application work outside upstream waits\", auth;dur=3368.8;desc=\"8 calls\", auth_wall;dur=1134.7;desc=\"overlapping calls counted once\", state;dur=115.9;desc=\"8 calls\", state_wall;dur=114.1;desc=\"overlapping calls counted once\", stripe;dur=3123.6;desc=\"6 calls\", stripe_wall;dur=627.3;desc=\"overlapping calls counted once\", terrabase;dur=3.7;desc=\"1 calls\", terrabase_wall;dur=3.7;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 76341,
+      "requestId": "01M5X34HA8SAE1F0HMAANGMNZ8"
+    },
+    {
+      "repeat": 1,
+      "path": "/profile",
+      "status": 200,
+      "ttfbMs": 1611.300000000745,
+      "totalMs": 1643.9000000022352,
+      "timing": "app;dur=1588.4, local;dur=37.9;desc=\"render and application work outside upstream waits\", auth;dur=3182.7;desc=\"9 calls\", auth_wall;dur=1217.4;desc=\"overlapping calls counted once\", state;dur=436.7;desc=\"14 calls\", state_wall;dur=436.0;desc=\"overlapping calls counted once\", terrabase;dur=3.7;desc=\"1 calls\", terrabase_wall;dur=3.7;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 57742,
+      "requestId": "01M5X34K6WGSJNYHT4YY850RV3"
+    },
+    {
+      "repeat": 1,
+      "path": "/api-keys",
+      "status": 200,
+      "ttfbMs": 1658.4000000022352,
+      "totalMs": 1707.2000000029802,
+      "timing": "app;dur=1633.7, local;dur=20.6;desc=\"render and application work outside upstream waits\", auth;dur=4131.4;desc=\"10 calls\", auth_wall;dur=1545.6;desc=\"overlapping calls counted once\", state;dur=91.0;desc=\"6 calls\", state_wall;dur=91.0;desc=\"overlapping calls counted once\", terrabase;dur=2.8;desc=\"1 calls\", terrabase_wall;dur=2.8;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 97782,
+      "requestId": "01M5X34MT7J1NFCEDKZB89T3QN"
+    },
+    {
+      "repeat": 1,
+      "path": "/auth",
+      "status": 200,
+      "ttfbMs": 2837.5,
+      "totalMs": 2870.300000000745,
+      "timing": "app;dur=2812.1, local;dur=32.3;desc=\"render and application work outside upstream waits\", auth;dur=7361.0;desc=\"9 calls\", auth_wall;dur=2660.2;desc=\"overlapping calls counted once\", state;dur=217.7;desc=\"6 calls\", state_wall;dur=214.9;desc=\"overlapping calls counted once\", terrabase;dur=94.6;desc=\"1 calls\", terrabase_wall;dur=94.6;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 65267,
+      "requestId": "01M5X34PFM23FM00PHTXQV7Z8G"
+    },
+    {
+      "repeat": 1,
+      "path": "/organization?tab=members",
+      "status": 200,
+      "ttfbMs": 1512,
+      "totalMs": 1545,
+      "timing": "app;dur=1488.6, local;dur=1.8;desc=\"render and application work outside upstream waits\", auth;dur=4036.2;desc=\"10 calls\", auth_wall;dur=1433.5;desc=\"overlapping calls counted once\", state;dur=175.5;desc=\"6 calls\", state_wall;dur=115.2;desc=\"overlapping calls counted once\", terrabase;dur=7.7;desc=\"1 calls\", terrabase_wall;dur=7.7;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 58854,
+      "requestId": "01M5X34S9AYG8C6PXK5QVX6KY7"
+    },
+    {
+      "repeat": 1,
+      "path": "/organization?tab=invitations",
+      "status": 200,
+      "ttfbMs": 1824.800000000745,
+      "totalMs": 1856.1000000014901,
+      "timing": "app;dur=1800.5, local;dur=1.1;desc=\"render and application work outside upstream waits\", auth;dur=4756.3;desc=\"10 calls\", auth_wall;dur=1793.2;desc=\"overlapping calls counted once\", state;dur=116.1;desc=\"6 calls\", state_wall;dur=69.6;desc=\"overlapping calls counted once\", terrabase;dur=64.1;desc=\"1 calls\", terrabase_wall;dur=64.1;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 58846,
+      "requestId": "01M5X34TSMXZEQ0HH9RX81DM83"
+    },
+    {
+      "repeat": 1,
+      "path": "/organization?tab=projects",
+      "status": 200,
+      "ttfbMs": 1475.4000000022352,
+      "totalMs": 1508,
+      "timing": "app;dur=1450.2, local;dur=26.0;desc=\"render and application work outside upstream waits\", auth;dur=3287.8;desc=\"8 calls\", auth_wall;dur=1123.7;desc=\"overlapping calls counted once\", state;dur=383.0;desc=\"6 calls\", state_wall;dur=370.7;desc=\"overlapping calls counted once\", terrabase;dur=186.7;desc=\"2 calls\", terrabase_wall;dur=186.7;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 72932,
+      "requestId": "01M5X34WKJM1FZES1HM0ATRTJ6"
+    },
+    {
+      "repeat": 1,
+      "path": "/organization?tab=audit",
+      "status": 401,
+      "ttfbMs": 1154,
+      "totalMs": 1154.699999999255,
+      "timing": "app;dur=1127.9, local;dur=1.4;desc=\"render and application work outside upstream waits\", auth;dur=2582.7;desc=\"7 calls\", auth_wall;dur=1101.8;desc=\"overlapping calls counted once\", state;dur=126.0;desc=\"4 calls\", state_wall;dur=126.0;desc=\"overlapping calls counted once\"",
+      "encoding": null,
+      "bytes": 4131,
+      "requestId": "01M5X34Y2RCXMZANMZB03C6W0J"
+    }
+  ],
+  "startedAt": "2026-10-26T21:50:56.079Z",
+  "revision": "5fa431a671f0eeb2c0018635f1760eb8190e76bf",
+  "error": "Error: HTTP 401 at /organization?tab=audit"
+}

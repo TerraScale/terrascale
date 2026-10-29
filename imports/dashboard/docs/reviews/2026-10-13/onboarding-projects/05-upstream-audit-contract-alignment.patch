@@ -1,0 +1,59 @@
+--- a/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/accounts-members-settings/AccountsMembersSettingsAuditJourneyTests.cs
++++ b/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/accounts-members-settings/AccountsMembersSettingsAuditJourneyTests.cs
+@@ -33,8 +33,8 @@
+         {
+             var values = Regex.Matches(selector.Groups[1].Value, "<option value=\"([^\"]+)\"")
+                 .Select(item => item.Groups[1].Value).ToArray();
+-            await Assert.That(values.Contains("viewer", StringComparer.Ordinal)).IsFalse()
+-                .Because("Viewer is always rejected with 422 by OrganizationOperations.AvailableRole.");
++            await Assert.That(values.Contains("viewer", StringComparer.Ordinal)).IsTrue()
++                .Because("Viewer is a supported role in OrganizationOperations.AvailableRole.");
+             await Assert.That(values.Contains("admin", StringComparer.Ordinal)).IsTrue()
+                 .Because("Admin is an available provider role, including for an existing administrator.");
+         }
+@@ -86,9 +86,9 @@
+         for (var attempt = 0; attempt < 2; attempt++)
+         {
+             using var invite = await HttpJourney.PostFormAsync(owner, "/api/v1/access/invitations?tab=invitations", new()
+-            { ["_csrf"] = ownerCsrf, ["email"] = "never-sent@example.test", ["role"] = "viewer" });
++            { ["_csrf"] = ownerCsrf, ["email"] = "never-sent@example.test", ["role"] = "unsupported-audit-role" });
+             await Assert.That(invite.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+-            await Assert.That((await invite.Content.ReadAsStringAsync()).Contains("The identity provider does not offer a viewer role", StringComparison.Ordinal)).IsTrue();
++            await Assert.That((await invite.Content.ReadAsStringAsync()).Contains("Choose an available role.", StringComparison.Ordinal)).IsTrue();
+         }
+         using var member = await scenario.LoginAsync("member");
+         var before = await member.GetStringAsync("/api/v1/auth/me");
+--- a/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/billing-checkout-subscriptions/BillingCheckoutAuditJourneyTests.cs
++++ b/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/billing-checkout-subscriptions/BillingCheckoutAuditJourneyTests.cs
+@@ -78,8 +78,10 @@
+         var csrf = await NewOrganizationAsync(client);
+         using var armed = await HttpJourney.PostFormAsync(client, "/__test/billing/checkouts/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "missing-index" });
+         await Assert.That(armed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
++        client.DefaultRequestHeaders.Accept.ParseAdd("text/html");
+         using var failed = await CheckoutAsync(client, csrf);
+         await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
++        await Assert.That(failed.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
+         var html = await failed.Content.ReadAsStringAsync();
+         var retry = Regex.Match(html, "<a[^>]+href=\"([^\"]+)\"[^>]*>Try again</a>").Groups[1].Value;
+         await RecordAsync("interrupted-checkout", new { status = (int)failed.StatusCode, retry });
+--- a/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/accounts-members-settings/AccountsMembersSettingsBrowserAuditJourneyTests.cs
++++ b/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/accounts-members-settings/AccountsMembersSettingsBrowserAuditJourneyTests.cs
+@@ -33,7 +33,7 @@
+     [Test]
+     [Arguments(1366)]
+     [Arguments(320)]
+-    public async Task InvitationRoleOptionsExcludeTheAlwaysRejectedViewer(int width)
++    public async Task InvitationRoleOptionsIncludeSupportedViewer(int width)
+     {
+         using var playwright = await Playwright.CreateAsync();
+         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+@@ -43,7 +43,7 @@
+         await role.ScrollIntoViewIfNeededAsync();
+         await ShotAsync(page, "invitation-options-" + width);
+         var options = await role.Locator("option").EvaluateAllAsync<string[]>("options => options.map(option => option.value)");
+-        await Assert.That(options.Contains("viewer", StringComparer.Ordinal)).IsFalse()
+-            .Because("The native form must not offer a role that the service always rejects.");
++        await Assert.That(options.Contains("viewer", StringComparer.Ordinal)).IsTrue()
++            .Because("The native form must offer the viewer role supported by OrganizationOperations.AvailableRole.");
+         await Assert.That(options.Contains("admin", StringComparer.Ordinal)).IsTrue();
+     }

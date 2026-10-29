@@ -1,0 +1,58 @@
+--- a/src/TerraScale.Dashboard/Features/Analytics/AnalyticsBackend.cs
++++ b/src/TerraScale.Dashboard/Features/Analytics/AnalyticsBackend.cs
+@@ -50,6 +50,7 @@
+                 seconds != (selection.Range switch { "1h" => 3600, "24h" => 86400, "7d" => 604800, "30d" => 2592000, _ => 0 }))
+                 throw new JsonException("Analytics returned an invalid UTC window.");
+             var points = new List<AnalyticsPoint>();
++            var observedBuckets = new HashSet<(string DatabaseId, string Region, DateTimeOffset Start)>();
+             foreach (var database in root.GetProperty("items").EnumerateArray())
+             {
+                 var databaseId = database.GetProperty("databaseId").GetString() ?? "";
+@@ -66,6 +67,8 @@
+                     if (start < from || start >= to || start.ToUnixTimeSeconds() % bucketSeconds != 0 || previousStart is { } previous && start <= previous)
+                         throw new JsonException("Analytics returned an invalid or unordered UTC bucket.");
+                     previousStart = start;
++                    if (!observedBuckets.Add((databaseId, region, start)))
++                        throw new JsonException("Analytics returned a duplicate database-region bucket.");
+                     var latency = series.GetProperty("latency");
+                     var clientBandwidth = series.GetProperty("clientBandwidth");
+                     var replicationBandwidth = series.GetProperty("replicationBandwidth");
+--- a/src/TerraScale.Dashboard/Features/Analytics/AnalyticsService.cs
++++ b/src/TerraScale.Dashboard/Features/Analytics/AnalyticsService.cs
+@@ -28,8 +28,11 @@
+
+     public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
+     {
+-        var starts = points.Select(point => point.Start.ToUniversalTime()).Distinct().Order().ToArray();
+-        if (starts.Length == 0) throw new JsonException("No analytics buckets.");
++        var observed = points.Select(point => point.Start.ToUniversalTime()).Distinct().Order().ToArray();
++        if (observed.Length == 0) throw new JsonException("No analytics buckets.");
++        var step = TimeSpan.FromSeconds(selection.Range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => throw new JsonException("Unknown analytics range.") });
++        var count = checked((int)((observed[^1] - observed[0]).Ticks / step.Ticks) + 1);
++        var starts = Enumerable.Range(0, count).Select(index => observed[0].AddTicks(checked(step.Ticks * index))).ToArray();
+         var indices = starts.Select((start, index) => (start, index)).ToDictionary(value => value.start, value => value.index);
+         var requests = new SortedDictionary<string, long[]>(StringComparer.Ordinal);
+         var operations = new SortedDictionary<string, long[]>(StringComparer.Ordinal);
+@@ -68,15 +71,16 @@
+             }
+             if (index == starts.Length - 1 && point.P95Ms is { } latest) p95 = Math.Max(p95 ?? 0, latest);
+         }
+-        for (var index = 0; index < starts.Length; index++) storageMissing[index] = storageSamples[index] != pointCounts[index];
++        for (var index = 0; index < starts.Length; index++) storageMissing[index] = storageSamples[index] == 0 || storageSamples[index] != pointCounts[index];
++        var missingBuckets = pointCounts.Select(count => count == 0).ToArray();
+         var charts = new List<AnalyticsChart>();
+-        Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
+-        Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
+-        Add("Errors", new AnalyticsSeries("Errors", errors));
++        Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value, missingBuckets)).ToArray());
++        Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value, missingBuckets)).ToArray());
++        Add("Errors", new AnalyticsSeries("Errors", errors, missingBuckets));
+         Add("Approximate request latency percentiles (µs)", latencies.Values.ToArray());
+         Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
+-        Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
+-        Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
++        Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent, missingBuckets), new AnalyticsSeries("Received", received, missingBuckets));
++        Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent, missingBuckets), new AnalyticsSeries("Received", replicationReceived, missingBuckets));
+         return (new(requestTotal, errorTotal, operationTotal, storageMissing[^1] ? null : storage[^1], clientTotal, replicationSentTotal, replicationReceivedTotal, p95), charts);
+
+         void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series)));

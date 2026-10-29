@@ -1,0 +1,32 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsLinePlot>
+@using System.Globalization
+@* Plot coordinates are 720x200 units with the plot at x 48..708. Here x becomes a percentage of the
+   fluid SVG width and y stays in pixels, so text, dots and tooltips render at their real size. *@
+<svg class="ts-chart ts-analytics-plot" role="group" aria-label="@Model.Label" data-init="el.querySelectorAll('.ts-chart-column').forEach((column, i, all) => column.setAttribute('tabindex', i === all.length - 1 ? '0' : '-1'))" data-on:keydown="evt.target.matches('.ts-chart-column') &amp;&amp; ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(evt.key) &amp;&amp; (evt.preventDefault(), [{ArrowLeft: evt.target.previousElementSibling, ArrowRight: evt.target.nextElementSibling, Home: el.querySelector('.ts-chart-column'), End: el.querySelector('.ts-chart-column:last-of-type')}[evt.key]?.closest('.ts-chart-column')].filter(Boolean).forEach(next => (evt.target.setAttribute('tabindex', '-1'), next.setAttribute('tabindex', '0'), next.focus())))">
+@for (var index = 0; index < Model.Grid.Count; index++) { var grid = Model.Grid[index]; <line class="ts-chart-grid @(index == Model.Grid.Count - 1 ? "ts-chart-baseline" : "")" x1="0" y1="@grid.Y" x2="100%" y2="@grid.Y"></line>@if (grid.Label.Length > 0) { <g><text class="ts-chart-axis" x="-10" y="@grid.Y" dy="0.32em" text-anchor="end">@grid.Label</text></g> } }
+@for (var index = 0; index < Model.Ticks.Count; index++) { var tick = Model.Ticks[index]; <g><text class="ts-chart-axis @(index % 2 == 1 ? "ts-chart-tick-minor" : "")" x="@Percent(tick.X)" y="192" text-anchor="@tick.Anchor">@tick.Label</text></g> }
+<svg viewBox="48 0 660 200" preserveAspectRatio="none" overflow="visible" aria-hidden="true">@if (Model.Area.Length > 0) { <path class="ts-chart-area" d="@Model.Area"></path> }@foreach (var path in Model.Paths) { <path class="ts-chart-line @path.Class" d="@path.Path" stroke-dasharray="@path.Dash" vector-effect="non-scaling-stroke"></path> }</svg>
+@foreach (var dot in Model.Markers) { <circle class="ts-chart-dot ts-chart-marker @dot.Class" cx="@Percent(dot.X)" cy="@dot.Y" stroke-dasharray="@dot.Dash" r="4" aria-hidden="true"></circle> }
+@foreach (var column in Model.Columns)
+{
+    var share = (Number(column.X) - 48) / 660; var width = Math.Min(Number(column.TipWidth), MaxTip);
+    var left = Math.Clamp(share > 0.5 ? -10 - width : 10, -48 - share * MinPlot, (1 - share) * MinPlot + 8 - width);
+    var nameLimit = Math.Max(4, (int)((MaxTip - 68) / 6.8) - column.Rows.Max(row => row.Value.EnumerateRunes().Count()));
+    <g class="ts-chart-column" tabindex="0" role="img" aria-label="@column.Label"><rect class="ts-chart-hit" x="@Percent(column.Left)" y="14" width="@Share(Number(column.Width))" height="154"></rect><line class="ts-chart-guide" x1="@Percent(column.X)" y1="14" x2="@Percent(column.X)" y2="168"></line>@foreach (var dot in column.Dots) { <circle class="ts-chart-dot @dot.Class" cx="@Percent(dot.X)" cy="@dot.Y" stroke-dasharray="@dot.Dash" r="4"></circle> }<svg class="ts-chart-tip" x="@Percent(column.X)" overflow="visible" aria-hidden="true"><rect class="ts-chart-tip-box" x="@Px(left)" y="14.0" width="@Px(width)" height="@column.TipHeight" rx="6"></rect><text class="ts-chart-tip-label" x="@Px(left + 10)" y="28.5" dy="0.35em">@column.Header</text>@foreach (var row in column.Rows) { <g><line class="ts-chart-tip-swatch @row.Class" x1="@Px(left + 10)" x2="@Px(left + 34)" y1="@row.Y" y2="@row.Y" stroke-dasharray="@row.Dash"></line><text class="ts-chart-tip-name" x="@Px(left + 42)" y="@row.Y" dy="0.35em">@Fit(row.Name, nameLimit)</text><text class="ts-chart-tip-value" x="@Px(left + width - 10)" y="@row.Y" dy="0.35em" text-anchor="end">@row.Value</text></g> }</svg></g>
+}
+</svg>
+@functions {
+    // Tips sit beside their column but are clamped to the narrowest plot (360px viewport minus page padding and the
+    // 56px axis gutter), so the whole tip stays inside the chart frame at every wider width. Long names are elided
+    // in the middle to keep the tip within MaxTip; the column aria-label and the legend keep the full name.
+    const double MinPlot = 272, MaxTip = 320;
+    static string Fit(string name, int limit)
+    {
+        var runes = name.EnumerateRunes().ToArray(); var tail = (limit - 1) / 2;
+        return runes.Length <= limit ? name : string.Concat(runes[..(limit - 1 - tail)]) + "…" + string.Concat(runes[^tail..]);
+    }
+    static double Number(string value) => double.Parse(value, CultureInfo.InvariantCulture);
+    static string Px(double value) => value.ToString("0.#", CultureInfo.InvariantCulture);
+    static string Share(double units) => (units / 6.6).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+    static string Percent(string x) => Share(Number(x) - 48);
+}

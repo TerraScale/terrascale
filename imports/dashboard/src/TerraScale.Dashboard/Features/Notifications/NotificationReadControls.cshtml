@@ -1,0 +1,2 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>
+<input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><input type="hidden" name="status" value="@Model.Page.Status" /><input type="hidden" name="page" value="@Model.Page.Page" /><button class="ts-btn @(Model.Id is null ? "ts-btn-secondary" : "ts-btn-ghost ts-btn-sm")" type="submit" disabled="@(Model.Id is null && Model.Page.Unread == 0 ? "disabled" : null)">@(Model.Id is null ? "Mark all read" : "Mark read")</button>
