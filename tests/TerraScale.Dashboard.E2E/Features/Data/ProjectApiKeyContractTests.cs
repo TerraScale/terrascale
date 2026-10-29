@@ -2,7 +2,6 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using TUnit.Assertions.Enums;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.ApiKeys;
 
 namespace TerraScale.Dashboard.E2E.Features.Data

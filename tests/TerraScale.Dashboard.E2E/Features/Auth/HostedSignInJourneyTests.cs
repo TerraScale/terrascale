@@ -1,6 +1,5 @@
 using System.Net;
 using Microsoft.AspNetCore.WebUtilities;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
 {

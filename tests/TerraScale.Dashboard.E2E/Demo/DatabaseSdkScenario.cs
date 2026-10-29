@@ -1,6 +1,5 @@
 using Cronos;
 using System.Collections.Concurrent;
-using System.Net;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
@@ -14,11 +13,9 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Data;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;

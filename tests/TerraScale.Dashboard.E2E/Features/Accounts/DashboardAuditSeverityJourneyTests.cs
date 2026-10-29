@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Organizations;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
