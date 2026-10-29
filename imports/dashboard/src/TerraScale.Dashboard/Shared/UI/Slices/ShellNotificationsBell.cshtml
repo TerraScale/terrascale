@@ -1,0 +1,2 @@
+@inherits RazorSlice<ShellModel>
+<button id="ts-notifications-topbar" class="ts-icon-btn ts-sidebar-notifications" type="button" aria-label="@Model.NotificationsLabel" command="show-modal" commandfor="ts-notifications-dialog" data-on:click="(document.getElementById('ts-notifications-dialog').dataset.returnFocusSelector = '#ts-notifications-topbar', @@get('/notifications/dialog', {retryMaxCount: 0}))">@ShellIcons.Svg("bell", 18)@if (Model.Unread > 0) { <span class="ts-nav-count" aria-hidden="true">@ShellModel.Count(Model.Unread)</span> }</button>

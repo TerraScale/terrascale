@@ -1,0 +1,21 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Profile.ProfilePage>
+<section class="ts-card" id="profile-email" aria-labelledby="profile-email-title">
+    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-email-title">Change sign-in email</h2><p class="ts-card-description">Verify your identity, then enter the code sent to your new address. Completing the change signs you out on every device.</p></div></header>
+    <div class="ts-card-body ts-stack-sm">
+        <form class="ts-form" method="post" action="/api/v1/dashboard/profile/email-change" data-submit-once>
+            <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+            <div class="ts-field"><label class="ts-label" for="new-email">New sign-in email</label><input class="ts-input" id="new-email" name="new_email" type="email" maxlength="254" autocomplete="email" required /></div>
+            <div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Verify identity and send code</button></div>
+        </form>
+        <details open="@Model.EmailCodeEntry">
+            <summary class="ts-link">Enter the email change code</summary>
+            @if (Model.PendingEmail is { } email) { <p class="ts-meta">Code sent to @email.</p> }
+            <form class="ts-form" method="post" action="/api/v1/dashboard/profile/email-change/confirm" data-submit-once>
+                <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                <p class="ts-hint" id="email-code-help">Use the six-digit code sent to your new address within ten minutes. Five wrong codes void the change. A new request replaces the previous code. To cancel, confirm the cancel link sent to your current address; this signs you out everywhere.</p>
+                <div class="ts-field"><label class="ts-label" for="email-change-code">Email change code</label><input class="ts-input ts-mono" id="email-change-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" aria-describedby="email-code-help" required /></div>
+                <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Change email and sign out</button></div>
+            </form>
+        </details>
+    </div>
+</section>

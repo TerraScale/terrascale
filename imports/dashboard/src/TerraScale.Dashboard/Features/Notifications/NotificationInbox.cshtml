@@ -1,0 +1,30 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationPage>
+<div class="ts-notifications-toolbar"><nav class="ts-tabs" aria-label="Notification filter">
+    @foreach (var filter in new[] { (Key: "all", Label: "All", Count: Model.Total), (Key: "unread", Label: "Unread", Count: Model.Unread) })
+    {
+        var href = WorkspaceUrl.For(Model.Shell.Context, filter.Key == "all" ? "/notifications" : "/notifications?status=unread");
+        if (Model.Dialog) { <button class="ts-tab" type="button" aria-current="@(Model.Status == filter.Key ? "page" : null)" data-on:click="@("@get('" + href.Replace("/notifications", "/notifications/dialog") + "')")"><span>@filter.Label</span><span class="ts-tab-count">@filter.Count</span></button> }
+        else { <a class="ts-tab" href="@href" aria-current="@(Model.Status == filter.Key ? "page" : null)"><span>@filter.Label</span><span class="ts-tab-count">@filter.Count</span></a> }
+    }
+    </nav><div class="ts-notifications-actions">@if (Model.Dialog) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model))) }<p class="ts-meta ts-notifications-summary">@Model.Unread unread @if (Model.Critical > 0) { <span>· @Model.Critical critical</span> } · @Model.Total total</p></div>
+</div>
+@if (Model.Items.Count == 0) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Bell", 16)</span><p class="ts-empty-title">You're all caught up</p><p class="ts-empty-detail">@(Model.Status == "unread" ? "No unread notifications in this scope." : "No notifications in this scope.")</p></div> }
+else
+{
+    <ol class="ts-notification-list">@foreach (var item in Model.Items)
+    {
+        var tone = item.Severity switch { "critical" => "danger", "warning" => "warning", "success" => "success", _ => "info" };
+        <li><article class="ts-notification @(item.Unread ? "ts-notification-unread" : "")" data-tone="@tone" aria-label="@item.Severity notification"><span class="ts-notification-marker" aria-hidden="true"></span><div class="ts-stack-sm"><div class="ts-row">@if (item.Url.Length > 0) { <a class="ts-strong" href="@TerraScale.Dashboard.Platform.Identity.Csrf.LocalRedirect(item.Url)">@item.Title</a> } else { <strong class="ts-strong">@item.Title</strong> }<span class="ts-badge ts-badge-@tone">@item.Severity</span></div><p class="ts-muted">@item.Body</p><p class="ts-meta"><time datetime="@item.CreatedAt.ToString("O")">@ValueFormat.UtcDate(item.CreatedAt)</time> · @(item.Unread ? "unread" : "read")</p></div>
+        @if (item.Unread)
+        {
+            @(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model, item.Id)))
+        }</article></li>
+    }</ol>
+}
+@if (Model.PageCount > 1)
+{
+    <nav class="ts-pager" aria-label="Notification pages"><span>Page @Model.Page of @Model.PageCount</span><div class="ts-row">
+        @if (Model.Page > 1) { if (Model.Dialog) { <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click="@("@get('" + Model.Href(Model.Page - 1, true) + "')")">Previous</button> } else { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@Model.Href(Model.Page - 1)" rel="prev">Previous</a> } }
+        @if (Model.Page < Model.PageCount) { if (Model.Dialog) { <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click="@("@get('" + Model.Href(Model.Page + 1, true) + "')")">Next</button> } else { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@Model.Href(Model.Page + 1)" rel="next">Next</a> } }
+    </div></nav>
+}

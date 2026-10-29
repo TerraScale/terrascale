@@ -1,0 +1,15 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@using TerraScale.Dashboard.Features.Organizations
+<main id="access-page" class="ts-page ts-org-page">
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, OrganizationPage>(Model))
+    <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access" @(ExternalLink.Attributes)>Organization roles, invitations and access@(ExternalLink.Hint)</a></p>
+    <div class="ts-toolbar ts-access-toolbar">
+        <form id="access-filter-form" method="get" action="/organization" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@@get('/organization', {contentType:'form'})">
+            <input type="hidden" name="tab" value="members" /><button class="ts-sr-only" type="submit">Apply filters</button><input type="hidden" name="role" value="@(Model.Filter.Role == "all" ? "" : Model.Filter.Role)" />
+            <div class="ts-filter-field ts-access-search"><label class="ts-sr-only" for="member-search">Filter members</label><input class="ts-input" id="member-search" name="q" type="search" placeholder="Search members" value="@Model.Filter.Query" /></div>
+            <div class="ts-filter-field"><span class="ts-sr-only" id="member-role-filter-label">Organization role</span><details class="ts-menu ts-menu-end" data-on:click__outside="el.open = false" data-on:click="evt.target.closest('.ts-menu-panel [type=submit]') &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.open &amp;&amp; (el.open = false, el.querySelector('summary').focus())"><summary class="ts-select" aria-labelledby="member-role-filter-label member-role-filter-value"><span id="member-role-filter-value">@OrganizationPage.RoleFilterLabel(Model.Filter.Role)</span></summary><div class="ts-menu-panel">@foreach (var role in new[] { "all", "owner", "admin", "member", "viewer" }) { <button class="ts-menu-item" type="submit" name="role" value="@(role == "all" ? "" : role)" aria-current="@(Model.Filter.Role == role ? "true" : null)"><span class="ts-menu-label">@OrganizationPage.RoleFilterLabel(role)</span>@if (Model.Filter.Role == role) { <span class="ts-menu-check" aria-hidden="true">@Icons.Render("Check", 15)</span> }</button> }</div></details></div>
+            @if (Model.Filter.Query.Length > 0 || Model.Filter.Role != "all") { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="/organization?tab=members">Clear</a> }
+        </form>
+    </div>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationMembers, OrganizationPage>(Model))
+</main>

@@ -1,0 +1,9 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>
+@if (Model.Page.Dialog)
+{
+    <form method="post" action="@Model.Action" data-on:submit="@("@post('" + Model.Action + "', {contentType:'form'})")">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadControls, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(Model))</form>
+}
+else
+{
+    <form method="post" action="@Model.Action">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadControls, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(Model))</form>
+}

@@ -1,0 +1,16 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
+@inject AssetUrls Assets
+<details class="ts-stack" id="auth-directory-export">
+<summary class="ts-strong">Export end-user directory</summary>
+<p class="ts-hint">Download up to 100 users per page, including verification status and linked provider identities. This exports the whole project directory, regardless of the search above. Each page is authorized and audited by ts-auth.</p>
+<p class="ts-hint">The first page sets a creation cutoff. Later creations are excluded; updates and deletions can be visible on later pages. This is not a transaction snapshot. Keep these downloads private.</p>
+<form class="ts-form" method="post" action="/api/v1/auth-management/users/export" id="auth-export-form">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<input type="hidden" name="project_id" value="@Model.Context.Project?.Id" />
+<div class="ts-field"><label class="ts-label" for="auth-export-format">Download format</label><select class="ts-select" id="auth-export-format" name="format"><option value="json">JSON</option><option value="csv">CSV</option></select><p class="ts-hint">CSV stores linked providers as JSON in one cell and prefixes spreadsheet formulas with an apostrophe.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-export-after">Resume cursor</label><textarea class="ts-input ts-mono" id="auth-export-after" name="after" rows="2" maxlength="8192" spellcheck="false" autocomplete="off" aria-describedby="auth-export-resume-help"></textarea><p class="ts-hint" id="auth-export-resume-help">Leave blank to start. After each download, the next cursor appears here. Save it to resume this project later. Downloads also return X-Export-Next and X-Export-Created-Before headers; JSON includes next and created_before.</p></div>
+<p class="ts-hint" id="auth-export-cutoff"></p>
+<p class="ts-hint" role="status" id="auth-export-status">Ready to download one page.</p>
+<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Download page</button><button class="ts-btn ts-btn-secondary" type="reset">Start over</button></div>
+</form></details>
+<script type="module" src="@Assets.Url("js/auth-directory-export.js")" nonce="@Model.Shell.Nonce"></script>

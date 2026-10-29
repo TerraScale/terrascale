@@ -1,0 +1,23 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Auth.AuthFailurePage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <div class="ts-login-heading">
+                    <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">Sign in</h1><p class="ts-auth-subtitle">Sign-in through ts-auth did not finish.</p></div>
+                </div>
+                <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@Model.Message</p><p class="ts-alert-body">Reference: <code>@Model.Reference</code></p></div>
+                <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-block" href="@Model.RetryUrl">Try again</a></div>
+                <p class="ts-meta">Still failing? Check <a class="ts-link" href="https://status.terrascale.tech" @(ExternalLink.Attributes)>TerraScale status@(ExternalLink.Hint)</a>, and quote the reference when you contact us.</p>
+            </div>
+        </div>
+        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms@(ExternalLink.Hint)</a><a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy@(ExternalLink.Hint)</a><a href="https://status.terrascale.tech" @(ExternalLink.Attributes)>Status@(ExternalLink.Hint)</a></footer>
+    </div>
+</main>
+@functions { public DocumentModel LayoutModel => Model.Document; }

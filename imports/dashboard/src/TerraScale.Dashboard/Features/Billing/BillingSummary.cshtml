@@ -1,0 +1,65 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingPage>
+@using System.Globalization
+@using TerraScale.Dashboard.Features.Billing
+@{
+    var org = Model.Shell.Context.Organization!;
+    var binding = Model.Binding;
+    var plan = PlanCatalog.For(org);
+    var owner = Model.CanManage;
+    var subscribed = binding?.SubscriptionId is { Length: > 0 } && binding.Status is not ("canceled" or "incomplete_expired");
+    var awaiting = org.BillingStatus == "billing_required" && !subscribed;
+    var free = plan?.Key == "free" && !subscribed;
+    var planName = awaiting || plan is null ? "No plan" : plan.Name;
+    var status = org.BillingStatus == "billing_required" ? "Payment required" : binding?.Status == "trialing" ? "Trialing" : org.BillingStatus == "active" ? "Active" : org.BillingStatus;
+    var effectiveInterval = !subscribed ? null : binding?.EffectiveInterval is { Length: > 0 } currentInterval ? currentInterval : binding?.Interval;
+    var statusClass = binding?.Status == "trialing" ? "ts-badge-info" : awaiting ? "ts-badge-warning" : org.BillingStatus is "" or "active" ? "ts-badge-success" : "ts-badge-neutral";
+}
+<div class="ts-stack ts-billing ts-usage">
+<section class="ts-billing ts-stack">
+    <header class="ts-row ts-row-between"><h2 class="ts-card-title">Plans and billing</h2></header>
+    @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+    @if (HttpContext!.Request.Query["payment"] == "canceled") { <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Checkout canceled</p><p class="ts-alert-body">Review your current plan below. Choose a plan to try again, or cancel the pending checkout before choosing a different plan.</p></div> }
+    @if (HttpContext!.Request.Query["payment"] == "blocked") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Checkout did not open</p><p class="ts-alert-body">Finish or cancel the pending checkout first. If this organization already has a subscription, change its plan below or in Manage payment.</p></div> }
+    <section class="ts-card" id="billing-summary" aria-labelledby="billing-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-summary-title">Current plan</h2><p class="ts-card-description">@(Model.InternalBill is not null ? "Internal reporting only. No Stripe charges; spending caps never suspend services." : awaiting || plan is null ? org.Name + " has no active plan." : free ? plan.Name + " plan. No subscription or payment method is required; no Stripe charges." : org.Name + " is billed on this plan.")</p></div>@if (Model.InternalBill is not null) { <span class="ts-badge ts-badge-info">Internal</span> }</header><div class="ts-card-body">
+        <div class="ts-billing-current"><div class="ts-billing-plan"><span class="ts-billing-plan-icon" aria-hidden="true">@Icons.Render("CreditCard", 20)</span><span class="ts-billing-plan-name">@planName</span><span class="ts-badge @statusClass"><span class="ts-dot" aria-hidden="true"></span>@status</span></div><dl class="ts-billing-facts"><div><dt>Billing interval</dt><dd>@(effectiveInterval is "monthly" ? "Monthly" : effectiveInterval is "annual" ? "Annual" : "Not applicable")</dd></div><div><dt>Renewal</dt><dd>@(binding?.RenewalAt?.UtcDateTime.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) ?? "Not scheduled")</dd></div><div><dt>Payment method</dt><dd>@(Model.PaymentMethodUnavailable ? "Not reported" : Model.PaymentMethod?.Label ?? (org.PaymentMethodValidated ? "On file" : "Not set"))</dd></div></dl></div>
+        @if (Model.InternalBill is null && !awaiting && plan is not null && (free || subscribed)) { <p class="ts-meta" id="billing-usage">@UsageThisPeriod(plan, plan.PriceCents == 0 ? null : Model.OverageUnits ?? -1)</p> }
+        @if (Model.PaymentMethodUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Payment method could not be loaded. Reload billing to retry.</p></div> }
+        @if (awaiting) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Choose a plan</p><p class="ts-alert-body">Projects and databases can’t be created in @org.Name until a plan is active.</p></div> }
+    </div></section>
+    @if (Model.InternalBill is null)
+    {
+    <section class="ts-billing-plans" aria-labelledby="available-plans-title"><header class="ts-billing-plans-head"><div><h2 class="ts-card-title" id="available-plans-title">Available plans</h2><p class="ts-card-description">@(owner ? "Pick the capacity your organization needs." : "Only the organization owner can change the plan.")</p></div></header>
+        <p class="ts-meta">@PlanCatalog.OperationUnitDefinition @PlanCatalog.AllowanceDefinition</p>
+        <div class="ts-billing-grid">@foreach (var candidate in PlanCatalog.ComparisonPlans)
+        {
+            var selectable = Model.Plans.FirstOrDefault(item => item.Key == candidate.Key);
+            var freeCandidate = candidate.Key == "free";
+            var interval = freeCandidate ? "" : selectable is not null && selectable.Id == org.PlanId && selectable.SupportsInterval(effectiveInterval ?? "") ? effectiveInterval! : selectable?.CheckoutInterval ?? "";
+            var current = freeCandidate ? free && !awaiting : subscribed && selectable?.Id == org.PlanId && effectiveInterval == interval;
+            var canReview = owner && subscribed && selectable is not null && (!freeCandidate || org.Kind == "personal" && Model.PlanChanges.State is not null);
+            var action = current ? "Current plan" : awaiting ? "Choose " + candidate.Name : candidate.PriceCents > (plan?.PriceCents ?? 0) ? "Upgrade to " + candidate.Name : "Switch to " + candidate.Name;
+            var primary = !current && (awaiting || candidate.PriceCents > (plan?.PriceCents ?? 0));
+            <article class="ts-plan @(current ? "ts-plan-current" : "")" data-tone="slate" aria-labelledby="plan-@candidate.Key" aria-current="@(current ? "true" : null)"><header class="ts-plan-head"><h3 id="plan-@candidate.Key" class="ts-plan-name">@candidate.Name</h3>@if (current) { <span class="ts-badge ts-badge-info"><span class="ts-dot" aria-hidden="true"></span>Current</span> }</header><div><p class="ts-plan-price">@candidate.Price<small>@candidate.PriceUnit</small></p><p class="ts-meta">@candidate.BillingDescription</p></div><ul class="ts-plan-features">@foreach (var feature in candidate.Features) { <li>@Icons.Render("Check", 15)<span>@feature</span></li> }@if (!subscribed && binding?.TrialUsed != true && selectable is { TrialDays: > 0 }) { <li>@Icons.Render("Check", 15)<span>@(selectable!.TrialDays)-day free trial</span></li> }</ul>
+                @if (candidate.Key == "enterprise") { <a class="ts-btn ts-btn-block ts-btn-secondary" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>Contact sales@(ExternalLink.Hint)</a> }
+                else if (canReview) { <form method="get" action="/organization"><input type="hidden" name="tab" value="billing" /><input type="hidden" name="review" value="1" /><input type="hidden" name="plan" value="@candidate.Key" /><input type="hidden" name="interval" value="@interval" /><button class="ts-btn ts-btn-block @(primary ? "ts-btn-primary" : "ts-btn-secondary")" type="submit" disabled="@current">@action</button></form> }
+                else if (owner && !subscribed && selectable is { PriceCents: > 0 }) { <form method="post" action="/billing/checkout"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="plan" value="@candidate.Key" /><input type="hidden" name="interval" value="@interval" /><input type="hidden" name="return" value="/organization?tab=billing" /><button class="ts-btn ts-btn-block @(primary ? "ts-btn-primary" : "ts-btn-secondary")" type="submit">@action</button></form> }
+                else if (freeCandidate) { <p class="ts-meta">@(current ? "Current plan" : org.Kind != "personal" ? "Available for Personal workspaces only." : "Free is available at renewal for subscribed Personal workspaces.")</p> }
+            </article>
+        }</div>
+    </section>
+    }
+</section>
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Plans.BillingPlanActions, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingDetailsView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Invoices.BillingHistoryView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
+</div>
+@functions {
+    // overage is null for Free and negative when Stripe could not be read.
+    private static string UsageThisPeriod(BillingPlan plan, long? overage) => overage switch
+    {
+        null => string.Create(CultureInfo.InvariantCulture, $"{plan.Name} stops new writes at its {plan.Allowances.MonthlyOperations:N0} operation units a month; reads and deletes keep working. No usage charges."),
+        < 0 => "Usage this period could not be loaded from Stripe. Reload billing to retry.",
+        0 => string.Create(CultureInfo.InvariantCulture, $"Usage this period: {MoneyFormat.Money(0)} so far, within {plan.Name}'s {plan.Allowances.MonthlyOperations:N0} included operation units. Units above them cost {OperationUnitOverage.Rate}."),
+        { } units => string.Create(CultureInfo.InvariantCulture, $"Usage this period: {MoneyFormat.Money(OperationUnitOverage.Cents(units))} so far, for {units:N0} operation units over {plan.Name}'s {plan.Allowances.MonthlyOperations:N0} included units, at {OperationUnitOverage.Rate}. Billed on your next invoice.")
+    };
+}
