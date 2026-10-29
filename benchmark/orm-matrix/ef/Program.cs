@@ -14,6 +14,11 @@ using Npgsql;
 var url = new Uri(Environment.GetEnvironmentVariable("DATABASE_URL") ?? throw new InvalidOperationException("DATABASE_URL is required"));
 var surface = Environment.GetEnvironmentVariable("MATRIX_SURFACE") ?? "unknown";
 var repeats = int.Parse(Environment.GetEnvironmentVariable("MATRIX_REPEAT") ?? "3", CultureInfo.InvariantCulture);
+if (repeats < 1)
+{
+    Console.Error.WriteLine("MATRIX_REPEAT must be positive");
+    return 2;
+}
 var credentials = url.UserInfo.Split(':', 2);
 var password = credentials.Length > 1 ? Uri.UnescapeDataString(credentials[1]) : null;
 var connection = new NpgsqlConnectionStringBuilder
