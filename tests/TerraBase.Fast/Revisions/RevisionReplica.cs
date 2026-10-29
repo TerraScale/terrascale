@@ -1,8 +1,10 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
-using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -57,28 +59,28 @@ internal sealed class RevisionReplica
 
 internal sealed class RevisionDatabase
 {
+    private const int PerRequest = 25;
     private readonly Dictionary<string, string> _acked = [with(StringComparer.Ordinal)];
+    private ManagedDatabaseRef? _reference;
+    private (ManagementApi Api, HttpClient Client)? _client;
 
-    public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+    public TenantContext Database { get; private set; } = null!;
 
-    public IReadOnlyDictionary<string, string> Acked => _acked;
-
-    public async Task CreateAsync(TerraBaseTestServer server)
+    public async Task CreateAsync(ManagementApi api)
     {
-        await Assert.That(await server.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(Database, CancellationToken.None)).IsTrue();
-        await ExecuteAsync(server, "CREATE TABLE items(id TEXT PRIMARY KEY, v TEXT NOT NULL)");
+        _reference = await api.CreateManagedDatabaseAsync();
+        Database = new TenantContext(_reference.Organization, PlanTier.Hobby, _reference.Project, _reference.Id);
+        await ExecuteAsync(api, [Statement("CREATE TABLE items(id TEXT PRIMARY KEY, v TEXT NOT NULL)")]);
     }
 
-    public async Task InsertAsync(TerraBaseTestServer server, int rows, int perWrite = 25)
+    public async Task InsertAsync(ManagementApi api, int rows)
     {
-        for (var done = 0; done < rows; done += perWrite)
+        for (var done = 0; done < rows; done += PerRequest)
         {
-            var batch = Enumerable.Range(0, Math.Min(perWrite, rows - done))
+            var batch = Enumerable.Range(0, Math.Min(PerRequest, rows - done))
                 .Select(_ => (Id: EntityIds.New().ToString(), Value: $"v-{EntityIds.New()}-{new string('x', 900)}"))
                 .ToList();
-            var sql = new StringBuilder("INSERT INTO items(id, v) VALUES ");
-            sql.AppendJoin(", ", batch.Select(row => $"('{row.Id}', '{row.Value}')"));
-            await ExecuteAsync(server, sql.ToString());
+            await ExecuteAsync(api, [.. batch.Select(row => Statement("INSERT INTO items(id, v) VALUES (?, ?)", row.Id, row.Value))]);
             foreach (var (id, value) in batch)
             {
                 _acked[id] = value;
@@ -86,57 +88,55 @@ internal sealed class RevisionDatabase
         }
     }
 
-    public async Task UpdateAsync(TerraBaseTestServer server, int rows)
+    public async Task UpdateAsync(ManagementApi api, int rows)
     {
-        foreach (var id in _acked.Keys.Take(rows).ToList())
+        foreach (var chunk in _acked.Keys.Take(rows).Chunk(PerRequest).ToList())
         {
-            var value = $"u-{EntityIds.New()}-{new string('y', 900)}";
-            await ExecuteAsync(server, $"UPDATE items SET v = '{value}' WHERE id = '{id}'");
-            _acked[id] = value;
-        }
-    }
-
-    public async Task DeleteAsync(TerraBaseTestServer server, int rows)
-    {
-        foreach (var id in _acked.Keys.Skip(rows).Take(rows).ToList())
-        {
-            await ExecuteAsync(server, $"DELETE FROM items WHERE id = '{id}'");
-            _acked.Remove(id);
-        }
-    }
-
-    public async Task<int> LostAckedWritesAsync(TerraBaseTestServer server)
-    {
-        var store = await StoreAsync(server) ?? throw new InvalidOperationException("the database does not exist");
-        var rows = await store.WithWriterAsync(session =>
-        {
-            using var command = session.Connection.CreateCommand();
-            command.CommandText = "SELECT id, v FROM items";
-            using var reader = command.ExecuteReader();
-            var found = new Dictionary<string, string>(StringComparer.Ordinal);
-            while (reader.Read())
+            var values = chunk.Select(id => (Id: id, Value: $"u-{EntityIds.New()}-{new string('y', 900)}")).ToList();
+            await ExecuteAsync(api, [.. values.Select(row => Statement("UPDATE items SET v = ? WHERE id = ?", row.Value, row.Id))]);
+            foreach (var (id, value) in values)
             {
-                found[reader.GetString(0)] = reader.GetString(1);
+                _acked[id] = value;
             }
+        }
+    }
 
-            return found;
-        }, "a revision test read", CancellationToken.None);
+    public async Task DeleteAsync(ManagementApi api, int rows)
+    {
+        foreach (var chunk in _acked.Keys.Skip(rows).Take(rows).Chunk(PerRequest).ToList())
+        {
+            await ExecuteAsync(api, [.. chunk.Select(id => Statement("DELETE FROM items WHERE id = ?", id))]);
+            foreach (var id in chunk)
+            {
+                _acked.Remove(id);
+            }
+        }
+    }
+
+    public async Task<int> LostAckedWritesAsync(ManagementApi api)
+    {
+        var body = await ExecuteAsync(api, [Statement("SELECT id, v FROM items")]);
+        var rows = body.GetProperty("results")[0].GetProperty("rows").EnumerateArray()
+            .ToDictionary(row => row[0].GetString()!, row => row[1].GetString()!, StringComparer.Ordinal);
         return _acked.Count(row => !rows.TryGetValue(row.Key, out var value) || value != row.Value) + rows.Keys.Count(id => !_acked.ContainsKey(id));
     }
 
     public int Missing(RevisionReplica replica) => _acked.Values.Count(value => !replica.Holds(value[..28]));
 
-    public async Task ExecuteAsync(TerraBaseTestServer server, string sql)
+    private async Task<JsonElement> ExecuteAsync(ManagementApi api, object[] statements)
     {
-        var store = await StoreAsync(server) ?? throw new InvalidOperationException("the database does not exist");
-        await store.WithWriterAsync(session =>
+        if (_client is not { } open || !ReferenceEquals(open.Api, api))
         {
-            using var command = session.Connection.CreateCommand();
-            command.CommandText = sql;
-            return command.ExecuteNonQuery();
-        }, "a revision test write", CancellationToken.None);
+            _client?.Client.Dispose();
+            var key = await api.Server.IssueNarrowedAsync(_reference!.Organization, _reference.Project, null, "documents:read", "documents:write");
+            _client = open = (api, api.DataClient(key));
+        }
+
+        using var response = await open.Client.PostAsJsonAsync(ManagementApi.Uri(_reference!.Data + "/sql/execute"), new { statements });
+        var body = JsonElement.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
+        return body;
     }
 
-    private async Task<TursoDatabaseStore?> StoreAsync(TerraBaseTestServer server) =>
-        (TursoDatabaseStore?)await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None);
+    private static object Statement(string sql, params string[] args) => new { sql, args };
 }

@@ -17,6 +17,7 @@ internal sealed partial class TursoDatabaseStore
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
+            await RecordOperationDamageAsync(error).ConfigureAwait(false);
             LogAfterCommit("the revision index", error);
         }
     }
@@ -25,20 +26,28 @@ internal sealed partial class TursoDatabaseStore
     {
         while (true)
         {
-            await WithWriterAsync(writer =>
-            {
-                Revisions.Catch(writer.Connection);
-                return true;
-            }, "a revision pull", cancellationToken).ConfigureAwait(false);
-
             var reader = await RentAsync(cancellationToken).ConfigureAwait(false);
             RevisionPullResult? result;
             try
             {
-                result = await reader.ExecuteAsync(io, () => Revisions.Pull(reader.Connection, clientRevision, page), cancellationToken).ConfigureAwait(false);
+                await WithWriterAsync(writer =>
+                {
+                    Revisions.Catch(writer.Connection);
+                    TursoRevisionLedger.BeginSnapshot(reader.Connection);
+                    return true;
+                }, "a revision pull", cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    result = await io.RunAsync(() => Revisions.Pull(reader.Connection, clientRevision, page, cancellationToken), cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await io.RunAsync(() => TursoRevisionLedger.EndSnapshot(reader.Connection), CancellationToken.None).ConfigureAwait(false);
+                }
             }
-            catch
+            catch (Exception error)
             {
+                await RecordOperationDamageAsync(error).ConfigureAwait(false);
                 await io.RunAsync(() => pool.Discard(reader), CancellationToken.None).ConfigureAwait(false);
                 throw;
             }

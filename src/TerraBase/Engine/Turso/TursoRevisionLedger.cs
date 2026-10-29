@@ -10,7 +10,6 @@ internal sealed class TursoRevisionLedger(string path)
 {
     internal const ulong CheckpointFrames = 1024;
     private const int FrameBatch = 1024;
-    private const int PullAttempts = 3;
 
     private readonly Lock _gate = new();
     private RevisionManifest? _manifest;
@@ -148,67 +147,56 @@ internal sealed class TursoRevisionLedger(string path)
         }
     }
 
-    internal RevisionPullResult? Pull(SqliteConnection reader, string? clientRevision, Action<uint, ReadOnlySpan<byte>> page)
+    internal static void BeginSnapshot(SqliteConnection reader) => Execute(reader, "BEGIN; SELECT count(*) FROM sqlite_schema;");
+
+    internal static void EndSnapshot(SqliteConnection reader) => Execute(reader, "ROLLBACK;");
+
+    internal RevisionPullResult? Pull(SqliteConnection reader, string? clientRevision, Action<uint, ReadOnlySpan<byte>> page, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < PullAttempts; attempt++)
+        var snapshot = reader.GetWalState();
+        var size = PageCount(reader);
+        RevisionPlan plan;
+        DatabaseRevision revision;
+        lock (_gate)
         {
-            Execute(reader, "BEGIN; SELECT count(*) FROM sqlite_schema;");
-            try
+            ThrowIfFenced();
+            if (_attached is null || _manifest is null
+                || snapshot.CheckpointSequence != _live.CheckpointSequence
+                || snapshot.MaxFrame != _live.MaxFrame)
             {
-                var snapshot = reader.GetWalState();
-                var size = PageCount(reader);
-                RevisionPlan plan;
-                DatabaseRevision revision;
-                lock (_gate)
-                {
-                    ThrowIfFenced();
-                    if (_attached is null || _manifest is null)
-                    {
-                        return null;
-                    }
-
-                    if (snapshot.CheckpointSequence != _live.CheckpointSequence
-                        || snapshot.MaxFrame > _live.MaxFrame
-                        || snapshot.MaxFrame < _live.BaseFrame)
-                    {
-                        continue;
-                    }
-
-                    plan = RevisionPlanner.Plan(_manifest, _live, clientRevision);
-                    revision = _manifest.Current(snapshot.MaxFrame);
-                }
-
-                uint[] pages = plan.Full is null
-                    ? [.. plan.Pages.Where(number => number <= size).Order()]
-                    : [.. Enumerable.Range(1, (int)size).Select(number => (uint)number)];
-                var buffer = ArrayPool<byte>.Shared.Rent(reader.PageSize);
-                try
-                {
-                    var span = buffer.AsSpan(0, reader.PageSize);
-                    foreach (var number in pages)
-                    {
-                        if (!reader.TryReadSnapshotPage(number, span))
-                        {
-                            throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture, $"page {number} is missing at frame {revision.Frame}"));
-                        }
-
-                        page(number, span);
-                    }
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
-
-                return new RevisionPullResult(revision, plan.Full, pages.Length, size);
+                return null;
             }
-            finally
-            {
-                Execute(reader, "ROLLBACK;");
-            }
+
+            plan = RevisionPlanner.Plan(_manifest, _live, clientRevision);
+            revision = _manifest.Current(snapshot.MaxFrame);
         }
 
-        throw new TimeoutException("the database's revision moved during every pull attempt");
+        var pages = plan.Full is null
+            ? plan.Pages.Where(number => number <= size).Order()
+            : Enumerable.Range(1, (int)size).Select(number => (uint)number);
+        var sent = 0;
+        var buffer = ArrayPool<byte>.Shared.Rent(reader.PageSize);
+        try
+        {
+            var span = buffer.AsSpan(0, reader.PageSize);
+            foreach (var number in pages)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!reader.TryReadSnapshotPage(number, span))
+                {
+                    throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture, $"page {number} is missing at frame {revision.Frame}"));
+                }
+
+                page(number, span);
+                sent++;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return new RevisionPullResult(revision, plan.Full, sent, size);
     }
 
     private bool CheckpointLocked(SqliteConnection writer)
@@ -224,16 +212,18 @@ internal sealed class TursoRevisionLedger(string path)
         var end = _live.MaxFrame;
         manifest.Seal(_live);
         Store();
+        bool truncated;
         try
         {
-            Execute(writer, "PRAGMA wal_checkpoint(TRUNCATE);");
+            truncated = writer.TryCheckpointTruncate(end);
         }
-        catch (SqliteException error) when (error.SqliteErrorCode is 5 or 6)
+        catch
         {
+            _fenced = "the checkpoint failed";
+            throw;
         }
 
         var (state, size) = Snapshot(writer, () => (writer.GetWalState(), PageCount(writer)));
-        var truncated = state.MaxFrame == 0;
         _live = truncated
             ? LiveGeneration.After(0, state.CheckpointSequence, size)
             : LiveGeneration.After(end, state.CheckpointSequence, _live.DatabaseSize);
@@ -289,11 +279,22 @@ internal sealed class TursoRevisionLedger(string path)
                 writer.ReadWalFramePages(first, pages.AsSpan(0, count), sizes.AsSpan(0, count));
                 for (var i = 0; i < count; i++)
                 {
-                    _live.Pages[pages[i]] = first + (ulong)i;
+                    if (!_live.Full)
+                    {
+                        _live.Pages[pages[i]] = first + (ulong)i;
+                    }
+
                     if (sizes[i] != 0)
                     {
                         _live.DatabaseSize = sizes[i];
                     }
+                }
+
+                if (_live.Pages.Count > RevisionManifest.MaxGenerationPages)
+                {
+                    _live.Full = true;
+                    _live.Pages.Clear();
+                    _live.Pages.TrimExcess();
                 }
             }
         }
