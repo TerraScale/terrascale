@@ -2,6 +2,13 @@
 # Locally, run them at low CPU priority, e.g. `nice -n 19 make test-fast`; CI runs them at full priority.
 # Nothing here applies nice itself.
 SOLUTION := TerraScale.slnx
+
+# Landing Fast covers tests and the complete prerendered production output.
+.PHONY: landing-test-fast
+landing-test-fast:
+	cd landing-site && npm ci --no-audit --no-fund && npm run build
+
+.DEFAULT_GOAL := build
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
