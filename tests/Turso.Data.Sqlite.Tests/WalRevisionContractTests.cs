@@ -4,8 +4,10 @@ using Turso.Raw.Public;
 
 namespace Turso.Data.Sqlite.Tests;
 
+/// <summary>The native WAL revision contract through the driver: manual WAL, frame metadata and snapshot page reads.</summary>
 public sealed class WalRevisionContractTests
 {
+    /// <summary>Manual WAL keeps every frame and the database file untouched until an explicit TRUNCATE; snapshot reads decrypt.</summary>
     [Test]
     public async Task ManualWalKeepsFramesUntilAnExplicitTruncate()
     {
@@ -42,7 +44,7 @@ public sealed class WalRevisionContractTests
                 Execute(reader, "ROLLBACK;");
 
                 Execute(writer, "BEGIN IMMEDIATE; INSERT INTO t VALUES (0, 'uncommitted');");
-                await Assert.That(() => writer.GetWalState()).Throws<TursoException>();
+                await Assert.That(writer.GetWalState).Throws<TursoException>();
                 Execute(writer, "ROLLBACK;");
 
                 var stamp = Stamp(path);
@@ -84,6 +86,7 @@ public sealed class WalRevisionContractTests
         }
     }
 
+    /// <summary>Overlapping buffers and frames past the end of the WAL are refused.</summary>
     [Test]
     public async Task FramePageRangesAndBuffersAreChecked()
     {
