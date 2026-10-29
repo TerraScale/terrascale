@@ -1,0 +1,22 @@
+<Project>
+  <!-- Central versions for every project; lock files pin the full graph. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup Label="Application">
+    <PackageVersion Include="Cronos" Version="0.13.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageVersion Include="RazorSlices" Version="0.12.1" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.18.0" />
+    <PackageVersion Include="Stripe.net" Version="53.0.0" />
+    <!-- Candidate SDK from vendor/dotnet (NuGet.Config maps it there); see vendor/dotnet/README.md. -->
+    <PackageVersion Include="TerraScale.DotNet" Version="0.0.20" />
+  </ItemGroup>
+  <ItemGroup Label="E2E">
+    <PackageVersion Include="TUnit" Version="1.73.19" />
+    <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
+    <PackageVersion Include="Deque.AxeCore.Playwright" Version="4.13.0" />
+    <PackageVersion Include="Bogus" Version="35.6.5" />
+  </ItemGroup>
+</Project>

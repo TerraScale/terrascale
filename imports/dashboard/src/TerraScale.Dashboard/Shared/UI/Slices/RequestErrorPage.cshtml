@@ -1,0 +1,26 @@
+@inherits RazorSlice<RequestError>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <div class="ts-login-heading">
+                    <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">@Model.Heading</h1><p class="ts-auth-subtitle" role="alert">@Model.Detail</p></div>
+                </div>
+                <p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p>
+                @if (Model.Heading == "Something went wrong on our side" && HttpContext?.Request.Method == "GET")
+                { <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="">Try again</a> }
+                <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/">Back to dashboard</a>
+                <a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/login">Sign in again</a>
+            </div>
+        </div>
+    </div>
+</main>
+@functions {
+    public DocumentModel LayoutModel => Model.Document;
+}

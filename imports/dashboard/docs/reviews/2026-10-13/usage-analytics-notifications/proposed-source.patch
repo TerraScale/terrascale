@@ -1,0 +1,68 @@
+--- a/src/TerraScale.Dashboard/Features/Usage/UsageService.cs
++++ b/src/TerraScale.Dashboard/Features/Usage/UsageService.cs
+@@ -31,7 +31,9 @@
+     public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
+     public int RegionCount => Selection.Context.Project?.Databases.Values.Select(database => database.Region).Where(region => region.Length > 0).Distinct().Count() ?? 0;
+     public string HistoryDescription => "The selected " + (Selection.DatabaseId.Length > 0 ? "database" : "project") + ", " + char.ToLowerInvariant(Selection.RangeLabel[0]) + Selection.RangeLabel[1..];
+-    public string ProjectHref(string projectId, string tab = "overview") => "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId);
++    public string ProjectHref(string projectId, string tab = "overview") => "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId) +
++        "&range=" + Uri.EscapeDataString(Selection.Range) +
++        (projectId == Selection.Context.Project?.Id && Selection.DatabaseId.Length > 0 ? "&database=" + Uri.EscapeDataString(Selection.DatabaseId) : "");
+ }
+
+ public sealed class UsageService(IUsageMeasurements measurements, SpendingService spending, IUsageReplication replication, IUsageStorage storage, TimeProvider time)
+--- a/src/TerraScale.Dashboard/Features/Organizations/OrganizationFilters.cs
++++ b/src/TerraScale.Dashboard/Features/Organizations/OrganizationFilters.cs
+@@ -8,7 +8,7 @@
+         http.Request.Query["q"].ToString().Trim(), http.Request.Query["role"].LastOrDefault() is { Length: > 0 } role ? role : "all",
+         int.TryParse(http.Request.Query["page"], out var page) ? Math.Max(1, page) : 1,
+         http.Request.Query["search"].ToString().Trim(), http.Request.Query["action"].ToString() is { Length: > 0 } action ? action : "all",
+-        http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" ? http.Request.Query["severity"].ToString() : "all",
++        http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" or "unknown" ? http.Request.Query["severity"].ToString() : "all",
+         http.Request.Query["range"].ToString() is "24h" or "30d" or "90d" ? http.Request.Query["range"].ToString() : "7d",
+         http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow());
+
+@@ -26,7 +26,8 @@
+     {
+         "high" or "critical" => "critical",
+         "medium" or "warn" or "warning" => "warn",
+-        _ => "info"
++        "low" or "info" or "informational" => "info",
++        _ => "unknown"
+     };
+     // These presentation classifiers preserve the original Go rules over the
+     // event's reported fields; they do not grant permissions or create events.
+--- a/src/TerraScale.Dashboard/Features/Organizations/OrganizationAuditView.cshtml
++++ b/src/TerraScale.Dashboard/Features/Organizations/OrganizationAuditView.cshtml
+@@ -16,7 +16,7 @@
+                 @foreach (var action in new[] { "all" }.Concat((Model.Access?.AuditEvents.Select(item => item.Action) ?? []).Append(Model.Filter.Action).Where(action => action != "all").Distinct().Order())) { <option value="@action" selected="@(Model.Filter.Action == action ? "selected" : null)">@(action == "all" ? "All actions" : action)</option> }
+             </select></label>
+             <label class="ts-filter-field" for="audit-severity">Severity<select class="ts-select" id="audit-severity" name="severity">
+-                @foreach (var severity in new[] { ("all", "All severities"), ("info", "Info"), ("warn", "Warning"), ("critical", "Critical") }) { <option value="@severity.Item1" selected="@(Model.Filter.Severity == severity.Item1 ? "selected" : null)">@severity.Item2</option> }
++                @foreach (var severity in new[] { ("all", "All severities"), ("info", "Info"), ("warn", "Warning"), ("critical", "Critical"), ("unknown", "Not reported") }) { <option value="@severity.Item1" selected="@(Model.Filter.Severity == severity.Item1 ? "selected" : null)">@severity.Item2</option> }
+             </select></label>
+             <label class="ts-filter-field" for="audit-range">Range<select class="ts-select" id="audit-range" name="range">
+                 @foreach (var range in new[] { ("24h", "Last 24 hours"), ("7d", "Last 7 days"), ("30d", "Last 30 days"), ("90d", "Last 90 days") }) { <option value="@range.Item1" selected="@(Model.Filter.Range == range.Item1 ? "selected" : null)">@range.Item2</option> }
+@@ -31,7 +31,7 @@
+                     <tbody>@foreach (var item in Model.AuditRows)
+                     {
+                         var severity = OrganizationFilters.AuditSeverity(item); var outcome = OrganizationFilters.AuditOutcome(item);
+-                        <tr><td class="ts-table-mono ts-meta"><time datetime="@item.OccurredAt.ToString("O")">@item.OccurredAt.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture)</time></td><td><span class="ts-list-main"><span class="ts-strong">@item.Actor</span><span class="ts-meta">@(OrganizationFilters.AuditActorType(item) == "service" ? "Service" : "User")</span></span></td><td><span class="ts-list-main"><span class="ts-strong">@OrganizationFilters.AuditActionLabel(item)</span><code class="ts-meta" title="Raw action code">@item.Action</code></span></td><td>@(item.Target.Length == 0 ? "Not reported" : item.Target)</td><td class="ts-table-mono ts-meta">@item.Source</td><td><span class="ts-badge ts-badge-@(severity == "critical" ? "danger" : severity == "warn" ? "warning" : severity == "info" ? "info" : "neutral")">@severity</span></td><td><span class="ts-badge ts-badge-@(outcome == "failure" ? "danger" : "success")">@outcome</span></td></tr>
++                        <tr><td class="ts-table-mono ts-meta"><time datetime="@item.OccurredAt.ToString("O")">@item.OccurredAt.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture)</time></td><td><span class="ts-list-main"><span class="ts-strong">@item.Actor</span><span class="ts-meta">@(OrganizationFilters.AuditActorType(item) == "service" ? "Service" : "User")</span></span></td><td><span class="ts-list-main"><span class="ts-strong">@OrganizationFilters.AuditActionLabel(item)</span><code class="ts-meta" title="Raw action code">@item.Action</code></span></td><td>@(item.Target.Length == 0 ? "Not reported" : item.Target)</td><td class="ts-table-mono ts-meta">@item.Source</td><td><span class="ts-badge ts-badge-@(severity == "critical" ? "danger" : severity == "warn" ? "warning" : severity == "info" ? "info" : "neutral")">@(severity == "unknown" ? "Not reported" : severity)</span></td><td><span class="ts-badge ts-badge-@(outcome == "failure" ? "danger" : "success")">@outcome</span></td></tr>
+                     }</tbody>
+                 </table>
+             </div>
+@@ -41,11 +41,11 @@
+         {
+             <div class="ts-empty" role="status"><p class="ts-empty-title">No audit events match these filters</p><p class="ts-empty-detail">@Model.AuditMatches.Count events match the current policy and filters. Try a wider time range or clear the search.</p></div>
+         }
+-        @if (Model.Access?.AuditEvents.Any(item => item.Risk is null) == true) { <p class="ts-meta" role="status">Severity is not reported for some provider events.</p> }
++        @if (Model.Access?.AuditEvents.Any(item => OrganizationFilters.AuditSeverity(item) == "unknown") == true) { <p class="ts-meta" role="status">Severity is not reported for some provider events.</p> }
+     </div>
+ </section>
+ <section class="ts-card" id="audit-breakdown" aria-labelledby="audit-breakdown-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="audit-breakdown-title">Severity breakdown</h2><p class="ts-card-description">Events in the current filtered view</p></div></header><div class="ts-card-body"><dl class="ts-grid-3 ts-audit-breakdown">
+-    @foreach (var share in new[] { ("Informational", "info", "info"), ("Warning", "warning", "warn"), ("Critical severity", "danger", "critical") })
++    @foreach (var share in new[] { ("Informational", "info", "info"), ("Warning", "warning", "warn"), ("Critical severity", "danger", "critical"), ("Not reported", "neutral", "unknown") })
+     {
+         var count = Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == share.Item3); var total = Model.AuditMatches.Count; var percent = total == 0 ? 0 : (int)Math.Round(count * 100d / total, MidpointRounding.AwayFromZero);
+         <div class="ts-audit-share ts-audit-share-@share.Item2"><dt class="ts-stat-label">@share.Item1</dt><dd class="ts-stat-value">@count</dd><dd class="ts-meta">@percent% · @count of @total filtered events</dd><dd><meter class="ts-audit-meter" min="0" max="@Math.Max(total, 1)" value="@count" aria-label="@(share.Item1.Replace(" severity", "") + ": " + count + " of " + total + " filtered events")"></meter></dd></div>

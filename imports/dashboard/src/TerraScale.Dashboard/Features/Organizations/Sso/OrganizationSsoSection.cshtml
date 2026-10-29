@@ -1,0 +1,61 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@using TerraScale.Dashboard.Features.Organizations
+@{
+    var sso = Model.Sso;
+    var connection = sso?.Connection;
+    var owner = Model.Shell.Context.Role == "owner";
+    var editable = owner && sso?.PlanIncludesSso == true && sso.Unavailable.Length == 0;
+}
+<section class="ts-card ts-card-boxed" id="organization-sso" aria-labelledby="organization-sso-title">
+    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-sso-title">Single sign-on</h2><p class="ts-card-description">Sign in through your identity provider with OpenID Connect (OIDC).</p></div>
+        @if (editable) { <div class="ts-card-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="configure-sso">@(connection is null ? "Configure SSO" : "Edit connection")</button></div> }</header>
+    <div class="ts-card-body ts-stack">
+        @if (sso is null) { <div class="ts-empty" role="status"><p class="ts-empty-title">Admins only</p><p class="ts-empty-detail">Only organization owners and admins can see single sign-on settings.</p></div> }
+        else
+        {
+            <p class="ts-meta">Once the email domain is verified, everyone with an email at that domain signs in through your identity provider: they type their email on the TerraScale sign-in page and are redirected. New users join this organization on their first sign-in with the default role. Email code and password sign-in are refused for that domain, except for the organization's owners, so an owner can still get in if the identity provider fails.</p>
+            @if (!sso.PlanIncludesSso)
+            { <div class="ts-alert ts-alert-info" role="status" id="sso-upgrade"><p class="ts-alert-title">Single sign-on is on the Team and Enterprise plans</p><p class="ts-alert-body">@(connection is null ? "Upgrade this organization to configure a connection." : "Editing and verifying this connection need the Team or Enterprise plan. You can still remove it.") @if (owner) { <a class="ts-link" href="/organization?tab=billing">Upgrade the plan</a> }</p></div> }
+            @if (sso.Unavailable.Length > 0) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@sso.Unavailable</p></div> }
+            else if (connection is null) { <div class="ts-empty" role="status"><p class="ts-empty-title">No connection</p><p class="ts-empty-detail">This organization has no single sign-on connection.</p></div> }
+            else
+            {
+                <dl class="ts-kv" aria-label="Single sign-on connection">
+                    <dt>Domain</dt><dd><span class="ts-mono">@connection.Domain</span> <span class="ts-badge @(connection.DomainVerified ? "ts-badge-success" : "ts-badge-warning")">@(connection.DomainVerified ? "Verified" : "Not verified")</span></dd>
+                    <dt>Protocol</dt><dd>OIDC</dd>
+                    <dt>Default role</dt><dd>@OrganizationPage.RoleLabel(connection.DefaultRole)</dd>
+                    @if (connection.Oidc is { } oidc)
+                    {
+                        <dt>Issuer</dt><dd class="ts-mono ts-break">@oidc.Issuer</dd><dt>Client ID</dt><dd class="ts-mono ts-break">@oidc.ClientId</dd>
+                        <dt>Client secret</dt><dd>@(oidc.ClientSecretSet ? "Set" : "Not set")</dd><dt>Redirect URI</dt><dd class="ts-mono ts-break">@oidc.RedirectUri</dd>
+                    }
+                </dl>
+                @if (!connection.DomainVerified)
+                {
+                    <div class="ts-stack-sm" id="sso-verification"><p class="ts-strong">Prove you own @connection.Domain</p><p class="ts-meta">Add this DNS record at your DNS provider, then verify. Single sign-on starts only after verification.</p>
+                        <dl class="ts-kv" aria-label="DNS verification record"><dt>Type</dt><dd class="ts-mono">@connection.Verification.Type</dd><dt>Name</dt><dd class="ts-mono ts-break">@connection.Verification.Name</dd><dt>Value</dt><dd class="ts-mono ts-break">@connection.Verification.Value</dd></dl>
+                        @if (editable) { <form method="post" action="/api/v1/dashboard/organization/sso/verify" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Verify domain</button></form> }
+                    </div>
+                }
+                @if (owner)
+                {
+                    <div class="ts-row"><button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="remove-sso">Remove connection</button></div>
+                    <dialog id="remove-sso" class="ts-dialog" closedby="any" aria-labelledby="remove-sso-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="remove-sso-title">Remove single sign-on</h2><p class="ts-dialog-description">People at @connection.Domain go back to email code and password sign-in. Their accounts and memberships stay.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="remove-sso">@Icons.Render("X", 18)</button></header>
+                        <form method="post" action="/api/v1/dashboard/organization/sso/delete" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="remove-sso">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">Remove connection</button></div></form></div></dialog>
+                }
+            }
+        }
+        @if (editable)
+        {
+            <dialog id="configure-sso" class="ts-dialog" closedby="any" aria-labelledby="configure-sso-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="configure-sso-title">Single sign-on connection</h2><p class="ts-dialog-description">Values come from your identity provider.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="configure-sso">@Icons.Render("X", 18)</button></header>
+                <form method="post" action="/api/v1/dashboard/organization/sso" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                    <div class="ts-field"><label class="ts-label" for="sso-domain">Email domain</label><input class="ts-input" id="sso-domain" name="domain" value="@connection?.Domain" placeholder="acme.com" required readonly="@(connection is null ? null : "readonly")" />@if (connection is not null) { <p class="ts-hint">Remove the connection to use another domain.</p> }</div>
+                    <div class="ts-field"><label class="ts-label" for="sso-role">Default role for new users</label><select class="ts-select" id="sso-role" name="default_role">@foreach (var role in new[] { "viewer", "member", "admin" }) { <option value="@role" selected="@((connection?.DefaultRole ?? "member") == role ? "selected" : null)">@OrganizationPage.RoleLabel(role)</option> }</select></div>
+                    <div class="ts-field"><label class="ts-label" for="sso-issuer">Issuer URL</label><input class="ts-input" id="sso-issuer" name="oidc_issuer" type="url" required value="@connection?.Oidc?.Issuer" placeholder="https://idp.example/realms/acme" /></div>
+                    <div class="ts-field"><label class="ts-label" for="sso-client-id">Client ID</label><input class="ts-input" id="sso-client-id" name="oidc_client_id" required value="@connection?.Oidc?.ClientId" autocomplete="off" /></div>
+                    <div class="ts-field"><label class="ts-label" for="sso-client-secret">Client secret</label><input class="ts-input" id="sso-client-secret" name="oidc_client_secret" type="password" autocomplete="new-password" /><p class="ts-hint">@(connection?.Oidc?.ClientSecretSet == true ? "A secret is set. Leave this blank to keep it, or enter a new one to replace it." : "Write-only: it is never shown again.")</p></div>
+                    <div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="configure-sso">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save connection</button></div>
+                </form></div></dialog>
+        }
+    </div>
+</section>

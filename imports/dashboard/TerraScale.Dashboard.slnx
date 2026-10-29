@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj" />
+  </Folder>
+</Solution>

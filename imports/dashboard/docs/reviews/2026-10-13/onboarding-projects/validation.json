@@ -1,0 +1,529 @@
+{
+  "recordedAtUtc": "2026-10-13T02:37:02.080226+00:00",
+  "source": {
+    "baseSha": "015b42c4825866131a00d48469650bcba04b2364",
+    "headSha": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+    "branch": "audit/onboarding-projects-20261013",
+    "status": "new files uncommitted; existing tracked files unchanged",
+    "publishedAuditHead": null,
+    "pullRequest": null,
+    "originMainWasFetchedInThisAudit": false
+  },
+  "newFiles": {
+    "tests": [
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditBrowserJourneyTests.cs",
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditHost.cs",
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditJourneyTests.cs"
+    ],
+    "reports": [
+      "docs/reviews/2026-10-13/onboarding-projects/01-onboarding-selection-guard.patch",
+      "docs/reviews/2026-10-13/onboarding-projects/02-project-dialog-navigation-and-retry.patch",
+      "docs/reviews/2026-10-13/onboarding-projects/03-selection-return-navigation.patch",
+      "docs/reviews/2026-10-13/onboarding-projects/README.md",
+      "docs/reviews/2026-10-13/onboarding-projects/validation.json"
+    ]
+  },
+  "checks": [
+    {
+      "name": "Locked Release application and TUnit compilation",
+      "outcome": "PASS",
+      "warnings": 0,
+      "errors": 0,
+      "log": "test-results/build-redacted.log",
+      "assetBundling": "NOT RUN; shared assets must remain read-only"
+    },
+    {
+      "name": "Focused C# whitespace format verification",
+      "outcome": "PASS",
+      "log": "test-results/format-redacted.log"
+    },
+    {
+      "name": "scripts/verify-e2e.py",
+      "outcome": "PASS",
+      "journeyClasses": 54
+    },
+    {
+      "name": "scripts/verify-sdk.py",
+      "outcome": "PASS"
+    },
+    {
+      "name": "git apply --check for all three proposed patches",
+      "outcome": "PASS",
+      "proposedSourceChangesApplied": false
+    }
+  ],
+  "focusedRun": {
+    "outcome": "FAIL on four verified product defects",
+    "exitCode": 2,
+    "total": 7,
+    "passed": 3,
+    "failed": 4,
+    "skipped": 0,
+    "trx": "test-results/onboarding-projects-redacted.trx",
+    "log": "test-results/redacted-tests.log",
+    "cases": [
+      {
+        "test": "ProjectDialogKeyboardRepeatSubmitHistoryAndFailureEvidence",
+        "outcome": "Passed",
+        "duration": "00:00:17.3362882"
+      },
+      {
+        "test": "SidebarCreateProjectLinkRendersTheRequestedDialog",
+        "outcome": "Failed",
+        "duration": "00:00:00.0863756"
+      },
+      {
+        "test": "InvalidProjectPlacementKeepsTheCreateFormAndDraft",
+        "outcome": "Failed",
+        "duration": "00:00:02.0215490"
+      },
+      {
+        "test": "InterruptedOnboardingRejectsAnotherSelectionBeforeRenamingTheDefaultProject",
+        "outcome": "Failed",
+        "duration": "00:00:01.5335057"
+      },
+      {
+        "test": "SwitchingProjectFromDatabaseDetailsReturnsToTheDatabaseList",
+        "outcome": "Failed",
+        "duration": "00:00:00.7295971"
+      },
+      {
+        "test": "ProducerAuthenticatedSetupResumesAfterLoginAndValidationFailure",
+        "outcome": "Passed",
+        "duration": "00:00:00.9972515"
+      },
+      {
+        "test": "RepeatedScopedSelectionRejectsForeignIdsAndExternalReturns",
+        "outcome": "Passed",
+        "duration": "00:00:00.5273753"
+      }
+    ]
+  },
+  "browser": {
+    "outcome": "PASS",
+    "observations": [
+      {
+        "size": "desktop",
+        "width": 1440,
+        "height": 900,
+        "sidebarDialogCount": 0,
+        "errorDialogCount": 0,
+        "nativePosts": 2,
+        "keyboardCancelCloseEscape": "pass",
+        "repeatSubmit": "one create POST",
+        "backForward": "pass",
+        "wcagViolations": [],
+        "onboardingWcagViolations": []
+      },
+      {
+        "size": "mobile",
+        "width": 390,
+        "height": 844,
+        "sidebarDialogCount": 0,
+        "errorDialogCount": 0,
+        "nativePosts": 2,
+        "keyboardCancelCloseEscape": "pass",
+        "repeatSubmit": "one create POST",
+        "backForward": "pass",
+        "wcagViolations": [],
+        "onboardingWcagViolations": []
+      }
+    ],
+    "redaction": "Synthetic account names concealed; email text redacted; email input concealed; no payment data entered",
+    "navigation": "T3 preview navigate timed out twice after 15000ms; switched to checkout-documented Playwright",
+    "pendingCapture": "Native POST held locally for capture, then released unchanged; actual pixels captured through CDP because normal screenshot waits for navigation",
+    "sampledAccessibility": "WCAG 2/2.1/2.2 AA tags, creation dialog and onboarding project step only"
+  },
+  "evidence": {
+    "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+    "qualifiesTestedPullRequestHead": false,
+    "note": "Audited source SHA plus the new local test harness; no applied source fixes or after-fix captures",
+    "testSourceSha256": {
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditBrowserJourneyTests.cs": "547fae5989126e078458257bd500a95816fe0511dda5b1e348972099165af1c9",
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditHost.cs": "7dc3d9f642b65a61eb5f44db873868f72847361f72edc40dd6f217733e20ed7c",
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditJourneyTests.cs": "88deb963cb26d8ac28c802e8d0c1dccdf644e7e12ddb2e74cec84c50180a38c2"
+    },
+    "testExecutableSha256": "0a292315dd39293ec111539f8d2da0fb07e2da0e385081ab55c685b954e3d27e",
+    "media": [
+      {
+        "flow": "desktop / dialog",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-dialog.png",
+        "sha256": "998a0b7939e3346006512bc17e1e4e7fb05a344fcbad0617e9250c0517aaf367",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / loading",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-loading.png",
+        "sha256": "1ac77a70a62b9a1b6a75c261fd7944a0d76a2bcb4f692364e745b9fa0933e578",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / success",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-success.png",
+        "sha256": "fa3dc3c6b4ae3b435cf898d915fee2e66b91495f59714af26b758f2995855576",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / sidebar-link-missing-dialog",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-sidebar-link-missing-dialog.png",
+        "sha256": "6b0f68ce58a9676b5d643dd5dd07eef6d4a43f5865483c36e3ae7534c849408f",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / duplicate-error-lost-form",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-duplicate-error-lost-form.png",
+        "sha256": "bd5fbf3a04809cd179fd75da0dee03af6db447ef6d2ce4ff72688687c094a757",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / registration-empty",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-registration-empty.png",
+        "sha256": "75e284d90aac325ea627db38eaa2c6f7300016a4ddf8baf1eba2464c928e4a08",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / optional-plan",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-optional-plan.png",
+        "sha256": "6cf2aa1e2f93e9e207a82f5b707b182d7725b71d6ffc768f0aa8349446c9ed22",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / first-project",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-first-project.png",
+        "sha256": "da849bdd25ab44aa9de21825b19e7ae441d8651ff7f7ac0bbe89f06289ca6d21",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / initial-empty-databases",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-initial-empty-databases.png",
+        "sha256": "4e3f231445c87da47f3a7937f7ced75bfeb8189ef6f9d906fd125c4d2772d4fd",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "desktop / project creation and Free onboarding",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/desktop-project-flow.webm",
+        "sha256": "3dab2609e42e7629ad23e384c440e5cd53ece1ff8d59a3398a7eea9547a4c058",
+        "kind": "video"
+      },
+      {
+        "flow": "mobile / dialog",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-dialog.png",
+        "sha256": "c8581796fcc88db8c5c92386ebaec76a9ef56723a918719d8ad4cc064f0626c2",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / loading",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-loading.png",
+        "sha256": "81310d702b66bc49f3b432a160f4fea8ddd7d0c5ec396ba84270284127ab3cd5",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / success",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-success.png",
+        "sha256": "9f20f2aec4349c117cade59107dec590b24a1a7a168f0abde9c4b8240edb92ce",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / sidebar-link-missing-dialog",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-sidebar-link-missing-dialog.png",
+        "sha256": "1eae04bb43c7c09db6f9a4c21619084d5a4b1aeeac4bcadf27b756b09d4479e1",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / duplicate-error-lost-form",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-duplicate-error-lost-form.png",
+        "sha256": "059c0ae9d9e77394f68fd9e9aea21a21b4f5ff7804525e07cf9e38824d95e8e2",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / registration-empty",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-registration-empty.png",
+        "sha256": "0b39512691c9073c1e593cf347bf50dcdcc68d8e7b65543b8e560c4c0c81b4bc",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / optional-plan",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-optional-plan.png",
+        "sha256": "5f222b5bcc4acd6008dc0026a01e9a1d6bcdf673afe0fe05b3b93b460821bc03",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / first-project",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-first-project.png",
+        "sha256": "d8963926b7367a7018da6db5b5e2e3f1bf228d566f204231170a478fb7d924a7",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / initial-empty-databases",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-initial-empty-databases.png",
+        "sha256": "cde51546de16895a574b35e168f25f2338bed308f00d2d2045cf5d1df4171d52",
+        "kind": "screenshot"
+      },
+      {
+        "flow": "mobile / project creation and Free onboarding",
+        "sourceCommit": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+        "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/browser/mobile-project-flow.webm",
+        "sha256": "cc302de00379b88a30e5f43b06f5f9c811b89ea499bd4ff41647823f981fbfa3",
+        "kind": "video"
+      }
+    ],
+    "committed": false
+  },
+  "notRun": [
+    "Complete fast and slow suites; focused-test constraint",
+    "Full make lint/CSS/JS bundling; no changes to existing assets or dependency files authorized",
+    "Proposed patches: not applied or compiled",
+    "Live ts-auth, persistent restart qualification, live account-to-ts-typescript SDK qualification, and real Stripe; synthetic local fixtures only"
+  ],
+  "overlapDependencies": [
+    "R3\u2013R6 source/refactor owner a2779417-adbf-4557-b982-0323019b4972: rebase the proposed Organizations/Accounts/Databases changes onto the settled source layout",
+    "Guided import owner mcp:f5d42343-686a-4d1c-981d-24d784216163: no import changes; coordinate any moved provisioning entry point through this report",
+    "Banner removal owner 1db730d1-a7ee-46ac-ab70-38c5df1dc9d4: unchanged; captures show the current source"
+  ],
+  "externalActions": "No push, PR, merge, deployment, paid services, real payments, credentials retrieval, or other thread access",
+  "recordScope": "Original audit at recordedAtUtc; publicationPreparation below is the later rebased verification. Original evidence and hashes are historical.",
+  "publicationPreparation": {
+    "recordedAtUtc": "2026-10-13T11:56:31.674042+00:00",
+    "baseSha": "7d0420ef1979b128fe212a23eb6c4227a2588859",
+    "sourceStatus": "Clean rebase; only eight new audit files to be committed. Published head and final tested-head results belong in the PR description.",
+    "existingTrackedFilesChangedByAudit": false,
+    "focusedRun": {
+      "total": 7,
+      "passed": 3,
+      "failed": 4,
+      "skipped": 0,
+      "exitCode": 2,
+      "cases": [
+        {
+          "test": "SidebarCreateProjectLinkRendersTheRequestedDialog",
+          "outcome": "Failed",
+          "duration": "00:00:00.2654824"
+        },
+        {
+          "test": "InvalidProjectPlacementKeepsTheCreateFormAndDraft",
+          "outcome": "Failed",
+          "duration": "00:00:00.5563759"
+        },
+        {
+          "test": "RepeatedScopedSelectionRejectsForeignIdsAndExternalReturns",
+          "outcome": "Passed",
+          "duration": "00:00:00.5614736"
+        },
+        {
+          "test": "InterruptedOnboardingRejectsAnotherSelectionBeforeRenamingTheDefaultProject",
+          "outcome": "Failed",
+          "duration": "00:00:00.5746384"
+        },
+        {
+          "test": "SwitchingProjectFromDatabaseDetailsReturnsToTheDatabaseList",
+          "outcome": "Failed",
+          "duration": "00:00:00.6688329"
+        },
+        {
+          "test": "ProducerAuthenticatedSetupResumesAfterLoginAndValidationFailure",
+          "outcome": "Passed",
+          "duration": "00:00:00.7580252"
+        },
+        {
+          "test": "ProjectDialogKeyboardRepeatSubmitHistoryAndFailureEvidence",
+          "outcome": "Passed",
+          "duration": "00:00:08.7859745"
+        }
+      ],
+      "trx": "test-results/pr-preparation/TerraScale.Dashboard.E2E_net10.0_x64.trx"
+    },
+    "build": {
+      "outcome": "PASS",
+      "warnings": 0,
+      "errors": 0,
+      "assetBundling": "NOT RUN; shared assets remain read-only"
+    },
+    "focusedFormatting": "PASS",
+    "sdkBoundaryGuard": "PASS",
+    "e2eBoundaryGuard": {
+      "outcome": "PASS",
+      "journeyClasses": 75,
+      "fixtureIsolation": "Each test owns its fixture; no execution limiter"
+    },
+    "fullLint": {
+      "outcome": "FAIL at prerequisite",
+      "command": "make lint",
+      "cause": "ERR_MODULE_NOT_FOUND: browserslist asset dependency is absent",
+      "remainingStages": "NOT RUN by make after prerequisite failure; focused format and boundary guards ran separately"
+    },
+    "completeFastSlowSuites": "NOT RUN; focused audit only, four Fast regressions are already red",
+    "proposals": {
+      "applyCheck": "PASS for all three patches on baseSha",
+      "applied": false,
+      "compiledOrRuntimeTested": false
+    },
+    "testSourceSha256": {
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditBrowserJourneyTests.cs": "1cbc3870628a6297f7c403da08dd1f8b17f8d061ef40716fd4797d0b75e9ed3c",
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditHost.cs": "7dc3d9f642b65a61eb5f44db873868f72847361f72edc40dd6f217733e20ed7c",
+      "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/onboarding-projects/OnboardingProjectsAuditJourneyTests.cs": "05aa6e051ef450b0d2d165202a2da1d19c16d778faf133f5381dc0cbd35a180b"
+    },
+    "browser": {
+      "outcome": "PASS",
+      "observations": [
+        {
+          "size": "desktop",
+          "width": 1440,
+          "height": 900,
+          "sidebarDialogCount": 0,
+          "errorDialogCount": 0,
+          "nativePosts": 2,
+          "keyboardCancelCloseEscape": "pass",
+          "repeatSubmit": "one create POST",
+          "backForward": "pass",
+          "wcagViolations": [],
+          "onboardingWcagViolations": []
+        },
+        {
+          "size": "mobile",
+          "width": 390,
+          "height": 844,
+          "sidebarDialogCount": 0,
+          "errorDialogCount": 0,
+          "nativePosts": 2,
+          "keyboardCancelCloseEscape": "pass",
+          "repeatSubmit": "one create POST",
+          "backForward": "pass",
+          "wcagViolations": [],
+          "onboardingWcagViolations": []
+        }
+      ],
+      "media": [
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-dialog.png",
+          "sha256": "b2b5d6ac29979f09e66ae39c6b3f23325c65fd38549641b17fffd75c71211e89",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-duplicate-error-lost-form.png",
+          "sha256": "a644cec98923e7173ceb574558ee73df77f89a7c16140c92c0c69eb853106ddd",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-first-project.png",
+          "sha256": "da849bdd25ab44aa9de21825b19e7ae441d8651ff7f7ac0bbe89f06289ca6d21",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-initial-empty-databases.png",
+          "sha256": "4e3f231445c87da47f3a7937f7ced75bfeb8189ef6f9d906fd125c4d2772d4fd",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-loading.png",
+          "sha256": "6127e7f90c7fd43132f98e6809d46e5738de8f20c92c22231208fd0034d71861",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-optional-plan.png",
+          "sha256": "6cf2aa1e2f93e9e207a82f5b707b182d7725b71d6ffc768f0aa8349446c9ed22",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-project-flow.webm",
+          "sha256": "4f21a1369fe2e857f67b06429b7cade362105e90e00fea897ab9a0e2edb6023d",
+          "kind": "video"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-registration-empty.png",
+          "sha256": "75e284d90aac325ea627db38eaa2c6f7300016a4ddf8baf1eba2464c928e4a08",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-sidebar-link-missing-dialog.png",
+          "sha256": "e39229da24e5650c36def7998d71bbbecdb42f31d5a5c2027d1c5ec90bbd527d",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/desktop-success.png",
+          "sha256": "cada10cc07e21b96fdf6b9934482f595229190edda18516fe02fa79906e6b7e1",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-dialog.png",
+          "sha256": "b574974ecf47eab35dde8c99de8be9e5a9e3c6a8e9181a03d88b75dbf92ed715",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-duplicate-error-lost-form.png",
+          "sha256": "5ebbc2e0923ca70a696ba492463a5065abab966e3c53aa86b0b1fb3d98e86559",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-first-project.png",
+          "sha256": "d8963926b7367a7018da6db5b5e2e3f1bf228d566f204231170a478fb7d924a7",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-initial-empty-databases.png",
+          "sha256": "cde51546de16895a574b35e168f25f2338bed308f00d2d2045cf5d1df4171d52",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-loading.png",
+          "sha256": "0952adc2213a6fb19ca0f38fa611aa1faa39e084466b4651c65c492f82ff8c05",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-optional-plan.png",
+          "sha256": "5f222b5bcc4acd6008dc0026a01e9a1d6bcdf673afe0fe05b3b93b460821bc03",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-project-flow.webm",
+          "sha256": "3aef8fd29d5a980b0ae64d450f79fcea74faabfba227d4227c44bef1b84b1aa2",
+          "kind": "video"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-registration-empty.png",
+          "sha256": "0b39512691c9073c1e593cf347bf50dcdcc68d8e7b65543b8e560c4c0c81b4bc",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-sidebar-link-missing-dialog.png",
+          "sha256": "df4f90aadda92bb216a16325be5402adec2938b9e285339be5aaa5f1564ad9a1",
+          "kind": "screenshot"
+        },
+        {
+          "path": "docs/reviews/2026-10-13/onboarding-projects/test-results/pr-preparation/browser/mobile-success.png",
+          "sha256": "a3588c2e0006953e0e615d6469428c834f2661d6c51c2dd985cad6a160780562",
+          "kind": "screenshot"
+        }
+      ],
+      "labels": "Historical rebased-source capture plus uncommitted harness, archived at test-results/pr-preparation/browser. Final PR commit captures and manifest use ignored test-results/pr-head and the PR description.",
+      "prAttachments": false
+    },
+    "autoMerge": {
+      "requested": true,
+      "allowAutoMerge": false,
+      "repositorySettingsChanged": false,
+      "readiness": "BLOCKED by four active regressions, incomplete gates and disabled repository auto-merge"
+    },
+    "forgeTooling": "fj bounded read against github.com returned 410 Gone; GitHub CLI fallback uses the actual GitHub remote",
+    "publishingBaseSha": "95d16216a0750742261d19b0954a6ad9c9c44a12",
+    "laterBaseChange": "Another audit added files outside this scope; application source is identical to the rechecked base. Fresh final-head verification will be recorded in the PR."
+  }
+}

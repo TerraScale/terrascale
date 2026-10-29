@@ -1,0 +1,16 @@
+@inherits RazorSlice<ConfirmDialogModel>
+<button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="@Model.Id" aria-label="@(Model.Button + ": " + Model.Target)">@Model.Button</button>
+<dialog id="@Model.Id" class="ts-dialog" closedby="any" aria-labelledby="@(Model.Id + "-title")" aria-describedby="@(Model.Id + "-description")">
+    <div class="ts-dialog-content">
+        <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(Model.Id + "-title")">@Model.Button: @Model.Target</h2><p class="ts-dialog-description" id="@(Model.Id + "-description")">@Model.Description</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@Model.Id">@Icons.Render("X",18)</button></header>
+        <form method="post" action="@Model.Action" class="ts-form" data-submit-once>
+            <input type="hidden" name="_csrf" value="@Model.CsrfToken" />
+            @foreach (var field in Model.Fields) { <input type="hidden" name="@field.Key" value="@field.Value" /> }
+            @if (Model.ConfirmationName is { } name)
+            {
+                <div class="ts-field"><label class="ts-label" for="@(Model.Id + "-name")">Type @name to confirm</label><input class="ts-input" id="@(Model.Id + "-name")" name="confirmName" required autocomplete="off" data-confirm-name="@name" data-on:input="el.setCustomValidity(el.value === el.dataset.confirmName ? '' : 'Type the exact name to confirm.')" /></div>
+            }
+            <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@Model.Id">Cancel</button><button class="ts-btn ts-btn-danger" type="submit">@Model.Button</button></div>
+        </form>
+    </div>
+</dialog>
