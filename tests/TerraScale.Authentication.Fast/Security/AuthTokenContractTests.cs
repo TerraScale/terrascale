@@ -6,6 +6,9 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Tests;
 
@@ -87,6 +90,35 @@ public sealed class AuthTokenContractTests(TerraBaseFixture fixture)
                 await replica.DisposeAsync();
             }
         }
+    }
+
+    [Test]
+    public async Task Startup_provisioning_recovers_immediately_from_a_read_before_collections_exist()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync(provision: false);
+        var clock = new SteppingClock(DateTimeOffset.UtcNow);
+        await using var server = await AuthTestServer.StartAsync(
+            settings: values => values["service-clients"] = $"{ServiceId}:{ServiceSecret}",
+            services: services =>
+            {
+                fixture.UseStorage(services, tenant);
+                services.AddSingleton<TimeProvider>(clock);
+            },
+            beforeStart: async services =>
+            {
+                // Reproduce the first readiness read arriving before startup has made the collections.
+                var ring = services.GetRequiredService<KeyRing>();
+                var unavailable = await Assert.ThrowsAsync<ApiException>(() => ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, CancellationToken.None));
+                await Assert.That(unavailable!.Status).IsEqualTo(503);
+                await SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None);
+            });
+        await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(Recovery);
+
+        // Monotonic time has not advanced: success must clear the earlier failed-read backoff.
+        using var response = await ClientCredentialsAsync(server);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var token = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString();
+        await Assert.That(token).IsNotNullOrEmpty();
     }
 
     private static async Task<HttpResponseMessage> ClientCredentialsAsync(AuthTestServer server)

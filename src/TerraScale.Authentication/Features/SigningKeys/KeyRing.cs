@@ -354,7 +354,10 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     {
         if (fresh)
         {
-            return this.Current(source.Cached[instanceId] = await this.LoadAsync(source, instanceId, cancellationToken).ConfigureAwait(false));
+            var read = source.Cached[instanceId] = await this.LoadAsync(source, instanceId, cancellationToken).ConfigureAwait(false);
+            // Successful provisioning supersedes an earlier readiness read before the collections existed.
+            source.Failed.TryRemove(instanceId, out _);
+            return this.Current(read);
         }
 
         var limit = maxAge is { } age && age < this.refreshInterval ? age : this.refreshInterval;
