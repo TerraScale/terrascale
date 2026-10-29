@@ -26,5 +26,24 @@ jobs:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Restore locked Cargo dependencies and build output
+        id: cargo
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            benchmark/clients/rust/target
+          key: ${{ runner.os }}-cargo-1.99.1-${{ hashFiles('benchmark/clients/rust/Cargo.lock', 'benchmark/clients/rust/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-1.99.1-
       - name: Build and test the locked SDK dependency and benchmark client
         run: cargo +1.99.1 test --locked --all-targets --manifest-path benchmark/clients/rust/Cargo.toml
+      - name: Retain main Cargo cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            benchmark/clients/rust/target
+          key: ${{ steps.cargo.outputs.cache-primary-key }}

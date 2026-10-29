@@ -6,6 +6,8 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  schedule:
+    - cron: "7 2-23/3 * * *"
   workflow_dispatch:
     inputs:
       native_artifacts:
@@ -27,6 +29,7 @@ env:
   TS_DOTNET_DIR: sdk/dotnet
   TsDotnetRoot: ${{ github.workspace }}/terrascale/sdk/dotnet
   TERRABASE_REVISION: ${{ github.sha }}
+  TS_AUTH_REVISION: ${{ github.sha }}
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   ASPNETCORE_HTTP_PORTS: ''
   # Keep CallerFilePath fixture lookups on disk, as in Docker (which excludes .git).
@@ -44,13 +47,18 @@ jobs:
     outputs:
       fast: ${{ steps.areas.outputs.fast }}
       main: ${{ steps.areas.outputs.main }}
+      slow: ${{ steps.slow.outputs.slow }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       # Pull requests list files through the API; the checkout also runs cheap checks before any build.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'schedule' && 'main' || github.sha }}
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: filter
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           # Empty on pushes: the action then diffs against the push's `before` commit.
@@ -71,6 +79,7 @@ jobs:
               - tests/TerraScale.Endpoints.Tests/**
               - tests/TerraScale.Logging.Tests/**
               # TerraBase's vendored driver also backs auth integration tests and vendor audits.
+              - sdk/dotnet/**
               - src/vendor/**
               - tests/Turso.Data.Sqlite.Tests/**
               - scripts/vendor/**
@@ -80,6 +89,7 @@ jobs:
               - src/TerraScale.CLI/**
               - benchmark/dotnet/**
               # Self-check changes run in changes; executor changes still qualify both native Fast areas.
+              - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
               # The credential entry point and the scripts it runs (make handoff-test).
               - scripts/handoff/**
@@ -87,6 +97,7 @@ jobs:
               - benchmark/scripts/repl-*-tenant.sh
             auth:
               - *shared
+              - scripts/ci/image-payloads.sh
               - auth.slnf
               - src/TerraScale.Authentication*/**
               - tests/TerraScale.Authentication*/**
@@ -100,6 +111,7 @@ jobs:
               - *shared
               - scripts/ci/terrabase-*
               - terrabase.slnf
+              - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
               - src/TerraBase*/**
               - tests/TerraBase*/**
@@ -107,15 +119,28 @@ jobs:
               - scripts/terrabase/**
       - id: areas
         env:
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_artifacts && '[]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'schedule' && '[]' || github.event_name == 'workflow_dispatch' && (inputs.native_artifacts && '[]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           # The ts-auth image does not contain TerraBase: main publishes and Slow-tests auth only for its own changes.
           echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
+      - id: slow
+        name: Select changed scheduled Slow suites
+        if: github.event_name == 'schedule'
+        run: python3 scripts/ci/slow-state.py
+      - name: Scan for legacy terms
+        run: python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md
+      - name: Retain legacy hits
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: legacy-hits
+          path: legacy-hits.md
+
       - name: Check out the path-filter matcher for regression fixtures
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && github.event_name != 'schedule'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: dorny/paths-filter
@@ -123,16 +148,17 @@ jobs:
           path: path-filter-action
           persist-credentials: false
       - name: Verify CI path filters
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && github.event_name != 'schedule'
         run: python3 scripts/ci/path-filter-test.py .github/workflows/ci.yml path-filter-action/dist/index.js
       # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
       # these lines from matching themselves.
       - name: Workflows name no retired hosting provider
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && github.event_name != 'schedule'
         run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
       - name: Slow report, cache policy, storage train and e2e summary self-checks
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && github.event_name != 'schedule'
         run: |
+          python3 scripts/legacy-scan/process-test.py
           python3 scripts/ci/slow-report-test.py
           python3 scripts/ci/cache-policy-test.py
           python3 scripts/vendor/turso-native-pipeline-test.py
@@ -148,13 +174,14 @@ jobs:
   # Normal runs verify prebuilt release bytes; native Rust builds stay in explicit maintenance dispatches.
   native:
     needs: changes
-    if: needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]'
+    if: needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]' || (github.event_name == 'schedule' && needs.changes.outputs.slow != '[]')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.sha }}
       - name: Download and verify the pinned FTS + contract1 release
         run: scripts/vendor/download-turso-native.sh native-output
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -229,7 +256,8 @@ jobs:
             case "$arch" in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; esac
             cp "native-builds/turso-native-build-$arch-2/release/$rid-build-receipt.txt" "native-release/$rid-independent-build-receipt.txt"
           done
-          (cd native-release && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          (cd native-release && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > ../native-SHA256SUMS)
+          mv native-SHA256SUMS native-release/SHA256SUMS
           cat native-release/NATIVE-SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -254,6 +282,7 @@ jobs:
         with:
           path: terrascale
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.sha }}
       - &native-artifacts
         name: Download this run's verified pinned release cores
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -280,6 +309,7 @@ jobs:
         working-directory: terrascale
         run: bash scripts/ci/test-area.sh fast "$AREA"
 
+
   auth:
     needs: [changes, native]
     if: >-
@@ -298,6 +328,13 @@ jobs:
       - *setup-dotnet
       - *nuget-cache
       - *locked-restore
+      - name: Restore Auth npm tooling cache
+        id: npm
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-auth-npm-${{ hashFiles('terrascale/Makefile', 'terrascale/Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-auth-npm-
       - id: fast-proof
         name: Verify exact-commit Auth Fast evidence
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -318,6 +355,12 @@ jobs:
       - name: Checked Auth build
         working-directory: terrascale
         run: bash scripts/ci/auth-build.sh
+      - name: Retain main Auth npm tooling cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.npm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm.outputs.cache-primary-key }}
       - name: Auth Fast
         if: steps.fast-proof.outputs.verified != 'true'
         working-directory: terrascale
@@ -340,9 +383,29 @@ jobs:
       - *setup-dotnet
       - *nuget-cache
       - *locked-restore
+      - &save-nuget
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase')) && steps.nuget.outputs.cache-hit != 'true'
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.nuget.outputs.cache-primary-key }}
       - name: Auth single-file packaging proof
         working-directory: terrascale
         run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make auth-publish RUNTIME=linux-x64 PUBLISH_DIR="$RUNNER_TEMP/auth-publish"
+      - name: Retain both architectures from the required Auth packaging proof
+        if: github.event_name != 'pull_request'
+        working-directory: terrascale
+        run: |
+          bash scripts/ci/image-payloads.sh auth
+          bash scripts/ci/image-payloads.sh pack auth
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name != 'pull_request'
+        with:
+          name: image-payloads-auth
+          path: ${{ runner.temp }}/image-payloads-auth.tar
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
 
   terrabase-build:
     needs: [changes, native]
@@ -361,9 +424,25 @@ jobs:
       - *setup-dotnet
       - *nuget-cache
       - *locked-restore
+      - *save-nuget
       - name: Checked build and single-file packaging proof
         working-directory: terrascale
         run: bash scripts/ci/test-area.sh build terrabase
+      - name: Reuse the checked TerraBase build for both runtime payloads
+        if: github.event_name != 'pull_request'
+        working-directory: terrascale
+        run: |
+          bash scripts/ci/image-payloads.sh terrabase
+          bash scripts/ci/image-payloads.sh pack terrabase
+      - name: Retain TerraBase runtime payloads
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: image-payloads-terrabase
+          path: ${{ runner.temp }}/image-payloads-terrabase.tar
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
       - name: Pack this commit's build outputs
         working-directory: terrascale
         # Only shard executables are consumed: their output directories contain every referenced assembly and native asset.
@@ -378,11 +457,12 @@ jobs:
         with:
           name: terrabase-build
           path: ${{ runner.temp }}/terrabase-build.tar.gz
+          compression-level: 0
           if-no-files-found: error
           retention-days: 1
 
   terrabase:
-    needs: terrabase-build
+    needs: [changes, terrabase-build]
     strategy:
       fail-fast: false
       matrix:
@@ -416,22 +496,18 @@ jobs:
           retention-days: 7
 
   main:
-    needs: [changes, native, test]
+    needs: [changes, native, terrabase]
     if: >-
-      !cancelled() && needs.test.result == 'success'
+      !cancelled() && needs.terrabase.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && needs.changes.outputs.main != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        area: ${{ fromJSON(needs.changes.outputs.main) }}
+      && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
-      group: production-${{ matrix.area }}
+      group: production-terrabase
       cancel-in-progress: false
     env:
-      AREA: ${{ matrix.area }}
+      AREA: terrabase
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -439,18 +515,19 @@ jobs:
       id-token: write
       # A failed release dispatches a fresh main run (a newer signed run) so the latest main still ends up live.
       actions: write
-    steps:
+    steps: &production-steps
       - *checkout
-      - *native-artifacts
-      - *setup-dotnet
-      - *nuget-cache
-      - *locked-restore
-      # actions/cache uses zstd archives. PRs only read; a successful locked restore on main seeds the exact key.
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase')) && steps.nuget.outputs.cache-hit != 'true'
+      - name: Download this area's checked runtime payloads
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          path: ~/.nuget/packages
-          key: ${{ steps.nuget.outputs.cache-primary-key }}
+          name: image-payloads-${{ env.AREA }}
+          path: ${{ runner.temp }}
+      - name: Prepare the runtime-only image context
+        working-directory: terrascale
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-payloads"
+          tar -C "$RUNNER_TEMP/image-payloads" -xf "$RUNNER_TEMP/image-payloads-$AREA.tar"
+          bash scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -462,10 +539,8 @@ jobs:
       - id: image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=terrascale/sdk/dotnet
-          target: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
+          context: ${{ runner.temp }}/image-payloads
+          file: ${{ runner.temp }}/image-payloads/Dockerfile
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
@@ -473,24 +548,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          build-args: &build-args |
-            TERRABASE_REVISION=${{ github.sha }}
-            TS_AUTH_REVISION=${{ github.sha }}
-          cache-from: &cache-from type=gha,scope=ci-base
           push: true
-      # Only base layers belong in GHA: production outputs and source snapshots churn the 10GiB quota.
-      # One matrix entry writes it; both architectures and both services consume the same build-platform layers.
-      - name: Cache shared Docker base layers
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase'))
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=terrascale/sdk/dotnet
-          target: base
-          build-args: *build-args
-          cache-from: *cache-from
-          cache-to: type=gha,mode=min,scope=ci-base
       # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
       - env:
           IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
@@ -539,7 +597,27 @@ jobs:
           fi
           exit "$status"
 
-  # Slow is independent of required Fast: relevant PRs and newest main, never merge groups.
+  main-auth:
+    needs: [changes, native, auth, auth-package]
+    if: >-
+      !cancelled() && needs.auth.result == 'success' && needs.auth-package.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'auth')
+    concurrency:
+      group: production-auth
+      cancel-in-progress: false
+    env:
+      AREA: auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      actions: write
+    steps: *production-steps
+
+  # Slow is independent of Fast/publication: PRs and changed main on a three-hour schedule.
   slow-auth:
     needs: [changes, native]
     if: >-
@@ -568,6 +646,21 @@ jobs:
           [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
           umask 077
           printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
+      - name: Cache shared Docker base layers
+        if: github.event_name == 'schedule' && github.ref == 'refs/heads/main' && env.AREA == 'auth'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: restored
+          build-args: &build-args |
+            TERRABASE_REVISION=${{ needs.changes.outputs.sha }}
+            TS_AUTH_REVISION=${{ needs.changes.outputs.sha }}
+            DOTNET_PROCESSOR_COUNT=8
+            DOTNET_GCHeapCount=8
+          cache-from: &cache-from type=gha,scope=ci-base
+          cache-to: type=gha,mode=min,scope=ci-base
       # Slow restores packages directly over main's cached base layers and builds its test graph independently of required Fast.
       - continue-on-error: true
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -585,10 +678,25 @@ jobs:
       - name: Remove the CI credential file
         if: ${{ always() && env.AREA == 'terrabase' }}
         run: rm -f "$RUNNER_TEMP/tigris-ci.env"
+      - name: Record the actual scheduled suite inputs
+        id: slow-record
+        if: ${{ always() && github.event_name == 'schedule' && hashFiles('slow/exit') != '' }}
+        working-directory: terrascale
+        run: |
+          mkdir -p slow
+          python3 scripts/ci/slow-state.py record "$AREA"
+      - name: Retain last actual scheduled suite inputs
+        if: ${{ always() && github.event_name == 'schedule' && hashFiles('terrascale/slow/fingerprint') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: slow-state-${{ env.AREA }}-${{ steps.slow-record.outputs.fingerprint }}
+          path: terrascale/slow/fingerprint
+          retention-days: 90
       - name: Report the Slow result
         if: ${{ always() }}
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.changes.outputs.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [[ ! -f slow/exit || ! -f slow/log ]]; then
@@ -620,7 +728,7 @@ jobs:
             target=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1 } on && /^Test run summary/ { print; exit }' slow/log)
             case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
             body=$(printf '%s\n' \
-              "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
+              "Failed on \`${SOURCE_SHA:-$GITHUB_SHA}\` in the Slow job: $RUN_URL" "" \
               "Environment: \`${{ github.job }} (${{ env.AREA }})\` job on GitHub-hosted runner, Dockerfile stage \`test-slow-${{ env.AREA }}\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
@@ -652,9 +760,12 @@ jobs:
 
   slow-auth-main:
     needs: [changes, native]
+    concurrency:
+      group: scheduled-slow-auth
+      cancel-in-progress: false
     if: >-
-      !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.main), 'auth')
+      !cancelled() && github.event_name == 'schedule'
+      && github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.slow), 'auth')
     env:
       AREA: auth
     runs-on: ubuntu-latest
@@ -666,9 +777,12 @@ jobs:
 
   slow-terrabase-main:
     needs: [changes, native]
+    concurrency:
+      group: scheduled-slow-terrabase
+      cancel-in-progress: false
     if: >-
-      !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
+      !cancelled() && github.event_name == 'schedule'
+      && github.ref == 'refs/heads/main' && contains(fromJSON(needs.changes.outputs.slow), 'terrabase')
     env:
       AREA: terrabase
     runs-on: ubuntu-latest

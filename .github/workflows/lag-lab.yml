@@ -31,8 +31,29 @@ jobs:
           node-version: '24'
       - name: Install the pinned compiler
         run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Restore locked Cargo and npm dependencies
+        id: cargo
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.npm
+            benchmark/lag-lab/turso/target
+          key: ${{ runner.os }}-lag-deps-1.99.1-${{ hashFiles('benchmark/lag-lab/Cargo.lock.gz', 'benchmark/lag-lab/package-lock.json', 'benchmark/lag-lab/prepare.py') }}
+          restore-keys: ${{ runner.os }}-lag-deps-1.99.1-
       - name: Build the pinned native page host and restore the official client
         run: bash benchmark/lag-lab/build.sh
+      - name: Retain main Cargo and npm cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.npm
+            benchmark/lag-lab/turso/target
+          key: ${{ steps.cargo.outputs.cache-primary-key }}
       - name: Audit published full-matrix evidence
         run: |
           python3 benchmark/lag-lab/summarize.py benchmark/bench/2026-10-29-lag-lab-full.json.gz benchmark/bench/2026-10-29-lag-lab-normal.json.gz --check

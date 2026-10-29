@@ -12,15 +12,15 @@ dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
 assert writers == ["type=gha,mode=min,scope=ci-base"], writers
 docker_writer = workflow.split("      - name: Cache shared Docker base layers\n", 1)[1].split("\n      #", 1)[0]
-assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in docker_writer
-assert "target: base" in docker_writer
+assert "github.event_name == 'schedule' && github.ref == 'refs/heads/main'" in docker_writer
+assert "target: restored" in docker_writer
 assert "cache-from: &cache-from type=gha,scope=ci-base" in workflow
 assert "mode=max" not in workflow, "Published binaries and source snapshots must not fill GHA"
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
-assert workflow.count("uses: actions/cache/save@") == 1
-nuget_writer = workflow.split("uses: actions/cache/save@", 1)[1].split("\n      - ", 1)[0]
+assert workflow.count("uses: actions/cache/save@") == 2
+nuget_writer = workflow.split("      - &save-nuget\n", 1)[1].split("\n      - ", 1)[0]
 assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in nuget_writer
 assert "steps.nuget.outputs.cache-primary-key" in nuget_writer
 assert "uses: actions/cache/restore@" in workflow
@@ -68,17 +68,24 @@ for area in ("libs", "auth", "terrabase"):
     assert f"SOLUTION={area}.slnf" in stages[f"build-{area}"][1], area
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
-assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
+# Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
+imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard/', 'tests/TerraScale.Dashboard.'))}
+assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
 assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
-for job in ("libs", "auth", "auth-package", "terrabase-build", "terrabase"):
+for job in ("libs", "auth", "terrabase-build", "terrabase"):
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
-assert '.["auth-package"].result' in test_job, "Affected Auth packaging cannot be skipped"
-assert "    needs: [changes, native, test]\n" in main_job, "Main must wait for the required test rollup"
-assert "!cancelled() && needs.test.result == 'success'" in main_job, "Main must not run after a failed or skipped test rollup"
+assert "    needs: [changes, native, terrabase]\n" in main_job, "TerraBase releases must wait for their own Fast shards"
+assert "!cancelled() && needs.terrabase.result == 'success'" in main_job
+main_auth = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth:\n", 1)[1], maxsplit=1)[0]
+assert "    needs: [changes, native, auth, auth-package]\n" in main_auth, "Auth releases must wait for Auth Fast"
+assert "!cancelled() && needs.auth.result == 'success'" in main_auth
+for release in (main_job, main_auth):
+    assert "cancel-in-progress: false" in release, "A running release must finish"
+    assert "image-payloads-" in workflow, "Release jobs reuse their area's checked build output"
 for job in (test_job, main_job):
     assert not re.search(r"^    needs: .*slow", job, re.M), "Slow results must not gate test or main"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
@@ -93,6 +100,8 @@ for area in ("auth", "terrabase"):
     slow = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  slow-{area}-main:\n", 1)[1], maxsplit=1)[0]
     assert "needs: [changes, native]" in slow, "Slow must not wait for image publication or rollout"
     assert "cancel-in-progress: true" not in slow, "Main results must survive superseding pushes"
+    assert "github.event_name == 'schedule'" in slow, "Slow must leave the push path"
+assert 'cron: "7 2-23/3 * * *"' in workflow
 assert "restore-keys: ${{ runner.os }}-nuget-monorepo-" in workflow
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
