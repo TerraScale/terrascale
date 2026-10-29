@@ -7,9 +7,9 @@ RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
-# Match Auth Fast concurrency to the available CPUs on dev hosts and CI runners.
+# Match Fast concurrency to the available CPUs on dev hosts and CI runners.
 AUTH_TEST_PARALLEL ?= $(shell nproc)
-TERRABASE_TEST_PARALLEL ?= 16
+TERRABASE_TEST_PARALLEL ?= $(shell nproc)
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -37,7 +37,7 @@ AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-a
 BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
-.PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
+.PHONY: restore turso-native build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
@@ -48,7 +48,14 @@ restore:
 	dotnet restore $(SOLUTION) --locked-mode
 	dotnet restore $(ANALYZER_CHECK_PROJECT) --locked-mode
 
-build: restore
+# Pinned Turso native libraries (src/vendor/Turso.Native/SHA256SUMS), needed by every build of TerraBase or its driver.
+# Fetched only when the pins do not verify: a fresh checkout has none, and a partial or stale copy is replaced. The
+# download checks the same pins before it publishes a file.
+TURSO_NATIVE_DIR := src/vendor/Turso.Data.Sqlite/native
+turso-native:
+	scripts/vendor/verify-turso-native.sh $(TURSO_NATIVE_DIR) >/dev/null 2>&1 || scripts/vendor/download-turso-native.sh $(TURSO_NATIVE_DIR)
+
+build: restore turso-native
 	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --no-restore
 
 fmt:
@@ -94,7 +101,7 @@ libs-nativeaot-check: restore
 	dotnet publish src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj --configuration Release --runtime $(RUNTIME) --output artifacts/nativeaot/endpoints-example
 
 # ts-auth.
-auth-build: restore
+auth-build: restore turso-native
 	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo
 
 auth-audit:
@@ -108,12 +115,12 @@ auth-openapi-check: auth-build
 
 # Builds only the Fast suite and its references; the Slow suite has its own target.
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
-auth-test-fast: restore
+auth-test-fast: restore turso-native
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
-auth-test-slow: auth-build
+auth-test-slow: auth-build turso-native
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
@@ -133,12 +140,12 @@ auth-dev:
 # Local development: TerraBase and ts-auth under Aspire (aspire/apphost.mts) with its dashboard, on loopback only. Each run
 # starts from an empty TerraBase; see README.md.
 .PHONY: dev
-dev:
+dev: turso-native
 	dotnet tool restore
 	TsDotnetRoot=$(abspath $(TS_DOTNET_DIR)) dotnet aspire run --apphost aspire
 
 # TerraBase: the server, its analyzer and its integration suites.
-terrabase-build: restore
+terrabase-build: restore turso-native
 	dotnet build terrabase.slnf --configuration $(CONFIGURATION) --no-restore
 
 terrabase-analyzer-check: restore
@@ -154,11 +161,11 @@ terrabase-analyzer-check: restore
 	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
 # Builds only the Fast suite: TerraBase and its analyzer build as its references; the Slow suite has its own target.
-terrabase-test-fast: restore
+terrabase-test-fast: restore turso-native
 	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
 	# The vendored Turso driver's regression tests (src/vendor/Turso.Data.Sqlite/UPSTREAM.md), then the Fast suite.
-	dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build
+	dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- $(TEST_ARGS)
 	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
@@ -183,11 +190,11 @@ terrabase-check: terrabase-build terrabase-analyzer-check
 	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
 
 
-terrabase-run:
+terrabase-run: turso-native
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
-terrabase-publish:
+terrabase-publish: turso-native
 	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
 
 # ts-benchmark (Go) plus the BenchmarkDotNet projects for ts-libs.
