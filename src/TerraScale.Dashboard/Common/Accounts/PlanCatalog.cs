@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Common.Accounts
     {
         // Catalog month/year map to the checkout names monthly/annual; monthly is the default whenever it is sold.
         public IReadOnlyList<string> CheckoutIntervals => [.. BillingIntervals.Select(interval => interval == "year" ? "annual" : "monthly")];
-        public string CheckoutInterval => CheckoutIntervals.Contains("monthly") ? "monthly" : CheckoutIntervals.FirstOrDefault() ?? "";
+        public string CheckoutInterval => CheckoutIntervals.Contains("monthly") ? "monthly" : (CheckoutIntervals is [var firstInterval, ..] ? firstInterval ?? "" : "");
         public bool SupportsInterval(string interval)
         {
             return PriceCents > 0 && CheckoutIntervals.Contains(interval);

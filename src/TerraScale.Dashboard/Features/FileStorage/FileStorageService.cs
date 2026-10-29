@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             // page must offer bucket creation (which enrolls the project) instead of an error.
             catch (TerraBaseNotFoundException error) when (error.ErrorCode == "unknown_database" && bucketAfter is null && string.IsNullOrEmpty(bucket))
             { return new(new([], null), null, null, null); }
-            var selected = string.IsNullOrEmpty(bucket) ? buckets.Items.FirstOrDefault()?.Id : bucket;
+            var selected = string.IsNullOrEmpty(bucket) ? (buckets.Items is [var firstBucket, ..] ? firstBucket?.Id : null) : bucket;
             var files = selected is null ? null : await client.ListBucketFilesAsync(selected, after, token);
             return new(buckets, files, selected, bucketAfter);
         }
