@@ -22,10 +22,10 @@ index 3bfb72b..be427dd 100644
          self.mv_tx.read().map(|(tx_id, _)| tx_id)
      }
 diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
-index 0c265bc..0958f92 100644
+index 0c265bc..c301a1b 100644
 --- a/sdk-kit/src/capi.rs
 +++ b/sdk-kit/src/capi.rs
-@@ -25,6 +25,154 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
+@@ -25,6 +25,187 @@ pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
      1
  }
  
@@ -135,6 +135,39 @@ index 0c265bc..0958f92 100644
 +    match wal_restarted(core, seq) {
 +        Ok(false) => c::turso_status_code_t::TURSO_OK,
 +        Ok(true) => wal_misuse("the WAL restarted while its frames were read", error_opt_out),
++        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
++    }
++}
++
++#[no_mangle]
++pub extern "C" fn turso_terrascale_wal_checkpoint_truncate(
++    connection: *const c::turso_connection_t,
++    upper_bound: u64,
++    truncated: *mut i32,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    if truncated.is_null() {
++        return wal_misuse("got null pointer", error_opt_out);
++    }
++    let core = connection.core();
++    if !core.get_auto_commit() || !core.is_idle_or_in_read_tx() || core.is_in_read_tx() {
++        return wal_misuse("a checkpoint needs a connection outside any transaction", error_opt_out);
++    }
++    let mode = turso_core::CheckpointMode::Truncate { upper_bound_inclusive: Some(upper_bound) };
++    let outcome = match core.checkpoint(mode) {
++        Ok(_) => core.wal_state().map(|state| state.max_frame == 0),
++        Err(turso_core::LimboError::Busy) => Ok(false),
++        Err(err) => Err(err),
++    };
++    match outcome {
++        Ok(done) => {
++            unsafe { *truncated = i32::from(done) };
++            c::turso_status_code_t::TURSO_OK
++        }
 +        Err(err) => unsafe { rsapi::TursoError::from(err).to_capi(error_opt_out) },
 +    }
 +}

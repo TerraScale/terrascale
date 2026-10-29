@@ -2,7 +2,7 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 output=${1:-"$root/src/vendor/Turso.Data.Sqlite/native"}
-tag=turso-native-v0.8.2-fts-contract1-aegis-wal1-20261029-r3
+tag=turso-native-v0.8.2-fts-contract1-aegis-wal1-20261029-r4
 pins="$root/src/vendor/Turso.Native/SHA256SUMS"
 # Check pins before any network access; partial publication must fail closed.
 test "$(grep -cE '^[0-9a-f]{64}  terrascale-turso-linux-(x64|arm64)\.so$' "$pins")" = 2 || {

@@ -40,7 +40,7 @@ tests), and `core/index_method/fts/mod.rs`.
 ## Delivery and verification
 
 Normal CI, Fast, Slow and image builds download and verify the combined
-`turso-native-v0.8.2-fts-contract1-aegis-wal1-20261029-r3` release. They never build Rust:
+`turso-native-v0.8.2-fts-contract1-aegis-wal1-20261029-r4` release. They never build Rust:
 
 ```sh
 nice -n 19 scripts/vendor/download-turso-native.sh

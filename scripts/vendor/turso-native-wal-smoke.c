@@ -12,6 +12,7 @@ extern turso_status_code_t turso_terrascale_wal_manual(const turso_connection_t 
 extern turso_status_code_t turso_terrascale_wal_state(const turso_connection_t *, uint64_t *, uint32_t *, const char **);
 extern turso_status_code_t turso_terrascale_wal_frame_pages(const turso_connection_t *, uint64_t, uint32_t, uint32_t *, uint32_t *, const char **);
 extern turso_status_code_t turso_terrascale_snapshot_read_page(const turso_connection_t *, uint32_t, uint8_t *, size_t, int32_t *, const char **);
+extern turso_status_code_t turso_terrascale_wal_checkpoint_truncate(const turso_connection_t *, uint64_t, int32_t *, const char **);
 extern uint32_t turso_terrascale_page_size(const turso_connection_t *);
 static const char *error;
 
@@ -190,7 +191,18 @@ int main(void) {
     state(writer, &reopened, &seq);
     assert(reopened == max_frame);
     assert(scalar(writer, "SELECT count(*) FROM t") == 1501);
-    expect(run(writer, "PRAGMA wal_checkpoint(TRUNCATE)"), TURSO_DONE);
+    int32_t truncated = -1;
+    begin_snapshot(reader);
+    expect(turso_terrascale_wal_checkpoint_truncate(writer, reopened, &truncated, &error), TURSO_OK);
+    assert(truncated == 0);
+    expect(turso_terrascale_wal_checkpoint_truncate(reader, reopened, &truncated, &error), TURSO_MISUSE);
+    expect(run(reader, "ROLLBACK"), TURSO_DONE);
+    state(writer, &max_frame, &seq);
+    assert(max_frame == reopened);
+    expect(turso_terrascale_wal_checkpoint_truncate(writer, reopened - 1, &truncated, &error), TURSO_OK);
+    assert(truncated == 0);
+    expect(turso_terrascale_wal_checkpoint_truncate(writer, reopened, &truncated, &error), TURSO_OK);
+    assert(truncated == 1);
     state(writer, &max_frame, &seq);
     assert(max_frame == 0);
     begin_snapshot(reader);
@@ -233,6 +245,6 @@ int main(void) {
     assert(unlink(path) == 0);
     (void)unlink(wal);
     assert(rmdir(directory) == 0);
-    printf("wal contract smoke: marker=1, %llu frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions, checkpoints and spills of other connections and bad ranges refused, explicit TRUNCATE resets frames\n", (unsigned long long)reopened);
+    printf("wal contract smoke: marker=1, %llu frames with the database file untouched across close, snapshot page reads decrypt under a passive checkpoint, write transactions, checkpoints and spills of other connections and bad ranges refused, busy or stale truncates kept, explicit TRUNCATE resets frames\n", (unsigned long long)reopened);
     return 0;
 }
