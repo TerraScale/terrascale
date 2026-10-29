@@ -21,11 +21,13 @@ Every TerraScale project has its own sign-in for the people who use your applica
 
 End users of one project are separate from every other project and from TerraScale accounts: the same email address in two projects is two unrelated accounts.
 
+Use your project's discovery document for app sign-in. It advertises only `authorization_code` and `refresh_token` grants and the four scopes above. It omits device authorization endpoint metadata. Device authorization, client credentials, token exchange and the GitHub Actions workload grant are platform capabilities, described by the platform discovery document at `https://auth.terrascale.tech/terrascale/.well-known/openid-configuration`.
+
 ## Set up sign-in in the dashboard
 
 Open **Authentication** for your project.
 
-1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Redirect URIs must be `https`, or `http` on `localhost` and loopback addresses.
+1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Register 1–10 absolute redirect URIs using `https`, or `http` on `localhost` and loopback addresses, without fragments or userinfo (an embedded username or password). Registration rejects invalid URIs with `400 invalid_request`; when the project's redirect allowlist is nonempty, each URI must also exactly match an entry there.
 2. **Sign-in methods**: choose email codes, passwords, or both, and whether people can create their own accounts. At least one of email codes and passwords stays on. A method you turn off disappears from the hosted pages.
 3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color. They style the hosted pages and the verification, sign-in and password-reset emails; without a name, both show your project's name. Optionally set `email_message` in `branding` through `PUT /v1/{project}/settings`: up to 500 plain-text characters, newlines allowed, added to those emails. A sent `branding` replaces the previous one, so send every branding field each time or omitted fields are cleared. HTML and placeholders such as `{{code}}` appear as literal text.
 4. **Configuration**: `redirect_urls` adds a project allowlist of at most 100 exact absolute URLs, without fragments or userinfo (`https`, or loopback `http`). A nonempty list further restricts each client's registered redirects; an empty list never permits unregistered redirects. `session_lifetime_seconds` is an absolute lifetime from original sign-in: 300–2592000 seconds (5 minutes–30 days), default 1209600 (14 days).
@@ -91,7 +93,7 @@ The access token is a JWT with your project's issuer as `iss`, your client ID as
 
 Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
-A project issuer serves only the authorization code and refresh token grants. Its tokens are for your own application: TerraScale's APIs do not accept them.
+A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project tokens are for your own application: TerraScale's APIs do not accept them.
 
 ## Manage users
 
