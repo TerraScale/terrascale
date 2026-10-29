@@ -1,0 +1,46 @@
+@inherits RazorSlice<TerraScale.Dashboard.Platform.Mcp.McpConsentPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <div class="ts-login-heading">
+                    <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">Connect an AI client</h1>
+                        @if (Model.Error is null)
+                        {
+                            <p class="ts-auth-subtitle"><strong>@Model.ClientName</strong> wants to use TerraScale's MCP tools as you.</p>
+                        }
+                    </div>
+                </div>
+                @if (Model.Error is not null)
+                {
+                    <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@Model.Error</p></div>
+                }
+                else
+                {
+                    <div class="ts-alert" role="status">
+                        <p class="ts-alert-body">After you sign in, it can read and change your organizations, projects, databases, data and billing with your roles, until the access token expires in 90 days or you revoke it on Profile → Access tokens.</p>
+                        <p class="ts-alert-body">The sign-in returns to <code>@Model.RedirectHost</code>. Continue only if you just started this from your AI client.</p>
+                    </div>
+                    <form class="ts-form" method="post" action="/oauth/authorize">
+                        <input type="hidden" name="_csrf" value="@Model.Csrf" />
+                        @foreach (var field in Model.Fields)
+                        {
+                            <input type="hidden" name="@field.Key" value="@field.Value" />
+                        }
+                        <button class="ts-btn ts-btn-primary ts-btn-block" type="submit" name="decision" value="allow">Sign in and allow</button>
+                        <button class="ts-btn ts-btn-secondary ts-btn-block" type="submit" name="decision" value="deny">Cancel</button>
+                    </form>
+                }
+                <p class="ts-meta">See <a class="ts-link" href="https://docs.terrascale.tech/guides/mcp" @(ExternalLink.Attributes)>connecting AI clients@(ExternalLink.Hint)</a> for how MCP sign-in works.</p>
+            </div>
+        </div>
+        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms@(ExternalLink.Hint)</a><a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy@(ExternalLink.Hint)</a><a href="https://status.terrascale.tech" @(ExternalLink.Attributes)>Status@(ExternalLink.Hint)</a></footer>
+    </div>
+</main>
+@functions { public DocumentModel LayoutModel => Model.Document; }

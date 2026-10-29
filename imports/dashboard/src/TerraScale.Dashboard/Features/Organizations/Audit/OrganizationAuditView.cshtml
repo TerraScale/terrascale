@@ -1,0 +1,53 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@using TerraScale.Dashboard.Features.Organizations
+<dl class="ts-kpis" aria-label="Audit totals">
+@foreach (var stat in new[] { ("Matching events", Model.AuditMatches.Count, "Current filtered view"), ("High risk", Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"), "Critical events in this view"), ("Warnings", Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), "Warning events in this view"), ("Informational", Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"), "Informational events in this view") })
+{
+    <div class="ts-kpi"><dt class="ts-kpi-label">@stat.Item1</dt><dd class="ts-kpi-value">@stat.Item2</dd><dd class="ts-kpi-detail">@stat.Item3</dd></div>
+}
+</dl>
+<section class="ts-card ts-card-boxed ts-card-flush" id="recent-activity" aria-labelledby="recent-activity-title">
+    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-activity-title">Recent activity</h2><p class="ts-card-description">Security events matching the current filters · @(Model.Access?.AuditRetentionDays is { } days ? "Events older than " + days + " days are not shown or exported on your plan." : "retention is not reported")</p></div></header>
+    <div class="ts-card-body">
+        <form method="get" action="/organization" class="ts-filters ts-audit-filters" role="search" aria-label="Filter audit events">
+            <input type="hidden" name="tab" value="audit" />
+            <label class="ts-filter-field ts-audit-search-field" for="audit-search">Search<input class="ts-input" id="audit-search" type="search" name="search" value="@Model.Filter.Search" placeholder="Actor, action, resource, or source" /></label>
+            <label class="ts-filter-field" for="audit-action">Action<select class="ts-select" id="audit-action" name="action">
+                @foreach (var action in new[] { "all" }.Concat((Model.Access?.AuditEvents.Select(item => item.Action) ?? []).Append(Model.Filter.Action).Where(action => action != "all").Distinct().Order())) { <option value="@action" selected="@(Model.Filter.Action == action ? "selected" : null)">@(action == "all" ? "All actions" : action)</option> }
+            </select></label>
+            <label class="ts-filter-field" for="audit-severity">Severity<select class="ts-select" id="audit-severity" name="severity">
+                @foreach (var severity in new[] { ("all", "All severities"), ("info", "Info"), ("warn", "Warning"), ("critical", "Critical"), ("unknown", "Not reported") }) { <option value="@severity.Item1" selected="@(Model.Filter.Severity == severity.Item1 ? "selected" : null)">@severity.Item2</option> }
+            </select></label>
+            <label class="ts-filter-field" for="audit-range">Range<select class="ts-select" id="audit-range" name="range">
+                @foreach (var range in OrganizationFilters.Ranges.Where(range => range.Days <= Math.Max(7, Model.Access?.AuditRetentionDays ?? 90))) { <option value="@range.Id" selected="@(Model.Filter.Range == range.Id ? "selected" : null)">@range.Label</option> }
+            </select></label>
+            <button class="ts-btn ts-btn-primary ts-btn-sm ts-audit-apply" type="submit">Apply filters</button>
+            <details class="ts-menu ts-menu-end" data-on:click__outside="el.open = false" data-on:click="evt.target.closest('.ts-menu-panel a') &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.open &amp;&amp; (el.open = false, el.querySelector('summary').focus())"><summary class="ts-btn ts-btn-secondary ts-btn-sm" aria-label="Export audit events">@Icons.Render("Download", 16)<span>Export</span></summary><div class="ts-menu-panel" aria-label="Export formats"><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "csv")">@Icons.Render("FileText", 15)<span>Export CSV</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "json")">@Icons.Render("FileJson", 15)<span>Export JSON</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "ndjson")">@Icons.Render("FileJson", 15)<span>Export NDJSON</span></a></div></details>
+        </form>
+        @if (Model.AuditRows.Count > 0)
+        {
+            <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Audit events table. Scroll horizontally to see all columns.">
+                <table class="ts-table ts-audit-table"><caption class="ts-sr-only">Audit events matching the current filters</caption><thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Source</th><th scope="col">IP</th><th scope="col">Severity</th><th scope="col">Outcome</th></tr></thead>
+                    <tbody>@foreach (var item in Model.AuditRows)
+                    {
+                        var severity = OrganizationFilters.AuditSeverity(item); var outcome = OrganizationFilters.AuditOutcome(item);
+                        <tr><td class="ts-table-mono ts-meta"><time datetime="@item.OccurredAt.ToString("O")">@ValueFormat.UtcDate(item.OccurredAt)</time></td><td><span class="ts-list-main"><span class="ts-strong">@item.Actor</span><span class="ts-meta">@(OrganizationFilters.AuditActorType(item) == "service" ? "Service" : "User")</span></span></td><td><span class="ts-list-main"><span class="ts-strong">@OrganizationFilters.AuditActionLabel(item)</span><code class="ts-meta" title="Raw action code">@item.Action</code></span></td><td>@(item.Target.Length == 0 ? "Not reported" : item.Target)</td><td class="ts-table-mono ts-meta">@item.Source</td><td class="ts-table-mono ts-meta">@(item.Ip is { Length: > 0 } ip ? ip : "Not reported")</td><td><span class="ts-badge ts-badge-@(severity == "critical" ? "danger" : severity == "warn" ? "warning" : severity == "info" ? "info" : "neutral")">@(severity == "unknown" ? "Not reported" : severity)</span></td><td><span class="ts-badge ts-badge-@(outcome == "failure" ? "danger" : "success")">@outcome</span></td></tr>
+                    }</tbody>
+                </table>
+            </div>
+            <nav class="ts-pager" aria-label="Audit pages"><span>Showing @Model.AuditRows.Count of @Model.AuditMatches.Count events · page @Model.AuditPage of @Model.AuditPages</span><div class="ts-row">@if (Model.AuditPage > 1) { <a class="ts-btn ts-btn-secondary ts-btn-sm" rel="prev" href="@Model.Filter.AuditUrl(Model.AuditPage - 1)">Previous</a> }@if (Model.AuditPage < Model.AuditPages) { <a class="ts-btn ts-btn-secondary ts-btn-sm" rel="next" href="@Model.Filter.AuditUrl(Model.AuditPage + 1)">Next</a> }</div></nav>
+        }
+        else
+        {
+            <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("ScrollText", 16)</span><p class="ts-empty-title">No audit events match these filters</p><p class="ts-empty-detail">@Model.AuditMatches.Count events match the current policy and filters. Try a wider time range or clear the search.</p></div>
+        }
+        @if (Model.Access?.AuditEvents.Any(item => OrganizationFilters.AuditSeverity(item) == "unknown") == true) { <p class="ts-meta" role="status">Severity is not reported for some provider events.</p> }
+    </div>
+</section>
+<section class="ts-card ts-card-boxed" id="audit-breakdown" aria-labelledby="audit-breakdown-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="audit-breakdown-title">Severity breakdown</h2><p class="ts-card-description">Events in the current filtered view</p></div></header><div class="ts-card-body"><dl class="ts-grid-3">
+    @foreach (var share in new[] { ("Informational", "info", "info"), ("Warning", "warning", "warn"), ("Critical severity", "danger", "critical"), ("Not reported", "neutral", "unknown") })
+    {
+        var count = Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == share.Item3); var total = Model.AuditMatches.Count; var percent = total == 0 ? 0 : (int)Math.Round(count * 100d / total, MidpointRounding.AwayFromZero);
+        <div class="ts-audit-share ts-audit-share-@share.Item2"><dt class="ts-stat-label">@share.Item1</dt><dd class="ts-stat-value">@count</dd><dd class="ts-meta">@percent% · @count of @total filtered events</dd><dd><meter class="ts-audit-meter" min="0" max="@Math.Max(total, 1)" value="@count" aria-label="@(share.Item1.Replace(" severity", "") + ": " + count + " of " + total + " filtered events")"></meter></dd></div>
+    }
+</dl></div></section>

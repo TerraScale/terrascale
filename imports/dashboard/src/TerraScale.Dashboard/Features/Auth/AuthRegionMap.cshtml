@@ -1,0 +1,13 @@
+@inherits RazorSlice
+@inject AssetUrls Assets
+<span></span>
+<div class="ts-auth-map">
+    <svg class="ts-auth-routes" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M16.1 32.8 Q 22 70 37 75.7"/><path d="M37 75.7 Q 46 40 52.4 23.9"/></svg>
+    <i class="ts-auth-point ts-auth-point-sjc"></i><i class="ts-auth-point ts-auth-point-gru"></i><i class="ts-auth-point ts-auth-point-fra"></i>
+</div>
+<ul class="ts-auth-regions">
+    @foreach (var code in new[] { "GRU", "FRA", "SJC" })
+    {
+        <li class="ts-auth-region" title="@Regions.Name(code)">@if (Regions.Country(code) is { Length: > 0 } flag) { <img src="@Assets.Url("flags/" + flag + ".svg")" alt="" /> }<span class="ts-mono">@code.ToLowerInvariant()</span></li>
+    }
+</ul>

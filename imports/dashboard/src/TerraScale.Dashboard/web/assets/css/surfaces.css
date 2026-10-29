@@ -1,0 +1,644 @@
+/* Flat sections, boxed panels, stats, empty states, alerts, badges, and tabs. */
+
+/* ui.Card renders a flat section: a heading row and its content. */
+.ts-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-s6);
+  min-width: 0;
+}
+
+/* Consecutive sections are divided by a hairline. */
+.ts-page > .ts-card + .ts-card,
+.ts-page > .ts-card + .ts-split,
+.ts-page > .ts-split + .ts-card,
+.ts-page > .ts-split + .ts-split,
+.ts-stack > .ts-card + .ts-card,
+.ts-stack-lg > .ts-card + .ts-card {
+  padding-top: var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* A section that ends in a stat row already closes with a hairline. */
+:is(.ts-page, .ts-stack) > .ts-card:has(> .ts-card-body > .ts-stats:last-child) + .ts-card {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.ts-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+}
+
+summary.ts-card-head {
+  display: list-item;
+  list-style-position: inside;
+  cursor: pointer;
+}
+
+.ts-card-heading {
+  display: grid;
+  flex: 1 1 280px;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ts-card-title {
+  font-size: var(--ts-fs-xl);
+  font-weight: 600;
+}
+
+.ts-card-description {
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-card-actions-shrinkable {
+  min-width: 0;
+}
+
+/* Opt-in header: compact actions share the title row; wider actions wrap. */
+.ts-card-head-title-actions {
+  align-items: center;
+  gap: 2px var(--ts-s3);
+}
+
+.ts-card-head-title-actions > .ts-card-heading {
+  flex-basis: max-content;
+}
+
+.ts-card-head-title-actions > .ts-card-actions {
+  margin-left: auto;
+}
+
+.ts-card-head-title-actions > .ts-card-description {
+  flex: 0 0 100%;
+}
+
+.ts-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--ts-s4);
+  min-width: 0;
+}
+
+.ts-card-flush > .ts-card-body > .ts-pager {
+  padding-top: var(--ts-s3);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* A hairline-divided part of a section. */
+.ts-card-section {
+  display: grid;
+  gap: var(--ts-s3);
+  padding-top: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* Boxed section (prototype ts-panel). Pair with ts-card; flat ts-card stays the default. */
+.ts-card.ts-card-boxed {
+  gap: var(--ts-s3);
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+/* A boxed section after another section keeps its own box, not the flat hairline. */
+.ts-card + .ts-card.ts-card-boxed,
+.ts-split + .ts-card.ts-card-boxed {
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+}
+
+/* Flush: no box padding. The head is inset; table cells at the edges are inset too. */
+.ts-card.ts-card-boxed.ts-card-flush {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.ts-card-boxed.ts-card-flush > .ts-card-head {
+  padding: var(--ts-s4) var(--ts-s5);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-card-boxed.ts-card-flush .ts-table th:first-child,
+.ts-card-boxed.ts-card-flush .ts-table td:first-child {
+  padding-left: var(--ts-s5);
+}
+
+.ts-card-boxed.ts-card-flush .ts-table th:last-child,
+.ts-card-boxed.ts-card-flush .ts-table td:last-child {
+  padding-right: var(--ts-s5);
+}
+
+/* Headline numbers: flat rows split by vertical hairlines. Every stat has a
+   leading divider; the grid is shifted left and clipped so the first stat of
+   each row hides its divider and lines up with the page edge. */
+.ts-stats {
+  --ts-stat-pad: var(--ts-s6);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  row-gap: var(--ts-s2);
+  position: relative;
+  margin-left: calc(-1 * var(--ts-s5));
+  overflow: hidden;
+}
+
+/* The top and bottom hairlines start where the content does, not at the shift. */
+.ts-stats::before,
+.ts-stats::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  left: var(--ts-s5);
+  height: 1px;
+  background: var(--ts-line);
+}
+
+.ts-stats::before {
+  top: 0;
+}
+
+.ts-stats::after {
+  bottom: 0;
+}
+
+.ts-stat {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s5) var(--ts-stat-pad);
+  border-left: 1px solid var(--ts-line);
+}
+
+.ts-stat-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ts-stat-value {
+  overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-3xl);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+/* KPI tiles (prototype b-kpis): icon + label, value, detail, thin meter. */
+.ts-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s3);
+  margin: 0;
+}
+
+.ts-kpi {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  min-width: 0;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-kpi-value {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font: 500 var(--ts-fs-3xl) / 1 var(--ts-font-mono);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-kpi-value small {
+  margin-left: 4px;
+  color: var(--ts-ink-3);
+  font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  letter-spacing: 0;
+}
+
+.ts-kpi-detail {
+  margin: 0;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+/* Thin meter: reuses the existing progress track at 4px. */
+.ts-kpi .ts-progress {
+  height: 4px;
+}
+
+@media (max-width: 899.98px) {
+  .ts-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* KPI tiles (prototype b-kpis): icon + label, value, detail, thin meter. */
+.ts-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s3);
+  margin: 0;
+}
+
+.ts-kpi {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  min-width: 0;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-kpi-value {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font: 500 var(--ts-fs-3xl) / 1 var(--ts-font-mono);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-kpi-value small {
+  margin-left: 4px;
+  color: var(--ts-ink-3);
+  font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  letter-spacing: 0;
+}
+
+.ts-kpi-detail {
+  margin: 0;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+/* Thin meter: reuses the existing progress track at 4px. */
+.ts-kpi .ts-progress {
+  height: 4px;
+}
+
+@media (max-width: 899.98px) {
+  .ts-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* KPI tiles (prototype b-kpis): icon + label, value, detail, thin meter. */
+.ts-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s3);
+  margin: 0;
+}
+
+.ts-kpi {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  min-width: 0;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-kpi-value {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font: 500 var(--ts-fs-3xl) / 1 var(--ts-font-mono);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-kpi-value small {
+  margin-left: 4px;
+  color: var(--ts-ink-3);
+  font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  letter-spacing: 0;
+}
+
+.ts-kpi-detail {
+  margin: 0;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+/* Thin meter: reuses the existing progress track at 4px. */
+.ts-kpi .ts-progress {
+  height: 4px;
+}
+
+@media (max-width: 899.98px) {
+  .ts-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* For stats whose values are words ("Not recorded") rather than numbers. */
+.ts-stats-compact .ts-stat-value {
+  font-size: var(--ts-fs-xl);
+}
+
+.ts-stat-detail {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-stats {
+    --ts-stat-pad: var(--ts-s4);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-stat {
+    padding-block: var(--ts-s4);
+  }
+
+  .ts-stat:nth-child(n + 3) {
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-stat:nth-child(n + 3) {
+    border-top: 1px solid var(--ts-line);
+  }
+
+}
+
+/* Icon tile: blue text stays readable over the soft fill on every surface. */
+.ts-icon-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-accent-soft);
+  color: var(--ts-info);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-icon-tile-success {
+  background: color-mix(in srgb, var(--ts-success) 14%, transparent);
+  color: var(--ts-success);
+}
+
+/* Empty states: a solid hairline box, an icon tile, a title and one line. */
+.ts-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s8) var(--ts-s6);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  text-align: center;
+}
+
+.ts-empty > .ts-icon-tile {
+  margin-bottom: var(--ts-s2);
+}
+
+.ts-empty-title {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+}
+
+.ts-empty-detail {
+  max-width: 52ch;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-empty > .ts-btn,
+.ts-empty > .ts-row,
+.ts-empty > :is(.ts-empty-action, .ts-empty-actions) {
+  margin-top: var(--ts-s2);
+}
+
+/* Alerts. */
+.ts-alert {
+  --alert: var(--state, var(--ts-info));
+  display: grid;
+  gap: 2px;
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid color-mix(in oklab, var(--alert) 28%, transparent);
+  border-radius: var(--ts-radius);
+  background: color-mix(in oklab, var(--alert) 8%, transparent);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-alert-info { --alert: var(--ts-info); }
+.ts-alert-success { --alert: var(--ts-success); }
+.ts-alert-warning { --alert: var(--ts-warning); }
+.ts-alert-danger { --alert: var(--ts-danger); }
+
+.ts-alert-title {
+  font-size: inherit;
+  font-weight: 500;
+}
+
+.ts-alert-body {
+  color: var(--ts-ink-2);
+}
+
+/* Badges. */
+.ts-badge {
+  --badge: var(--state, var(--ts-ink-2));
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+  background: color-mix(in oklab, var(--badge) var(--ts-tint-badge), transparent);
+  color: var(--badge);
+  font-size: var(--ts-fs-xs);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ts-badge-neutral { --badge: var(--ts-ink-2); }
+.ts-badge-info { --badge: var(--ts-info); }
+.ts-badge-success { --badge: var(--ts-success); }
+.ts-badge-warning { --badge: var(--ts-warning); }
+.ts-badge-danger { --badge: var(--ts-danger); }
+.ts-badge-tone { --badge: var(--tone); }
+/* Status tones from data-tone hosts; the same full-strength hues as the classes above. */
+[data-tone="success"] { --tone: var(--ts-success); }
+[data-tone="warning"] { --tone: var(--ts-warning); }
+[data-tone="danger"] { --tone: var(--ts-danger); }
+[data-tone="info"] { --tone: var(--ts-info); }
+[data-tone="neutral"] { --tone: var(--ts-ink-2); }
+/* Category hues, not status: text is lifted toward ink for AA. */
+.ts-badge-violet, .ts-badge-blue { color: color-mix(in oklab, var(--badge) 60%, var(--ts-ink)); }
+.ts-badge-violet { --badge: var(--ts-chart-4); }
+.ts-badge-blue { --badge: var(--ts-chart-1); }
+
+/* A leading status dot. */
+.ts-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state, currentColor);
+}
+
+.ts-stat .ts-dot {
+  color: var(--ts-ink-3);
+}
+
+.ts-badge > .ts-dot {
+  width: 6px;
+  height: 6px;
+}
+
+/* Wrap sections so every destination, active state and focus ring stays
+   visible on deep links without horizontal scrolling. */
+.ts-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--ts-s6);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-toolbar .ts-tabs {
+  border-bottom: 0;
+}
+
+.ts-tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--ts-s2);
+  height: 40px;
+  color: var(--ts-ink-2);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-tab:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-tab[aria-current="page"],
+.ts-tab[aria-selected="true"] {
+  color: var(--ts-ink);
+}
+
+.ts-tab[aria-current="page"]::after,
+.ts-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ts-accent);
+}
+
+.ts-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  line-height: 18px;
+  text-align: center;
+}
+
+.ts-card-actions > .ts-filters {
+  flex-wrap: nowrap;
+}
+
+.ts-measurement-loading {
+  display: none;
+}
+
+body.ts-nav-pending .ts-measurement-loading {
+  display: block;
+}

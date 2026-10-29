@@ -1,0 +1,85 @@
+{
+  "auditedSourceHead": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+  "base": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+  "durationSeconds": 8.438,
+  "tests": [
+    {
+      "test": "CanceledUnpaidCheckoutDoesNotMarkPaidTierAsCurrent",
+      "outcome": "Failed"
+    },
+    {
+      "test": "ConcurrentCheckoutAndCancelReplayKeepOneSessionAndAllowReplacement",
+      "outcome": "Passed"
+    },
+    {
+      "test": "InterruptedCheckoutRetryRepairsIndexWithoutReplacingSession",
+      "outcome": "Passed"
+    },
+    {
+      "test": "InterruptedCheckoutOffersRetryBackToBilling",
+      "outcome": "Failed"
+    },
+    {
+      "test": "PartiallyPaidInvoiceUsesRemainingAmountForOutstandingBalance",
+      "outcome": "Failed"
+    },
+    {
+      "test": "InvoiceFailureCanRetryThroughFiltersWithoutReportingAnEmptyHistory",
+      "outcome": "Passed"
+    },
+    {
+      "test": "CancelCheckoutReturnsVisibleOutcomeAndCanStartDifferentPlan",
+      "outcome": "Failed"
+    },
+    {
+      "test": "AnnualPlanPageKeepsAnnualSelectedWhenChooserOpens(1440, 900)",
+      "outcome": "Failed"
+    },
+    {
+      "test": "AnnualPlanPageKeepsAnnualSelectedWhenChooserOpens(390, 844)",
+      "outcome": "Failed"
+    },
+    {
+      "test": "KeyboardReviewCloseEscapeBackAndForwardStayUsable(1440, 900)",
+      "outcome": "Passed"
+    },
+    {
+      "test": "KeyboardReviewCloseEscapeBackAndForwardStayUsable(390, 844)",
+      "outcome": "Passed"
+    }
+  ],
+  "observations": {
+    "annual-chooser-1440": {
+      "route": "/organization?tab=billing&interval=annual",
+      "width": 1440,
+      "height": 900,
+      "annual": false
+    },
+    "annual-chooser-390": {
+      "route": "/organization?tab=billing&interval=annual",
+      "width": 390,
+      "height": 844,
+      "annual": false
+    },
+    "canceled-checkout": {
+      "route": "/organization?tab=billing&payment=canceled",
+      "message": 0,
+      "replacementAccepted": true
+    },
+    "canceled-current-tier": {
+      "summary": "No plan",
+      "currentPaidTier": true
+    },
+    "interrupted-checkout": {
+      "status": 503,
+      "retry": "/"
+    },
+    "partial-invoice": {
+      "amountDue": 1234,
+      "amountPaid": 1000,
+      "amountRemaining": 234,
+      "outstanding": "$12.34"
+    }
+  },
+  "testedAuditHeadSHA": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0"
+}

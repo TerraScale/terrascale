@@ -1,0 +1,186 @@
+{
+  "$comment": "Canonical TerraScale plan catalog. Subscription prices, allowances and overage rates approved 2026-10-23; monthly and yearly billing for every paid plan approved 2026-10-28.",
+  "version": 2,
+  "currency": "USD",
+  "subscriptions": {
+    "definition": "Starter, Pro and Team are each billed monthly at priceMonthlyUsd or yearly at priceAnnualUsd; a year costs ten monthly payments (two months free). billingIntervals lists the intervals a plan is sold at through checkout. Operation-unit overage is invoiced every month on both intervals."
+  },
+  "metering": {
+    "operationUnit": {
+      "name": "Operation unit",
+      "bytes": 4096,
+      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written.",
+      "rules": [
+        "Lists, queries, and batches count each item independently.",
+        "Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed.",
+        "Failed, denied, invalid, throttled, and not-found requests are not billed."
+      ]
+    },
+    "storage": {
+      "name": "Storage across regions",
+      "definition": "Stored bytes count once in every selected region."
+    },
+    "allowances": {
+      "paidOverages": true,
+      "definition": "Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate. Storage and client egress over the allowance are not billed yet."
+    },
+    "entitlements": {
+      "name": "Plan entitlements",
+      "definition": "Per-plan ceilings enforced by TerraBase. Requests per second, burst requests, and concurrent requests apply per organization; requests beyond them receive HTTP 429 with a Retry-After header. queryTimeoutSeconds is the longest a single query may run. storageLimitGb is the hard storage ceiling, distinct from the included storage allowance. pitrDays is the point-in-time recovery window and backupRetentionDays the backup retention, in days. regionsPerDatabase is the number of regions a database can replicate to. support is a support response target, not an SLA. null means no plan ceiling."
+    },
+    "egress": {
+      "name": "Client egress",
+      "definition": "Outbound application response bytes to clients, excluding replication traffic; decimal GB."
+    },
+    "overageRates": {
+      "operationUnitsPerMillionUsd": 5,
+      "storageGbRegionMonthUsd": 0.5,
+      "clientEgressGbUsd": 0.1,
+      "status": "approved"
+    }
+  },
+  "plans": [
+    {
+      "id": "free",
+      "name": "Free",
+      "available": true,
+      "priceMonthlyUsd": 0,
+      "priceAnnualUsd": 0,
+      "billingIntervals": [],
+      "trialDays": null,
+      "limits": {
+        "projects": 1,
+        "databases": 1,
+        "members": 1,
+        "storageGb": 0.1,
+        "operationUnitsPerMonth": 50000,
+        "egressGbPerMonth": 1
+      },
+      "entitlements": {
+        "requestsPerSecond": 50,
+        "burstRequests": 100,
+        "concurrentRequests": 4,
+        "queryTimeoutSeconds": 1,
+        "storageLimitGb": 0.1,
+        "pitrDays": 1,
+        "backupRetentionDays": 1,
+        "regionsPerDatabase": 3,
+        "support": "Community"
+      }
+    },
+    {
+      "id": "starter",
+      "name": "Starter",
+      "available": true,
+      "priceMonthlyUsd": 3,
+      "priceAnnualUsd": 30,
+      "billingIntervals": ["month", "year"],
+      "trialDays": null,
+      "limits": {
+        "projects": 5,
+        "databases": 5,
+        "members": 5,
+        "storageGb": 1,
+        "operationUnitsPerMonth": 250000,
+        "egressGbPerMonth": 5
+      },
+      "entitlements": {
+        "requestsPerSecond": 200,
+        "burstRequests": 400,
+        "concurrentRequests": 8,
+        "queryTimeoutSeconds": 2,
+        "storageLimitGb": 5,
+        "pitrDays": 3,
+        "backupRetentionDays": 3,
+        "regionsPerDatabase": 3,
+        "support": "2 business days"
+      }
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "available": true,
+      "priceMonthlyUsd": 20,
+      "priceAnnualUsd": 200,
+      "billingIntervals": ["month", "year"],
+      "trialDays": null,
+      "limits": {
+        "projects": 25,
+        "databases": 25,
+        "members": 25,
+        "storageGb": 10,
+        "operationUnitsPerMonth": 2000000,
+        "egressGbPerMonth": 50
+      },
+      "entitlements": {
+        "requestsPerSecond": 500,
+        "burstRequests": 1000,
+        "concurrentRequests": 16,
+        "queryTimeoutSeconds": 5,
+        "storageLimitGb": 100,
+        "pitrDays": 7,
+        "backupRetentionDays": 7,
+        "regionsPerDatabase": 3,
+        "support": "1 business day"
+      }
+    },
+    {
+      "id": "team",
+      "name": "Team",
+      "available": true,
+      "priceMonthlyUsd": 50,
+      "priceAnnualUsd": 500,
+      "billingIntervals": ["month", "year"],
+      "trialDays": null,
+      "limits": {
+        "projects": 100,
+        "databases": 100,
+        "members": 100,
+        "storageGb": 25,
+        "operationUnitsPerMonth": 5000000,
+        "egressGbPerMonth": 100
+      },
+      "entitlements": {
+        "requestsPerSecond": 500,
+        "burstRequests": 1000,
+        "concurrentRequests": 16,
+        "queryTimeoutSeconds": 5,
+        "storageLimitGb": 100,
+        "pitrDays": 14,
+        "backupRetentionDays": 14,
+        "regionsPerDatabase": 3,
+        "support": "8 hours"
+      }
+    },
+    {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "available": false,
+      "priceMonthlyUsd": 999,
+      "priceAnnualUsd": null,
+      "billingIntervals": [],
+      "trialDays": null,
+      "limits": {
+        "projects": null,
+        "databases": null,
+        "members": null,
+        "storageGb": 100,
+        "operationUnitsPerMonth": 10000000,
+        "egressGbPerMonth": 250
+      },
+      "entitlements": {
+        "requestsPerSecond": null,
+        "burstRequests": null,
+        "concurrentRequests": null,
+        "queryTimeoutSeconds": null,
+        "storageLimitGb": null,
+        "pitrDays": 30,
+        "backupRetentionDays": 30,
+        "regionsPerDatabase": 3,
+        "support": "Custom"
+      },
+      "billing": "$999 per month support plus usage; contact sales."
+    }
+  ],
+  "reviewStatus": "approved"
+}
