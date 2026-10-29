@@ -30,7 +30,7 @@ assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workf
 assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in workflow
 assert "steps: *slow-steps" in workflow
-auth_job = workflow.split("\n  auth:\n", 1)[1].split("\n  terrabase-build:\n", 1)[0]
+auth_job = workflow.split("\n  auth:\n", 1)[1].split("\n  auth-package:\n", 1)[0]
 assert "bash scripts/ci/auth-fast.sh" in auth_job
 assert "docker/build-push-action" not in auth_job
 assert "*nuget-cache" in auth_job and "*locked-restore" in auth_job
@@ -38,7 +38,11 @@ auth_fast = (root / "scripts/ci/auth-fast.sh").read_text()
 assert "fmt-check SOLUTION=auth.slnf" in auth_fast
 assert "dotnet build tests/TerraScale.Authentication.Fast/" in auth_fast
 assert "-o auth-build auth-check" in auth_fast
-assert auth_fast.index("make -o restore auth-test-fast") < auth_fast.index("make auth-publish")
+assert "make -o restore auth-test-fast" in auth_fast
+assert "auth-publish" not in auth_fast
+package_job = workflow.split("\n  auth-package:\n", 1)[1].split("\n  terrabase-build:\n", 1)[0]
+assert "make auth-publish RUNTIME=linux-x64" in package_job
+assert "*nuget-cache" in package_job and "*locked-restore" in package_job
 assert "native-audit:" not in workflow, "Remove the temporary executor comparison"
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
@@ -60,13 +64,14 @@ for area in ("libs", "auth", "terrabase"):
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
 assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
-assert "needs: [changes, native, libs, auth, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
-for job in ("libs", "auth", "terrabase-build", "terrabase"):
+for job in ("libs", "auth", "auth-package", "terrabase-build", "terrabase"):
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
+assert '.["auth-package"].result' in test_job, "Affected Auth packaging cannot be skipped"
 assert "    needs: [changes, native, test]\n" in main_job, "Main must wait for the required test rollup"
 assert "!cancelled() && needs.test.result == 'success'" in main_job, "Main must not run after a failed or skipped test rollup"
 for job in (test_job, main_job):

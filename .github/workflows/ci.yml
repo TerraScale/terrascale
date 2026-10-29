@@ -310,9 +310,31 @@ jobs:
       - name: Install Auth browser dependencies
         working-directory: terrascale
         run: npx --yes playwright@1.63.0 install --with-deps chromium
-      - name: Checked Auth build, Fast and packaging proof
+      - name: Checked Auth build and Fast
         working-directory: terrascale
         run: bash scripts/ci/auth-fast.sh
+
+  auth-package:
+    needs: [changes, native]
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'auth')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      AREA: auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - name: Auth single-file packaging proof
+        working-directory: terrascale
+        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make auth-publish RUNTIME=linux-x64 PUBLISH_DIR="$RUNNER_TEMP/auth-publish"
 
   terrabase-build:
     needs: [changes, native]
@@ -646,7 +668,7 @@ jobs:
 
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, native, libs, auth, terrabase-build, terrabase]
+    needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]
     if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -667,4 +689,5 @@ jobs:
           if grep -qE 'failure|cancelled' <<< '${{ join(needs.*.result, ' ') }}'; then exit 1; fi
           for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
             [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
+            [[ $area != auth || $(jq -r '.["auth-package"].result' <<< "$RESULTS") == success ]] || exit 1
           done
