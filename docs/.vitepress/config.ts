@@ -26,9 +26,7 @@ function titleOf(localePrefix: string, link: string): string {
       }
       const heading = text.match(/^# (.+)$/m)
       if (heading) return heading[1]
-    } catch {
-
-    }
+    } catch {}
   }
   return rel.split('/').pop() || link
 }

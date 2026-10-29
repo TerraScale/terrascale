@@ -6,7 +6,6 @@
   "create-terrascale-app/template/app/page.tsx": {"reason": "P5/C1: unpublished source fixture or dependency awaiting SQL conversion; no site includes or downloads.", "digest": "6c70a70466e67418492c7d7985b5ee3e44611ad16c52cdb97a5ea367f76aa934"},
   "create-terrascale-app/template/terrascale.ts": {"reason": "P5/C1: unpublished source fixture or dependency awaiting SQL conversion; no site includes or downloads.", "digest": "4a96ea625970e899e0591d6f9393b8a0959c56be2d0e70081c49334ff69bb47a"},
   "data/canonical/pricing.json": {"reason": "Billing source terminology; no legacy API or architecture contract is published from these lines.", "digest": "6b684b48f647d6e76ab62505f26734543c828ab998e189a5a95085570fc5e680"},
-  "data/policies.json": {"reason": "Billing source terminology; no legacy API or architecture contract is published from these lines.", "digest": "e79668384486ed6b94ae3479238114d4b6758c907ef056047e2d65b98150d9da"},
   "docs/.vitepress/theme/DocsFooter.vue": {"reason": "Public service-status feed, unrelated to database feeds.", "digest": "ce628ebf319ed3947288bb79dba91d1a7f4a4a7dca4ae91c10e0ea6678d3702f"},
   "docs/ar/guides/end-user-authentication.md": {"reason": "OIDC discovery document, unrelated to database data.", "digest": "509b611476ed89b5c0d2c939e8082776c361532dc797708860f58a0f6b8690da"},
   "docs/ar/guides/single-sign-on.md": {"reason": "OIDC discovery document, unrelated to database data.", "digest": "ca30c7d2e30bd2a49852b38f8ce8c9f1f8f8e4bf2309886a3a5f96d673a3e9fe"},

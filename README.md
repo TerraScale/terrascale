@@ -41,7 +41,7 @@ All current locale copies are visibly bannered English fallbacks; a reviewed
 translation removes its fallback marker. Never mark untranslated content as
 reviewed. Keep legal routes noindex until approved documents are available.
 
-Pricing derives from the published catalog and documentation policy; use
+Subscription pricing derives from the published catalog; use
 `nice -n 19 npm run canonical:sync` to refresh it. Do not invent SDK releases,
 API routes, endpoint discovery or production guarantees from local evidence.
 
