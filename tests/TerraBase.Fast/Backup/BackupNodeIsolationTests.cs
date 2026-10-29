@@ -149,16 +149,19 @@ public sealed class BackupNodeIsolationTests
             Directory.Delete(directory, recursive: true);
         }
 
-        Task<ManagementApi> StartAsync(string dataDirectory, string node, TimeProvider time) => ManagementApi.StartAsync(settings =>
+        Task<ManagementApi> StartAsync(string dataDirectory, string node, TimeProvider time)
         {
-            s3.Configure(settings);
-            settings["data-directory"] = dataDirectory;
-            settings["node-name"] = node;
-        }, services =>
-        {
-            s3.Route(services);
-            ManualBackupHosting.Configure(services);
-        }, time, cancellationToken, userId: user);
+            return ManagementApi.StartAsync(settings =>
+            {
+                s3.Configure(settings);
+                settings["data-directory"] = dataDirectory;
+                settings["node-name"] = node;
+            }, services =>
+            {
+                s3.Route(services);
+                ManualBackupHosting.Configure(services);
+            }, time, cancellationToken, userId: user);
+        }
     }
 
     private static async Task PutAsync(HttpClient data, ManagedDatabaseRef database, string text, CancellationToken cancellationToken)
