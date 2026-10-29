@@ -121,7 +121,9 @@ namespace TerraScale.Dashboard.Platform.Contracts
             // Adapt only the pinned package asset, never document/DOM prototypes or untrusted markup.
             using var resource = typeof(ScalarOptions).Assembly.GetManifestResourceStream("ScalarStaticAssets.scalar.js")
                 ?? throw new InvalidOperationException("Scalar bundle missing");
-            var gzip = resource.ReadByte() is 0x1f and 0x8b;
+            var first = resource.ReadByte();
+            var second = resource.ReadByte();
+            var gzip = first == 0x1f && second == 0x8b;
             resource.Position = 0;
             using var decoded = gzip ? (Stream)new GZipStream(resource, CompressionMode.Decompress) : resource;
             using var reader = new StreamReader(decoded);
@@ -133,7 +135,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
             const string evalProbe = "try{return Function(``),!0}catch{return!1}";
             // Desktop and mobile SearchButton instances both listen on window. Handle one shortcut once.
             const string searchShortcut = "t.key===e.searchHotKey&&(t.preventDefault(),t.stopPropagation(),n.open?n.hide():n.show())";
-            if (producers.Matches(script).Count != 4 || script.Split(theme, StringSplitOptions.None).Length != 2 ||
+            if (producers.Count(script) != 4 || script.Split(theme, StringSplitOptions.None).Length != 2 ||
                 script.Split(evalProbe, StringSplitOptions.None).Length != 2 ||
                 script.Split(searchShortcut, StringSplitOptions.None).Length != 2)
             {
