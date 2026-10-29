@@ -1,0 +1,121 @@
+/* Administration pages: identifiers, inline row forms, and plan editors. */
+
+.ts-admin-id {
+  width: fit-content;
+  max-width: 14ch;
+  overflow: hidden;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-admin-action-form {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-admin-inline-field .ts-input {
+  width: 8rem;
+}
+
+.ts-admin-inline-field .ts-select {
+  width: 9.5rem;
+}
+
+.ts-admin-nowrap {
+  flex-wrap: nowrap;
+}
+
+.ts-admin-card-note {
+  padding: 0 var(--ts-s6) var(--ts-s4);
+}
+
+.ts-admin-plan-list {
+  display: grid;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+}
+
+.ts-admin-plan {
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-admin-plan:last-child {
+  border-bottom: 0;
+}
+
+.ts-admin-plan > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) var(--ts-s4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ts-admin-plan > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-admin-plan > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 2px solid var(--ts-ink-3);
+  border-bottom: 2px solid var(--ts-ink-3);
+  transform: rotate(45deg);
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-admin-plan[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.ts-admin-plan > summary:hover {
+  background: var(--ts-surface-2);
+}
+
+.ts-admin-plan > .ts-form {
+  padding: var(--ts-s2) var(--ts-s4) var(--ts-s4);
+}
+
+.ts-admin-filters {
+  flex-wrap: nowrap;
+}
+
+.ts-admin-filters > input[type="search"] {
+  flex: 0 1 240px;
+}
+
+.ts-admin .ts-list-main > .ts-badge,
+.ts-admin .ts-list-main > code {
+  justify-self: start;
+}
+
+.ts-admin-date {
+  white-space: nowrap;
+}
+
+/* Keep wide tab bars and tables from widening the page on phones; the
+   positioned wrap also contains the sr-only labels inside scrolled rows. */
+.ts-admin {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ts-admin .ts-table-wrap {
+  position: relative;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-admin-filters {
+    width: 100%;
+  }
+
+  .ts-admin-filters > input[type="search"] {
+    flex: 1 1 auto;
+  }
+}

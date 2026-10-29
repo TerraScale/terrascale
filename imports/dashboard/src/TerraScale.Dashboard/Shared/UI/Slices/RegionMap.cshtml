@@ -1,0 +1,12 @@
+@inherits RazorSlice
+@inject AssetUrls Assets
+<div class="ts-region-map" aria-hidden="true" data-highlights="GRU,FRA,SJC">
+    <img class="ts-region-map-image" src="@Assets.Url("brand/region-map.svg")" alt="" loading="lazy" decoding="async" />
+    <svg class="ts-region-overlay" viewBox="0 0 136 80" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <path class="ts-region-arc" d="M 21.00 28.58 Q 35.50 19.76 50.00 59.76" />
+        <path class="ts-region-arc" d="M 50.00 59.76 Q 35.50 19.76 21.00 28.58" />
+    </svg>
+    <span class="ts-region-node" data-region="SJC"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span>
+    <span class="ts-region-node" data-region="GRU"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span>
+    <span class="ts-region-node" data-region="FRA"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span>
+</div>

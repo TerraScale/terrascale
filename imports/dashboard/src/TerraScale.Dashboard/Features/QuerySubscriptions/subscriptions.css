@@ -1,0 +1,156 @@
+/* Plans and billing: current plan summary, interval switch, and plan cards. */
+
+/* Billing sections sit on the page rhythm, not the tighter stack gap. */
+.ts-stack.ts-billing {
+  gap: var(--ts-s8);
+}
+
+.ts-billing-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s6);
+}
+
+.ts-billing-plan {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.ts-billing-plan-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+}
+
+.ts-billing-plan-name {
+  font-size: var(--ts-fs-xl);
+  font-weight: 600;
+}
+
+.ts-billing-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s8);
+}
+
+.ts-billing-facts > div {
+  display: grid;
+  gap: 2px;
+}
+
+.ts-billing-facts dt {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-billing-facts dd {
+  font-weight: 600;
+}
+
+.ts-billing-plans {
+  display: grid;
+  gap: var(--ts-s5);
+}
+
+.ts-billing-plans-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+}
+
+.ts-billing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--ts-s4);
+}
+
+/* Plan card: a flat neutral surface; the current plan gets a blue outline only. */
+.ts-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-s3);
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-plan-current {
+  border-color: color-mix(in oklab, var(--ts-accent) 50%, transparent);
+}
+
+.ts-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2);
+}
+
+.ts-plan-name {
+  font-size: var(--ts-fs-lg);
+  font-weight: 600;
+}
+
+.ts-plan-price {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ts-s1);
+  font-family: var(--ts-font-num);
+  font-size: var(--ts-fs-3xl);
+  font-weight: var(--ts-display-weight);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-plan-price small {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+.ts-plan-features {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  list-style: none;
+}
+
+.ts-plan-features > li {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-plan-features svg {
+  flex: none;
+  color: var(--ts-ink-3);
+}
+
+/* The plan an accepted change moves to. */
+.ts-plan-upcoming {
+  border-style: dashed;
+  border-color: var(--ts-line-strong);
+}
+
+.ts-internal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ts-s6); }
+.ts-internal-meter .ts-svg-sharebar-fill { fill: var(--ts-chart-1); }
+.ts-internal-meter[data-state="warning"] .ts-svg-sharebar-fill { fill: var(--ts-warning); }
+.ts-billing-history-filters { align-items: end; }
+@container page (width < 768px) {
+  .ts-internal-grid { grid-template-columns: minmax(0, 1fr); }
+  .ts-billing-history-filters > .ts-field { flex: 1 1 100%; }
+}

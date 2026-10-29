@@ -1,0 +1,5 @@
+{
+  "ConsoleDraft": "SELECT name FROM users WHERE name = \u0027audit-local\u0027 LIMIT 5",
+  "DialogSql": "SELECT * FROM users LIMIT 20",
+  "PersistedSql": "SELECT * FROM users LIMIT 20"
+}

@@ -1,0 +1,18 @@
+# Browser/policy suites run on dev hosts, never on GitHub-hosted runners.
+name: Slow
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  instructions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Document the dev-host Slow command
+        run: |
+          echo 'Run on a dev host: ts-heavy-any nice -n 19 make test-slow --repo ts-dashboard --branch main' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This workflow does not claim test success; retain the dev-host command result as proof.' >> "$GITHUB_STEP_SUMMARY"

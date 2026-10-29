@@ -1,0 +1,11 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+<section class="ts-card ts-card-flush" id="sql-tables" aria-labelledby="sql-tables-title" aria-busy="false">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-tables-title">SQL tables</h2><p class="ts-card-description">Declared columns, including tables with no rows.</p></div></header>
+<div class="ts-card-body">
+<p class="ts-meta" role="status" aria-live="polite" data-sql-catalog-status></p>
+@if(Model.CatalogError.Length > 0){<div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@Model.CatalogError</p></div>}
+else if(Model.Catalog is not {Tables.Count: > 0}){<div class="ts-empty" role="status"><p class="ts-empty-title">No SQL tables yet.</p><p class="ts-empty-detail">Run CREATE TABLE to define a table and its columns.</p></div>}
+else{<ul class="ts-list">@foreach(var table in Model.Catalog.Tables){<li class="ts-list-item"><details><summary class="ts-mono">@table.Name</summary><dl class="ts-kv">@foreach(var field in table.Fields){<div><dt class="ts-mono">@field.Path</dt><dd>@field.Type</dd></div>}</dl></details></li>}</ul>}
+@if(Model.Catalog is {Truncated: true}){<p class="ts-hint" role="status">Showing the first 100 SQL tables by name. More tables exist; suggestions cover only these tables.</p>}
+<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit" form="sql-query-form" formaction="/api/v1/dashboard/data/sql/catalog" data-sql-catalog-refresh>Refresh SQL tables</button>
+</div></section>

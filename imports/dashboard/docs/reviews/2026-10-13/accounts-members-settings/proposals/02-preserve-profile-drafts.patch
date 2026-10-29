@@ -1,0 +1,29 @@
+--- a/src/TerraScale.Dashboard/Features/Profile/ProfileEndpoints.cs
++++ b/src/TerraScale.Dashboard/Features/Profile/ProfileEndpoints.cs
+@@ -7,4 +7,4 @@
+-public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null)
++public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null, string? DraftName = null, string? DraftPhone = null)
+ {
+     public string[] Permissions
+     {
+@@ -78,7 +78,8 @@
+         }
+         catch (AccountAccessException error)
+         {
+-            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session)));
++            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session),
++                DraftName: language ? null : form["name"].ToString(), DraftPhone: language ? null : form["phoneNumber"].ToString()));
+             slice.StatusCode = error.StatusCode;
+             return slice;
+         }
+--- a/src/TerraScale.Dashboard/Features/Profile/ProfileView.cshtml
++++ b/src/TerraScale.Dashboard/Features/Profile/ProfileView.cshtml
+@@ -9,7 +9,7 @@
+     @if (Model.Tab == "profile")
+     {
+         <div class="ts-grid-2">
+-            <section class="ts-card" id="profile-details" aria-labelledby="profile-details-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-details-title">Profile details</h2><p class="ts-card-description">Update the account information shown across TerraScale.</p></div></header><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/profile"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="displayName">Display name</label><input class="ts-input" id="displayName" name="name" value="@Model.Shell.Context.Account.Name" autocomplete="name" maxlength="128" required /></div><div class="ts-field"><label class="ts-label" for="phoneNumber">Phone number (optional)</label><input class="ts-input" id="phoneNumber" name="phoneNumber" type="tel" value="@Model.Shell.Context.Account.Phone" autocomplete="tel" inputmode="tel" /></div><div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save profile</button></div></form></div></section>
++            <section class="ts-card" id="profile-details" aria-labelledby="profile-details-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-details-title">Profile details</h2><p class="ts-card-description">Update the account information shown across TerraScale.</p></div></header><div class="ts-card-body"><form class="ts-form" method="post" action="/api/v1/dashboard/profile"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="displayName">Display name</label><input class="ts-input" id="displayName" name="name" value="@(Model.DraftName ?? Model.Shell.Context.Account.Name)" autocomplete="name" maxlength="128" required /></div><div class="ts-field"><label class="ts-label" for="phoneNumber">Phone number (optional)</label><input class="ts-input" id="phoneNumber" name="phoneNumber" type="tel" value="@(Model.DraftPhone ?? Model.Shell.Context.Account.Phone)" autocomplete="tel" inputmode="tel" /></div><div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save profile</button></div></form></div></section>
+             <section class="ts-card" id="profile-language" aria-labelledby="profile-language-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-language-title">Language</h2><p class="ts-card-description">Choose the language used by onboarding and the Dashboard.</p></div></header><div class="ts-card-body"><form method="post" action="/api/v1/dashboard/profile/language" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="interfaceLanguage">Interface language</label><select class="ts-select" id="interfaceLanguage" name="locale"><option value="en" selected="@(Model.Shell.Context.Account.Locale == "en" ? "selected" : null)">English</option><option value="pt-BR" selected="@(Model.Shell.Context.Account.Locale == "pt-BR" ? "selected" : null)">Português</option></select></div><div class="ts-form-actions"><button class="ts-btn ts-btn-secondary" type="submit">Save language</button></div></form></div></section>
+             <section class="ts-card" id="profile-posture" aria-labelledby="profile-posture-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-posture-title">Security posture</h2><p class="ts-card-description">Current account role and sessions.</p></div></header><div class="ts-card-body"><dl class="ts-kv ts-profile-posture"><dt>Active organization role</dt><dd><span class="ts-badge ts-badge-info">@(Model.Shell.Context.Role == "" ? "Unavailable" : Model.Shell.Context.Role)</span></dd><dt>Active sessions</dt><dd><span class="ts-badge ts-badge-neutral">@(Model.Sessions?.Count.ToString() ?? "Not loaded")</span></dd></dl></div></section>
+         </div>

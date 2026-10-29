@@ -1,0 +1,26 @@
+{
+  "name": "terrascale-dashboard-assets",
+  "description": "Front-end asset build only: bundles web/assets into web/static (Lightning CSS stylesheet, esbuild code editor) and regenerates the committed dotted region map.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build:css": "node build/build-css.mjs",
+    "watch:css": "node build/build-css.mjs --watch --dev",
+    "check:css": "node build/build-css.mjs --check",
+    "build:js": "node build/build-js.mjs",
+    "watch:js": "node build/build-js.mjs --watch",
+    "build:region-map": "node build/generate-region-map.mjs"
+  },
+  "devDependencies": {
+    "@shikijs/engine-javascript": "4.4.3",
+    "browserslist": "4.29.0",
+    "dotted-map": "2.2.3",
+    "esbuild": "0.28.2",
+    "lightningcss": "1.33.0",
+    "modern-monaco": "0.4.2",
+    "tm-grammars": "1.31.15"
+  }
+}

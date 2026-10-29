@@ -1,0 +1,19 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                <div class="ts-auth-heading"><h1 class="ts-auth-title">Checkout temporarily unavailable</h1></div>
+                <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">Stripe checkout did not open</p><p class="ts-alert-body">Return to billing to resume the checkout or cancel it before choosing another plan.</p></div>
+                <a class="ts-btn ts-btn-primary ts-btn-block" href="/organization?tab=billing">Try again</a>
+            </div>
+        </div>
+    </div>
+</main>
+@functions { public DocumentModel LayoutModel => Model; }

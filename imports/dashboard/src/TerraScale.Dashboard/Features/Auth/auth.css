@@ -1,0 +1,261 @@
+/* Sign-in page: a full-bleed region map beside the credential column. */
+
+.ts-login {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(420px, 1fr);
+  min-height: 100dvh;
+}
+
+.ts-login-hero {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: var(--ts-s10);
+  border-right: 1px solid var(--ts-line);
+  background: var(--ts-surface);
+  overflow: hidden;
+}
+
+.ts-login-hero .ts-region-map {
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.ts-login-regions {
+  position: absolute;
+  bottom: var(--ts-s8);
+  left: var(--ts-s10);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s5);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  list-style: none;
+}
+
+.ts-login-regions li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-login-regions .ts-dot {
+  width: 6px;
+  height: 6px;
+  color: var(--ts-link);
+}
+
+/* Decorative auth aside; operational maps retain their shared component. */
+.ts-auth-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--ts-s8);
+}
+
+/* Neutral dotted world map: masked dots, dashed static routes, muted markers, no animation. */
+.ts-auth-map {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 119 / 60;
+}
+
+.ts-auth-map::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ts-ink-3);
+  opacity: 0.4;
+  -webkit-mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
+  mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
+}
+
+.ts-auth-routes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.ts-auth-routes path {
+  fill: none;
+  stroke: var(--ts-ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.7;
+}
+
+.ts-auth-point {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px;
+  border: 2px solid var(--ts-surface);
+  border-radius: 50%;
+  background: var(--ts-ink-2);
+}
+
+.ts-auth-point-sjc { left: 16.1%; top: 32.8%; background: var(--ts-chart-4); }
+.ts-auth-point-gru { left: 37%; top: 75.7%; background: var(--ts-chart-2); }
+.ts-auth-point-fra { left: 52.4%; top: 23.9%; background: var(--ts-chart-3); }
+
+.ts-auth-regions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-auth-region {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  height: 28px;
+  padding-inline: var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-auth-region img {
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+/* Centered form column: card, then the locale footer below it. */
+.ts-login-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s6);
+  padding: var(--ts-s10) var(--ts-s5);
+  background: var(--ts-canvas);
+}
+
+.ts-login-panel {
+  display: grid;
+  gap: var(--ts-s5);
+  width: min(400px, 100%);
+}
+
+.ts-login-stack {
+  display: grid;
+  gap: var(--ts-s5);
+}
+
+.ts-login-heading {
+  display: grid;
+  justify-items: center;
+  gap: var(--ts-s6);
+  margin-bottom: var(--ts-s1);
+}
+
+.ts-login-heading .ts-auth-heading {
+  gap: var(--ts-s2);
+}
+
+.ts-login-heading .ts-auth-title {
+  font-size: 24px;
+}
+
+.ts-login-logo {
+  justify-self: center;
+  width: auto;
+  height: 28px;
+}
+
+.ts-login-brand {
+  justify-content: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-login-brand img {
+  width: 25px;
+  height: 28px;
+}
+
+.ts-login-brand-word {
+  color: var(--ts-ink);
+  font: 600 17px / 1 var(--ts-font-sans);
+  letter-spacing: -0.02em;
+}
+
+.ts-login-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s4);
+}
+
+.ts-login-footer > a {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+/* Below 900px the map hides and the form stacks from the top, as in the prototype. */
+@media (max-width: 900px) {
+  .ts-login {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-login-hero {
+    display: none;
+  }
+
+  .ts-login-column {
+    justify-content: flex-start;
+    padding-top: var(--ts-s12);
+  }
+}
+
+/* Organization selection belongs to the authenticated dashboard boundary. */
+.ts-org-picker {
+  color-scheme: dark;
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  --ts-canvas: light-dark(#ffffff, #151515);
+  --ts-surface: light-dark(#fafafa, #1b1b1b);
+  --ts-surface-2: light-dark(#f4f4f5, #222222);
+  --ts-surface-3: light-dark(#e9e9ec, #2c2c2c);
+  --ts-ink: light-dark(#0a0a0a, #f2f2f2);
+  --ts-ink-2: light-dark(#4d4d4d, #a8a8a8);
+  --ts-ink-3: light-dark(#626262, #9a9a9a);
+  --ts-line: light-dark(rgb(0 0 0 / 0.12), rgb(255 255 255 / 0.08));
+  --ts-line-strong: light-dark(rgb(0 0 0 / 0.2), rgb(255 255 255 / 0.14));
+  --ts-hover: light-dark(rgb(0 0 0 / 0.04), rgb(255 255 255 / 0.05));
+  --ts-accent-soft: light-dark(rgb(33 88 232 / 0.08), rgb(33 88 232 / 0.18));
+  --ts-link: light-dark(#2158e8, #6b93ff);
+  --ts-focus: var(--ts-link);
+}
+html[data-theme="light"] .ts-org-picker { color-scheme: light; }
+html[data-theme="system"] .ts-org-picker { color-scheme: light dark; }
+.ts-org-picker { display: grid; justify-items: center; align-content: center; gap: var(--ts-s6); min-height: 100dvh; padding: var(--ts-s6) var(--ts-s4); }
+.ts-org-picker-card { display: grid; gap: var(--ts-s5); width: min(100%, 560px); padding: var(--ts-s8); border: 1px solid var(--ts-line); border-radius: 14px; background: var(--ts-surface); }
+.ts-org-picker-user { display: flex; align-items: center; gap: var(--ts-s3); font-size: var(--ts-fs-sm); }
+.ts-org-picker-user > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ts-org-picker-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); overflow: hidden; }
+.ts-org-picker-list li + li { border-top: 1px solid var(--ts-line); }
+.ts-org-picker-option { display: flex; align-items: center; gap: var(--ts-s3); width: 100%; padding: var(--ts-s4); background: transparent; color: var(--ts-ink); border: 0; text-align: left; font: inherit; cursor: pointer; }
+.ts-org-picker-option:hover { background: var(--ts-hover); }
+.ts-org-picker-option:focus-visible { outline: 2px solid var(--ts-focus); outline-offset: -2px; }
+.ts-org-picker-avatar { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: var(--ts-radius); background: var(--ts-accent-soft); color: var(--ts-link); font-weight: 600; }
+.ts-org-picker-main { flex: 1; min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.ts-org-picker-name { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ts-s2); }
+.ts-org-picker-footer { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--ts-s4); font-size: var(--ts-fs-xs); color: var(--ts-ink-3); }
+.ts-org-picker-footer a { color: inherit; }
+.ts-org-picker-footer .ts-select { width: 110px; }
+@media (max-width: 480px) { .ts-org-picker-card { padding: var(--ts-s5); } .ts-org-picker-user { flex-wrap: wrap; } }
+
+.ts-org-picker-powered { color: var(--ts-ink-3); font-size: 12px; text-align: center; }
+.ts-org-picker-powered b { color: var(--ts-ink-2); font-weight: 500; }

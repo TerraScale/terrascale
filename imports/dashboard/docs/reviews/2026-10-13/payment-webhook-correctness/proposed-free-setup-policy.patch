@@ -1,0 +1,22 @@
+--- a/src/TerraScale.Dashboard/Features/Billing/StripeBilling.cs
++++ b/src/TerraScale.Dashboard/Features/Billing/StripeBilling.cs
+@@ -257,7 +257,7 @@
+             binding.RenewalAt = renewalAt;
+             binding.PaymentValidated = paymentValid;
+             binding.Status = status;
+-            binding.TrialUsed |= status is "active" or "trialing";
++            binding.TrialUsed |= subscriptionId.Length > 0 && (status is "active" or "trialing");
+             binding.Revision = checked(binding.Revision + 1);
+             org.PaymentMethodValidated = paymentValid;
+             if (paymentValid)
+@@ -324,7 +324,9 @@
+         var existing = await ReadAsync(orgId, cancellationToken) ?? throw new IOException("Billing reservation did not persist.");
+         RequireStripe(existing);
+         var endedSubscription = existing.SubscriptionId.Length > 0 && existing.Status is "canceled" or "incomplete_expired";
+-        if (!endedSubscription && existing.StartedAt.AddHours(1) > time.GetUtcNow())
++        var changingCompletedSetup = existing.SubscriptionId.Length == 0 && existing.CheckoutId.Length > 0 &&
++            existing.Plan == "free" && existing.Plan != plan && existing.Status == "active" && existing.PaymentValidated;
++        if (!endedSubscription && !changingCompletedSetup && existing.StartedAt.AddHours(1) > time.GetUtcNow())
+         {
+             if (existing.Plan != plan || existing.Interval != interval || existing.ReturnPath != returnPath)
+                 throw new OnboardingValidationException("Finish the current checkout before choosing another plan.");

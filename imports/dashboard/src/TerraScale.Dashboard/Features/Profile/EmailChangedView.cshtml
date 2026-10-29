@@ -1,0 +1,8 @@
+@inherits RazorSlice<TerraScale.Dashboard.Shared.UI.DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+<main class="ts-login"><div class="ts-login-column"><section class="ts-login-panel"><div class="ts-login-stack">
+    <h1 class="ts-auth-title">Sign-in email changed</h1>
+    <p class="ts-auth-subtitle" role="status">All sessions have ended. Sign in again with your new email address.</p>
+    <a class="ts-btn ts-btn-primary ts-btn-block" href="/login?returnTo=%2Fprofile">Sign in with your new email</a>
+</div></section></div></main>
+@functions { public DocumentModel LayoutModel => Model; }
