@@ -140,8 +140,8 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
                 sentBytes = checked(sentBytes + sent);
                 receivedBytes = checked(receivedBytes + received);
                 var key = (databaseId, source, destination, kind);
-                var prior = pairTotals.GetValueOrDefault(key);
-                pairTotals[key] = (checked(prior.Sent + sent), checked(prior.Received + received));
+                var (Sent, Received) = pairTotals.GetValueOrDefault(key);
+                pairTotals[key] = (checked(Sent + sent), checked(Received + received));
             }
         }
 

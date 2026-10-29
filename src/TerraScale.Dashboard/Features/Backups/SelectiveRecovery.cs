@@ -1,11 +1,9 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -75,7 +73,7 @@ public sealed class SelectiveRecovery(IHttpClientFactory factory, IProjectAccess
         if (approval.Length is 0 or > 131072 || ids.Length is 0 or > 100 || ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
             throw new AccountAccessException("Select at least one previewed record to approve. Start a new preview if the approval expired.", 422);
         foreach (var id in ids) DataService.ValidDocumentId(id);
-        var result = await SendAsync(context, database, "recover", new RecoveryApplyRequest(approval, ids.Select(id => new RecoveryIdentity(collection, id)).ToArray()),
+        var result = await SendAsync(context, database, "recover", new RecoveryApplyRequest(approval, [.. ids.Select(id => new RecoveryIdentity(collection, id))]),
             RecoveryJson.Default.RecoveryApplyRequest, RecoveryJson.Default.RecoveryApplied, ct);
         if (string.IsNullOrEmpty(result.Offset) || result.Durability is not ("local_durable" or "remote_durable") || result.Results is null || result.Results.Any(record => record is null) ||
             !result.Results.Select(record => record.Id).Order(StringComparer.Ordinal).SequenceEqual(ids.Order(StringComparer.Ordinal)) ||
@@ -148,7 +146,7 @@ public static class SelectiveRecoveryEndpoints
                             ? page with
                             {
                                 Applied = await recovery.ApplyAsync(context, database, form["approval"].ToString(), page.Collection,
-                                form["approved"].Select(value => value ?? "").ToArray(), http.RequestAborted)
+                                [.. form["approved"].Select(value => value ?? "")], http.RequestAborted)
                             }
                             : page with { Preview = await recovery.PreviewAsync(context, database, page.Window, page.Point, page.Collection, page.Ids, http.RequestAborted) };
                     }

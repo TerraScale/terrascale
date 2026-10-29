@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using TerraScale.Dashboard.Shared.Charts;
 using TerraScale.Dashboard.Shared.Formatting;
 
@@ -50,7 +49,7 @@ public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<
                 if ((sample == 0 || Missing(row, sample - 1)) && (sample == starts.Count - 1 || Missing(row, sample + 1))) markers.Add(new(C(X(sample)), C(Y(row.Values[sample])), color, dash));
             }
             Flush(); paths.Add(new(row.Name, color, dash, string.Join(' ', segments)));
-            void Flush() { if (segment.Count == 0) return; segments.Add(ChartGeometry.Smooth(segment.ToArray())); segment.Clear(); }
+            void Flush() { if (segment.Count == 0) return; segments.Add(ChartGeometry.Smooth([.. segment])); segment.Clear(); }
         }
         var columns = new List<RequestColumn>();
         // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.

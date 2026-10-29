@@ -133,7 +133,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
             }
             if (points.Select(point => point.Start).Distinct().Count() != points.Count)
                 throw new JsonException("Activity repeated a UTC bucket.");
-            result.Activity = points.OrderBy(point => point.Start).ToArray();
+            result.Activity = [.. points.OrderBy(point => point.Start)];
             result.ActivityMeasured = true;
             result.ActivityNote = "Reads and writes metered by TerraBase.";
         }
@@ -147,7 +147,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
     private async Task RegionsAsync(AccountContext context, HomeMeasurement result, CancellationToken cancellationToken)
     {
         var counts = new SortedDictionary<string, int>();
-        foreach (var project in context.Organization?.Projects.Values.AsEnumerable() ?? Enumerable.Empty<ProjectRecord>())
+        foreach (var project in context.Organization?.Projects.Values.AsEnumerable() ?? [])
         {
             if (context.Role.Length == 0 && project.Id != context.Project?.Id) continue;
             if (project.OrganizationId != context.Organization!.Id) continue;
@@ -179,6 +179,6 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
             catch (Exception error) when (error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { ServiceSloTelemetry.MarkFailure(error); result.RegionError = "Could not load region health and latency. Retry this page."; }
         }
-        result.Regions = counts.Select(pair => new HomeRegion(pair.Key, measurements.GetValueOrDefault(pair.Key).Status ?? "Not reported", measurements.GetValueOrDefault(pair.Key).Latency ?? "Not reported", pair.Value)).ToArray();
+        result.Regions = [.. counts.Select(pair => new HomeRegion(pair.Key, measurements.GetValueOrDefault(pair.Key).Status ?? "Not reported", measurements.GetValueOrDefault(pair.Key).Latency ?? "Not reported", pair.Value))];
     }
 }

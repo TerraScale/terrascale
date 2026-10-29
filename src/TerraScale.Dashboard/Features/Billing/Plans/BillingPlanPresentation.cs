@@ -1,6 +1,4 @@
 using System.Globalization;
-using Microsoft.Extensions.Primitives;
-using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Shared.Formatting;
 
 namespace TerraScale.Dashboard.Features.Billing.Plans;

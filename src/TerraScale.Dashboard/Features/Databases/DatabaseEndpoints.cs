@@ -1,7 +1,5 @@
-using RazorSlices;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Analytics;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.Onboarding;
@@ -11,8 +9,6 @@ using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Shared.UI;
-using TerraScale.DotNet.TerraBase;
-using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
@@ -47,7 +43,7 @@ public static class DatabaseEndpoints
                 var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
                     db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
                 var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
-                return Results.Json(new CursorPage<object>(page.Items.Select(database => DatabaseOutput(database, restricted)).ToArray(), page.NextCursor, page.Limit));
+                return Results.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
             }
             catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
         });
@@ -89,7 +85,7 @@ public static class DatabaseEndpoints
             }
             catch (Exception error) when (KnownFailure(error))
             {
-                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), regions: form["region"].Select(value => value ?? "").ToArray(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, allRegions: form["allRegions"] == "true") : Failure(error);
+                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), regions: [.. form["region"].Select(value => value ?? "")], status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, allRegions: form["allRegions"] == "true") : Failure(error);
             }
         });
         foreach (var operation in new[] { "branch", "regions", "delete" })
@@ -119,7 +115,7 @@ public static class DatabaseEndpoints
                     catch (Exception error) when (KnownFailure(error))
                     {
                         if (!WantsHtml(http) || Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
-                        var draft = action == "regions" ? new DatabasePlacementDraft(form["region"].Select(value => value ?? "").ToArray(), form["allRegions"] == "true") : null;
+                        var draft = action == "regions" ? new DatabasePlacementDraft([.. form["region"].Select(value => value ?? "")], form["allRegions"] == "true") : null;
                         return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error), draft, branchName: action == "branch" ? form["name"].ToString() : null);
                     }
                 });

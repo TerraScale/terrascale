@@ -1,6 +1,4 @@
 using System.Globalization;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Onboarding;
@@ -19,8 +17,8 @@ public static class OnboardingProgress
     {
         var definitions = new[] { ("account-information", "Account"), ("payment-method", "Payment"), ("project", "Project") };
         var current = Array.FindIndex(definitions, definition => definition.Item1 == step);
-        return definitions.Select((definition, index) => new OnboardingStep(definition.Item1, definition.Item2, (index + 1).ToString(CultureInfo.InvariantCulture),
-            current < 0 || index < current ? "COMPLETED" : index == current ? "CURRENT" : "NOT STARTED", current < 0 || index < current, index == current)).ToArray();
+        return [.. definitions.Select((definition, index) => new OnboardingStep(definition.Item1, definition.Item2, (index + 1).ToString(CultureInfo.InvariantCulture),
+            current < 0 || index < current ? "COMPLETED" : index == current ? "CURRENT" : "NOT STARTED", current < 0 || index < current, index == current))];
     }
 }
 

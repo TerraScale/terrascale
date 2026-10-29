@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Organizations.Invitations;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Organizations;
@@ -168,7 +167,7 @@ public sealed partial class OrganizationMcpTools(IHttpContextAccessor http, Acco
         return new OrganizationAuditEvents(rows, matches.Count, matches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"),
             matches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), matches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"),
             matches.Count(item => OrganizationFilters.AuditSeverity(item) == "unknown"),
-            page, pages, range, severity, retained.Select(item => item.Action).Distinct().Order().ToArray(), retention);
+            page, pages, range, severity, [.. retained.Select(item => item.Action).Distinct().Order()], retention);
     });
 
     private Task<OrganizationDone> Member(string operation, string userId, string? organizationId, string? projectId) => Invoke(async () =>

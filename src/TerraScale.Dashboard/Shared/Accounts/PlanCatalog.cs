@@ -9,7 +9,7 @@ public sealed record BillingPlan(string Id, string Key, string Name, long PriceC
     PlanAllowances Allowances, PlanResourceLimits Resources, IReadOnlyList<string> BillingIntervals)
 {
     // Catalog month/year map to the checkout names monthly/annual; monthly is the default whenever it is sold.
-    public IReadOnlyList<string> CheckoutIntervals => BillingIntervals.Select(interval => interval == "year" ? "annual" : "monthly").ToArray();
+    public IReadOnlyList<string> CheckoutIntervals => [.. BillingIntervals.Select(interval => interval == "year" ? "annual" : "monthly")];
     public string CheckoutInterval => CheckoutIntervals.Contains("monthly") ? "monthly" : CheckoutIntervals.FirstOrDefault() ?? "";
     public bool SupportsInterval(string interval) => PriceCents > 0 && CheckoutIntervals.Contains(interval);
     public long IntervalPriceCents(string interval) => interval == "annual" ? AnnualPriceCents : PriceCents;
@@ -84,11 +84,11 @@ public static class PlanCatalog
         return new PlanComparison(key, plan.GetProperty("name").GetString()!, cents,
             selectable?.Price ?? MoneyFormat.Money(cents), selectable?.PriceUnit ?? "/ month",
             key == "free" ? "No card required" : selectable?.BillingDescription ?? plan.GetProperty("billing").GetString()!,
-            Array.AsReadOnly(new[] {
+            Array.AsReadOnly([
                 limits.GetProperty("storageGb").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage",
                 limits.GetProperty("operationUnitsPerMonth").GetInt64().ToString("N0", CultureInfo.InvariantCulture) + " " + OperationUnitName.ToLowerInvariant() + "s/month (" + (OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)",
                 limits.GetProperty("egressGbPerMonth").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month",
-                Resource("projects", "project", "projects"), Resource("databases", "database", "databases"), Resource("members", "team member", "team members") }));
+                Resource("projects", "project", "projects"), Resource("databases", "database", "databases"), Resource("members", "team member", "team members") ]));
     }).ToArray());
 
     private static string ReadPublishedJson()

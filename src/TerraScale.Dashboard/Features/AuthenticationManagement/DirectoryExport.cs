@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement;
@@ -28,8 +27,8 @@ public static partial class AuthenticationConsole
             if (page.Items.Count > 100) throw new IOException("ts-auth returned an oversized directory page.");
             if (!string.IsNullOrEmpty(page.Next)) http.Response.Headers["X-Export-Next"] = page.Next;
             http.Response.Headers["X-Export-Created-Before"] = page.CreatedBefore.ToString("O", CultureInfo.InvariantCulture);
-            var export = new DirectoryExportPage(page.Items.Select(user => new DirectoryExportUser(user.Id, user.Email, user.EmailVerified, user.CreatedAt, user.Disabled,
-                user.LinkedProviders.Select(provider => new DirectoryExportProvider(provider.Provider, provider.ClientId, provider.Subject)).ToArray())).ToArray(), page.Next, page.CreatedBefore);
+            var export = new DirectoryExportPage([.. page.Items.Select(user => new DirectoryExportUser(user.Id, user.Email, user.EmailVerified, user.CreatedAt, user.Disabled,
+                [.. user.LinkedProviders.Select(provider => new DirectoryExportProvider(provider.Provider, provider.ClientId, provider.Subject))]))], page.Next, page.CreatedBefore);
             var content = format == "json"
                 ? JsonSerializer.SerializeToUtf8Bytes(export, DirectoryExportJson.Default.DirectoryExportPage)
                 : Encoding.UTF8.GetBytes(DirectoryCsv(export));
@@ -51,7 +50,7 @@ public static partial class AuthenticationConsole
         var csv = new StringBuilder("id,email,email_verified,created_at,disabled,linked_providers\r\n");
         foreach (var user in page.Items)
         {
-            var providers = JsonSerializer.Serialize(user.LinkedProviders.ToArray(), DirectoryExportJson.Default.DirectoryExportProviderArray);
+            var providers = JsonSerializer.Serialize([.. user.LinkedProviders], DirectoryExportJson.Default.DirectoryExportProviderArray);
             csv.AppendJoin(',', new[] { user.Id, user.Email, user.EmailVerified ? "true" : "false", user.CreatedAt.ToString("O", CultureInfo.InvariantCulture),
                 user.Disabled ? "true" : "false", providers }.Select(CsvCell)).Append("\r\n");
         }

@@ -56,7 +56,7 @@ public static class CursorPaging
         if (ordered.Any(item => string.IsNullOrEmpty(item.Key)) || ordered.Select(item => item.Key).Distinct(StringComparer.Ordinal).Count() != ordered.Length)
             throw new IOException("The list producer returned invalid or duplicate identities.");
         var page = ordered.Where(item => StringComparer.Ordinal.Compare(item.Key, position) > 0).Take(limit + 1).ToArray();
-        return new(page.Take(limit).Select(item => item.Item).ToArray(), page.Length > limit ? "1." + scope + "." + Encode(page[limit - 1].Key) : null, limit);
+        return new([.. page.Take(limit).Select(item => item.Item)], page.Length > limit ? "1." + scope + "." + Encode(page[limit - 1].Key) : null, limit);
     }
 
     private static string Encode(string value) => WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(value));

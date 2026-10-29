@@ -19,9 +19,9 @@ public sealed record AnalyticsSelection(AccountContext Context, string Range, st
         return new(context with { Project = project }, range is "1h" or "24h" or "7d" or "30d" ? range : "24h", databaseId, region);
     }
     public IReadOnlyList<string> ObservedRegions { get; init; } = [];
-    public IReadOnlyList<string> Regions => Context.Project!.Databases.Values.Where(db => DatabaseId.Length == 0 || db.Id == DatabaseId)
+    public IReadOnlyList<string> Regions => [.. Context.Project!.Databases.Values.Where(db => DatabaseId.Length == 0 || db.Id == DatabaseId)
         .SelectMany(db => db.Regions.Prepend(db.Region)).Concat(ObservedRegions).Append(Region).Where(code => code.Length > 0)
-        .Select(code => code.ToUpperInvariant()).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        .Select(code => code.ToUpperInvariant()).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 }
 
 public sealed record AnalyticsPoint(string DatabaseId, string Region, DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests,

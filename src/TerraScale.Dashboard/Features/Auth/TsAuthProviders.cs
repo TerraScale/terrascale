@@ -29,7 +29,7 @@ public sealed partial class TsAuthGateway : ITsAuthProviders
             var providers = body.RootElement.GetProperty("providers").EnumerateArray().Select(item => item.GetString()).ToArray();
             if (providers.Any(provider => provider is null || !IsSignInProvider(provider)) || providers.Distinct().Count() != providers.Length)
                 throw new IOException("ts-auth returned an invalid provider list.");
-            return providers.Select(provider => provider!).Order(StringComparer.Ordinal).ToArray();
+            return [.. providers.Select(provider => provider!).Order(StringComparer.Ordinal)];
         }
         catch (Exception error) when (Unreported(error, cancellationToken)) { return null; }
     }

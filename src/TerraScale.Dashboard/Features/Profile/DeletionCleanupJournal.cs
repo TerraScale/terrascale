@@ -40,7 +40,7 @@ public sealed class DeletionCleanupJournal(IDashboardState state)
                 if (TerraScaleIds.IsValid(checkout.ProjectId)) projects.Add(checkout.ProjectId);
             }
         }
-        var entry = new Entry(proof, projects.Order(StringComparer.Ordinal).ToArray(), customers.Order(StringComparer.Ordinal).ToArray());
+        var entry = new Entry(proof, [.. projects.Order(StringComparer.Ordinal)], [.. customers.Order(StringComparer.Ordinal)]);
         try { await state.PutAsync(Collection, proof.Id, JsonSerializer.SerializeToElement(entry), TerraBasePrecondition.Absent, cancellationToken); }
         catch (TerraBasePreconditionFailedException)
         {

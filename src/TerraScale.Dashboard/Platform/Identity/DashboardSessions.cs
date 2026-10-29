@@ -161,7 +161,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
             result.Add(new(id, id == current, expiry));
         }
         if (stale.Count != 0) await UpdateIndexAsync(session.UserId, entries => { foreach (var id in stale) entries.Remove(id); }, context.RequestAborted);
-        return result.OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        return [.. result.OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal)];
     }
 
     private async Task<SessionRecord?> ResolveAsync(string collection, string id, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null,

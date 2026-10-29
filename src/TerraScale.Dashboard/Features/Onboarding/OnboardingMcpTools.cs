@@ -17,7 +17,7 @@ public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService
         var step = account.OnboardingCompleted ? "" : account.OnboardingStep;
         var plans = await onboarding.PlansAsync(Cancellation);
         return new(account.OnboardingCompleted, step, OnboardingProgress.Steps(step),
-            plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingIntervals, plan.Price + " " + plan.PriceUnit, plan.Allowances.MonthlyEgressBytes, plan.TrialDays)).ToArray());
+            [.. plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingIntervals, plan.Price + " " + plan.PriceUnit, plan.Allowances.MonthlyEgressBytes, plan.TrialDays))]);
     }
 
     [McpServerTool(Name = "save_onboarding_step", Title = "Save onboarding step", OpenWorld = true, Destructive = false, UseStructuredContent = true),

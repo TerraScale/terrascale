@@ -102,7 +102,7 @@ public static partial class AuthenticationConsole
     // Empty values clear a branding field.
     public static TerraScaleAuthProjectBranding Branding(string? name, string? logoUrl, string? themeColor)
     {
-        string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         var (title, logo, color) = (Clean(name), Clean(logoUrl), Clean(themeColor)?.ToLowerInvariant());
         if (title is { Length: > 64 } || title?.Any(char.IsControl) == true) throw new AccountAccessException("Use a name of up to 64 characters.", 422);
         if (logo is not null && !HttpsUrl(logo))
@@ -114,7 +114,7 @@ public static partial class AuthenticationConsole
     // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
     public static TerraScaleAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId)
     {
-        string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         var (id, secret, url, team, key) = (Clean(clientId), Clean(clientSecret), Clean(issuer), Clean(teamId)?.ToUpperInvariant(), Clean(keyId)?.ToUpperInvariant());
         if (AuthenticationProvider.Find(provider) is not { } known) throw new AccountAccessException("Choose google, github, apple or oidc.", 422);
         if (id is null or { Length: > 256 }) throw new AccountAccessException($"Enter the {known.ClientIdLabel.ToLowerInvariant()} of up to 256 characters.", 422);

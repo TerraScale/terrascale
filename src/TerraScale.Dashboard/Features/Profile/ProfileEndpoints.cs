@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -32,7 +31,7 @@ public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", strin
             }
             if (Shell.Context.CanManage) result.Add("Manage organization resources");
             if (Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true) result.Add("Provision organization resources");
-            return result.ToArray();
+            return [.. result];
         }
     }
 }

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using TerraScale.Dashboard.Shared.Charts;
 
 namespace TerraScale.Dashboard.Features.Home;
@@ -29,7 +28,7 @@ public sealed record HomeRequestChart(string Label, string Area, IReadOnlyList<C
             return new ChartTick(C(X(index)), visible ? points[index].Start.UtcDateTime.ToString(page.Range is "7d" or "30d" ? "MMM d HH:mm" : "HH:mm", CultureInfo.InvariantCulture) : "", step == 0 ? "start" : step == 4 ? "end" : "middle");
         }).ToArray();
         var paths = names.Select((name, index) => new RequestPath(name, names.Length == 1 ? "ts-chart-series-1" : "ts-cat-" + (index % 3 + 1), index < 3 ? "" : 3 * (index / 3 + 1) + " 5",
-            ChartGeometry.Smooth(points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name)))).ToArray()))).ToArray();
+            ChartGeometry.Smooth([.. points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name))))]))).ToArray();
         // One hover/keyboard column per bucket, so every plotted value (both endpoints included) is inspectable.
         var columnWidth = 660d / Math.Max(1, points.Count - 1);
         var columns = new List<RequestColumn>();

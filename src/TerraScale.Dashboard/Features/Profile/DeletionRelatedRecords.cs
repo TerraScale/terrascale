@@ -1,5 +1,4 @@
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Features.Notifications;

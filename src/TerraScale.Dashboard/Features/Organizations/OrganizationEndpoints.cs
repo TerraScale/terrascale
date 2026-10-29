@@ -299,7 +299,7 @@ public static class OrganizationEndpoints
                 Regions = available,
                 OpenCreateProject = true,
                 ProjectDraftName = form["name"].ToString(),
-                ProjectDraftRegions = form["regions"].Select(value => value ?? "").Where(available.Contains).ToArray(),
+                ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(available.Contains)],
                 ProjectDraftPrimaryRegion = form["region"].ToString(),
                 ProjectDraftBackupRegion = form["backupRegion"].ToString()
             };

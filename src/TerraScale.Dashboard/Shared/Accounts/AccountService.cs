@@ -166,7 +166,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
 
     private async Task<TerraScaleAuthPlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     {
-        TerraScaleAuthPlatformProject? Existing(IEnumerable<TerraScaleAuthPlatformProject> projects) => projects.Where(project => project.Name == PersonalName)
+        static TerraScaleAuthPlatformProject? Existing(IEnumerable<TerraScaleAuthPlatformProject> projects) => projects.Where(project => project.Name == PersonalName)
             .OrderBy(project => project.CreatedAt).ThenBy(project => project.Id, StringComparer.Ordinal).FirstOrDefault();
         if (Existing(await platform.ListProjectsAsync(session, organizationId, cancellationToken)) is { } existing) return existing;
         try { return await platform.CreateProjectAsync(session, organizationId, PersonalName, cancellationToken); }
@@ -259,7 +259,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             var selectedProject = projectId is null ? DefaultProject(selected) : selected.Projects[projectId];
             if (selectedProject is not null && selectedProject.OrganizationId != selected.Id)
                 throw new AccountAccessException("Project belongs to another organization.");
-            var selectedContext = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), selected, selectedProject);
+            var selectedContext = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], selected, selectedProject);
             await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, selectedContext, cancellationToken);
             return selectedContext with { Loaded = loadedAt };
         }
@@ -281,7 +281,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             account.ActiveProjectId = project?.Id ?? "";
         }
         if (project is not null && project.OrganizationId != active!.Id) throw new AccountAccessException("Project belongs to another organization.");
-        var context = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), active, project);
+        var context = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], active, project);
         await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, context, cancellationToken);
         return context with { Loaded = loadedAt };
     }
@@ -317,9 +317,9 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         org.Slug = Slug(live.Name);
         org.CreatedAt = live.CreatedAt;
         if (live.Role is not null) Member(org, session, live.Role);
-        if (projects is null) { if (live.Role is null) org.Projects = new(); return; }
+        if (projects is null) { if (live.Role is null) org.Projects = []; return; }
         var saved = org.Projects;
-        org.Projects = new();
+        org.Projects = [];
         foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id) && !org.DeletedProjectIds.Contains(project.Id) &&
             (live.Role is not null || project.Role is "viewer" or "member" or "admin")))
         {

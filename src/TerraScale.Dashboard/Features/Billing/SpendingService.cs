@@ -40,11 +40,11 @@ public sealed class SpendingService(AccountService accounts, TimeProvider time, 
         {
             if (project.OrganizationId != org.Id) throw new IOException("Stored project scope is invalid.");
             return new SpendingProject(project.Id, project.Name, project.Region,
-                project.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).Select(database =>
+                [.. project.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).Select(database =>
                 {
                     if (database.ProjectId != project.Id) throw new IOException("Stored database scope is invalid.");
                     return new SpendingDatabase(database.Id, database.Name, database.Region);
-                }).ToArray());
+                })]);
         }).ToArray();
         return new(org.Id, org.InternalBilling is null ? 0 : org.SpendCapCents, projects);
     }

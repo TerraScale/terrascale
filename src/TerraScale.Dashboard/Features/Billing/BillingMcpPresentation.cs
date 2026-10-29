@@ -43,16 +43,15 @@ public sealed partial class StripeBilling
     {
         context = await MemberAsync(context, cancellationToken);
         var facts = await McpFactsAsync(context, cancellationToken);
-        return new(PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).OrderBy(plan => plan.PriceCents).ThenBy(plan => plan.Key)
+        return new([.. PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).OrderBy(plan => plan.PriceCents).ThenBy(plan => plan.Key)
             .Select(plan =>
             {
                 var limits = PlanCatalog.ResourceLimits(plan.Id);
                 var allowance = PlanCatalog.Limits(plan.Id);
                 return new BillingMcpPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingIntervals, plan.Price + " " + plan.PriceUnit, allowance.MonthlyEgressBytes, plan.TrialDays, limits.Databases,
                     limits.Members, allowance.MonthlyOperations, PlanCatalog.OperationUnitBytes,
-                    new[] { plan.StorageAllowance, plan.OperationsAllowance, plan.EgressAllowance, plan.DatabaseAllowance, plan.MemberAllowance }
-                        .Where(value => value != "Limit not published").ToArray(), plan.Key == facts.PlanKey);
-            }).ToArray(), facts.PlanKey, Empty(facts.Interval));
+                    [.. new[] { plan.StorageAllowance, plan.OperationsAllowance, plan.EgressAllowance, plan.DatabaseAllowance, plan.MemberAllowance }.Where(value => value != "Limit not published")], plan.Key == facts.PlanKey);
+            })], facts.PlanKey, Empty(facts.Interval));
     }
 
     public async Task<BillingMcpSummary> McpSummaryAsync(AccountContext context, CancellationToken cancellationToken)

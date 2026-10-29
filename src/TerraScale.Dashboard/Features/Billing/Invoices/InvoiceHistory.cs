@@ -58,7 +58,7 @@ public static class InvoiceHistory
             .OrderByDescending(invoice => invoice.CreatedAt).ToArray();
         var pages = Math.Max(1, (rows.Length + PageSize - 1) / PageSize);
         page = Math.Clamp(page, 1, pages);
-        return new(rows.Skip((page - 1) * PageSize).Take(PageSize).ToArray(), page, pages, rows.Length);
+        return new([.. rows.Skip((page - 1) * PageSize).Take(PageSize)], page, pages, rows.Length);
     }
 
     public static InvoiceHistoryPage ForBrowser(IReadOnlyList<BillingInvoice> invoices, IQueryCollection query, DateTimeOffset now)

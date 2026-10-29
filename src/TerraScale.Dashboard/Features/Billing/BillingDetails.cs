@@ -1,4 +1,3 @@
-using Stripe;
 using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing;
@@ -27,9 +26,9 @@ public sealed partial class StripeBilling
         if (ids?.Data is null || ids.HasMore || ids.Data.Any(id => id.CustomerId != binding.CustomerId))
             throw new IOException("Billing tax IDs could not be loaded completely for this customer.");
         var address = customer.Address;
-        return new(customer.Name ?? "", new[] { address?.Line1, address?.Line2,
+        return new(customer.Name ?? "", [.. new[] { address?.Line1, address?.Line2,
             string.Join(" ", new[] { address?.PostalCode, address?.City }.Where(value => !string.IsNullOrWhiteSpace(value))),
-            address?.State, address?.Country }.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToArray(),
+            address?.State, address?.Country }.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!)],
             ids?.Data?.Select(id => new BillingTaxId(id.Type ?? "", id.Value ?? "", id.Verification?.Status ?? "unavailable")).ToArray() ?? []);
     }
 }

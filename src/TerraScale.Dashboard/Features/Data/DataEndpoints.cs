@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;

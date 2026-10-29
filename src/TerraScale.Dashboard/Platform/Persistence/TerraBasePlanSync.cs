@@ -1,9 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json.Serialization;
-using TerraScale.Dashboard.Shared.Accounts;
-using TerraScale.Dashboard.Shared.Databases;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Platform.Persistence;

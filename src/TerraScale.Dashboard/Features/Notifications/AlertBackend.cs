@@ -21,12 +21,12 @@ public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity iden
         if (!response.IsSuccessStatusCode) throw new IOException("Project analytics are unavailable.");
         var root = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         if (root.GetProperty("projectId").GetString() != projectId || root.GetProperty("bucketSeconds").GetInt32() != 60) throw new JsonException("Analytics returned a different project or window.");
-        return new(root.GetProperty("to").GetDateTimeOffset(), root.GetProperty("items").EnumerateArray().Select(item => new AlertSeries(
+        return new(root.GetProperty("to").GetDateTimeOffset(), [.. root.GetProperty("items").EnumerateArray().Select(item => new AlertSeries(
             item.GetProperty("databaseId").GetString() ?? "", item.GetProperty("databaseName").GetString() ?? "", item.GetProperty("region").GetString() ?? "",
-            item.GetProperty("series").EnumerateArray().Select(series => new AlertBucket(series.GetProperty("start").GetDateTimeOffset(),
+            [.. item.GetProperty("series").EnumerateArray().Select(series => new AlertBucket(series.GetProperty("start").GetDateTimeOffset(),
                 series.GetProperty("requests").EnumerateObject().Sum(count => count.Value.GetInt64()), series.GetProperty("errors").GetInt64(),
                 series.GetProperty("latency").TryGetProperty("p95Ms", out var p95) && p95.ValueKind == JsonValueKind.Number ? p95.GetDouble() : null,
-                series.GetProperty("storageBytes") is { ValueKind: JsonValueKind.Number } storage ? storage.GetInt64() : null)).ToArray())).ToArray());
+                series.GetProperty("storageBytes") is { ValueKind: JsonValueKind.Number } storage ? storage.GetInt64() : null))]))]);
     }
 
     // The allowance feed is the authoritative month-to-date operation units per organization.

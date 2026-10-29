@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Organizations;
@@ -32,7 +31,7 @@ public static class ProjectSettingsEndpoints
             try
             {
                 await operations.UpdateProjectAsync(context, name, form["region"].ToString(), form["backupRegion"].ToString(),
-                    form["regions"].Select(value => value ?? "").ToArray(), http.RequestAborted);
+                    [.. form["regions"].Select(value => value ?? "")], http.RequestAborted);
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project?renamed=1", replace: true));
             }
             catch (AccountAccessException error) { return Page(http, context, name, error.Message, error.StatusCode); }

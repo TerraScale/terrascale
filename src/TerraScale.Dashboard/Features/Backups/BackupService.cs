@@ -28,7 +28,7 @@ public sealed class BackupService(AccountService accounts, DatabaseService datab
         { policyUnavailable = "Provider backup scheduling is unavailable."; }
         // Snapshot inventory and scheduler policy are independent provider reads.
         // A policy outage must not erase known restore points or their count.
-        return new(policy, backups.OrderByDescending(backup => backup.CreatedAt).ThenBy(backup => backup.Id, StringComparer.Ordinal).Select(View).ToArray())
+        return new(policy, [.. backups.OrderByDescending(backup => backup.CreatedAt).ThenBy(backup => backup.Id, StringComparer.Ordinal).Select(View)])
         { PolicyUnavailable = policyUnavailable };
     }
 

@@ -1,10 +1,7 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
@@ -34,7 +31,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             if (!string.IsNullOrEmpty(next) && (!seen.Add(next) || ++pages >= 100))
                 throw new HttpRequestException("Credential pagination did not advance within its bounds.");
         } while (!string.IsNullOrEmpty(next));
-        return result.OrderBy(key => key.Name, StringComparer.Ordinal).ToArray();
+        return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
     }
 
     public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken, string stepUpProof = "")
@@ -223,7 +220,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         if (!body.TryGetProperty("allowed_cidrs", out var list) || list.ValueKind == JsonValueKind.Null) return [];
         if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() > MaxAllowedCidrs || list.EnumerateArray().Any(item => item.GetString() is not { Length: > 0 and <= 64 }))
             throw new HttpRequestException("ts-auth returned an invalid allowlist.");
-        return list.EnumerateArray().Select(item => item.GetString()!).ToArray();
+        return [.. list.EnumerateArray().Select(item => item.GetString()!)];
     }
     private static IReadOnlyList<string> ProjectCidrs(AccountContext context, JsonElement body) =>
         body.ValueKind == JsonValueKind.Object && body.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() == DatabaseService.Scope(context).ProjectId
@@ -279,7 +276,7 @@ public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell
     public string Warning { get; init; } = "";
     public static string Lines(IReadOnlyList<string>? cidrs) => string.Join('\n', cidrs ?? []);
     public AccountContext Context => Shell.Context;
-    public IReadOnlyList<ProjectCredential> Filtered => Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase))).ToArray();
+    public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
     public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
     public string With(string path, bool clear = false, string? create = null)
     {

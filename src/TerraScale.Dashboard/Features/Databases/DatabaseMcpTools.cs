@@ -2,10 +2,8 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.DotNet.TerraBase;
 using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 
 namespace TerraScale.Dashboard.Features.Databases;
@@ -56,7 +54,7 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
         { unavailable = unavailable is null ? "Backup measurements are unavailable." : unavailable + " Backup measurements are unavailable."; }
         return new(db.Id, db.Name, db.Status, db.Region, output.Placement, db.CreatedAt, db.AllRegions, db.Endpoint,
             // MCP labels are an existing response contract, independent of page display casing.
-            placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code }).ToArray(), contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
+            [.. placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code })], contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
             unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
     }
 

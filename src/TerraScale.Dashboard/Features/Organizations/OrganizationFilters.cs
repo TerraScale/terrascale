@@ -19,10 +19,10 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
         if (days == 0) days = 7;
         if (retentionDays is >= 1) days = Math.Min(days, retentionDays.Value);
         var from = (Now ?? DateTimeOffset.UtcNow).AddDays(-days);
-        return events.Where(item => (item.OccurredAt == DateTimeOffset.MinValue || item.OccurredAt >= from) && (Action == "all" || item.Action == Action) &&
+        return [.. events.Where(item => (item.OccurredAt == DateTimeOffset.MinValue || item.OccurredAt >= from) && (Action == "all" || item.Action == Action) &&
             (Severity == "all" || AuditSeverity(item) == Severity) &&
             (Search.Length == 0 || string.Join(' ', item.Actor, item.Action, item.Target, item.TargetType, item.Source, AuditSeverity(item), item.OccurredAt.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ")).Contains(Search, StringComparison.OrdinalIgnoreCase)))
-            .OrderByDescending(item => item.OccurredAt).ThenBy(item => item.Id).ToArray();
+            .OrderByDescending(item => item.OccurredAt).ThenBy(item => item.Id)];
     }
     public static string AuditSeverity(AuditRecord item) => item.Risk?.ToLowerInvariant() switch
     {
@@ -73,13 +73,13 @@ public sealed partial record OrganizationPage
     public bool CanManage => Shell.Context.CanManage;
     public bool CanProvision => CanManage && Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true;
     public OrganizationFilters Filter => Filters ?? new();
-    public IReadOnlyList<MemberRecord> MatchingMembers => (Access?.Members ?? []).Where(member =>
+    public IReadOnlyList<MemberRecord> MatchingMembers => [.. (Access?.Members ?? []).Where(member =>
         (Filter.Role == "all" || member.Role == Filter.Role) &&
-        (Filter.Query.Length == 0 || string.Join(' ', member.Name, member.Email, member.UserId).Contains(Filter.Query, StringComparison.OrdinalIgnoreCase))).OrderBy(member => member.Name).ThenBy(member => member.UserId).ToArray();
+        (Filter.Query.Length == 0 || string.Join(' ', member.Name, member.Email, member.UserId).Contains(Filter.Query, StringComparison.OrdinalIgnoreCase))).OrderBy(member => member.Name).ThenBy(member => member.UserId)];
     public int MemberPages => Math.Max(1, (MatchingMembers.Count + 9) / 10);
     public int MemberPage => Math.Clamp(Filter.Page, 1, MemberPages);
     public int MemberTotal => Access?.Members.Count ?? 0;
-    public IReadOnlyList<MemberRecord> MemberRows => MatchingMembers.Skip((MemberPage - 1) * 10).Take(10).ToArray();
+    public IReadOnlyList<MemberRecord> MemberRows => [.. MatchingMembers.Skip((MemberPage - 1) * 10).Take(10)];
     public string MemberUrl(int page) => "/organization?tab=members&q=" + Uri.EscapeDataString(Filter.Query) + "&role=" + Uri.EscapeDataString(Filter.Role) + (page > 1 ? "&page=" + page : "");
     public IReadOnlyList<InvitationRow> InvitationRows
     {
@@ -90,12 +90,12 @@ public sealed partial record OrganizationPage
                 invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status,
                 // An expired invitation stays manageable: an owner or admin can replace or cancel it.
                 invite.CreatedAt, invite.ExpiresAt, invite.Status is "pending" or "expired")).ToDictionary(invite => invite.Id);
-            return rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal).ToArray();
+            return [.. rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal)];
         }
     }
     public int InvitationPages => Math.Max(1, (InvitationRows.Count + 9) / 10);
     public int InvitationPage => Math.Clamp(Filter.Page, 1, InvitationPages);
-    public IReadOnlyList<InvitationRow> InvitationPageRows => InvitationRows.Skip((InvitationPage - 1) * 10).Take(10).ToArray();
+    public IReadOnlyList<InvitationRow> InvitationPageRows => [.. InvitationRows.Skip((InvitationPage - 1) * 10).Take(10)];
     public string InvitationUrl(int page) => "/organization?tab=invitations" + (page > 1 ? "&page=" + page : "");
     public static string RoleLabel(string role) => role.Length == 0 ? "Unknown" : char.ToUpperInvariant(role[0]) + role[1..];
     public static string RoleFilterLabel(string role) => role switch { "all" => "All roles", "owner" => "Organization owner", _ => RoleLabel(role) };
@@ -103,7 +103,7 @@ public sealed partial record OrganizationPage
     public IReadOnlyList<AuditRecord> AuditMatches => Filter.ApplyAudit(Access?.AuditEvents ?? [], Access?.AuditRetentionDays);
     public int AuditPages => Math.Max(1, (AuditMatches.Count + 9) / 10);
     public int AuditPage => Math.Clamp(Filter.Page, 1, AuditPages);
-    public IReadOnlyList<AuditRecord> AuditRows => AuditMatches.Skip((AuditPage - 1) * 10).Take(10).ToArray();
+    public IReadOnlyList<AuditRecord> AuditRows => [.. AuditMatches.Skip((AuditPage - 1) * 10).Take(10)];
 }
 
 public sealed record OrganizationMemberModel(OrganizationPage Page, MemberRecord Member)

@@ -11,10 +11,8 @@ using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
-using TerraScale.Dashboard.Shared.Databases;
 using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
@@ -50,12 +48,11 @@ public static class DashboardMcp
             typeof(TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools),
             typeof(TerraScale.Dashboard.Features.QuerySubscriptions.QuerySubscriptionMcpTools),
         ];
-        return toolTypes.SelectMany(toolType => toolType.GetMethods()
+        return [.. toolTypes.SelectMany(toolType => toolType.GetMethods()
             .Where(method => method.IsDefined(typeof(McpServerToolAttribute)))
             .Select(method => McpServerTool.Create(method, request => ActivatorUtilities.CreateInstance(
                 request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType),
-                options: new() { SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } })))
-            .ToArray();
+                options: new() { SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } })))];
     }
 
     private static JsonNode NullableRequirements(AIJsonSchemaCreateContext context, JsonNode schema)

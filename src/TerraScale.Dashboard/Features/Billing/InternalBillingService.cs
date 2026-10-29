@@ -95,8 +95,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
     private async Task<(OrganizationRecord Organization, InternalBill Bill)> ReadDetailsAsync(AccountContext context, CancellationToken cancellationToken)
     {
         context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-        var target = await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken);
-        var organization = target.Organization;
+        var (Document, Organization, Authority) = await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken);
+        var organization = Organization;
         if (organization.InternalBilling is null) throw new AccountAccessException("Organization has no internal billing policy.", 422);
         await ValidateClaimsAsync(state, organization, cancellationToken);
         var selection = new UsageSelection(context with { Organization = organization }, "7d", "", false);
@@ -262,8 +262,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
 
     private async Task ReleaseUncommittedAsync(BillingBinding reservation, CancellationToken cancellationToken)
     {
-        var target = await OrganizationAsync(reservation.OrganizationId, cancellationToken);
-        if (target.Organization.InternalBilling is not null) return;
+        var (Document, Organization) = await OrganizationAsync(reservation.OrganizationId, cancellationToken);
+        if (Organization.InternalBilling is not null) return;
         var document = await state.GetAsync(StripeBilling.Collection, reservation.OrganizationId, cancellationToken);
         if (document is null) return;
         var current = StripeBilling.ReadBinding(document, reservation.OrganizationId);
@@ -281,16 +281,16 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         for (var attempt = 0; attempt < 8; attempt++)
         {
             principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
-            var current = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
-            if (current.Organization.InternalBilling?.ConfigurationId != observed.InternalBilling!.ConfigurationId ||
-                current.Organization.OwnerUserId != observed.OwnerUserId || current.Organization.SpendCapCents != bill.SpendCapCents)
+            var (Document, Organization, Authority) = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
+            if (Organization.InternalBilling?.ConfigurationId != observed.InternalBilling!.ConfigurationId ||
+                Organization.OwnerUserId != observed.OwnerUserId || Organization.SpendCapCents != bill.SpendCapCents)
                 throw new AccountAccessException("Internal billing changed while recording its cap alert.", 409);
-            if (current.Organization.InternalBillingAlerts.TryGetValue(alertKey, out alert) &&
+            if (Organization.InternalBillingAlerts.TryGetValue(alertKey, out alert) &&
                 alert.ConfigurationId == observed.InternalBilling.ConfigurationId && alert.SpendCapCents == bill.SpendCapCents) break;
-            alert = new(current.Organization.OwnerUserId, observed.InternalBilling.ConfigurationId, bill.SpendCapCents,
+            alert = new(Organization.OwnerUserId, observed.InternalBilling.ConfigurationId, bill.SpendCapCents,
                 alert?.Id ?? ids.NewId(), month, bill.Alert!, time.GetUtcNow());
-            current.Organization.InternalBillingAlerts[alertKey] = alert;
-            try { await state.PutAsync(AccountService.OrganizationsCollection, observed.Id, JsonSerializer.SerializeToElement(current.Organization), TerraBasePrecondition.Matches(current.Document.Version), cancellationToken); break; }
+            Organization.InternalBillingAlerts[alertKey] = alert;
+            try { await state.PutAsync(AccountService.OrganizationsCollection, observed.Id, JsonSerializer.SerializeToElement(Organization), TerraBasePrecondition.Matches(Document.Version), cancellationToken); break; }
             catch (TerraBasePreconditionFailedException) when (attempt < 7) { alert = null; }
         }
         if (alert is null || alert.Month != month || alert.Id.Length == 0 || alert.OwnerUserId.Length == 0)
@@ -309,9 +309,9 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             // The CLI's explicit target need not be the browser selection.
             // Re-resolve its provider membership after credential rotation,
             // then read its canonical owner/policy/cap after that awaited work.
-            var latest = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
-            if (latest.Organization.OwnerUserId != alert.OwnerUserId || latest.Organization.InternalBilling?.ConfigurationId != alert.ConfigurationId ||
-                latest.Organization.SpendCapCents != alert.SpendCapCents)
+            var (Document, Organization, Authority) = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
+            if (Organization.OwnerUserId != alert.OwnerUserId || Organization.InternalBilling?.ConfigurationId != alert.ConfigurationId ||
+                Organization.SpendCapCents != alert.SpendCapCents)
                 throw new AccountAccessException("Internal billing changed while recording its cap alert.", 409);
             if (account.Notifications.Any(notification => notification.OrganizationId == observed.Id && notification.Type == "internal-cap" && notification.BillingMonth == month)) return;
             account.Notifications.Add(new()
@@ -363,7 +363,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
     private async Task<(TerraBaseDocument Document, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
     {
         // Capture the CAS version before awaited canonical reads so a newer dashboard projection cannot be overwritten.
-        var target = await OrganizationAsync(id, cancellationToken);
+        var (Document, Organization) = await OrganizationAsync(id, cancellationToken);
         var current = await AccountScope.RefreshAsync(accounts, principal with { Organization = new() { Id = id }, Project = null }, cancellationToken);
         var members = await platform.ListMembersAsync(current.Session, id, cancellationToken);
         var owners = members.Where(member => member.Role == "owner").ToArray();
@@ -371,10 +371,10 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             !members.Any(member => member.UserId == current.UserId) || owners.Length != 1)
             throw new IOException("Internal organization owner identity is invalid.");
         // I3 keeps OwnerUserId transient; each persisted billing alert owns its owner reference.
-        target.Organization.OwnerUserId = owners[0].UserId;
+        Organization.OwnerUserId = owners[0].UserId;
         // I3's hydrated map preserves settings for current projects; canonical project fields are JsonIgnore.
-        target.Organization.Projects = current.Organization!.Projects;
-        return (target.Document, target.Organization, current.Organization!);
+        Organization.Projects = current.Organization!.Projects;
+        return (Document, Organization, current.Organization!);
     }
 
     private async Task<BillingBinding> FenceAsync(string id, CancellationToken cancellationToken) => StripeBilling.ReadBinding(

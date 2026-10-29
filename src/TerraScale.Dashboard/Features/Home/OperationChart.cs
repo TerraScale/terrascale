@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using TerraScale.Dashboard.Shared.Charts;
 using static TerraScale.Dashboard.Shared.Charts.ChartGeometry;
 

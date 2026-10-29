@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Platform.Mcp;
 
@@ -18,8 +17,8 @@ public sealed class NotificationMcpTools(IHttpContextAccessor http, AccountServi
         var context = await NotificationCommands.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
         if (http.HttpContext is { } request) await ApiKeyExpiryNotifications.RefreshAsync(request, context);
         var inbox = NotificationCommands.Inbox(context, status, page);
-        return new(inbox.Items.Select(item => new NotificationToolItem(item.Id, item.Type, item.Title, item.Body,
-            item.Unread ? "Unread" : "Read", item.Severity, item.CreatedAt)).ToArray(), inbox.Status, inbox.Unread, inbox.Critical,
+        return new([.. inbox.Items.Select(item => new NotificationToolItem(item.Id, item.Type, item.Title, item.Body,
+            item.Unread ? "Unread" : "Read", item.Severity, item.CreatedAt))], inbox.Status, inbox.Unread, inbox.Critical,
             inbox.Total, inbox.Matching, inbox.Page, inbox.PageCount);
     }
 

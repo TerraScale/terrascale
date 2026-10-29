@@ -1,6 +1,5 @@
 using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Analytics;
@@ -37,7 +36,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             if (batch.State == AnalyticsSourceState.NotMetered)
                 return new(shell, selection, null, [], Empty: "TerraBase has no analytics for this project or database yet. They start with its first database.");
             if (batch.Points.Count == 0) return new(shell, selection, null, []);
-            selection = selection with { ObservedRegions = batch.Points.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
+            selection = selection with { ObservedRegions = [.. batch.Points.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase)] };
             var (totals, charts) = Build(selection, batch.Points);
             return new(shell, selection, totals, charts);
         }
@@ -48,8 +47,8 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
 
     public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
     {
-        var result = Aggregate(selection, points);
-        return (result.Totals, result.Charts());
+        var (Totals, Charts) = Aggregate(selection, points);
+        return (Totals, Charts());
     }
 
     public static AnalyticsTotals Summarize(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points) => Aggregate(selection, points).Totals;
@@ -90,12 +89,12 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             var group = selection.Context.Project!.Databases.GetValueOrDefault(point.DatabaseId)?.Name ?? point.DatabaseId;
             if (selection.Context.Project.Databases.Values.Count(database => database.Name == group) > 1) group += " (" + point.DatabaseId + ")";
             if (point.Region.Length > 0) group += " / " + point.Region;
-            foreach (var percentile in new[] { (Name: "p50", Value: point.P50Ms), (Name: "p95", Value: point.P95Ms), (Name: "p99", Value: point.P99Ms) })
+            foreach (var (Name, Value) in new[] { (Name: "p50", Value: point.P50Ms), (Name: "p95", Value: point.P95Ms), (Name: "p99", Value: point.P99Ms) })
             {
-                if (percentile.Value is not { } value) continue;
+                if (Value is not { } value) continue;
                 if (!double.IsFinite(value) || value < 0) throw new JsonException("Invalid latency observation.");
-                var name = (percentile.Name + " " + group).Trim();
-                if (!latencies.TryGetValue(name, out var series)) latencies[name] = series = new(name, new decimal[starts.Length], Enumerable.Repeat(true, starts.Length).ToArray());
+                var name = (Name + " " + group).Trim();
+                if (!latencies.TryGetValue(name, out var series)) latencies[name] = series = new(name, new decimal[starts.Length], [.. Enumerable.Repeat(true, starts.Length)]);
                 series.Values[index] = (decimal)value;
                 series.Missing![index] = false;
             }
@@ -103,10 +102,10 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             var regionCode = point.Region.ToLowerInvariant();
             if (regionCode.Length > 0)
             {
-                var row = regions.GetValueOrDefault(regionCode);
+                var (Requests, WorstP95Ms) = regions.GetValueOrDefault(regionCode);
                 var pointRequests = point.Requests.Values.Aggregate(0L, (sum, count) => checked(sum + Nonnegative(count)));
                 // Percentiles cannot be added; report the worst observed bucket p95 across the selected range.
-                regions[regionCode] = (checked(row.Requests + pointRequests), MaxLatency(row.WorstP95Ms, point.P95Ms));
+                regions[regionCode] = (checked(Requests + pointRequests), MaxLatency(WorstP95Ms, point.P95Ms));
             }
         }
         var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, Regions.Country(item.Key), item.Value.Requests, item.Value.WorstP95Ms))
@@ -122,11 +121,11 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         IReadOnlyList<AnalyticsChart> Charts()
         {
             var charts = new List<AnalyticsChart>();
-            Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
-            Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
+            Add("Requests by type", [.. requests.Select(item => new AnalyticsSeries(item.Key, item.Value))]);
+            Add("Operations by type", [.. operations.Select(item => new AnalyticsSeries(item.Key, item.Value))]);
             Add("Errors", new AnalyticsSeries("Errors", errors));
             const string latencyTitle = "Approximate request latency percentiles (ms)";
-            charts.Add(new(latencyTitle, AnalyticsLinePlot.ForLatency(latencyTitle + ", " + selection.Range, selection.Range, starts, latencies.Values.ToArray()), selection));
+            charts.Add(new(latencyTitle, AnalyticsLinePlot.ForLatency(latencyTitle + ", " + selection.Range, selection.Range, starts, [.. latencies.Values]), selection));
             Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
             Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
             Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));

@@ -1,7 +1,5 @@
 using System.Net.Mail;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Organizations;

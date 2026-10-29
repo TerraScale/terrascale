@@ -4,7 +4,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Auth;
@@ -17,7 +16,7 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
     public async Task<IReadOnlyList<ProfileToken>> ListAsync(AccountContext context, CancellationToken cancellationToken)
     {
         var set = await ReadAsync(context.UserId, cancellationToken);
-        return set.Tokens.Where(token => token.RevokedAt is null && token.Token.ExpiresAt > time.GetUtcNow()).OrderByDescending(token => token.Token.CreatedAt).Select(token => token.Token).ToArray();
+        return [.. set.Tokens.Where(token => token.RevokedAt is null && token.Token.ExpiresAt > time.GetUtcNow()).OrderByDescending(token => token.Token.CreatedAt).Select(token => token.Token)];
     }
 
     // The fresh grant comes from its own ts-auth authorization round trip, so the

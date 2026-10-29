@@ -11,7 +11,7 @@ public static class AccountRequest
             await accounts.GetContextAsync(session, http.RequestAborted, Scope(http, "organizationId"), Scope(http, "projectId")));
         if (organizationScoped && read?.Value is { Organization: { MfaRequired: true } blocked } context)
             throw new TerraScale.Dashboard.Features.Auth.OrganizationMfaRequiredException(blocked.Name,
-                context.Organizations.Where(org => !org.MfaRequired).Select(org => (org.Id, org.Name)).ToArray());
+                [.. context.Organizations.Where(org => !org.MfaRequired).Select(org => (org.Id, org.Name))]);
         return read?.Value;
     }
 

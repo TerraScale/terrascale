@@ -25,8 +25,8 @@ public static class HomeMcpPresentation
             organization.ContainsMember(context.UserId) ? organization.Members.Values.Count(member => member.Status == "active") : null,
             notifications.Count(item => item.Unread), notifications.Length, measurement.ActiveCredentials,
             new(range, false, measurement.ActivityMeasured, measurement.ActivityNote,
-                measurement.Activity.Select(point => point.Reads).ToArray(), measurement.Activity.Select(point => point.Writes).ToArray(),
-                measurement.Activity.Select(point => point.Start.UtcDateTime.ToString(range == "30d" ? "MMM d" : "MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture)).ToArray(),
+                [.. measurement.Activity.Select(point => point.Reads)], [.. measurement.Activity.Select(point => point.Writes)],
+                [.. measurement.Activity.Select(point => point.Start.UtcDateTime.ToString(range == "30d" ? "MMM d" : "MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture))],
                 measurement.ActivityMeasured ? measurement.Reads : null, measurement.ActivityMeasured ? measurement.Writes : null),
             [new("Create first database", project.Databases.Count > 0, "/databases"),
                 new("Create an Application credential", measurement.ActiveCredentials is { } count ? count > 0 : null, "/api-keys")]);

@@ -7,8 +7,8 @@ public static class DashboardStateSchema
     public const string ProjectId = "00000000000000000000000005";
     public const string Database = "ts-dashboard";
 
-    public static IReadOnlyList<string> Collections { get; } = Array.AsReadOnly(new[]
-    {
+    public static IReadOnlyList<string> Collections { get; } = Array.AsReadOnly(
+    [
         "sessions",
         "account_deletions",
         "dashboard_deletion_cleanup",
@@ -36,5 +36,5 @@ public static class DashboardStateSchema
         "dashboard_alert_projects",
         "dashboard_log_drains",
         "dashboard_log_drain_projects"
-    });
+    ]);
 }
