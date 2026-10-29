@@ -9,8 +9,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
-using TerraBase.Slow.Platform;
-using TerraBase.Slow.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;

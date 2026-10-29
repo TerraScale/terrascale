@@ -6,7 +6,6 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
-using TerraBase.Slow.Documents;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Shapes;

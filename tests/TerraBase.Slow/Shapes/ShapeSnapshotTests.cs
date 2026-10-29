@@ -1,4 +1,3 @@
-using TerraBase.Testing;
 using System.Buffers.Text;
 using System.Diagnostics.Metrics;
 using System.Globalization;
@@ -12,11 +11,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Slow.Documents;
-using TerraBase.Slow.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
+using TerraBase.Testing;
 
 namespace TerraBase.Slow.Shapes;
 

@@ -2,7 +2,6 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine.Turso;
-using TerraBase.Slow.Documents;
 using TerraBase.LiveRestoreDrill;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;

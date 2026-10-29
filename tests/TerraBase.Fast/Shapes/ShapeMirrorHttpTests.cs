@@ -4,8 +4,6 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;

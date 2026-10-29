@@ -1,5 +1,5 @@
-using TerraBase.Testing;
 using System.Net;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 

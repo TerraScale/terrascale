@@ -13,7 +13,6 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
-using TerraBase.Slow.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 

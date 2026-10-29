@@ -9,8 +9,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
-using TerraBase.Slow.Documents;
-using TerraBase.Slow.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Tenancy;
 using TerraBase.Testing;

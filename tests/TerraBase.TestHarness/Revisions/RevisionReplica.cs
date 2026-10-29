@@ -5,7 +5,6 @@ using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;

@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Primitives;

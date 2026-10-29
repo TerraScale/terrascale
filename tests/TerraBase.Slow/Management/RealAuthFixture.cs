@@ -1,5 +1,4 @@
 extern alias tsauth;
-
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
@@ -15,10 +14,10 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Testing;
-using tsauth::TerraScale.Authentication.Configuration;
-using tsauth::TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
+using tsauth::TerraScale.Authentication.Configuration;
+using tsauth::TerraScale.Authentication.Features.Platform;
 
 namespace TerraBase.Slow.Management;
 

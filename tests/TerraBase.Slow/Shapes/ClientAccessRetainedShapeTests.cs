@@ -5,7 +5,6 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Slow.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
 using TerraBase.Primitives;

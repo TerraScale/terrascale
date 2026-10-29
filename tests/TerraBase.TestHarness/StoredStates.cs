@@ -1,8 +1,8 @@
 using System.Buffers.Text;
 using System.Text.Json;
-using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 

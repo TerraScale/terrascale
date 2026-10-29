@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using Turso.Raw.Public;
 
 namespace Turso.Data.Sqlite.Tests;
 

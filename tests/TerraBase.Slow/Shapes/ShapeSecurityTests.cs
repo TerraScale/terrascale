@@ -4,7 +4,6 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using TerraBase.Features.Shapes;
-using TerraBase.Slow.Documents;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Shapes;

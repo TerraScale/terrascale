@@ -1,4 +1,3 @@
-using static TerraBase.Testing.StoragePoolHelpers;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -6,6 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
+using static TerraBase.Testing.StoragePoolHelpers;
 
 namespace TerraBase.Slow.Storage;
 

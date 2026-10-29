@@ -3,7 +3,6 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Fast.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Testing;
 

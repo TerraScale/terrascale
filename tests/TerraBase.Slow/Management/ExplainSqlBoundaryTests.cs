@@ -12,7 +12,6 @@ using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
-using TerraBase.Fast.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Primitives;

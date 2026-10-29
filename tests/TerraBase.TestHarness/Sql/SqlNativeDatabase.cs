@@ -3,7 +3,6 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
-using TerraBase.Testing;
 
 namespace TerraBase.Testing;
 

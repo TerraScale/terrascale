@@ -1,5 +1,4 @@
 using Bogus;
-using Npgsql;
 using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 

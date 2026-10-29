@@ -1,8 +1,7 @@
-using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Engine;
-using static TerraBase.Fast.Documents.CollectionAccessRulesTests;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 

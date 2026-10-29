@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Slow.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Tenancy;
 using TerraBase.Testing;

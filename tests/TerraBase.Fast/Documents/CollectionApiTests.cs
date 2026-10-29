@@ -1,6 +1,6 @@
-using TerraBase.Testing;
 using System.Net;
 using System.Text.Json;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 

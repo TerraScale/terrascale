@@ -1,6 +1,5 @@
 using System.Net;
 using Bogus;
-using TerraBase.Fast.Documents;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;

@@ -1,4 +1,3 @@
-using static TerraBase.Testing.PlatformDatabaseFixture;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -6,6 +5,7 @@ using TerraBase.Configuration;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Testing;
+using static TerraBase.Testing.PlatformDatabaseFixture;
 
 namespace TerraBase.Fast.Platform;
 

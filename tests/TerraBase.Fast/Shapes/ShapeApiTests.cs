@@ -1,14 +1,11 @@
 using System.Net;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
-using TerraBase.Fast.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 

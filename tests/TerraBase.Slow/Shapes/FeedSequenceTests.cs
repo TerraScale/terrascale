@@ -1,12 +1,11 @@
 using System.Text;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
-using TerraBase.Slow.Documents;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Slow.Shapes;
 

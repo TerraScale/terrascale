@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
-using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -23,6 +22,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Hosting;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
