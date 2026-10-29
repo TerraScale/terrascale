@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
 @using System.Globalization
-@using TerraScale.Dashboard.Shared.Charts
-@using TerraScale.Dashboard.Shared.Formatting
+@using TerraScale.Dashboard.Common.Charts
+@using TerraScale.Dashboard.Common.Formatting
 <section class="ts-card" id="analytics-summary" aria-labelledby="analytics-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="analytics-summary-title">Key analytics</h2><p class="ts-card-description">@(Model.Selection.DatabaseId.Length > 0 ? "Selected database" : "Selected project")@(Model.Selection.Region.Length > 0 ? " in " + Model.Selection.Region.ToLowerInvariant() : "") · @Model.Selection.Range</p></div></header><div class="ts-card-body">
 @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Analytics unavailable</p><p class="ts-alert-body">@Model.Error</p></div> }
 else if (Model.Totals is not { } data) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("BarChart3", 16)</span><p class="ts-empty-title">@Model.Empty</p></div> }

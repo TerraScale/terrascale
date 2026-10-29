@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-grants-title" data-signals="{_grantPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_grantPending = true)" data-on:pageshow__window="$_grantPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_grantPending = false)">
     <header class="ts-page-header"><h1 id="project-grants-title">Explicit project grants</h1><p>@Model.Shell.Context.Project!.Name</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
     <p>This list contains explicit grants for the selected project only. Organization-implied access is not listed. Your effective project role is @Model.Shell.Context.Project.Role.</p>

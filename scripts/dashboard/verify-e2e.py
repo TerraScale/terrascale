@@ -28,7 +28,7 @@ app = root / "src/TerraScale.Dashboard"
 assert not [path for path in app.rglob("*.cs") if not {"bin", "obj"}.intersection(path.relative_to(app).parts)
             and "TerraScale.Dashboard.E2E" in path.read_text()], "Test providers must stay out of the production application"
 assert not [path for path in app.rglob("*.cs") if not {"bin", "obj"}.intersection(path.relative_to(app).parts)
-            and "TerraScale.Dashboard.Demo" in path.read_text()], \
+            and "TerraScale.Dashboard.E2E.Demo" in path.read_text()], \
     "Synthetic providers must only be compiled into the E2E test executable"
 assert not (app / "Demo").exists(), "Demo fixtures belong in tests/TerraScale.Dashboard.E2E/Demo"
 assert not [item.get("Include") for item in ET.parse(app / "TerraScale.Dashboard.csproj").iter()

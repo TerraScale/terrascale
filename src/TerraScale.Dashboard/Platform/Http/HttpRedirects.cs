@@ -1,16 +1,20 @@
-namespace TerraScale.Dashboard.Platform.Http;
-
-public static class HttpRedirects
+namespace TerraScale.Dashboard.Platform.Http
 {
-    internal static IResult SeeOther(string location) => new SeeOtherResult(location);
-
-    private sealed record SeeOtherResult(string Location) : IResult
+    public static class HttpRedirects
     {
-        public Task ExecuteAsync(HttpContext context)
+        internal static IResult SeeOther(string location)
         {
-            context.Response.StatusCode = StatusCodes.Status303SeeOther;
-            context.Response.Headers.Location = WorkspaceUrl.PreserveRequest(context, Location);
-            return Task.CompletedTask;
+            return new SeeOtherResult(location);
+        }
+
+        private sealed record SeeOtherResult(string Location) : IResult
+        {
+            public Task ExecuteAsync(HttpContext context)
+            {
+                context.Response.StatusCode = StatusCodes.Status303SeeOther;
+                context.Response.Headers.Location = WorkspaceUrl.PreserveRequest(context, Location);
+                return Task.CompletedTask;
+            }
         }
     }
 }

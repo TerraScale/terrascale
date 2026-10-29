@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectInvitationPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-invitations-title" data-signals="{_invitationPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_invitationPending = true)" data-on:pageshow__window="$_invitationPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_invitationPending = false)">
     <header class="ts-page-header"><h1 id="project-invitations-title">Project invitations</h1><p>@Model.Shell.Context.Project!.Name</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
     <p>These invitations grant access to this project only. Accepting one does not change the recipient's organization role.</p>

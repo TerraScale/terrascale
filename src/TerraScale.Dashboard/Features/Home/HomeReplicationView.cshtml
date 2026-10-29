@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
 @using TerraScale.Dashboard.Features.Home
-@using TerraScale.Dashboard.Shared.Formatting
+@using TerraScale.Dashboard.Common.Formatting
 <section class="ts-card" id="home-replication" aria-labelledby="home-replication-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="home-replication-title">Replication</h2><p class="ts-card-description">Selected project · @Model.Range</p></div></header><div class="ts-card-body">
 @if (Model.Measurement.ReplicationError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Replication unavailable</p><p class="ts-alert-body">@Model.Measurement.ReplicationError</p></div> }
 else if (Model.Measurement.Replication is not { } data) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Network", 16)</span><p class="ts-empty-title">@Model.Measurement.ReplicationEmpty</p></div> }

@@ -1,10 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
 @inject AssetUrls Assets
 @using System.Globalization
-@using TerraScale.Dashboard.Shared.Charts
+@using TerraScale.Dashboard.Common.Charts
 @using TerraScale.Dashboard.Features.Home
-@using TerraScale.Dashboard.Shared.UI
-@using TerraScale.Dashboard.Shared.Formatting
+@using TerraScale.Dashboard.Common.UI
+@using TerraScale.Dashboard.Common.Formatting
 @{
     // Map nodes exist only for codes whose position is defined in overlays.css; other regions stay in the cards and table.
     var positioned = new[] { "GRU", "FRA", "SJC", "SFO" };

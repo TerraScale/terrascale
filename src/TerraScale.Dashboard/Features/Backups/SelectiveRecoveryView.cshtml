@@ -1,11 +1,11 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Backups.SelectiveRecoveryPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using System.Globalization
 @using System.Text.Json
 @using TerraScale.Dashboard.Features.Databases
 @using TerraScale.Dashboard.Features.Backups
 <main class="ts-page">
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
 <section class="ts-card" aria-labelledby="recovery-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recovery-title">Recover selected records</h2><p class="ts-card-description">Compare retained records with current data, then approve the records to restore into @Model.Database.Name.</p></div></header><div class="ts-card-body ts-stack-lg">
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
 @if(Model.Applied is { } count){<div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Restored @count approved record(s) into @Model.Database.Name.</p></div>}

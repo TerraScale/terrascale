@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Support.SupportPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
     <header class="ts-row-between"><div class="ts-stack-sm"><h1>Contact support</h1><p class="ts-meta">Send a request to the TerraScale team. We reply by email to @Model.Shell.Context.Account.Email.</p></div></header>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }

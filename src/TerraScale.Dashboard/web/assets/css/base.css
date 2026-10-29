@@ -160,7 +160,7 @@ hr {
 }
 
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
-   document loads (see Shared/UI/Slices/ShellDocument.cshtml). Reveal the bar in the
+   document loads (see Common/UI/Slices/ShellDocument.cshtml). Reveal the bar in the
    first paint after the click. A flat pulse shows an
    ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {

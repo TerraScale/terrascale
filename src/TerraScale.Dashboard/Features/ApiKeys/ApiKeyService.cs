@@ -4,316 +4,518 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.DotNet;
 
-namespace TerraScale.Dashboard.Features.ApiKeys;
-
-// ts-auth owns key metadata and issuance. Secrets are returned once and never stored by the dashboard.
-public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
+namespace TerraScale.Dashboard.Features.ApiKeys
 {
-    public async Task<IReadOnlyList<ProjectCredential>> ListAsync(AccountContext context, CancellationToken cancellationToken)
+    // ts-auth owns key metadata and issuance. Secrets are returned once and never stored by the dashboard.
+    public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     {
-        if (context.Project is null) return [];
-        var scope = DatabaseService.Scope(context);
-        var result = new List<ProjectCredential>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        string? next = null;
-        var pages = 0;
-        do
+        public async Task<IReadOnlyList<ProjectCredential>> ListAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            var page = await Client().ListProjectApiKeysAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, 100, next, cancellationToken);
-            if (page.Items is null) throw new HttpRequestException("Credential listing returned an invalid page.");
-            foreach (var item in page.Items)
+            if (context.Project is null)
             {
-                var key = Map(context, item);
-                if (result.Any(listed => listed.Id == key.Id)) throw new HttpRequestException("Credential listing returned a repeated key.");
-                result.Add(key);
+                return [];
             }
-            next = page.Next;
-            if (!string.IsNullOrEmpty(next) && (!seen.Add(next) || ++pages >= 100))
-                throw new HttpRequestException("Credential pagination did not advance within its bounds.");
-        } while (!string.IsNullOrEmpty(next));
-        return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
-    }
 
-    public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken, string stepUpProof = "")
-    {
-        var request = PrepareCreate(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs);
-        var scope = DatabaseService.Scope(context);
-        if (string.IsNullOrEmpty(stepUpProof)) throw StepUpFlow.Required();
-        var result = await ProtectedAsync(() => Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
-            request, stepUpProof, cancellationToken));
-        var key = Map(context, result.ApiKey);
-        if (key.Name != request.Name || key.DatabaseId != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
-            !SameCidrs(request.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key))
-            throw new HttpRequestException("Credential issuance returned different restrictions.");
-        return new(key, result.Key);
-    }
+            var scope = DatabaseService.Scope(context);
+            var result = new List<ProjectCredential>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            string? next = null;
+            var pages = 0;
+            do
+            {
+                var page = await Client().ListProjectApiKeysAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, 100, next, cancellationToken);
+                if (page.Items is null)
+                {
+                    throw new HttpRequestException("Credential listing returned an invalid page.");
+                }
 
-    internal TerraScaleAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
-    {
-        if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
-        name = name.Trim();
-        if (name.EnumerateRunes().Count() is 0 or > 128 || name.Any(char.IsControl)) throw new AccountAccessException("Enter a name of up to 128 characters and choose a database access level.", 422);
-        if (kind is not ("key" or "api-key")) throw new AccountAccessException("Kind must be key.", 422);
-        var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
-        var permissions = scopes.Distinct(StringComparer.Ordinal).ToArray();
-        if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose one or more of documents:read, documents:write, databases:read, databases:write.", 422);
-        if (!ExpiryChoices.Contains(expiresInDays)) throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
-        // Whole seconds, so the expiry ts-auth echoes back compares exactly.
-        DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
-        _ = DatabaseService.Scope(context);
-        var cidrs = CheckCidrs(allowedCidrs);
-        // ts-auth narrows by the database ULID only: a name could later reach a re-created database of that name.
-        return new(name, permissions, database?.Id, expiresAt, cidrs);
-    }
+                foreach (var item in page.Items)
+                {
+                    var key = Map(context, item);
+                    if (result.Any(listed => listed.Id == key.Id))
+                    {
+                        throw new HttpRequestException("Credential listing returned a repeated key.");
+                    }
 
-    // Replaces the key's allowlist at ts-auth (same role as creating a key); an empty list allows any IP.
-    public async Task<ProjectCredential> SetAllowedCidrsAsync(AccountContext context, string keyId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
-    {
-        if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
-        if (!TerraScaleIds.IsValid(keyId)) throw new AccountAccessException("The key is unavailable.", 404);
-        var cidrs = CheckCidrs(allowedCidrs);
-        var key = Map(context, await SendAsync(context, HttpMethod.Put, KeysPath(DatabaseService.Scope(context)) + "/" + keyId + "/allowed-cidrs",
-            JsonContent.Create(new(cidrs), ApiKeyAuthJson.Default.AuthAllowedCidrsBody), cancellationToken));
-        if (key.Id != keyId || !SameCidrs(cidrs, key.AllowedCidrs!)) throw new HttpRequestException("ts-auth returned a different key allowlist.");
-        return key;
-    }
+                    result.Add(key);
+                }
+                next = page.Next;
+                if (!string.IsNullOrEmpty(next) && (!seen.Add(next) || ++pages >= 100))
+                {
+                    throw new HttpRequestException("Credential pagination did not advance within its bounds.");
+                }
+            } while (!string.IsNullOrEmpty(next));
+            return [.. result.OrderBy(key => key.Name, StringComparer.Ordinal)];
+        }
 
-    // The project's allowlist applies to every key in it, on top of each key's own list.
-    public async Task<IReadOnlyList<string>> ProjectAllowedCidrsAsync(AccountContext context, CancellationToken cancellationToken) =>
-        ProjectCidrs(context, await SendAsync(context, HttpMethod.Get, ProjectPath(DatabaseService.Scope(context)), null, cancellationToken));
-
-    public async Task<IReadOnlyList<string>> SetProjectAllowedCidrsAsync(AccountContext context, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
-    {
-        if (!context.CanManage) throw new AccountAccessException("Project admin access is required.");
-        var cidrs = CheckCidrs(allowedCidrs);
-        var saved = ProjectCidrs(context, await SendAsync(context, HttpMethod.Put, ProjectPath(DatabaseService.Scope(context)) + "/allowed-cidrs",
-            JsonContent.Create(new(cidrs), ApiKeyAuthJson.Default.AuthAllowedCidrsBody), cancellationToken));
-        if (!SameCidrs(cidrs, saved)) throw new HttpRequestException("ts-auth returned a different project allowlist.");
-        return saved;
-    }
-
-    public async Task RevokeAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
-    {
-        if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
-        var scope = DatabaseService.Scope(context);
-        var client = Client();
-        var key = await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken);
-        if (Map(context, key).Id != keyId) throw new HttpRequestException("Credential lookup returned a different key.");
-        try { await client.RevokeProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
-        catch (HttpRequestException)
+        public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken, string stepUpProof = "")
         {
-            // A failed answer may hide a committed delete: report the key's real state, not the transport error.
-            try { await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
-            catch (HttpRequestException missing) when (missing.StatusCode == HttpStatusCode.NotFound) { return; }
-            throw;
+            var request = PrepareCreate(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs);
+            var scope = DatabaseService.Scope(context);
+            if (string.IsNullOrEmpty(stepUpProof))
+            {
+                throw StepUpFlow.Required();
+            }
+
+            var result = await ProtectedAsync(() => Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
+                request, stepUpProof, cancellationToken));
+            var key = Map(context, result.ApiKey);
+            if (key.Name != request.Name || key.DatabaseId != request.Database || key.ExpiresAt != request.ExpiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(request.Scopes!.Order(StringComparer.Ordinal)) ||
+                !SameCidrs(request.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key))
+            {
+                throw new HttpRequestException("Credential issuance returned different restrictions.");
+            }
+
+            return new(key, result.Key);
+        }
+
+        internal TerraScaleAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
+        {
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Organization management access is required.");
+            }
+
+            name = name.Trim();
+            if (name.EnumerateRunes().Count() is 0 or > 128 || name.Any(char.IsControl))
+            {
+                throw new AccountAccessException("Enter a name of up to 128 characters and choose a database access level.", 422);
+            }
+
+            if (kind is not ("key" or "api-key"))
+            {
+                throw new AccountAccessException("Kind must be key.", 422);
+            }
+
+            var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
+            var permissions = scopes.Distinct(StringComparer.Ordinal).ToArray();
+            if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write")))
+            {
+                throw new AccountAccessException("Choose one or more of documents:read, documents:write, databases:read, databases:write.", 422);
+            }
+
+            if (!ExpiryChoices.Contains(expiresInDays))
+            {
+                throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
+            }
+            // Whole seconds, so the expiry ts-auth echoes back compares exactly.
+            DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
+            _ = DatabaseService.Scope(context);
+            var cidrs = CheckCidrs(allowedCidrs);
+            // ts-auth narrows by the database ULID only: a name could later reach a re-created database of that name.
+            return new(name, permissions, database?.Id, expiresAt, cidrs);
+        }
+
+        // Replaces the key's allowlist at ts-auth (same role as creating a key); an empty list allows any IP.
+        public async Task<ProjectCredential> SetAllowedCidrsAsync(AccountContext context, string keyId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
+        {
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Organization management access is required.");
+            }
+
+            if (!TerraScaleIds.IsValid(keyId))
+            {
+                throw new AccountAccessException("The key is unavailable.", 404);
+            }
+
+            var cidrs = CheckCidrs(allowedCidrs);
+            var key = Map(context, await SendAsync(context, HttpMethod.Put, KeysPath(DatabaseService.Scope(context)) + "/" + keyId + "/allowed-cidrs",
+                JsonContent.Create(new(cidrs), ApiKeyAuthJson.Default.AuthAllowedCidrsBody), cancellationToken));
+            if (key.Id != keyId || !SameCidrs(cidrs, key.AllowedCidrs!))
+            {
+                throw new HttpRequestException("ts-auth returned a different key allowlist.");
+            }
+
+            return key;
+        }
+
+        // The project's allowlist applies to every key in it, on top of each key's own list.
+        public async Task<IReadOnlyList<string>> ProjectAllowedCidrsAsync(AccountContext context, CancellationToken cancellationToken)
+        {
+            return ProjectCidrs(context, await SendAsync(context, HttpMethod.Get, ProjectPath(DatabaseService.Scope(context)), null, cancellationToken));
+        }
+
+        public async Task<IReadOnlyList<string>> SetProjectAllowedCidrsAsync(AccountContext context, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
+        {
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Project admin access is required.");
+            }
+
+            var cidrs = CheckCidrs(allowedCidrs);
+            var saved = ProjectCidrs(context, await SendAsync(context, HttpMethod.Put, ProjectPath(DatabaseService.Scope(context)) + "/allowed-cidrs",
+                JsonContent.Create(new(cidrs), ApiKeyAuthJson.Default.AuthAllowedCidrsBody), cancellationToken));
+            if (!SameCidrs(cidrs, saved))
+            {
+                throw new HttpRequestException("ts-auth returned a different project allowlist.");
+            }
+
+            return saved;
+        }
+
+        public async Task RevokeAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
+        {
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Organization management access is required.");
+            }
+
+            var scope = DatabaseService.Scope(context);
+            var client = Client();
+            var key = await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken);
+            if (Map(context, key).Id != keyId)
+            {
+                throw new HttpRequestException("Credential lookup returned a different key.");
+            }
+
+            try { await client.RevokeProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
+            catch (HttpRequestException)
+            {
+                // A failed answer may hide a committed delete: report the key's real state, not the transport error.
+                try { await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
+                catch (HttpRequestException missing) when (missing.StatusCode == HttpStatusCode.NotFound) { return; }
+                throw;
+            }
+        }
+
+        // After ts-auth committed a create or revoke: the dashboard records who made it and from where.
+        public Task RecordAsync(AccountService accounts, AccountContext context, string keyId, bool created, CancellationToken cancellationToken)
+        {
+            return accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, created ? "api_key.created" : "api_key.revoked", keyId, "api_key", time.GetUtcNow())), cancellationToken);
+        }
+
+        // Callers exclude client aborts before treating cancellation as a dependency timeout.
+        internal static bool FollowUpFailure(Exception error)
+        {
+            return error is HttpRequestException or IOException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
+        }
+
+        // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
+        public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken, string stepUpProof = "")
+        {
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Organization management access is required.");
+            }
+
+            if (previousSecretTtl is < 0 or > MaxPreviousSecretTtl)
+            {
+                throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
+            }
+
+            if (string.IsNullOrEmpty(stepUpProof))
+            {
+                throw StepUpFlow.Required();
+            }
+
+            var scope = DatabaseService.Scope(context);
+            var client = Client();
+            var current = Map(context, await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken));
+            if (current.Id != keyId)
+            {
+                throw new HttpRequestException("Credential lookup returned a different key.");
+            }
+
+            TerraScaleAuthPlatformApiKeySecret result;
+            try
+            {
+                result = await ProtectedAsync(() => client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId,
+                stepUpProof, new TerraScaleAuthPlatformRotateApiKey(previousSecretTtl), cancellationToken));
+            }
+            catch (TerraScaleAuthException error) when (error.ErrorCode == "rotation_pending")
+            {
+                throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
+            }
+            var key = Map(context, result.ApiKey);
+            if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId ||
+                !SameCidrs(current.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key) || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
+            {
+                throw new HttpRequestException("Credential rotation returned different restrictions.");
+            }
+
+            return new(key, result.Key);
+        }
+
+        public const string ScopeDescription = "Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Hrana/libSQL and Postgres wire protocols, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
+
+        public const int MaxPreviousSecretTtl = 86400;
+        public const int MaxAllowedCidrs = 32;
+        // ts-auth must echo the exact network set it enforces. Compare canonical networks: host bits are masked,
+        // a bare address is /32 or /128, IPv6 spelling, duplicates and order do not matter, families never mix.
+        // An entry that does not parse never matches, so a widened or different echo is rejected.
+        internal static bool SameCidrs(IReadOnlyList<string> requested, IReadOnlyList<string> returned)
+        {
+            static string? Network(string value)
+            {
+                var parts = value.Trim().Split('/');
+                if (parts.Length > 2 || !IPAddress.TryParse(parts[0], out var ip) || ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.ScopeId != 0)
+                {
+                    return null;
+                }
+
+                var bytes = ip.GetAddressBytes();
+                var prefix = bytes.Length * 8;
+                if (parts.Length == 2 && (!int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out prefix) || prefix > bytes.Length * 8))
+                {
+                    return null;
+                }
+
+                for (var index = 0; index < bytes.Length; index++)
+                {
+                    bytes[index] &= (byte)(0xff << Math.Clamp(8 * (index + 1) - prefix, 0, 8));
+                }
+
+                return new IPAddress(bytes) + "/" + prefix.ToString(CultureInfo.InvariantCulture);
+            }
+            var left = requested.Select(Network).ToHashSet(StringComparer.Ordinal);
+            var right = returned.Select(Network).ToHashSet(StringComparer.Ordinal);
+            return !left.Contains(null) && !right.Contains(null) && left.SetEquals(right);
+        }
+        // Light checks only: ts-auth validates and canonicalizes each entry and answers 400 with the reason.
+        public static string[] ParseCidrs(string text)
+        {
+            return text.Split([',', ';', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        private static string[] CheckCidrs(IReadOnlyList<string> cidrs)
+        {
+            var values = cidrs.Select(cidr => cidr.Trim()).Where(cidr => cidr.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (values.Length > MaxAllowedCidrs || values.Any(cidr => cidr.Length > 64 || cidr.Any(character => !char.IsAsciiHexDigit(character) && character is not ('.' or ':' or '/'))))
+            {
+                throw new AccountAccessException("Enter up to 32 IP addresses or CIDR ranges, such as 203.0.113.0/24 or 2001:db8::/48.", 422);
+            }
+
+            return values;
+        }
+        public static bool ExpiresSoon(ProjectCredential key, DateTimeOffset now)
+        {
+            return key.ExpiresAt is { } expires && expires > now && expires - now <= TimeSpan.FromDays(7);
+        }
+
+        // Key lifetimes offered on create, in days; 0 means the key works until it is revoked.
+        public static readonly IReadOnlyList<int> ExpiryChoices = [0, 30, 90, 365];
+
+        public static ProjectApiKeyMetadata Metadata(ProjectCredential key)
+        {
+            return new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
+            key.DatabaseId ?? "", key.CreatedByEmail, Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
+            { CreatedByUserId = key.CreatedByUserId, DatabaseName = key.DatabaseName, AllowedCidrs = key.AllowedCidrs };
+        }
+
+        public static ProjectCredentialMetadata CredentialMetadata(ProjectCredential key)
+        {
+            var value = Metadata(key);
+            return new(value.KeyId, value.ProjectId, value.Name, value.Prefix, value.LastFour, value.Scopes, value.DatabaseId,
+                value.CreatedByEmail, value.CreatedAt, value.ExpiresAt, value.LastUsedAt, value.RevokedAt, value.IsActive, "api-key")
+            { CreatedByUserId = value.CreatedByUserId, DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs };
+        }
+
+        private TerraScaleAuthPlatformClient Client()
+        {
+            return new TerraScaleAuthClient(http.CreateClient("platform"),
+            new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = "terrascale" }).Platform;
+        }
+
+        private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
+
+        private static string KeysPath(DatabaseScope scope)
+        {
+            return ProjectPath(scope) + "/api-keys";
+        }
+
+        private static string ProjectPath(DatabaseScope scope)
+        {
+            return $"/v1/terrascale/organizations/{scope.OrganizationId}/projects/{scope.ProjectId}";
+        }
+
+        // ts-auth answers 400 with a reason for a bad CIDR; the user sees it. Other refusals keep their status.
+        private async Task<JsonElement> SendAsync(AccountContext context, HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
+        {
+            using var request = new HttpRequestMessage(method, new Uri(AuthOrigin, path)) { Content = content };
+            request.Headers.Authorization = new("Bearer", context.Session.AccessToken);
+            using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            if (bytes.Length > 1024 * 1024)
+            {
+                throw new HttpRequestException("ts-auth answered an oversized body.");
+            }
+
+            JsonElement body = default;
+            try { using var document = JsonDocument.Parse(bytes); body = document.RootElement.Clone(); }
+            catch (JsonException) { if (response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException("ts-auth answered an invalid body.");
+                }
+            }
+            if (response.IsSuccessStatusCode)
+            {
+                return body.ValueKind == JsonValueKind.Object ? body : throw new HttpRequestException("ts-auth answered an invalid body.");
+            }
+
+            if ((int)response.StatusCode is 400 or 422 && body.ValueKind == JsonValueKind.Object && body.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object &&
+                error.TryGetProperty("message", out var message) && message.GetString() is { Length: > 0 and <= 300 } reason)
+            {
+                throw new AccountAccessException(reason, 400, error.TryGetProperty("code", out var code) ? code.GetString() ?? "" : "");
+            }
+
+            throw new HttpRequestException("ts-auth refused the request.", null, response.StatusCode);
+        }
+
+        private static IReadOnlyList<string> Cidrs(JsonElement body)
+        {
+            if (!body.TryGetProperty("allowed_cidrs", out var list) || list.ValueKind == JsonValueKind.Null)
+            {
+                return [];
+            }
+
+            if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() > MaxAllowedCidrs || list.EnumerateArray().Any(item => item.GetString() is not { Length: > 0 and <= 64 }))
+            {
+                throw new HttpRequestException("ts-auth returned an invalid allowlist.");
+            }
+
+            return [.. list.EnumerateArray().Select(item => item.GetString()!)];
+        }
+        private static IReadOnlyList<string> ProjectCidrs(AccountContext context, JsonElement body)
+        {
+            return body.ValueKind == JsonValueKind.Object && body.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() == DatabaseService.Scope(context).ProjectId
+                ? Cidrs(body) : throw new HttpRequestException("ts-auth returned a different project.");
+        }
+
+        private ProjectCredential Map(AccountContext context, JsonElement body)
+        {
+            TerraScaleAuthPlatformApiKey? key;
+            try { key = body.ValueKind == JsonValueKind.Object ? body.Deserialize(ApiKeyAuthJson.Default.TerraScaleAuthPlatformApiKey) : null; }
+            catch (JsonException) { key = null; }
+            return Map(context, key ?? throw new HttpRequestException("Credential returned invalid metadata or scope identity.")) with { AllowedCidrs = Cidrs(body) };
+        }
+
+        private ProjectCredential Map(AccountContext context, TerraScaleAuthPlatformApiKey key)
+        {
+            var scope = DatabaseService.Scope(context);
+            if (!TerraScaleIds.IsValid(key.Id) || key.OrganizationId != scope.OrganizationId || key.ProjectId != scope.ProjectId ||
+                string.IsNullOrWhiteSpace(key.Name) || key.Name.Any(char.IsControl) || key.Scopes.Count == 0 ||
+                key.Scopes.Any(string.IsNullOrWhiteSpace) || key.Scopes.Distinct(StringComparer.Ordinal).Count() != key.Scopes.Count)
+            {
+                throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
+            }
+            // The restriction is the database ULID; the name is looked up for display. A key stored narrowed by name (before
+            // narrowing by ULID) mints no token at ts-auth, and an ID no longer in the project is a deleted database.
+            var narrowed = key.Database;
+            var byId = narrowed is not null && TerraScaleIds.IsValid(narrowed);
+            var name = narrowed is null ? null : byId ? context.Project!.Databases.GetValueOrDefault(narrowed)?.Name ?? "Deleted database"
+                : narrowed + " (narrowed by name, unusable: create a new key)";
+            return new(key.Id, scope.ProjectId, key.Name, key.Scopes, byId ? narrowed : null, "", key.CreatedAt)
+            {
+                CreatedByUserId = key.CreatedBy ?? "",
+                CreatedByEmail = context.Organization?.Members.GetValueOrDefault(key.CreatedBy ?? "")?.Email ?? "",
+                DatabaseName = name,
+                AllowedCidrs = ValidCidrs(key.AllowedCidrs),
+                ExpiresAt = key.ExpiresAt,
+                LastUsedAt = key.LastUsedAt,
+                IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
+            };
+        }
+        private static IReadOnlyList<string> ValidCidrs(IReadOnlyList<string> cidrs)
+        {
+            return cidrs is not null && cidrs.Count <= MaxAllowedCidrs && cidrs.All(item => item is { Length: > 0 and <= 64 })
+                ? cidrs : throw new HttpRequestException("ts-auth returned an invalid allowlist.");
+        }
+
+        private static async Task<T> ProtectedAsync<T>(Func<Task<T>> send)
+        {
+            try { return await send(); }
+            catch (TerraScaleAuthException error) when (error.ErrorCode == "step_up_required") { throw StepUpFlow.Required(); }
+        }
+
+        private static string Format(DateTimeOffset value)
+        {
+            return value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
         }
     }
 
-    // After ts-auth committed a create or revoke: the dashboard records who made it and from where.
-    public Task RecordAsync(AccountService accounts, AccountContext context, string keyId, bool created, CancellationToken cancellationToken) =>
-        accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, created ? "api_key.created" : "api_key.revoked", keyId, "api_key", time.GetUtcNow())), cancellationToken);
-
-    // Callers exclude client aborts before treating cancellation as a dependency timeout.
-    internal static bool FollowUpFailure(Exception error) => error is HttpRequestException or IOException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
-
-    // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
-    public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken, string stepUpProof = "")
+    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
     {
-        if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
-        if (previousSecretTtl is < 0 or > MaxPreviousSecretTtl) throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
-        if (string.IsNullOrEmpty(stepUpProof)) throw StepUpFlow.Required();
-        var scope = DatabaseService.Scope(context);
-        var client = Client();
-        var current = Map(context, await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken));
-        if (current.Id != keyId) throw new HttpRequestException("Credential lookup returned a different key.");
-        TerraScaleAuthPlatformApiKeySecret result;
-        try
+        public string Warning { get; init; } = "";
+        public static string Lines(IReadOnlyList<string>? cidrs)
         {
-            result = await ProtectedAsync(() => client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId,
-            stepUpProof, new TerraScaleAuthPlatformRotateApiKey(previousSecretTtl), cancellationToken));
+            return string.Join('\n', cidrs ?? []);
         }
-        catch (TerraScaleAuthException error) when (error.ErrorCode == "rotation_pending")
+
+        public AccountContext Context => Shell.Context;
+        public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
+        public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
+        public string With(string path, bool clear = false, string? create = null)
         {
-            throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
+            var values = new SortedDictionary<string, string?>();
+            if (!clear) { values["databaseId"] = DatabaseId; values["q"] = Search; values["status"] = Status; }
+            if (create is not null)
+            {
+                values["create"] = create;
+            }
+
+            var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));
+            return query.Length == 0 ? path : path + "?" + query;
         }
-        var key = Map(context, result.ApiKey);
-        if (key.Id != keyId || key.Name != current.Name || key.DatabaseId != current.DatabaseId ||
-            !SameCidrs(current.AllowedCidrs!, key.AllowedCidrs!) || string.IsNullOrEmpty(result.Key) || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
-            throw new HttpRequestException("Credential rotation returned different restrictions.");
-        return new(key, result.Key);
-    }
-
-    public const string ScopeDescription = "Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Hrana/libSQL and Postgres wire protocols, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted.";
-
-    public const int MaxPreviousSecretTtl = 86400;
-    public const int MaxAllowedCidrs = 32;
-    // ts-auth must echo the exact network set it enforces. Compare canonical networks: host bits are masked,
-    // a bare address is /32 or /128, IPv6 spelling, duplicates and order do not matter, families never mix.
-    // An entry that does not parse never matches, so a widened or different echo is rejected.
-    internal static bool SameCidrs(IReadOnlyList<string> requested, IReadOnlyList<string> returned)
-    {
-        static string? Network(string value)
+        public string AccessFor(string kind)
         {
-            var parts = value.Trim().Split('/');
-            if (parts.Length > 2 || !IPAddress.TryParse(parts[0], out var ip) || ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.ScopeId != 0) return null;
-            var bytes = ip.GetAddressBytes();
-            var prefix = bytes.Length * 8;
-            if (parts.Length == 2 && (!int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out prefix) || prefix > bytes.Length * 8)) return null;
-            for (var index = 0; index < bytes.Length; index++) bytes[index] &= (byte)(0xff << Math.Clamp(8 * (index + 1) - prefix, 0, 8));
-            return new IPAddress(bytes) + "/" + prefix.ToString(CultureInfo.InvariantCulture);
+            if (Create != kind || DraftScopes.Length == 0 && Error.Length == 0)
+            {
+                return "documents:read";
+            }
+
+            var scopes = DraftScopes.Split([',', ' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            if (scopes.SequenceEqual(Full.Split(',').Order(StringComparer.Ordinal)))
+            {
+                return Full;
+            }
+
+            var value = string.Join(',', scopes);
+            return value is "documents:read" or "documents:write" or "documents:read,documents:write" or Full ? value : "";
         }
-        var left = requested.Select(Network).ToHashSet(StringComparer.Ordinal);
-        var right = returned.Select(Network).ToHashSet(StringComparer.Ordinal);
-        return !left.Contains(null) && !right.Contains(null) && left.SetEquals(right);
-    }
-    // Light checks only: ts-auth validates and canonicalizes each entry and answers 400 with the reason.
-    public static string[] ParseCidrs(string text) => text.Split([',', ';', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    private static string[] CheckCidrs(IReadOnlyList<string> cidrs)
-    {
-        var values = cidrs.Select(cidr => cidr.Trim()).Where(cidr => cidr.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (values.Length > MaxAllowedCidrs || values.Any(cidr => cidr.Length > 64 || cidr.Any(character => !char.IsAsciiHexDigit(character) && character is not ('.' or ':' or '/'))))
-            throw new AccountAccessException("Enter up to 32 IP addresses or CIDR ranges, such as 203.0.113.0/24 or 2001:db8::/48.", 422);
-        return values;
-    }
-    public static bool ExpiresSoon(ProjectCredential key, DateTimeOffset now) => key.ExpiresAt is { } expires && expires > now && expires - now <= TimeSpan.FromDays(7);
-    // Key lifetimes offered on create, in days; 0 means the key works until it is revoked.
-    public static readonly IReadOnlyList<int> ExpiryChoices = [0, 30, 90, 365];
-
-    public static ProjectApiKeyMetadata Metadata(ProjectCredential key) => new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
-        key.DatabaseId ?? "", key.CreatedByEmail, Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
-    { CreatedByUserId = key.CreatedByUserId, DatabaseName = key.DatabaseName, AllowedCidrs = key.AllowedCidrs };
-    public static ProjectCredentialMetadata CredentialMetadata(ProjectCredential key)
-    {
-        var value = Metadata(key);
-        return new(value.KeyId, value.ProjectId, value.Name, value.Prefix, value.LastFour, value.Scopes, value.DatabaseId,
-            value.CreatedByEmail, value.CreatedAt, value.ExpiresAt, value.LastUsedAt, value.RevokedAt, value.IsActive, "api-key")
-        { CreatedByUserId = value.CreatedByUserId, DatabaseName = value.DatabaseName, AllowedCidrs = value.AllowedCidrs };
-    }
-
-    private TerraScaleAuthPlatformClient Client() => new TerraScaleAuthClient(http.CreateClient("platform"),
-        new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = "terrascale" }).Platform;
-    private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
-
-    private static string KeysPath(DatabaseScope scope) => ProjectPath(scope) + "/api-keys";
-    private static string ProjectPath(DatabaseScope scope) => $"/v1/terrascale/organizations/{scope.OrganizationId}/projects/{scope.ProjectId}";
-
-    // ts-auth answers 400 with a reason for a bad CIDR; the user sees it. Other refusals keep their status.
-    private async Task<JsonElement> SendAsync(AccountContext context, HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
-    {
-        using var request = new HttpRequestMessage(method, new Uri(AuthOrigin, path)) { Content = content };
-        request.Headers.Authorization = new("Bearer", context.Session.AccessToken);
-        using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);
-        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        if (bytes.Length > 1024 * 1024) throw new HttpRequestException("ts-auth answered an oversized body.");
-        JsonElement body = default;
-        try { using var document = JsonDocument.Parse(bytes); body = document.RootElement.Clone(); }
-        catch (JsonException) { if (response.IsSuccessStatusCode) throw new HttpRequestException("ts-auth answered an invalid body."); }
-        if (response.IsSuccessStatusCode) return body.ValueKind == JsonValueKind.Object ? body : throw new HttpRequestException("ts-auth answered an invalid body.");
-        if ((int)response.StatusCode is 400 or 422 && body.ValueKind == JsonValueKind.Object && body.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object &&
-            error.TryGetProperty("message", out var message) && message.GetString() is { Length: > 0 and <= 300 } reason)
-            throw new AccountAccessException(reason, 400, error.TryGetProperty("code", out var code) ? code.GetString() ?? "" : "");
-        throw new HttpRequestException("ts-auth refused the request.", null, response.StatusCode);
-    }
-
-    private static IReadOnlyList<string> Cidrs(JsonElement body)
-    {
-        if (!body.TryGetProperty("allowed_cidrs", out var list) || list.ValueKind == JsonValueKind.Null) return [];
-        if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() > MaxAllowedCidrs || list.EnumerateArray().Any(item => item.GetString() is not { Length: > 0 and <= 64 }))
-            throw new HttpRequestException("ts-auth returned an invalid allowlist.");
-        return [.. list.EnumerateArray().Select(item => item.GetString()!)];
-    }
-    private static IReadOnlyList<string> ProjectCidrs(AccountContext context, JsonElement body) =>
-        body.ValueKind == JsonValueKind.Object && body.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() == DatabaseService.Scope(context).ProjectId
-            ? Cidrs(body) : throw new HttpRequestException("ts-auth returned a different project.");
-
-    private ProjectCredential Map(AccountContext context, JsonElement body)
-    {
-        TerraScaleAuthPlatformApiKey? key;
-        try { key = body.ValueKind == JsonValueKind.Object ? body.Deserialize(ApiKeyAuthJson.Default.TerraScaleAuthPlatformApiKey) : null; }
-        catch (JsonException) { key = null; }
-        return Map(context, key ?? throw new HttpRequestException("Credential returned invalid metadata or scope identity.")) with { AllowedCidrs = Cidrs(body) };
-    }
-
-    private ProjectCredential Map(AccountContext context, TerraScaleAuthPlatformApiKey key)
-    {
-        var scope = DatabaseService.Scope(context);
-        if (!TerraScaleIds.IsValid(key.Id) || key.OrganizationId != scope.OrganizationId || key.ProjectId != scope.ProjectId ||
-            string.IsNullOrWhiteSpace(key.Name) || key.Name.Any(char.IsControl) || key.Scopes.Count == 0 ||
-            key.Scopes.Any(string.IsNullOrWhiteSpace) || key.Scopes.Distinct(StringComparer.Ordinal).Count() != key.Scopes.Count)
-            throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
-        // The restriction is the database ULID; the name is looked up for display. A key stored narrowed by name (before
-        // narrowing by ULID) mints no token at ts-auth, and an ID no longer in the project is a deleted database.
-        var narrowed = key.Database;
-        var byId = narrowed is not null && TerraScaleIds.IsValid(narrowed);
-        var name = narrowed is null ? null : byId ? context.Project!.Databases.GetValueOrDefault(narrowed)?.Name ?? "Deleted database"
-            : narrowed + " (narrowed by name, unusable: create a new key)";
-        return new(key.Id, scope.ProjectId, key.Name, key.Scopes, byId ? narrowed : null, "", key.CreatedAt)
+        public string DraftDatabaseFor(string kind)
         {
-            CreatedByUserId = key.CreatedBy ?? "",
-            CreatedByEmail = context.Organization?.Members.GetValueOrDefault(key.CreatedBy ?? "")?.Email ?? "",
-            DatabaseName = name,
-            AllowedCidrs = ValidCidrs(key.AllowedCidrs),
-            ExpiresAt = key.ExpiresAt,
-            LastUsedAt = key.LastUsedAt,
-            IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow()
-        };
-    }
-    private static IReadOnlyList<string> ValidCidrs(IReadOnlyList<string> cidrs) =>
-        cidrs is not null && cidrs.Count <= MaxAllowedCidrs && cidrs.All(item => item is { Length: > 0 and <= 64 })
-            ? cidrs : throw new HttpRequestException("ts-auth returned an invalid allowlist.");
+            return Create == kind ? Context.Project?.Databases.GetValueOrDefault(DraftDatabaseId)?.Name ?? "All project databases (current and future)" : "All project databases (current and future)";
+        }
 
-    private static async Task<T> ProtectedAsync<T>(Func<Task<T>> send)
-    {
-        try { return await send(); }
-        catch (TerraScaleAuthException error) when (error.ErrorCode == "step_up_required") { throw StepUpFlow.Required(); }
-    }
+        public string PermissionSignals(string kind)
+        {
+            return System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["_" + kind + "Access"] = AccessFor(kind), ["_" + kind + "Database"] = DraftDatabaseFor(kind) });
+        }
 
-    private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
-}
+        // Documents plus database management: create and delete databases, indexes and saved queries (a seed or migration script).
+        public const string Full = "documents:read,documents:write,databases:read,databases:write";
+        public static string Summary(string access)
+        {
+            return access switch
+            {
+                Full => "Can read and change records, and create and delete databases and indexes.",
+                "documents:read,documents:write" => "Can read, create, update, and delete records.",
+                "documents:read" => "Can read records. Cannot create, update, or delete them.",
+                "documents:write" => "Can create, update, and delete records. Cannot read or query them.",
+                _ => "Choose an access level before creating this credential.",
+            };
+        }
 
-public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default)
-{
-    public string Warning { get; init; } = "";
-    public static string Lines(IReadOnlyList<string>? cidrs) => string.Join('\n', cidrs ?? []);
-    public AccountContext Context => Shell.Context;
-    public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
-    public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
-    public string With(string path, bool clear = false, string? create = null)
-    {
-        var values = new SortedDictionary<string, string?>();
-        if (!clear) { values["databaseId"] = DatabaseId; values["q"] = Search; values["status"] = Status; }
-        if (create is not null) values["create"] = create;
-        var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));
-        return query.Length == 0 ? path : path + "?" + query;
-    }
-    public string AccessFor(string kind)
-    {
-        if (Create != kind || DraftScopes.Length == 0 && Error.Length == 0) return "documents:read";
-        var scopes = DraftScopes.Split([',', ' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
-            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-        if (scopes.SequenceEqual(Full.Split(',').Order(StringComparer.Ordinal))) return Full;
-        var value = string.Join(',', scopes);
-        return value is "documents:read" or "documents:write" or "documents:read,documents:write" or Full ? value : "";
-    }
-    public string DraftDatabaseFor(string kind) => Create == kind ? Context.Project?.Databases.GetValueOrDefault(DraftDatabaseId)?.Name ?? "All project databases (current and future)" : "All project databases (current and future)";
-    public string PermissionSignals(string kind) => System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["_" + kind + "Access"] = AccessFor(kind), ["_" + kind + "Database"] = DraftDatabaseFor(kind) });
-    // Documents plus database management: create and delete databases, indexes and saved queries (a seed or migration script).
-    public const string Full = "documents:read,documents:write,databases:read,databases:write";
-    public static string Summary(string access) => access switch
-    {
-        Full => "Can read and change records, and create and delete databases and indexes.",
-        "documents:read,documents:write" => "Can read, create, update, and delete records.",
-        "documents:read" => "Can read records. Cannot create, update, or delete them.",
-        "documents:write" => "Can create, update, and delete records. Cannot read or query them.",
-        _ => "Choose an access level before creating this credential.",
-    };
-    public static string PermissionSummary(string kind) => "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'documents:read,documents:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'documents:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'documents:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
-    public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
-    {
-        if (new[] { "documents:read", "documents:write", "databases:read", "databases:write" }.All(key.Scopes.Contains))
-            return ("Full-access key", "rose", "ShieldAlert");
-        if (key.Scopes.Any(scope => scope is "documents:write" or "databases:write"))
-            return key.Scopes.Any(scope => scope is "documents:read" or "databases:read") ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
-        return ("Read-only key", "sky", "Eye");
+        public static string PermissionSummary(string kind)
+        {
+            return "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'documents:read,documents:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'documents:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'documents:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
+        }
+
+        public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
+        {
+            if (new[] { "documents:read", "documents:write", "databases:read", "databases:write" }.All(key.Scopes.Contains))
+            {
+                return ("Full-access key", "rose", "ShieldAlert");
+            }
+
+            if (key.Scopes.Any(scope => scope is "documents:write" or "databases:write"))
+            {
+                return key.Scopes.Any(scope => scope is "documents:read" or "databases:read") ? ("Read-write key", "amber", "KeyRound") : ("Write-only key", "amber", "Pencil");
+            }
+
+            return ("Read-only key", "sky", "Eye");
+        }
     }
 }

@@ -1,0 +1,24 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <div class="ts-login-heading">
+                    <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">Temporarily unavailable</h1><p class="ts-auth-subtitle">We couldn't reach the service. Please try again shortly.</p></div>
+                </div>
+                <p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p>
+                <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="/">Try again</a>
+                <p class="ts-meta">Check <a class="ts-link" href="https://status.terrascale.tech" @(ExternalLink.Attributes)>system status@(ExternalLink.Hint)</a> or visit <a class="ts-link" href="https://docs.terrascale.tech" @(ExternalLink.Attributes)>Docs@(ExternalLink.Hint)</a>.</p>
+            </div>
+        </div>
+    </div>
+</main>
+@functions {
+    public DocumentModel LayoutModel => Model;
+}

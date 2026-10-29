@@ -15,7 +15,7 @@ from xml.sax.saxutils import quoteattr
 import sys
 root, target = map(Path, sys.argv[1:])
 (target / 'Program.cs').write_text('''using System.Security.Cryptography;
-using TerraScale.Dashboard.Demo;
+using TerraScale.Dashboard.E2E.Demo;
 using System.Text;
 var root = args[0];
 var host = args[1];

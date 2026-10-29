@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Onboarding.OnboardingPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-login">
     <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
@@ -63,8 +63,8 @@
                 <div class="ts-field"><label class="ts-label" for="projectName">Project name</label><input class="ts-input" id="projectName" name="name" maxlength="100" value="@Model.ProjectName" autocomplete="organization" required /></div>
                 <div class="ts-field"><label class="ts-label" for="region">Primary region</label>
                     @{ var regions = Model.Regions ?? []; var selectedRegion = Model.Region.Length > 0 ? Model.Region : regions.FirstOrDefault() ?? ""; }
-                    @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.RegionPicker, RegionMapField>(new("region", selectedRegion, Available: regions)))
-                    <select class="ts-select" id="region" name="region" required aria-describedby="region-hint">@if (selectedRegion.Length > 0 && !regions.Contains(selectedRegion)) { <option value="@selectedRegion" selected>@selectedRegion · Unavailable</option> }@foreach (var code in regions) { <option value="@code" selected="@(code == selectedRegion ? "selected" : null)">@code · @TerraScale.Dashboard.Shared.UI.Regions.Name(code)</option> }</select><p class="ts-hint" id="region-hint">@(regions.Count == 0 ? "Serving regions could not be loaded. Reload this page to try again." : "You can add regions to your project later.")</p>
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionPicker, RegionMapField>(new("region", selectedRegion, Available: regions)))
+                    <select class="ts-select" id="region" name="region" required aria-describedby="region-hint">@if (selectedRegion.Length > 0 && !regions.Contains(selectedRegion)) { <option value="@selectedRegion" selected>@selectedRegion · Unavailable</option> }@foreach (var code in regions) { <option value="@code" selected="@(code == selectedRegion ? "selected" : null)">@code · @TerraScale.Dashboard.Common.UI.Regions.Name(code)</option> }</select><p class="ts-hint" id="region-hint">@(regions.Count == 0 ? "Serving regions could not be loaded. Reload this page to try again." : "You can add regions to your project later.")</p>
                 </div>
                 <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard <span aria-hidden="true">→</span></button></div>
             </form>

@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Accounts
 @inject AssetUrls Assets
 @if (Model.Tab is "members" or "invitations")
@@ -19,7 +19,7 @@ else
     }
     else
     {
-    @if (Model.Shell.Context.Organization is { } limited && TerraScale.Dashboard.Shared.Accounts.PlanCatalog.ResourceLimits(limited).Projects is > 0 and var allowed && limited.Projects.Count > allowed)
+    @if (Model.Shell.Context.Organization is { } limited && TerraScale.Dashboard.Common.Accounts.PlanCatalog.ResourceLimits(limited).Projects is > 0 and var allowed && limited.Projects.Count > allowed)
     { <div class="ts-alert ts-alert-warning" role="status" id="project-limit-exceeded"><p class="ts-alert-title">More projects than the plan allows</p><p class="ts-alert-body">This organization has @ValueFormat.Plural(limited.Projects.Count, "project"); its plan allows @allowed. Existing projects keep working, but new projects are refused. <a class="ts-link" href="/organization?tab=billing">Upgrade the plan</a> or delete projects.</p></div> }
     @if (Model.Shell.Context.Organization is not { } org)
     { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Building2", 16)</span><p class="ts-empty-title">Select an organization</p><p class="ts-empty-detail">Choose an organization from the workspace menu.</p></div> }
@@ -30,7 +30,7 @@ else
     else if (Model.Tab == "organization")
     {
         var current = Model.Shell.Context.Project;
-        var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Shared.Accounts.PlanCatalog.For(org);
+        var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Common.Accounts.PlanCatalog.For(org);
         var pending = Model.InvitationRows.Count(item => item.Status == "pending");
         <dl class="ts-kpis" aria-label="Organization summary">
             <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("FolderKanban", 16)</span>Projects</dt><dd class="ts-kpi-value">@org.Projects.Count</dd><dd class="ts-kpi-detail">@(current is null ? "No project selected" : current.Name + " is current") · @ValueFormat.Plural(org.Projects.Values.Sum(project => project.Databases.Count), "database")</dd></div>

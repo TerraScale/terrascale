@@ -6,7 +6,7 @@
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Shared/Accounts/pricing.json" />
+    <EmbeddedResource Include="Common/Accounts/pricing.json" />
     <PackageReference Include="Cronos" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />

@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page"><header class="ts-stack-sm"><h1>Analytics</h1><p class="ts-meta">Requests, latency, bandwidth and storage measured by TerraBase.</p></header>
     <form class="ts-filters" method="get" action="/analytics" role="search" aria-label="Filter analytics" data-submit-once>
         <input type="hidden" name="project" value="@Model.Selection.Context.Project!.Id" />

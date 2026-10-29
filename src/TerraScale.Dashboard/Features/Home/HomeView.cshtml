@@ -1,7 +1,7 @@
 @using System.Globalization
-@using TerraScale.Dashboard.Shared.Charts
+@using TerraScale.Dashboard.Common.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Home
 <main class="ts-page ts-home"><header class="ts-home-header"><div class="ts-stack-sm"><h1 class="ts-home-header-title">@(Model.Tab == "connect" ? "Connect" : "Overview")</h1><p class="ts-meta">@(Model.Tab == "connect" ? "Connect an assistant or platform to " : "Activity, setup and regions for ")@(Model.Shell.Context.Project?.Name)</p></div><div class="ts-page-actions"><a class="ts-btn ts-btn-secondary" href="/api-keys">@Icons.Render("KeyRound", 16)<span>API keys</span></a><a class="ts-btn ts-btn-primary" href="/databases">@Icons.Render("Plus", 16)<span>New database</span></a></div></header>
     <div class="ts-toolbar ts-home-toolbar"><nav class="ts-tabs" aria-label="Overview sections"><a class="ts-tab" href="/" aria-current="@(Model.Tab != "connect" ? "page" : null)"><span>Overview</span></a><a class="ts-tab" href="/?tab=connect" aria-current="@(Model.Tab == "connect" ? "page" : null)"><span>Connect</span></a></nav></div>

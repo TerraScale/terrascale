@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Auth.OrganizationPickerPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-org-picker"><section class="ts-org-picker-card" aria-labelledby="org-picker-title">
 <div class="ts-login-heading"><span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="28" height="28" /><span>TerraScale</span></span><h1 class="ts-auth-title" id="org-picker-title">Choose an organization</h1><p class="ts-meta">You belong to @ValueFormat.Plural(Model.Context.Organizations.Count, "organization").</p></div>
