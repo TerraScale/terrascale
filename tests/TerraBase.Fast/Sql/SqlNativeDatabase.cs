@@ -69,16 +69,16 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
 
     public Task<JsonElement[]> OkAsync(params string[] statements) => OkAsync([.. statements.Select(sql => Sql(sql))]);
 
-    public async Task<(HttpStatusCode Status, string? Code, int Statement)> RefusedAsync(HttpClient client, params object[] statements)
+    public async Task<SqlRefusal> RefusedAsync(HttpClient client, params object[] statements)
     {
         var (status, body) = await PostAsync(client, statements);
         await Assert.That(status).IsNotEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
         var error = body.GetProperty("error");
         var statement = error.TryGetProperty("statement", out var index) || error.TryGetProperty("op", out index) ? index.GetInt32() : -1;
-        return (status, error.TryGetProperty("sqlite_code", out var code) ? code.GetString() : null, statement);
+        return new SqlRefusal(status, error.TryGetProperty("sqlite_code", out var code) ? code.GetString() : null, statement);
     }
 
-    public Task<(HttpStatusCode Status, string? Code, int Statement)> RefusedAsync(params string[] statements) =>
+    public Task<SqlRefusal> RefusedAsync(params string[] statements) =>
         RefusedAsync(Writer, [.. statements.Select(sql => Sql(sql))]);
 
     public async Task<long> CountAsync(string table) =>
@@ -130,3 +130,5 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
         await Api.DisposeAsync();
     }
 }
+
+internal sealed record SqlRefusal(HttpStatusCode Status, string? Code, int Statement);

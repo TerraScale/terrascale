@@ -193,15 +193,15 @@ internal sealed class SqlSession(
                 return pinned is null ? refused! : await DescribeInAsync(pinned.Transaction, plan, cancellationToken).ConfigureAwait(false);
             }
 
-            var opened = await OpenAsync(write: false, cancellationToken).ConfigureAwait(false);
-            if (opened.Error is { } failed)
+            var (transaction, _, failed) = await OpenAsync(write: false, cancellationToken).ConfigureAwait(false);
+            if (transaction is null)
             {
-                return failed;
+                return failed!;
             }
 
-            await using (opened.Transaction!.ConfigureAwait(false))
+            await using (transaction.ConfigureAwait(false))
             {
-                return await DescribeInAsync(opened.Transaction, plan, cancellationToken).ConfigureAwait(false);
+                return await DescribeInAsync(transaction, plan, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -333,24 +333,24 @@ internal sealed class SqlSession(
     private async ValueTask<SqlOutcome> AutocommitAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         var write = plan.Kind == SqlStatementKind.Write;
-        var opened = await OpenAsync(write, cancellationToken).ConfigureAwait(false);
-        if (opened.Error is { } failed)
+        var (transaction, lease, failed) = await OpenAsync(write, cancellationToken).ConfigureAwait(false);
+        if (transaction is null)
         {
-            return failed;
+            return failed!;
         }
 
-        using (opened.Lease)
+        using (lease)
         {
-            await using (opened.Transaction!.ConfigureAwait(false))
+            await using (transaction.ConfigureAwait(false))
             {
                 var tally = new Tally();
-                var (outcome, _) = await RunAsync(opened.Transaction, plan, command, tally, admit, cancellationToken).ConfigureAwait(false);
+                var (outcome, _) = await RunAsync(transaction, plan, command, tally, admit, cancellationToken).ConfigureAwait(false);
                 if (outcome is not SqlResult result)
                 {
                     return outcome;
                 }
 
-                if (write && await CommitAsync(opened.Transaction, opened.Lease, tally, cancellationToken).ConfigureAwait(false) is { } refused)
+                if (write && await CommitAsync(transaction, lease, tally, cancellationToken).ConfigureAwait(false) is { } refused)
                 {
                     return refused;
                 }
@@ -767,7 +767,7 @@ internal sealed class SqlSession(
 
         public bool Wrote { get; private set; }
 
-        public Dictionary<string, int> Operations { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, int> Operations { get; } = [with(StringComparer.Ordinal)];
 
         public void Add(SqlStatementPlan plan, SqlStatementResult result)
         {

@@ -42,17 +42,18 @@ internal static class SqlScript
 
     private static readonly string[] ReservedPrefixes = ["_tb_", "turso_", "__turso_", "tb_index_", "fts_dir_", "pragma_", "sqlite_stat"];
 
-    private static readonly HashSet<string> ReservedTables = new(StringComparer.OrdinalIgnoreCase) { "collections", "commit_offset", "_collections", "_indexes", "_unique" };
+    private static readonly HashSet<string> ReservedTables = [with(StringComparer.OrdinalIgnoreCase), "collections", "commit_offset", "_collections", "_indexes", "_unique"];
 
-    private static readonly HashSet<string> TablePositions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "FROM", "JOIN", "INTO", "UPDATE", "TABLE", "EXISTS", "ON", "VIEW", "TRIGGER", "INDEX", "REFERENCES",
-    };
+    private static readonly HashSet<string> TablePositions =
+    [
+        with(StringComparer.OrdinalIgnoreCase), "FROM", "JOIN", "INTO", "UPDATE", "TABLE", "EXISTS", "ON", "VIEW", "TRIGGER", "INDEX", "REFERENCES",
+    ];
 
-    private static readonly HashSet<string> ReadPragmas = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo", "foreign_key_list", "foreign_key_check",
-    };
+    private static readonly HashSet<string> ReadPragmas =
+    [
+        with(StringComparer.OrdinalIgnoreCase), "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo", "foreign_key_list",
+        "foreign_key_check",
+    ];
 
     private static readonly SqlError Reserved = SqlErrors.Error("names starting with _tb_ or turso_, and the engine's own tables, are reserved");
 
@@ -112,8 +113,10 @@ internal static class SqlScript
         var parameters = Parameters(tokens);
         var first = tokens[0];
         var verb = first.Kind == SqlTokenKind.Word ? first.Value.ToUpperInvariant() : "";
-        SqlStatementPlan Plan(SqlStatementKind kind, SqlWriteVerb write = SqlWriteVerb.None, bool readsTables = false, bool explain = false, bool readOnly = false) =>
-            new(text, kind, write, readsTables, explain, readOnly, parameters, tables);
+        SqlStatementPlan Plan(SqlStatementKind kind, SqlWriteVerb write = SqlWriteVerb.None, bool readsTables = false, bool explain = false, bool readOnly = false)
+        {
+            return new(text, kind, write, readsTables, explain, readOnly, parameters, tables);
+        }
 
         return verb switch
         {
