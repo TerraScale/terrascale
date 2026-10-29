@@ -21,10 +21,10 @@
     <!-- ts-libs keeps style out of the build: its public signatures carry unused parameters that are API. -->
     <EnforceCodeStyleInBuild Condition="'$(IsLibsArea)' != 'true'">true</EnforceCodeStyleInBuild>
     <!-- Required for IDE0005 (unused usings) in the build; TerraBase's public APIs carry XML docs. -->
-    <GenerateDocumentationFile Condition="'$(IsTerraBaseArea)' == 'true' or '$(IsDashboardArea)' == 'true'">true</GenerateDocumentationFile>
+    <GenerateDocumentationFile Condition="'$(IsTerraBaseArea)' == 'true'">true</GenerateDocumentationFile>
     <!-- CS1591: TerraBase is a server, not a library, and its code carries no comments (user rule 2026-10-29: "do not
          comment the code"). The documentation file stays generated because IDE0005 needs it in the build. -->
-    <NoWarn Condition="'$(IsTerraBaseArea)' == 'true' or '$(IsDashboardArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
+    <NoWarn Condition="'$(IsTerraBaseArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
     <!-- ts-libs tests use real cultures (fr-FR), so the invariant mode stays with TerraBase and ts-auth. -->
     <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
@@ -53,4 +53,14 @@
     <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)sdk/dotnet</TsDotnetRoot>
   </PropertyGroup>
 
+  <!-- DECISION 2026-10-29: this is a repository move, not a dashboard restyle.
+       Preserve ts-dashboard's .NET 10 default analyzer/warning policy on the .NET 11 SDK. -->
+  <PropertyGroup Condition="'$(IsDashboardArea)' == 'true'">
+    <AnalysisLevel>10.0</AnalysisLevel>
+    <AnalysisMode>Default</AnalysisMode>
+    <WarningLevel>10</WarningLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
 </Project>
