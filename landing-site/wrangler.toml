@@ -1,0 +1,12 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
+
+name = "ts-landing"
+compatibility_date = "2026-04-21"
+routes = [
+  { pattern = "terrascale.tech", custom_domain = true },
+  { pattern = "www.terrascale.tech", custom_domain = true },
+]
+
+[assets]
+directory = "./build"
+not_found_handling = "404-page"

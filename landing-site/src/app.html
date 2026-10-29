@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon-blue.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#151515" />
+    <meta name="darkreader-lock" />
+    <link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/logo-principal.svg" as="image" type="image/svg+xml" />
+    <script
+      defer
+      src="https://umami.mariogk.com/script.js"
+      data-website-id="f76c453a-382e-48ac-a3e4-c53a8d8a553a"
+    ></script>
+    <script
+      defer
+      src="https://umami.mariogk.com/recorder.js"
+      data-website-id="f76c453a-382e-48ac-a3e4-c53a8d8a553a"
+    ></script>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('ts-locale');
+          var lang = stored;
+          if (!lang || ['en', 'es', 'pt-br'].indexOf(lang) === -1) {
+            var list = navigator.languages || [navigator.language || ''];
+            lang = 'en';
+            for (var i = 0; i < list.length; i++) {
+              var n = (list[i] || '').toLowerCase();
+              if (n.indexOf('pt') === 0) { lang = 'pt-br'; break; }
+              if (n.indexOf('es') === 0) { lang = 'es'; break; }
+              if (n.indexOf('en') === 0) { lang = 'en'; break; }
+            }
+          }
+          var bcp47 = { en: 'en', es: 'es', 'pt-br': 'pt-BR' }[lang] || 'en';
+          document.documentElement.lang = bcp47;
+          window.__TS_LOCALE__ = lang;
+        } catch {
+          document.documentElement.lang = 'en';
+          window.__TS_LOCALE__ = 'en';
+        }
+      })();
+    </script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

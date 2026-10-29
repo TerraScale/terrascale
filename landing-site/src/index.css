@@ -1,0 +1,367 @@
+@import "tailwindcss";
+@import "./tokens.css";
+@import "./components.css";
+
+/* Self-hosted fonts (OFL, see static/fonts/OFL-*.txt). Oxanium is only used when a direction sets it as display. */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/geist.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+/* Graphite Blue (v3): flat dark canvas, 1px hairlines, no gradients or glows. */
+:root,
+[data-theme="focused"] {
+  --ts-bg-base: #151515;
+  --ts-bg-base-raw: 21, 21, 21;
+  --ts-bg-surface: #1b1b1b;
+  --ts-bg-card: #1b1b1b;
+  --ts-code-bg: #222222;
+  --ts-divider: rgb(255 255 255 / 0.08);
+
+  /* Accent is the logo blue at full strength. Text and focus on dark use the lifted link blue (5.9:1). */
+  --ts-primary: #2158e8;
+  --ts-primary-hover: #1a4bd0;
+  --ts-primary-light: #6b93ff;
+  --ts-primary-light-rgb: 107, 147, 255;
+  --ts-primary-rgb: 33, 88, 232;
+  --ts-secondary: #00a1dd;
+  --ts-secondary-rgb: 0, 161, 221;
+  --ts-tertiary: #b2a0ec;
+  --ts-tertiary-rgb: 178, 160, 236;
+
+  --ts-text: #f2f2f2;
+  --ts-text-muted: #a8a8a8;
+
+  /* Cards are flat solid surfaces. Frost (rgba of --ts-bg-base-raw) is for header and overlays only. */
+  --ts-glass-bg: #1b1b1b;
+  --ts-glass-border: rgb(255 255 255 / 0.12);
+  --ts-grid-color: rgb(255 255 255 / 0.05);
+
+  --ts-notfound-bg: #151515;
+  --ts-notfound-blue: #2158e8;
+  --ts-notfound-blue-bright: #6b93ff;
+  --ts-notfound-grid: rgb(255 255 255 / 0.05);
+
+  --ts-font-body: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --ts-font-accent: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --ts-font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  --ts-space-1: 0.25rem;
+  --ts-space-2: 0.5rem;
+  --ts-space-3: 0.75rem;
+  --ts-space-4: 1rem;
+  --ts-space-5: 1.25rem;
+  --ts-space-6: 1.5rem;
+  --ts-space-8: 2rem;
+  --ts-space-10: 2.5rem;
+  --ts-space-12: 3rem;
+  --ts-space-16: 4rem;
+  --ts-space-20: 5rem;
+  --ts-space-24: 6rem;
+
+  --ts-radius-sm: 4px;
+  --ts-radius-md: 6px;
+  --ts-radius-lg: 10px;
+  --ts-radius-xl: 14px;
+  --ts-radius-pill: 9999px;
+
+  --ts-transition-fast: 150ms ease-out;
+  --ts-transition-normal: 200ms ease-out;
+  --ts-transition-slow: 260ms cubic-bezier(.2,.8,.2,1);
+
+  color-scheme: dark;
+  font-family: var(--ts-font-body);
+  background-color: var(--ts-bg-base);
+  color: var(--ts-text);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-padding-top: 60px;
+  background-color: var(--ts-bg-base);
+}
+
+body {
+  min-height: 100vh;
+  font-size: var(--ts-fs-lg);
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ts-primary-light);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Page layout shared by About, Contact and 404: the same gutters as the header and the home and
+   pricing sections, and the same section rhythm (80px, 48px on phones, a hairline between). */
+.ts-container {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: clamp(16px, 2.5vw, 40px);
+}
+
+.ts-section {
+  padding-block: var(--ts-space-20);
+}
+
+main > * + .ts-section {
+  border-top: 1px solid var(--ts-divider);
+}
+
+main > .ts-section:first-child {
+  padding-top: var(--ts-space-16);
+}
+
+@media (max-width: 640px) {
+  .ts-section {
+    padding-block: var(--ts-space-12);
+  }
+}
+
+.pulse-dot {
+  animation: ts-pulse-soft 2.2s ease-in-out infinite;
+  display: inline-block;
+  border-radius: 999px;
+}
+
+@keyframes ts-pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* Applied by the reveal action (src/lib/reveal.ts): rise 32px and fade in once, on the base curve. */
+.ts-reveal {
+  opacity: 0;
+  transform: translate3d(0, 32px, 0);
+  transition:
+    opacity 720ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 720ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ts-reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.ts-text-gradient {
+  color: var(--ts-primary-light);
+}
+
+.ts-eyebrow {
+  font-family: var(--ts-font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ts-primary-light);
+}
+
+.ts-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius-md);
+  font-family: var(--ts-font-accent);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background-color var(--ts-transition-fast),
+    border-color var(--ts-transition-fast),
+    color var(--ts-transition-fast);
+}
+
+.ts-btn-primary {
+  background: var(--ts-primary);
+  color: #fff;
+}
+
+.ts-btn-primary:hover {
+  background: var(--ts-primary-hover);
+}
+
+.ts-btn-glass {
+  background: var(--ts-bg-surface);
+  border-color: var(--ts-glass-border);
+  color: var(--ts-text);
+}
+
+.ts-btn-glass:hover {
+  border-color: rgb(255 255 255 / 0.29);
+  background: var(--ts-bg-card);
+}
+
+/* The base .ts-btn above is unlayered, so it beats the layered design-system variants; restate
+   the large size and the secondary outline here. */
+.ts-btn-lg {
+  height: var(--ts-control-h-lg);
+  padding: 0 var(--ts-s5);
+}
+
+.ts-btn-secondary {
+  border-color: var(--ts-control-line);
+  color: var(--ts-ink);
+}
+
+.ts-btn-secondary:hover {
+  border-color: var(--ts-control-line-hover);
+  background: var(--ts-surface-2);
+}
+
+.ts-btn-compact {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.ts-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ts-glass-border);
+  border-radius: var(--ts-radius-md);
+  background: var(--ts-bg-surface);
+  color: var(--ts-text);
+  font-family: var(--ts-font-body);
+  font-size: 14px;
+  outline: none;
+  transition: border-color var(--ts-transition-fast);
+}
+
+.ts-input::placeholder {
+  color: var(--ts-text-muted);
+}
+
+.ts-input:focus-visible {
+  outline: 2px solid var(--ts-primary-light);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.ts-glass {
+  background: var(--ts-glass-bg);
+  border: 1px solid var(--ts-glass-border);
+}
+
+.tok-keyword { color: #a1bbfe; }
+.tok-string  { color: #6cc6dc; }
+.tok-comment { color: #8f8f8f; font-style: italic; }
+.tok-fn      { color: #f2f2f2; }
+.tok-num     { color: #e293c0; }
+.tok-op      { color: #a8a8a8; }
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ts-bg-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ts-divider);
+  border-radius: 5px;
+  border: 2px solid var(--ts-bg-base);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--ts-primary-rgb), 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .ts-reveal,
+  .ts-reveal.is-visible {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+
+  .pulse-dot {
+    animation: none !important;
+  }
+}
+
+/* Page ledes wrap without leaving a single word on the last line. */
+.ts-lede {
+  text-wrap: pretty;
+}
+
+/* Two-tone headings: the second phrase takes the direction's heading-muted colour. */
+.ts-h-muted {
+  color: var(--ts-heading-muted);
+}
+
+/* Landing's own highlighter classes (src/lib/highlight.ts). */
+.tok-keyword { color: var(--ts-syn-keyword); }
+.tok-string  { color: var(--ts-syn-string); }
+.tok-comment { color: var(--ts-syn-comment); }
+.tok-fn      { color: var(--ts-syn-fn); }
+.tok-num     { color: var(--ts-syn-number); }
+.tok-op      { color: var(--ts-syn-punct); }
+

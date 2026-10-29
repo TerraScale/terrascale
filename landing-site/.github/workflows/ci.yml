@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # Pinned legacy scanner, sparse so only its policy directory lands beside the checkout.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: TerraScale/terrascale
+          ref: a2e200187ffe32084a10f2a81c9e3e1f59b49a29
+          sparse-checkout: scripts/legacy-scan
+          persist-credentials: false
+          path: legacy-scanner
+      - name: Scan for legacy references
+        run: python3 legacy-scanner/scripts/legacy-scan/scan.py --repo ts-landing --root . --output legacy-hits.md
+      - name: Upload legacy hits
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: legacy-hits
+          path: legacy-hits.md
+          if-no-files-found: error
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Run tests and validate the static build
+        run: npm run build
