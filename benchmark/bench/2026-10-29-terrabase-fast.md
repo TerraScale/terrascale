@@ -105,4 +105,8 @@ Per-test after durations for every repeat: [CSV](2026-10-29-terrabase-fast-after
 
 `ts-ship` also passed this candidate on mariogk-dev: libs **17.192 s**, auth **90.789 s**, TerraBase **64.200 s**. Its benchmark check failed `TestParityRunnerMeasuresEveryRegionThenCleansUp` and reached the 299-second deadline, so it correctly did not push. The benchmark owner has been notified through the parent.
 
-Live main CI proof is pending shipping. A separate four-CPU build rehearsal is in progress.
+The independently source-linked Slow graph also builds: `dotnet build tests/TerraBase.Slow/TerraBase.Slow.csproj --no-restore --nologo -p:UseSharedCompilation=false` completed in **52.84 s**, with zero warnings or errors. This verifies moved scenarios still compile independently.
+
+A four-CPU-affinity CI rehearsal on mariogk-dev completed locked restore, the full checked Fast/E2E/driver build, both single-file/native packaging proofs, SHA verification and the shard archive in **254 s**. Disabling ReadyToRun only for the CI packaging proof reduced that rehearsal from **282 s**; production image builds retain ReadyToRun. The isolated single-file driver proof passed all **24** tests, with no skips. This rehearsal excludes GitHub setup/upload overhead and is advisory; the actual main CI run remains required.
+
+Live main CI proof is pending the benchmark owner's shipping fix.
