@@ -69,6 +69,16 @@ public sealed class WalRevisionContractTests
         }
     }
 
+    [Test]
+    public async Task FramePageBuffersMustNotOverlap()
+    {
+        using var database = new TemporaryDatabase();
+        database.Connection.UseManualWal();
+        var buffer = new uint[4];
+        await Assert.That(() => database.Connection.ReadWalFramePages(1, buffer.AsSpan(0, 2), buffer.AsSpan(0, 2))).Throws<ArgumentException>();
+        await Assert.That(() => database.Connection.ReadWalFramePages(1, buffer.AsSpan(0, 2), buffer.AsSpan(1, 2))).Throws<ArgumentException>();
+    }
+
     private static SqliteConnection Open(string connectionString)
     {
         var connection = new SqliteConnection(connectionString);
