@@ -83,7 +83,11 @@ public sealed class PrimaryUserTests(TerraBaseFixture fixture)
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (!this.Armed)
+            var path = request.RequestUri!.AbsolutePath;
+            if (!this.Armed || request.Method != HttpMethod.Get
+                || !(path.Contains($"/collections/{AuthStore.MfaCollection}/documents/", StringComparison.Ordinal)
+                    || path.Contains($"/collections/{AuthStore.OidcAuthorizationCollection}/documents/", StringComparison.Ordinal)
+                    || path.Contains($"/collections/{AuthStore.OidcTokenCollection}/documents/", StringComparison.Ordinal)))
             {
                 return await base.SendAsync(request, cancellationToken);
             }
