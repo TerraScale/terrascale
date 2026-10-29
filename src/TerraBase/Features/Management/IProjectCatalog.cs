@@ -7,7 +7,7 @@ namespace TerraBase.Features.Management;
 public readonly union ResolveProjectResult(string, NotFound, Unavailable);
 
 /// <summary>Resolves ts-auth project ids to the compatible on-disk catalog namespace.</summary>
-public interface IProjectCatalog
+internal interface IProjectCatalog
 {
     /// <summary>
     /// Finds a verified storage namespace, or registers a signed project's first database atomically under
@@ -15,16 +15,10 @@ public interface IProjectCatalog
     /// </summary>
     ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, string? createIn, CancellationToken cancellationToken);
 
-    /// <summary>The organization that registered <paramref name="projectId"/>, if registered.</summary>
     ValueTask<ResolveProjectResult> ProjectOrganizationAsync(string projectId, CancellationToken cancellationToken);
 
-    /// <summary>Sets the plan of the storage organization a signed project enrolled; projects created through management routes keep their creator's plan.</summary>
     ValueTask<SetPlanResult> SetEnrolledPlanAsync(string projectId, PlanTier plan, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Sets the plan of the operator-owned storage organization named by its ts-auth organization id, creating it for a paid plan
-    /// before its first database enrolls; organizations created through management routes keep their creator's plan.
-    /// </summary>
     ValueTask<SetPlanResult> SetStoragePlanAsync(string organizationId, PlanTier plan, CancellationToken cancellationToken);
 
     /// <summary>

@@ -13,7 +13,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Qos;
 
 /// <summary>Registers organization resource controls and request admission.</summary>
-public static class QosExtensions
+internal static class QosExtensions
 {
     /// <summary>Registers bounded node-local request admission.</summary>
     public static IServiceCollection AddTerraBaseQos(this IServiceCollection services) => services

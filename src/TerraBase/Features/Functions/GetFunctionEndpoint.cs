@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Reads a function with its source.</summary>
-public sealed class GetFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
+internal sealed class GetFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

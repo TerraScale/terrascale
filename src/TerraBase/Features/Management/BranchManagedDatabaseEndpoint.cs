@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/databases/{database}/branches</c>: creates a database as a snapshot copy of another.</summary>
-public sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
+internal sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

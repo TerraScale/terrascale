@@ -10,7 +10,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Logs;
 
 /// <summary>Recent redacted request observations for an authorized database.</summary>
-public sealed class ListDatabaseLogsEndpoint(IManagementService management, IRequestLogs logs) : EndpointWithoutRequest<IResult>
+internal sealed class ListDatabaseLogsEndpoint(IManagementService management, IRequestLogs logs) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <summary><c>GET …/databases/{database}/indexes</c>: lists the indexes of a database.</summary>
-public sealed class ListIndexesEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
+internal sealed class ListIndexesEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Webhooks;
 
 /// <summary>Lists a webhook's bounded, sanitized delivery history.</summary>
-public sealed class ListWebhookDeliveriesEndpoint(IManagementService management, IWebhooks webhooks) : EndpointWithoutRequest<IResult>
+internal sealed class ListWebhookDeliveriesEndpoint(IManagementService management, IWebhooks webhooks) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

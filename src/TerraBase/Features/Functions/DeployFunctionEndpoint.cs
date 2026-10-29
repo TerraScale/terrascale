@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Deploys or replaces a function.</summary>
-public sealed class DeployFunctionEndpoint(IManagementService management, IFunctions functions) : Endpoint<DeployFunctionRequest, IResult>
+internal sealed class DeployFunctionEndpoint(IManagementService management, IFunctions functions) : Endpoint<DeployFunctionRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

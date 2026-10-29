@@ -10,7 +10,7 @@ namespace TerraBase.Features.Management;
 /// ts-auth organization id, before or after its first database enrolls. Served only on the internal administrative listener,
 /// as <c>PUT /admin/projects/{project}/plan</c> is.
 /// </summary>
-public sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
+internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

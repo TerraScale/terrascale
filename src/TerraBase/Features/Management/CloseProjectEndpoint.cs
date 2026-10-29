@@ -10,7 +10,7 @@ namespace TerraBase.Features.Management;
 /// <c>PUT /admin/projects/{project}/closure</c>: ts-auth's project closure handoff (docs/terrabase/project-closure.md).
 /// Served only on the internal listener, behind the peer credential, as <c>PUT /admin/projects/{project}/plan</c> is.
 /// </summary>
-public sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<ProjectClosureRequest, IResult>
+internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<ProjectClosureRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

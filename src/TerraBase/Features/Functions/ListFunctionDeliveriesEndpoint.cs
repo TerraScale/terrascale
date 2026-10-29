@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Lists a change-triggered function's deliveries.</summary>
-public sealed class ListFunctionDeliveriesEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
+internal sealed class ListFunctionDeliveriesEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Deletes a function and its logs.</summary>
-public sealed class DeleteFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

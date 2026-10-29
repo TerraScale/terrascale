@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Lists a function's invocation logs.</summary>
-public sealed class ListFunctionLogsEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
+internal sealed class ListFunctionLogsEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

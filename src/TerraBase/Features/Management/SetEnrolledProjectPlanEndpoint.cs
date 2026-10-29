@@ -6,11 +6,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// <c>PUT /admin/projects/{project}/plan</c>: sets the plan of the storage organization a signed project enrolled. Served only on the internal administrative listener,
-/// on the private network, as <c>POST /admin/api-keys</c> is.
-/// </summary>
-public sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
+internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

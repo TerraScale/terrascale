@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST /v1/management/organizations</c>: creates an organization.</summary>
-public sealed class CreateOrganizationEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
+internal sealed class CreateOrganizationEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -14,7 +14,7 @@ public sealed class CreateOrganizationEndpoint(IManagementService management) : 
         Post(ManagementRoute.Organizations);
         Name("createOrganization");
         Summary("Creates an organization");
-        Description("name: 1 to 128 characters with a letter or digit, unique among the organizations the acting user created, ignoring case. The acting user becomes its first member." + " " + ManagementRoute.IdentityDescription);
+        Description("name: 1 to 128 characters with a letter or digit, unique among the organizations the acting user created, ignoring case." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

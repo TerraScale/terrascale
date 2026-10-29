@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>DELETE /v1/management/organizations/{organization}</c>: deletes an organization without projects.</summary>
-public sealed class DeleteOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

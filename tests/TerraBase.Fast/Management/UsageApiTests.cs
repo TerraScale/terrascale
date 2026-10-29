@@ -1266,7 +1266,7 @@ public sealed class UsageApiTests
         private Action<string> _before = null!;
         private Func<string, object?>? _answer;
 
-        public static IManagementService Wrap(IManagementService inner, Action<string> before, Func<string, object?>? answer = null)
+        internal static IManagementService Wrap(IManagementService inner, Action<string> before, Func<string, object?>? answer = null)
         {
             var proxy = Create<IManagementService, SlowManagement>();
             var slow = (SlowManagement)(object)proxy;

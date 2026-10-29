@@ -53,7 +53,7 @@ internal static class UserAuthExtensions
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
 
-    public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
+    internal static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
 
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>
         user?.Identities.FirstOrDefault(identity => identity.IsAuthenticated && identity.AuthenticationType == scheme);

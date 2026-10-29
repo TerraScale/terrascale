@@ -103,7 +103,6 @@ internal sealed partial class EngineManagementService(
         string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
         await WriteAsync<SetPlanResult>(async transaction =>
         {
-            // The plan is billing, which belongs to the owners.
             var access = await AuthorizeAsync(transaction, userId, organizationId, allowProject: false, cancellationToken).ConfigureAwait(false);
             if (access is not Organization)
             {

@@ -220,17 +220,28 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_terrabase_refusal_changes_nothing_and_keeps_every_right_of_the_project()
+    [Arguments("closure")]
+    [Arguments("binding")]
+    public async Task A_terrabase_refusal_changes_nothing_and_keeps_every_right_of_the_project(string refusal)
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
+        await using var enrollment = await ProjectEnrollment.StartAsync(TestContext.Current!.Execution.CancellationToken);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false,
+            services: services => services.AddKeyedSingleton(App.StorageAuthority, (_, _) => enrollment.Server.Management()));
         var (_, token) = await oidc.SignInUserAsync("owner@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Kept");
-        await fixture.Server.Management().CloseProjectAsync(project, organization, AuthStore.NewId());
+        if (refusal == "binding")
+        {
+            await enrollment.EnrollAsync(project);
+        }
+        else
+        {
+            await enrollment.Server.Management().CloseProjectAsync(project, organization, AuthStore.NewId());
+        }
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{project}", token))
-            .IsEqualTo((409, "closure_conflict"));
+            .IsEqualTo((409, refusal == "binding" ? "binding_conflict" : "closure_conflict"));
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{project}", token);
         await Assert.That(await JobAsync(oidc, "project", project)).IsNull();
         // The intent's fence is gone with it: the project takes new roles again.
@@ -418,9 +429,13 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     // One project closure is accepted and removed, the next is refused: the account intent ends, the accepted removal
     // stands, and the refused and not-yet-started projects keep every right with no intent left.
     [Test]
-    public async Task A_refusal_after_an_accepted_project_closure_ends_the_account_intent_without_stranding_anything()
+    [Arguments("closure")]
+    [Arguments("binding")]
+    public async Task A_refusal_after_an_accepted_project_closure_ends_the_account_intent_without_stranding_anything(string refusal)
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
+        await using var enrollment = await ProjectEnrollment.StartAsync(TestContext.Current!.Execution.CancellationToken);
+        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false,
+            services: services => services.AddKeyedSingleton(App.StorageAuthority, (_, _) => enrollment.Server.Management()));
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (guest, _) = await oidc.SignInUserAsync("guest@example.test");
         var solo = await oidc.CreateOrganizationAsync(token, "Solo");
@@ -428,9 +443,16 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         // The closure visits an organization's projects in storage id order.
         var ordered = created.OrderBy(id => AuthStore.NaturalKeyId("terrascale", AuthStore.ProjectCollection, id), StringComparer.Ordinal).ToArray();
         var (first, refused, later) = (ordered[0], ordered[1], ordered[2]);
-        await fixture.Server.Management().CloseProjectAsync(refused, solo, AuthStore.NewId());
+        if (refusal == "binding")
+        {
+            await enrollment.EnrollAsync(refused);
+        }
+        else
+        {
+            await enrollment.Server.Management().CloseProjectAsync(refused, solo, AuthStore.NewId());
+        }
 
-        await Assert.That(await oidc.FailAsync(HttpMethod.Delete, "/v1/terrascale/account", token)).IsEqualTo((409, "closure_conflict"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Delete, "/v1/terrascale/account", token)).IsEqualTo((409, refusal == "binding" ? "binding_conflict" : "closure_conflict"));
         var directory = oidc.Server.App.Services.GetRequiredService<PlatformDirectory>();
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id)).IsNotNull();
         await Assert.That(await directory.ProjectAsync(first, CancellationToken.None)).IsNull();

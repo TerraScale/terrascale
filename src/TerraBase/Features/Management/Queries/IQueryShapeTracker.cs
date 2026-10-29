@@ -64,14 +64,9 @@ public sealed record QueryShapeListBody(IReadOnlyList<QueryShapeStats> Items);
 public readonly union QueryShapeReadResult(QueryShapeRead, Unavailable);
 
 /// <summary>Best-effort workload statistics for canonical queries, without retaining literal values.</summary>
-public interface IQueryShapeTracker
+internal interface IQueryShapeTracker
 {
-    /// <summary>
-    /// Records a canonical shape without catalog I/O. Shapes larger than 8 KiB in UTF-8 and new shapes beyond the
-    /// pending item or memory bounds are dropped; the caller must remove literals before recording.
-    /// </summary>
     void Record(TenantContext database, string collection, string shape, TimeSpan latency, long rowsScanned);
 
-    /// <summary>Reads admitted statistics, adding pending observations on the primary; the caller executes or disposes the read.</summary>
     ValueTask<QueryShapeReadResult> ReadAsync(TenantContext database, CancellationToken cancellationToken);
 }

@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>DELETE …/saved-queries/{query}</c>: deletes a saved query.</summary>
-public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQueryService queries) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteSavedQueryEndpoint(IManagementService management, IQueryService queries) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

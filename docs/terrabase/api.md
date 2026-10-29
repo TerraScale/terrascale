@@ -54,13 +54,8 @@ service ownership decided by the user on 2026-10-06
      `{database}` answers `404`, the project's database list holds only it, and creating another answers `404`;
    - `scope` (space-separated) holds the scope the operation needs, or the route answers `403 forbidden_scope`.
 
-   `org_id` is not used by the public API. ts-auth maps roles to scopes; TerraBase checks scopes, never roles
-   on public routes. `sub` (a user id, or an API key id, its ULID) is recorded as the actor. Existing legacy projects
-   resolve to their original records only after an explicit binding is verified against ts-auth. Unverified
-   mappings answer `404` for project JWTs, including database creation. An authorized database create enrolls
-   a fresh ts-auth project with a verified binding in an opaque storage namespace without user membership.
-   Each binding is scoped to the exact trusted issuer and storage namespace
-   ([COS decision, 2026-10-07](decisions/0011-project-catalog-trust.md)).
+   ts-auth maps roles to scopes; TerraBase checks scopes, never roles
+   on public routes. `sub` (a user id, or an API key id, its ULID) is recorded as the actor. An authorized database create enrolls a fresh project using the signed `project_id` and `org_id` claims.
 
    | Scope | Grants |
    | --- | --- |

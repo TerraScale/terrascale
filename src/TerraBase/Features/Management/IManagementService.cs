@@ -7,7 +7,7 @@ namespace TerraBase.Features.Management;
 /// <summary>An organization: the tenant, which owns billing, and the top-level owner of projects.</summary>
 /// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="Name">Display name, unique among the organizations created by <paramref name="CreatedBy"/> (case-insensitive).</param>
-/// <param name="CreatedBy">User id (from ts-auth) of the creator.</param>
+/// <param name="CreatedBy">User id (from ts-auth) of the creator, its first member.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Plan">The organization's plan; <see cref="PlanTier.Hobby"/> until set.</param>
 public sealed record Organization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt, PlanTier Plan = PlanTier.Hobby);
@@ -128,14 +128,12 @@ public readonly union CopyDatabaseResult(ManagedDatabase, NotFound, Forbidden, C
 /// <param name="Next">Cursor for the next page (<c>after</c>); <see langword="null"/> on the last page.</param>
 public sealed record ManagementPage<T>(IReadOnlyList<T> Items, string? Next);
 
-/// <summary>Manages organizations, projects and databases.</summary>
-public interface IManagementService
+internal interface IManagementService
 {
     /// <summary>The exact live database an existing owner or admin may recover; never creates catalog state.</summary>
     ValueTask<WritableDatabaseTenantResult> GetRecoveryDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, string? authorityToken, CancellationToken cancellationToken);
 
-    /// <summary>Creates an organization.</summary>
     ValueTask<CreateOrganizationResult> CreateOrganizationAsync(string userId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the user's organizations after <paramref name="after"/>.</summary>
@@ -144,10 +142,8 @@ public interface IManagementService
     /// <summary>Reads an organization.</summary>
     ValueTask<GetOrganizationResult> GetOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
-    /// <summary>Sets the plan of an organization.</summary>
     ValueTask<SetPlanResult> SetPlanAsync(string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken);
 
-    /// <summary>Deletes an empty organization.</summary>
     ValueTask<DeleteOrganizationResult> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
     /// <summary>Creates a project in an organization.</summary>
@@ -184,7 +180,6 @@ public interface IManagementService
     ValueTask<SetDatabaseRegionsResult> RenameDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Finds a database record within its organization and project.</summary>
     ValueTask<FindDatabaseRecordResult> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
     /// <summary>Lists the databases of a project.</summary>
@@ -195,15 +190,12 @@ public interface IManagementService
     ValueTask<GetDatabaseResult> GetDatabaseAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Resolves a database tenant for its organization creator or scoped project token.</summary>
     ValueTask<DatabaseTenantResult> GetDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Resolves a database tenant for a change to its data or tooling state.</summary>
     ValueTask<WritableDatabaseTenantResult> GetWritableDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Resolves a project the acting user may change.</summary>
     ValueTask<WritableProjectResult> GetWritableProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>

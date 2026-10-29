@@ -3,7 +3,7 @@ using TerraBase.Errors;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary>Registers the SQL and saved-query part of the Management slice.</summary>
-public static class QueriesExtensions
+internal static class QueriesExtensions
 {
     internal const string SqlDescription =
         "sql (at most 16 KiB): SELECT * | field, … FROM collection [WHERE …] [ORDER BY field [ASC|DESC], … (at most 4)] [LIMIT 1 to 1000, default 100]. " +

@@ -6,8 +6,7 @@
 
 ## Context
 
-TS-464 replicates client-database documents only. The management catalog, API keys, dashboard documents and
-commit records live in `_system.db` ([0005](0005-multi-tenancy.md), [0008](0008-management-commits.md)) and stay
+TS-464 replicates client-database documents only. The management catalog and API keys live in `_system.db` ([0005](0005-multi-tenancy.md)) and stay
 local, so a second member answers 401/404 for organizations and keys created on the first. Only one member can
 serve, and every restart is downtime.
 

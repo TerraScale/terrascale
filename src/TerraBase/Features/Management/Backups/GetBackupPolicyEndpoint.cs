@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>GET …/databases/{database}/backup-policy</c>: reads the backup policy of a database.</summary>
-public sealed class GetBackupPolicyEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
+internal sealed class GetBackupPolicyEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

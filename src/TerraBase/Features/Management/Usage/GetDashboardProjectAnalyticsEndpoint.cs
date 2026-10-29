@@ -10,7 +10,7 @@ namespace TerraBase.Features.Management.Usage;
 /// <c>GET /v1/usage/projects/{project}/analytics</c>: the public project analytics for the dashboard. Served only on the internal
 /// listener, which requires the shared peer credential, as <c>GET /v1/usage/allowances</c> is.
 /// </summary>
-public sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catalog, IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catalog, IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     /// <summary>The acting service of a synthesized project grant; reads only, never recorded as a member.</summary>
     internal const string Actor = "ts-dashboard";

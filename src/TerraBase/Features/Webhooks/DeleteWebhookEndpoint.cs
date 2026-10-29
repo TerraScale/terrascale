@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Webhooks;
 
 /// <summary>Deletes a collection webhook and its delivery history.</summary>
-public sealed class DeleteWebhookEndpoint(IManagementService management, IWebhooks webhooks) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteWebhookEndpoint(IManagementService management, IWebhooks webhooks) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

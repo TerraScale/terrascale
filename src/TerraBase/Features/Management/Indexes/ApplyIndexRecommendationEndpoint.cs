@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <summary><c>POST …/index-recommendations/{recommendation}/apply</c>: creates the recommended index.</summary>
-public sealed class ApplyIndexRecommendationEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
+internal sealed class ApplyIndexRecommendationEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

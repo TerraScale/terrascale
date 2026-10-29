@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <summary><c>GET …/databases/{database}/index-recommendations</c>: recommends indexes from the SQL workload.</summary>
-public sealed class ListIndexRecommendationsEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
+internal sealed class ListIndexRecommendationsEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

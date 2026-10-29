@@ -134,15 +134,6 @@ How the regions learn it:
   member missing, postpones cleanup and keeps the cursor. The storage reader is released before network calls and cleanup,
   so reconciliation works with `storage-queue=1` too.
 
-Register an organization and project in another region with a [management commit](management-commits.md) that chooses the
-ids they have in the first. Leave out the organization if that region already has it:
-
-```json
-{"id":"<new ULID>","ops":[
-  {"op":"create_organization","id":"<organization id>","name":"<name>"},
-  {"op":"create_project","organization":"<organization id>","id":"<project id>","name":"<name>"}]}
-```
-
 A database another region holds is not recorded here when:
 
 | Reason | Metric |

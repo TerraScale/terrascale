@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary>Branches only the source identity the caller expected.</summary>
-public sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
+internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

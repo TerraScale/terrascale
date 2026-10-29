@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>POST …/projects/{project}/saved-queries</c>: saves a query in a project.</summary>
-public sealed class CreateSavedQueryEndpoint(IManagementService management, IQueryService queries) : Endpoint<SavedQueryRequest, IResult>
+internal sealed class CreateSavedQueryEndpoint(IManagementService management, IQueryService queries) : Endpoint<SavedQueryRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

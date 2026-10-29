@@ -22,9 +22,8 @@ import (
 // 30-day backup retention, so nothing of the run is trimmed or throttled), a project, the database, the collection and
 // an index on acct (so restores also prove index rebuild). IDs are this run's own ULIDs, recorded in run.json.
 func Setup(ctx context.Context, r *Run) error {
-	if r.Organization == "" {
-		r.Owner, r.Organization, r.Project, r.DatabaseID = ulid.Make().String(), ulid.Make().String(), ulid.Make().String(), ulid.Make().String()
-		r.SetupCommit = ulid.Make().String()
+	if r.Owner == "" {
+		r.Owner = ulid.Make().String()
 		r.Database, r.Collection = "pitr", "events"
 		if err := r.Save(); err != nil {
 			return err
@@ -37,33 +36,70 @@ func Setup(ctx context.Context, r *Run) error {
 	return createTenant(ctx, c, r)
 }
 
-// Adopt registers the run's tenant, with its recorded ids, on the node of r.NodeDir: a fresh, isolated node whose
-// backup settings name a copy of the source's bucket objects can then restore the source database from them alone.
 func Adopt(ctx context.Context, r *Run) error {
 	c, err := r.Client(time.Minute)
 	if err != nil {
 		return err
 	}
-	return createTenant(ctx, c, r)
+	if r.Organization == "" || r.Project == "" || r.DatabaseID == "" {
+		return fmt.Errorf("the run has no registered source database")
+	}
+	var database struct {
+		ID string `json:"id"`
+	}
+	if _, err := c.JSON(ctx, http.MethodGet, r.ManagementPath(), nil, &database); err != nil {
+		return fmt.Errorf("recover the source catalog before adopting this run: %w", err)
+	}
+	if database.ID != r.DatabaseID {
+		return fmt.Errorf("the recovered database does not match the run")
+	}
+	return createCollections(ctx, c, r)
 }
 
-// createTenant registers the run's organization, project and database (with their recorded ids) on c's node. On a
-// fresh target node this makes the source database's backup prefix (v1/<org>/<project>/<database id>/) restorable
-// there, without copying any local file.
 func createTenant(ctx context.Context, c *Client, r *Run) error {
-	// The same id and byte-identical body replay the recorded answer (CommitEndpoint.cs), so setup can be rerun.
-	commit := map[string]any{
-		"id": r.SetupCommit,
-		"ops": []any{
-			map[string]any{"op": "create_organization", "id": r.Organization, "name": "pitr-" + r.ID},
-			map[string]any{"op": "set_plan", "organization": r.Organization, "plan": "enterprise"},
-			map[string]any{"op": "create_project", "organization": r.Organization, "id": r.Project, "name": "pitr"},
-			map[string]any{"op": "create_database", "organization": r.Organization, "project": r.Project, "name": r.Database, "id": r.DatabaseID},
-		},
+	create := func(path, name string) (string, error) {
+		var resource struct {
+			ID string `json:"id"`
+		}
+		_, err := c.JSON(ctx, http.MethodPost, path, map[string]string{"name": name}, &resource)
+		return resource.ID, err
 	}
-	if _, err := c.JSON(ctx, http.MethodPost, "/v1/management/commits", commit, nil); err != nil {
-		return fmt.Errorf("tenant: %w", err)
+	var err error
+	if r.Organization == "" {
+		r.Organization, err = create("/v1/management/organizations", "pitr-"+r.ID)
+		if err != nil {
+			return fmt.Errorf("organization: %w", err)
+		}
+		if err := r.Save(); err != nil {
+			return err
+		}
 	}
+	root := "/v1/management/organizations/" + r.Organization
+	if _, err := c.JSON(ctx, http.MethodPut, root+"/plan", map[string]string{"plan": "enterprise"}, nil); err != nil {
+		return fmt.Errorf("plan: %w", err)
+	}
+	if r.Project == "" {
+		r.Project, err = create(root+"/projects", "pitr")
+		if err != nil {
+			return fmt.Errorf("project: %w", err)
+		}
+		if err := r.Save(); err != nil {
+			return err
+		}
+	}
+	if r.DatabaseID == "" {
+		r.DatabaseID, err = create(root+"/projects/"+r.Project+"/databases", r.Database)
+		if err != nil {
+			return fmt.Errorf("database: %w", err)
+		}
+		if err := r.Save(); err != nil {
+			return err
+		}
+	}
+	return createCollections(ctx, c, r)
+}
+
+func createCollections(ctx context.Context, c *Client, r *Run) error {
 	db := r.DatabasePath(r.Database)
 	// Never drop events, markers or fences: the oracle, the cuts and the phase fences rest on them.
 	for _, name := range []string{r.Collection, "markers", "fences", "nudges"} {

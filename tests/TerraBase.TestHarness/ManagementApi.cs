@@ -109,7 +109,6 @@ public sealed class ManagementApi : IAsyncDisposable
     internal async Task VerifyCatalogAsync(CancellationToken cancellationToken) =>
         await Assert.That(await ((CatalogGate)Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(cancellationToken)).IsTrue();
 
-    /// <summary>A client acting as <paramref name="user"/>.</summary>
     public HttpClient As(string user) => Authorized(() => Issuer.Mint(user));
 
     /// <summary>A client acting as <paramref name="user"/> through the platform operator on the internal listener.</summary>
@@ -347,10 +346,8 @@ public sealed class ManagementApi : IAsyncDisposable
     }
 }
 
-/// <summary>An organization with one project, its creator, and a data API client whose key reaches the whole organization.</summary>
 public sealed class Tenant(string user, string organizationId, string projectId, HttpClient data) : IDisposable
 {
-    /// <summary>The organization's creator.</summary>
     public string User { get; } = user;
 
     public string OrganizationId { get; } = organizationId;

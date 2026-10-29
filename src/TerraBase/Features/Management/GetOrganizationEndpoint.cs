@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>GET /v1/management/organizations/{organization}</c>: reads an organization.</summary>
-public sealed class GetOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class GetOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

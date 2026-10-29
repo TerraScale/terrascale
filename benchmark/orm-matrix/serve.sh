@@ -110,17 +110,21 @@ print(base64.b64encode(hashlib.sha256(b"TerraBase integration fixtures only; nev
   done
   curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz" || fail "TerraBase did not answer /healthz"
   local owner organization project
+  local local_management="http://127.0.0.1:$internal/v1/management"
   owner=$(ulid)
-  organization=$(ulid)
-  project=$(ulid)
-  jq -n --arg id "$(ulid)" --arg organization "$organization" --arg project "$project" --arg database "$(ulid)" '{id: $id, ops: [
-      {op: "create_organization", id: $organization, name: ("orm-matrix-" + $organization)},
-      {op: "set_plan", organization: $organization, plan: "enterprise"},
-      {op: "create_project", organization: $organization, id: $project, name: "orm-matrix"},
-      {op: "create_database", organization: $organization, project: $project, name: "matrix", id: $database}]}' >"$work/commit.json"
+  jq -n --arg name "orm-matrix-$(ulid)" '{name: $name}' >"$work/organization.json"
+  organization=$(curl -fsS --http2-prior-knowledge -H @"$work/peer.headers" -H "X-TerraBase-User-Id: $owner" \
+    -H 'Content-Type: application/json' --data-binary @"$work/organization.json" "$local_management/organizations" | jq -er '.id') \
+    || fail "organization creation failed"
+  curl -fsS --http2-prior-knowledge -o /dev/null -X PUT -H @"$work/peer.headers" -H "X-TerraBase-User-Id: $owner" \
+    -H 'Content-Type: application/json' --data '{"plan":"enterprise"}' "$local_management/organizations/$organization/plan" \
+    || fail "plan update failed"
+  project=$(curl -fsS --http2-prior-knowledge -H @"$work/peer.headers" -H "X-TerraBase-User-Id: $owner" \
+    -H 'Content-Type: application/json' --data '{"name":"orm-matrix"}' "$local_management/organizations/$organization/projects" | jq -er '.id') \
+    || fail "project creation failed"
   curl -fsS --http2-prior-knowledge -o /dev/null -H @"$work/peer.headers" -H "X-TerraBase-User-Id: $owner" \
-    -H 'Content-Type: application/json' --data-binary @"$work/commit.json" "http://127.0.0.1:$internal/v1/management/commits" \
-    || fail "tenant creation failed"
+    -H 'Content-Type: application/json' --data '{"name":"matrix"}' "$local_management/organizations/$organization/projects/$project/databases" \
+    || fail "database creation failed"
   jq -n --arg organization "$organization" --arg project "$project" \
     '{name: "orm-matrix", scopes: ["documents:read", "documents:write"], organizationId: $organization, projectId: $project, databaseId: null}' \
     >"$work/key.json"

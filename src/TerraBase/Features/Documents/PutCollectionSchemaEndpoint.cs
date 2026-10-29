@@ -10,7 +10,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Documents;
 
 /// <summary>Attaches or replaces a collection's declared JSON Schema.</summary>
-public sealed class PutCollectionSchemaEndpoint(IDocumentService documents, ITenantDirectory tenants, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
+internal sealed class PutCollectionSchemaEndpoint(IDocumentService documents, ITenantDirectory tenants, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

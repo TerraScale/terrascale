@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Schema;
 
 /// <summary><c>GET …/databases/{database}/schema</c>: lists the collections of a database with their sizes.</summary>
-public sealed class ListCollectionsEndpoint(IManagementService management, ISchemaService schema) : EndpointWithoutRequest<IResult>
+internal sealed class ListCollectionsEndpoint(IManagementService management, ISchemaService schema) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

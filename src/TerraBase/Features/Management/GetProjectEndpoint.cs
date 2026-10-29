@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/projects/{project}</c>: reads a project.</summary>
-public sealed class GetProjectEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class GetProjectEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

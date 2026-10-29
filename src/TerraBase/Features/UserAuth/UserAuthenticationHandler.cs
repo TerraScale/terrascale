@@ -12,12 +12,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>
-/// Authenticates <c>Authorization: Bearer &lt;ts-auth access token&gt;</c>: an asymmetrically signed JWT of type
-/// <c>at+jwt</c> from <c>auth-issuer</c>, for one of <c>auth-audience</c>, within its lifetime, with a <c>sub</c>, and not
-/// a ts-auth guest's (<c>is_anonymous</c>).
-/// The principal carries the <c>sub</c> as <see cref="ClaimTypes.NameIdentifier"/>. Request headers never name the user.
-/// </summary>
 internal sealed class UserAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,

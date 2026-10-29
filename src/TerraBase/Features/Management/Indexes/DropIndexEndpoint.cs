@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <summary><c>DELETE …/indexes/{index}</c>: drops a secondary index.</summary>
-public sealed class DropIndexEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
+internal sealed class DropIndexEndpoint(IManagementService management, IIndexService indexes) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

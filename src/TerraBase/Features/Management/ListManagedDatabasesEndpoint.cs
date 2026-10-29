@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>GET …/projects/{project}/databases</c>: lists the databases of a project.</summary>
-public sealed class ListManagedDatabasesEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class ListManagedDatabasesEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

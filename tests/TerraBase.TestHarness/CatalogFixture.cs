@@ -20,6 +20,17 @@ internal static class CatalogFixture
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken);
+            var existing = await directory.ResolveProjectDatabaseAsync(database.ProjectId!, name, linked.Token);
+            if (existing is Unavailable)
+            {
+                return false;
+            }
+            if (existing is ResolvedProjectDatabase registered && registered.Database.OrganizationId == database.OrganizationId
+                && registered.Database.DatabaseId == database.DatabaseId)
+            {
+                return true;
+            }
+
             var result = await directory.AdoptDatabaseAsync(database, name,
                 new DatabasePlacement(api.Server.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().Region, replicas, 1), linked.Token);
             return result switch
