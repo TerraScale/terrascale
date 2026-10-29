@@ -131,13 +131,25 @@ jobs:
         if: github.event_name == 'schedule'
         run: python3 scripts/ci/slow-state.py
       - name: Scan for legacy terms
-        run: python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md
+        if: github.event_name != 'schedule'
+        env:
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+        run: |
+          args=()
+          if [[ -n $BASE_SHA && ! $BASE_SHA =~ ^0+$ ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            args+=(--changed-from "$BASE_SHA")
+          fi
+          python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md "${args[@]}" > legacy-scan.log
+          head -1 legacy-scan.log
       - name: Retain legacy hits
-        if: failure()
+        if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: legacy-hits
-          path: legacy-hits.md
+          path: |
+            legacy-hits.md
+            legacy-scan.log
 
       - name: Check out the path-filter matcher for regression fixtures
         if: github.event_name != 'push' && github.event_name != 'schedule'

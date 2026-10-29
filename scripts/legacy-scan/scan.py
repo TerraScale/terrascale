@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--repo", required=True)
     parser.add_argument("--mode", choices=["report", "fail"])
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--changed-from", help="Scan only existing files changed since this Git revision")
     args = parser.parse_args()
     root = args.root.resolve()
     policy = Path(__file__).resolve().parent
@@ -30,7 +31,8 @@ def main():
     if mode not in {"report", "fail"}:
         raise ValueError(".legacy-scan-mode must contain report or fail")
     hits = []
-    paths = git(root, "ls-files", "-z").decode("utf-8").split("\0")
+    paths = (git(root, "diff", "--name-only", "--diff-filter=ACMRT", "-z", args.changed_from, "HEAD")
+             if args.changed_from else git(root, "ls-files", "-z")).decode("utf-8").split("\0")
     for name in sorted(set(paths) - {""}):
         path = root / name
         data = os.readlink(path).encode("utf-8") if path.is_symlink() else path.read_bytes()
