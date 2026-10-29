@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Playwright;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
 {

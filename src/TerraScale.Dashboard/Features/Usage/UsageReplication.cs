@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.Features.Usage
                     return new([], [], Error: "TerraBase couldn't find this project for replication reporting.");
                 }
 
-                if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden)
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
                     return new([], [], Error: "TerraBase didn't authorize replication data for this project.");
                 }

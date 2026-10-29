@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,7 +13,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Platform.Persistence;

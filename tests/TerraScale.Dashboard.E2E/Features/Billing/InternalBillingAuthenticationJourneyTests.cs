@@ -1,7 +1,5 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
@@ -173,13 +171,9 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             {
                 args[1] = "---org";
             }
-            else if (shape == "trailing-positional")
-            {
-                args = [.. args, "--", "unexpected"];
-            }
             else
             {
-                args = ["report-internal-billing", "--"];
+                args = shape == "trailing-positional" ? [.. args, "--", "unexpected"] : ["report-internal-billing", "--"];
             }
 
             using var output = new StringWriter(); using var error = new StringWriter();

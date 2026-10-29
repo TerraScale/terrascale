@@ -3,7 +3,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
@@ -380,7 +379,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
                 if (email == DeferredEmail)
                 {
-                    DeferredCommitted = Task.Run(async () => { await CommitDeferred.Task; await inner.CreateInvitationAsync(session, organizationId, email, role, default); });
+                    DeferredCommitted = Task.Run(async () => { await CommitDeferred.Task; await inner.CreateInvitationAsync(session, organizationId, email, role, default); }, cancellationToken);
                     throw new HttpRequestException("Synthetic timeout before ts-auth committed the invitation.");
                 }
                 var created = await inner.CreateInvitationAsync(session, organizationId, email, role, cancellationToken);

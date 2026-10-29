@@ -5,7 +5,6 @@ using Stripe;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {

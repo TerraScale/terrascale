@@ -8,7 +8,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.Home;
-using TerraScale.Dashboard.Platform.Http;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
