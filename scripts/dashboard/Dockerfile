@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# The final stage is the actual application. Only DEMO=true selects its in-memory demo providers.
+# The final stage is the production application; synthetic providers exist only in the test executable.
 
 # Build stages run on the builder's platform; the output is portable IL, so one publish serves amd64 and arm64.
 FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS node-modules
@@ -22,7 +22,7 @@ COPY src/TerraScale.Dashboard/TerraScale.Dashboard.csproj src/TerraScale.Dashboa
 # Keep restored package bytes in this cached build layer, including on a fresh CI builder.
 RUN dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode
 COPY . .
-# The deployed commit (`--build-arg SOURCE_REVISION=$(git rev-parse HEAD)`): /health/ready reports it.
+# Pin the source revision in the build; the image label and deployment digest identify the serving revision.
 ARG SOURCE_REVISION
 RUN test -n "$SOURCE_REVISION" || { echo 'Pass --build-arg SOURCE_REVISION=$(git rev-parse HEAD).' >&2; exit 1; }
 RUN dotnet publish src/TerraScale.Dashboard --configuration Release --output /app --no-restore \
