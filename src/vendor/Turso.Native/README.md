@@ -8,7 +8,8 @@ The required `native` job still gates `test`. Native maintenance is an explicit
 One maintenance dispatch runs two independent clean builds per real architecture
 and compares their library bytes before preparing an artifact for parent publication; they do not qualify Fast, publish images or upload a release.
 
-Release: [`turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023).
+Release: [`turso-native-v0.8.2-fts-contract1-runtime-aegis-interrupt-20261029`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-runtime-aegis-interrupt-20261029).
+It supersedes `turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023`, which stays published and unchanged.
 `SHA256SUMS` pins both qualified libraries; downloads and managed builds reject
 missing or mismatched bytes. Never replace or append assets to encryption-only
 `turso-native-v1` or overwrite the combined release.
@@ -69,6 +70,32 @@ The added contract smoke tests persisted encrypted FTS after reopen, marker 1,
 a SQL trigger spoof remaining a constraint, and real ciphertext tamper producing
 native corruption. Native admission bounds opaque scoring allocations; it does
 not promise a hard deadline inside third-party work.
+
+## Interrupt, query timeout and value length (20261029)
+
+`0004-export-interrupt-query-timeout-and-value-length.patch` (SHA-256
+`94bec89cb24ceb590b401e30182db4b9c173a222a0ee3a8460ee2afc50fc77f8`, checked before it is applied after the budget
+patch) adds three TerraScale exports for native SQL sessions:
+
+- `turso_connection_interrupt`: core's `Connection::interrupt`, sqlite3_interrupt semantics. Safe from another thread
+  while a statement runs; ignored when the connection is idle; core clears it once no statement is active.
+- `turso_connection_set_query_timeout_ms`: core's per-connection statement deadline; 0 disables it.
+- `turso_connection_set_max_value_length`: a per-connection bound (default and maximum `Value::MAX_BLOB_LENGTH`) that
+  `zeroblob`, `randomblob` and `||` check before allocating, and every scalar function result checks before it is
+  stored; past it the statement fails with `TooBig`.
+
+The contract smoke now also proves the query timeout, a cross-thread interrupt, the next statement after both, and the
+value bound for `zeroblob`, `randomblob`, `printf` and `||`. The build checks all three exports and
+`turso_connection_prepare_first`.
+
+[Maintenance run 40926743490](https://github.com/TerraScale/terrascale/actions/runs/40926743490) built twice per real
+architecture; both builds per architecture produced identical bytes and passed the FTS and contract1 smokes. An
+independent admitted dev-host build produced the same linux-x64 bytes.
+
+| Architecture | SHA-256 |
+| --- | --- |
+| linux-x64 | `f720d4948f7633c6bc1d5118fc8e656759a8c67da60a734769553e192ecc79f8` |
+| linux-arm64 | `c46b4393474348916f64b7f5842c55bbf48504968f0b5cbecc8b63e055ba8b7f` |
 
 ## Runtime AEGIS qualification
 

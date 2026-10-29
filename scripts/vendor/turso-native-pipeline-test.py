@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
             "native smoke: candidate query/cursor/sort/preflight/count use indexed text id seeks; ULIDs, missing hits and empty counts passed\n"
             "native smoke: three-term carrying-slop reader/count/ordered queries refuse scratch; small admitted slop succeeds\n")
         (release / f"{rid}-contract1-smoke.txt").write_text(
-            "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint and page tamper TURSO_CORRUPT passed\n")
+            "contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint, interrupt, query timeout, value length and page tamper TURSO_CORRUPT passed\n")
 
         def manifest(directory, name):
             files = sorted(path for path in directory.rglob("*") if path.is_file() and path.name != name)

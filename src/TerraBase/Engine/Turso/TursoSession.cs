@@ -91,8 +91,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             ThrowIfStopped();
             return 1;
         });
-        // One evaluated candidate of an authorized query: engine work only, no scanned bytes.
-        // Its argument names a row column, so Turso evaluates it per candidate, not once.
         connection.CreateFunction<object?, long>("tb_sql_row", _ =>
         {
             if (_rowCharge?.Invoke() == true)
