@@ -14,8 +14,7 @@ claim that the current runtime or deployed fleet already implements it.
   formats are in [identity-descriptor.md](identity-descriptor.md).
 - Each value has one correct setting in code. Production exposes no tuning
   knobs. Fakes, demo stores and authentication bypasses belong only in test
-  code and test binaries, except the user-authorized `DEMO=true` public demo
-  (`src/TerraScale.Dashboard/Demo`); unsetting it restores the real application.
+  code and test binaries (`tests/TerraScale.Dashboard.E2E/Demo`).
 - CI rejects new switch-style configuration. A narrow allowance for an
   unavoidable third-party name needs a one-line reason.
 

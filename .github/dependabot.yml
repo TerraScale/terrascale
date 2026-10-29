@@ -8,6 +8,8 @@ updates:
       - /benchmark/**
       - /aspire/**
       - /tools/**
+      - /sdk/dotnet/**
+      - /scripts/dashboard/**
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
@@ -16,7 +18,9 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: gomod
-    directory: /benchmark
+    directories:
+      - /benchmark
+      - /sdk/go
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
@@ -25,7 +29,12 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: npm
-    directory: /aspire
+    directories:
+      - /aspire
+      - /sdk/js
+      - /docs-site
+      - /docs-site/create-terrascale-app
+      - /scripts/dashboard
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
@@ -36,6 +45,7 @@ updates:
   - package-ecosystem: cargo
     directories:
       - /benchmark/clients/rust
+      - /sdk/rust
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
@@ -45,6 +55,15 @@ updates:
         patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /sdk/python
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
