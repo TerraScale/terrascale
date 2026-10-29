@@ -1,0 +1,94 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Importing.ImportJobPage>
+@using TerraScale.Dashboard.Features.Importing
+@using TerraScale.Dashboard.Features.Databases
+@using TerraScale.DotNet.TerraBase
+@{
+    var job = Model.Job; var state = Model.State; var preview = job.Preview; var culture = System.Globalization.CultureInfo.InvariantCulture;
+    var canWrite = Model.Shell.Context.CanWriteProjectData;
+    var action = "/api/v1/dashboard/imports/" + Uri.EscapeDataString(job.Database);
+    var live = ImportService.Live(job);
+    var differences = ImportService.Differences(job);
+    var stopped = state is "failed" or "cancelled";
+    string When(DateTimeOffset? value) => value?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", culture) ?? "—";
+    string Number(long value) => value.ToString("N0", culture);
+    void Upload(string title, string description)
+    {
+        <section class="ts-card" aria-labelledby="import-upload-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="import-upload-title">@title</h2><p class="ts-card-description">@description</p></div></header><div class="ts-card-body">
+        <form class="ts-form" data-import-upload="resend" data-database="@job.Database" data-bytes="@job.Source.Bytes" data-sha256="@job.Source.Sha256"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+        <div class="ts-field"><label class="ts-label" for="import-resend">Export file</label><input class="ts-input" id="import-resend" type="file" name="file" required aria-describedby="import-resend-hint" /><p class="ts-hint" id="import-resend-hint">The same file: @TerraScale.Dashboard.Common.Formatting.MetricFormat.Bytes(job.Source.Bytes), SHA-256 <span class="ts-mono">@(job.Source.Sha256[..12])…</span>@(job.Source.ReceivedBytes > 0 ? " · " + TerraScale.Dashboard.Common.Formatting.MetricFormat.Bytes(job.Source.ReceivedBytes) + " already received; the upload continues from there." : "")</p></div>
+        <progress class="ts-import-progress" max="100" value="0" hidden data-import-progress></progress><p class="ts-meta" role="status" aria-live="polite" data-import-status></p>
+        <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Upload",16)<span>Upload</span></button></div></form></div></section>
+    }
+    void Command(string name, string label, string icon, string tone = "secondary")
+    {
+        <form method="post" action="@(action + "/" + name)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-@tone" type="submit">@Icons.Render(icon,16)<span>@label</span></button></form>
+    }
+}
+<div id="import-job" class="ts-stack-lg">@if(live){<span hidden data-on-interval__duration.2s="@("@get('" + ImportEndpoints.JobPath(job.Database) + "')")"></span>}
+<dl class="ts-stats ts-stats-compact" aria-label="Import summary"><div class="ts-stat"><dt class="ts-stat-label">Status</dt><dd class="ts-stat-value"><span class="ts-badge ts-badge-tone" data-tone="@ImportService.Tone(job.State)"><span class="ts-dot" aria-hidden="true"></span>@state.Replace('_', ' ')</span></dd></div><div class="ts-stat"><dt class="ts-stat-label">Source</dt><dd class="ts-stat-value">@ImportService.FormatLabel(job.Source.Format)</dd><dd class="ts-stat-detail">Export · @TerraScale.Dashboard.Common.Formatting.MetricFormat.Bytes(job.Source.Bytes)</dd></div><div class="ts-stat"><dt class="ts-stat-label">Destination</dt><dd class="ts-stat-value">@if(Model.DatabaseId is { } databaseId){<a href="@DatabaseService.Path(databaseId)">@job.Database</a>}else{@job.Database}</dd></div><div class="ts-stat"><dt class="ts-stat-label">Created</dt><dd class="ts-stat-value">@When(job.CreatedAt)</dd></div></dl>
+@if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div>}
+@if(job.Error?.Code == "preview_changed" && state is "analyzing" or "ready"){<div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">The preview changed after you confirmed it</p><p class="ts-alert-body">TerraBase's mapping changed before copying began, so nothing was copied under the old plan. Review the new preview and confirm it again.</p></div>}
+@if(state is "ready" or "queued" or "running" or "validating"){<p class="ts-meta">Do not write to @job.Database until the import completes: the import never overwrites a document, so one written there stops it.</p>}
+@if(state == "awaiting_source"){
+    if(job.Error?.Code == "source_checksum_mismatch"){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">The upload was damaged in transit</p><p class="ts-alert-body">TerraBase discarded the bytes because their SHA-256 differed. Upload the identical file again. A changed or re-exported file needs a new import.</p></div>}
+    if(canWrite){Upload("Upload the export", "TerraBase is waiting for the file this import was created for. A partial upload with no progress for 1 day is discarded, and the upload starts over.");}
+}
+else if(state == "analyzing"){<div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Reading the export</p><p class="ts-alert-body">TerraBase maps every row to build the dry-run preview. Nothing in the export is executed and nothing is written yet.</p></div>}
+else if(state is "queued" or "running" or "validating"){
+    var progress = job.Progress;
+<section class="ts-card" aria-labelledby="import-progress-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="import-progress-title">@(state switch { "queued" => "Waiting to start", "validating" => "Validating", _ => "Copying" })</h2><p class="ts-card-description">@(state switch { "queued" => "One import copies at a time in this region; this one starts next.", "validating" => "Comparing row counts and checksums with the export.", _ => "Written in atomic batches. A restart continues after the last committed batch." })</p></div></header><div class="ts-card-body ts-stack-sm">
+@if(progress is not null){<div class="ts-row-between"><span class="ts-meta">Rows written</span><span class="ts-mono">@(progress.RowsTotal > 0 ? decimal.Truncate(Math.Clamp(progress.RowsWritten * 100m / progress.RowsTotal, 0, 100)) : 0)%</span></div><progress class="ts-import-progress" max="@Math.Max(progress.RowsTotal, 1)" value="@progress.RowsWritten" aria-label="Rows written">@progress.RowsWritten</progress>
+<p class="ts-meta">@Number(progress.RowsWritten) of @Number(progress.RowsTotal) rows · @progress.TablesDone of @progress.TablesTotal tables@(progress.CurrentTable is null ? "" : " · copying " + progress.CurrentTable)</p>}
+</div></section>
+}
+else if(state == "completed"){
+<div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-title">Import verified</p><p class="ts-alert-body">@Number(job.Validation?.Tables.Sum(table => table.Documents) ?? 0) documents in @(job.Validation?.Tables.Count ?? 0) collections. Every row count and checksum matches the export. You can now write to @job.Database and add replica regions.</p></div>
+}
+else if(stopped){
+<div class="ts-alert @(state == "failed" ? "ts-alert-danger" : "ts-alert-info")" role="@(state == "failed" ? "alert" : "status")"><p class="ts-alert-title">@(state == "failed" ? "Import stopped" : "Import cancelled")</p>
+@if(job.Error is { } error){<p class="ts-alert-body">@error.Message <span class="ts-mono">(@(error.Code + (error.Table is null ? "" : " · " + error.Table) + (error.Row is null ? "" : " · row " + Number(error.Row.Value)) + (error.Column is null ? "" : " · column " + error.Column)))</span></p>}
+<p class="ts-alert-body">@(state == "failed" && job.Error?.Retryable == false ? "Fix the source data, export again, and start a new import." : job.ConfirmedPreviewId is null ? "Resuming reads the export again; you then confirm a fresh preview." : "Resuming continues copying after the last committed batch, under the preview you confirmed.") Documents already written stay in @job.Database; delete that database to discard them.@(job.Source.RetainedUntil is { } until ? " TerraBase keeps the uploaded file until " + When(until) + "." : "")</p></div>
+    if(canWrite && (state == "cancelled" || job.Error?.Retryable == true)){if(job.Source.Staged){<div class="ts-row">@{Command("resume", "Resume import", "RotateCcw", "primary");}</div>}else{Upload("Upload the export again to resume", "TerraBase no longer holds the uploaded file.");}}
+}
+@if(state == "rejected" && preview is null){
+<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">The export could not be used</p><p class="ts-alert-body">@(job.Error?.Message ?? "TerraBase could not read this file.")@(job.Error?.Code == "wal_mode_source" ? " Make a rollback-mode copy with VACUUM INTO." : "") Export again, then start a new import. Delete @job.Database to discard this one.</p></div>
+}
+@if(job.Validation is { } validation){
+<section class="ts-card ts-card-flush" aria-labelledby="import-validation-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="import-validation-title">Validation</h2><p class="ts-card-description">@(validation.Passed ? "Counts and checksums match the export." : "Some collections do not match the export.")</p></div></header><div class="ts-table-wrap"><table class="ts-table"><thead><tr><th>Source table</th><th>Collection</th><th class="ts-num">Source rows</th><th class="ts-num">Documents</th><th>Checksum</th></tr></thead><tbody>
+@foreach(var table in validation.Tables){<tr><td class="ts-mono">@table.Source</td><td class="ts-mono">@table.Collection</td><td class="ts-num">@Number(table.SourceRows)</td><td class="ts-num">@Number(table.Documents)</td><td><span class="ts-badge @(table.Match ? "ts-badge-success" : "ts-badge-danger")">@(table.Match ? "Match" : "Mismatch")</span></td></tr>}
+</tbody></table></div></section>
+}
+@if(preview is not null && state is "ready" or "rejected"){
+<section class="ts-card" aria-labelledby="import-preview-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="import-preview-title">Dry-run preview</h2><p class="ts-card-description">Every row of the uploaded export, mapped. Nothing has been written.</p></div></header><div class="ts-card-body ts-stack-sm">
+<dl class="ts-stats ts-stats-compact"><div class="ts-stat"><dt class="ts-stat-label">Tables</dt><dd class="ts-stat-value">@preview.Tables.Count(table => !table.Excluded) of @preview.Tables.Count</dd></div><div class="ts-stat"><dt class="ts-stat-label">Rows</dt><dd class="ts-stat-value">@Number(preview.Tables.Where(table => !table.Excluded).Sum(table => table.Rows))</dd></div><div class="ts-stat"><dt class="ts-stat-label">Blocking issues</dt><dd class="ts-stat-value" data-import-issues="@(preview.Blocking > 0 ? "blocking" : null)">@preview.Blocking</dd></div><div class="ts-stat"><dt class="ts-stat-label">Warnings</dt><dd class="ts-stat-value" data-import-issues="@(preview.Warnings > 0 ? "warning" : null)">@preview.Warnings</dd></div></dl>
+@if(preview.Blocking > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">@preview.Blocking blocking @(preview.Blocking == 1 ? "issue" : "issues")</p><p class="ts-alert-body">Exclude the affected tables or columns, then update the preview. Invalid values must be fixed in the source and exported again.</p></div>}
+</div></section>
+<form method="post" action="@(action + "/options")" class="ts-stack-lg" aria-label="Import options"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<section class="ts-card" aria-labelledby="import-tables-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="import-tables-title">Tables and type mapping</h2><p class="ts-card-description">Each table becomes a collection. @(char.ToUpperInvariant(ImportService.Ids(job.Source.Format)[0]) + ImportService.Ids(job.Source.Format)[1..]). Exclude what should not be copied.</p></div>@if(canWrite){<div class="ts-card-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">@Icons.Render("RefreshCw",15)<span>Update preview</span></button></div>}</header><div class="ts-card-body ts-stack-sm">
+@for(var index = 0; index < preview.Tables.Count; index++){
+    var table = preview.Tables[index]; var id = "import-table-" + index.ToString(culture);
+    var blocking = table.Issues.Count(issue => issue.Severity == "blocking");
+<div class="ts-import-table"><div class="ts-row-between"><span class="ts-list-main"><span class="ts-strong ts-mono">@table.Source → @table.Collection</span><span class="ts-meta">@Number(table.Rows) rows · @(job.Source.Format == TerraScale.DotNet.TerraBase.TerraBaseImportFormat.Ndjson ? "exported ids kept" : "generated ULIDs")@(table.PrimaryKey.Count > 0 ? " · source primary key fields: " + string.Join(", ", table.PrimaryKey) : " · no source primary key required")@(table.Excluded ? " · excluded" : "")</span></span>
+<span class="ts-row">@if(blocking > 0){<span class="ts-badge ts-badge-danger">@blocking blocking</span>}@if(table.Constraints.Count > 0){<span class="ts-badge ts-badge-info">@table.Constraints.Count not enforced</span>}<label class="ts-check" for="@id"><input type="checkbox" id="@id" name="exclude" value="@table.Source" checked="@table.Excluded" /><span>Exclude table</span></label></span></div>
+@if(table.Issues.Count > 0){<ul class="ts-import-issues">@foreach(var issue in table.Issues){<li><span class="ts-badge @(issue.Severity == "blocking" ? "ts-badge-danger" : "ts-badge-warning")">@issue.Severity</span> @ImportService.Issue(table)(issue)</li>}</ul>}
+<details class="ts-import-details" open="@(blocking > 0)"><summary class="ts-meta">@table.Columns.Count columns, @table.Constraints.Count constraints</summary><div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">@table.Source type mapping</caption><thead><tr><th>Column</th><th>Source type</th><th>Stored as</th><th>Exclude</th></tr></thead><tbody>
+@foreach(var column in table.Columns){<tr><td class="ts-mono">@(column.Name + (column.Nullable ? "" : " · not null"))</td><td class="ts-mono">@column.SourceType</td><td>@ImportService.Describe(column.Mapping)</td><td><input type="checkbox" name="exclude" value="@(table.Source + "." + column.Name)" checked="@column.Excluded" aria-label="@("Exclude " + table.Source + "." + column.Name)" /></td></tr>}
+</tbody></table></div>
+@if(table.Constraints.Count > 0){<ul class="ts-meta">@foreach(var constraint in table.Constraints){<li>@ImportService.Kind(constraint.Kind) <span class="ts-mono">@(constraint.Name ?? "(unnamed)")</span> (@string.Join(", ", constraint.Columns)@(constraint.References is null ? "" : " → " + constraint.References)): @(constraint.Enforced ? "enforced" : "recorded, not enforced")</li>}</ul>}
+</details></div>
+}
+</div></section></form>
+@if(preview.Skipped.Count > 0){<details class="ts-card ts-import-skipped"><summary class="ts-card-body ts-strong">@(preview.Skipped.Count + (preview.SkippedTruncated ? "+" : "")) source objects are not imported</summary><ul class="ts-card-body ts-meta">@foreach(var skipped in preview.Skipped){<li>@ImportService.Kind(skipped.Kind) <span class="ts-mono">@skipped.Name</span></li>}@if(preview.SkippedTruncated){<li>More objects were skipped than TerraBase lists.</li>}</ul></details>}
+@if(state == "ready" && preview.Blocking == 0){
+<section class="ts-card" aria-labelledby="import-confirm-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="import-confirm-title">Confirm this preview</h2><p class="ts-card-description">Preview <span class="ts-mono">@preview.Id</span>. Starting copies exactly this plan into @job.Database.</p></div></header><div class="ts-card-body ts-stack-sm">
+@if(!differences.Any){<p class="ts-meta">Every column keeps its own JSON type and nothing is excluded.</p>}
+@foreach(var group in new[] { ("Stored as a different type", differences.TypeChanges), ("Constraints not enforced", differences.Constraints), ("Not imported", differences.Excluded), ("Generated document IDs", differences.GeneratedIds), ("Warnings", differences.Warnings) }){if(group.Item2.Count > 0){<div class="ts-alert ts-alert-warning"><p class="ts-alert-title">@group.Item1 (@group.Item2.Count)</p><ul class="ts-alert-body">@foreach(var line in group.Item2){<li>@line</li>}</ul></div>}}
+@if(canWrite){<form method="post" action="@(action + "/start")" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="previewId" value="@preview.Id" /><label class="ts-check"><input type="checkbox" name="confirm" value="1" required /><span>I reviewed this exact preview and accept every difference listed.@(preview.Skipped.Count > 0 ? " Skipped source objects are not imported." : "")</span></label><div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Play",16)<span>Start import</span></button></div></form>}
+else{<p class="ts-meta">Starting an import requires management access.</p>}
+</div></section>
+}
+}
+@if(canWrite && !job.CancelRequested && state is "awaiting_source" or "analyzing" or "ready" or "rejected" or "queued" or "running" or "validating"){<div class="ts-row">@{Command("cancel", "Cancel import", "X", "ghost");}</div>}
+@if(job.CancelRequested && !stopped){<p class="ts-meta" role="status">Cancelling after the current batch…</p>}
+@if(live){<a class="ts-btn ts-btn-ghost ts-btn-sm" href="@ImportEndpoints.JobPath(job.Database)">@Icons.Render("RefreshCw",15)<span>Refresh status</span></a>}
+</div>

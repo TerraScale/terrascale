@@ -1,0 +1,10 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
+<main class="ts-page" aria-labelledby="grant-removed-title">
+    <h1 id="grant-removed-title">Your explicit project grant was removed</h1>
+    <p role="status">Organization-implied access and independent service keys are unchanged. If no other access remains, this project is no longer available to you.</p>
+    <a class="ts-link" href="/profile">Return to your account</a>
+</main>
+@functions {
+    public DocumentModel LayoutModel => Model;
+}

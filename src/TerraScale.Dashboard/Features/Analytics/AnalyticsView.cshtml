@@ -1,0 +1,27 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page"><header class="ts-stack-sm"><h1>Analytics</h1><p class="ts-meta">Requests, latency, bandwidth and storage measured by TerraBase.</p></header>
+    <form class="ts-filters" method="get" action="/analytics" role="search" aria-label="Filter analytics" data-submit-once>
+        <input type="hidden" name="project" value="@Model.Selection.Context.Project!.Id" />
+        @if (Model.Totals is null)
+        {
+            <label class="ts-filter-field" for="analytics-range"><span class="ts-label">Range</span><select class="ts-select" id="analytics-range" name="range">@foreach (var range in new[] { "1h", "24h", "7d", "30d" }) { <option value="@range" selected="@(range == Model.Selection.Range ? "selected" : null)">@range</option> }</select></label>
+        }
+        else
+        {
+            <input type="hidden" id="analytics-range" name="range" value="@Model.Selection.Range" />
+        }
+        <label class="ts-filter-field" for="analytics-database"><span class="ts-label">Database</span><select class="ts-select" id="analytics-database" name="database"><option value="">All databases</option>@foreach (var database in Model.Selection.Context.Project!.Databases.Values.OrderBy(item => item.Name, StringComparer.Ordinal)) { <option value="@database.Id" selected="@(database.Id == Model.Selection.DatabaseId ? "selected" : null)">@database.Name</option> }</select></label>
+        <label class="ts-filter-field" for="analytics-region"><span class="ts-label">Region</span><select class="ts-select" id="analytics-region" name="region"><option value="">All regions</option>@foreach (var region in Model.Selection.Regions) { <option value="@region" selected="@(region == Model.Selection.Region ? "selected" : null)">@region</option> }</select></label>
+        <button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
+    </form>
+    <p class="ts-meta ts-measurement-loading" role="status">Loading analytics measurements…</p>
+    <p class="ts-meta">Measured by TerraBase. Time buckets are selected automatically for the range. Request latency percentiles are approximate histogram estimates in milliseconds. Storage is shown when sampled. Replication uses its own replication_bytes meter. Read operations match the read counts on Usage; committed put, patch and delete operations are writes. Billing uses separate 4 KiB operation units, so one operation can consume multiple units. Counters are flushed every 10 seconds, so the newest requests can take that long to appear. Requests include this dashboard&#39;s own reads while you browse a database, such as document counts; they are not read operations and are not billed.</p>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsSummaryView, TerraScale.Dashboard.Features.Analytics.AnalyticsPage>(Model))
+    @if (Model.Totals is not null) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsRegionView, TerraScale.Dashboard.Features.Analytics.AnalyticsPage>(Model)) }
+    @if (Model.Totals is not null) { <div class="ts-grid ts-grid-2">@foreach (var chart in Model.Charts) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsChartView, TerraScale.Dashboard.Features.Analytics.AnalyticsChart>(chart)) }</div> }
+    <section class="ts-card" id="prometheus-export" aria-labelledby="prometheus-export-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="prometheus-export-title">Export to Prometheus</h2><p class="ts-card-description">Scrape this project's metrics with an API key that has databases:read. The client ID is the key up to its first underscore. Metrics: terrascale_database_requests_per_second, terrascale_database_errors_per_second, terrascale_database_operations_per_second{kind}, terrascale_database_latency_milliseconds{quantile} and terrascale_database_storage_bytes, labelled database, database_id and region.</p></div></header><div class="ts-card-body">
+        <div class="ts-snippet" data-signals="{_promCopy: ''}"><div class="ts-snippet-header ts-row-between"><span>prometheus.yml</span><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-on:click="(navigator.clipboard?.writeText(document.getElementById('prometheus-config').textContent) ?? Promise.reject()).then(() => { $_promCopy = 'Copied'; setTimeout(() => $_promCopy = '', 2000) }, () => $_promCopy = 'Copy failed')">@Icons.Render("Copy", 14)<span data-text="$_promCopy || 'Copy'">Copy</span></button></div><pre class="ts-snippet-body" id="prometheus-config"><code>@Model.PrometheusConfig</code></pre></div>
+    </div></section>
+</main>
+@functions { public ShellModel LayoutModel => Model.Shell; }
