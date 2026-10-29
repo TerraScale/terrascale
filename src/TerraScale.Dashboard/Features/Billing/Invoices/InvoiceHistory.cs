@@ -116,11 +116,11 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             if (renewal is { } next && next.At > now)
             {
                 summary = summary with
-            {
-                NextInvoice = next.Ends ? "None scheduled" : MoneyFormat.Money(next.AmountCents, next.Currency) + " base fee",
-                NextDetail = next.Ends ? "The subscription ends on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
+                {
+                    NextInvoice = next.Ends ? "None scheduled" : MoneyFormat.Money(next.AmountCents, next.Currency) + " base fee",
+                    NextDetail = next.Ends ? "The subscription ends on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
                     : "Base subscription at renewal on " + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture) + ". Usage, credits, discounts and taxes may change the final invoice."
-            };
+                };
             }
 
             var current = invoices.Where(invoice => invoice.PeriodStart is { } start && invoice.PeriodEnd is { } end &&
@@ -158,10 +158,10 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             if (upcoming is not null)
             {
                 summary = summary with
-            {
-                NextInvoice = MoneyFormat.Money(upcoming.AmountCents, upcoming.Currency),
-                NextDetail = "Recorded open invoice dated " + upcoming.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
-            };
+                {
+                    NextInvoice = MoneyFormat.Money(upcoming.AmountCents, upcoming.Currency),
+                    NextDetail = "Recorded open invoice dated " + upcoming.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
+                };
             }
 
             if (invoices.Count > 0)

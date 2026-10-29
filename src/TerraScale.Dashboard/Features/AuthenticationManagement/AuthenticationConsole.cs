@@ -142,7 +142,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         // Empty values clear a branding field.
         public static TerraScaleAuthProjectBranding Branding(string? name, string? logoUrl, string? themeColor)
         {
-            static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            static string? Clean(string? value)
+            {
+                return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            }
+
             var (title, logo, color) = (Clean(name), Clean(logoUrl), Clean(themeColor)?.ToLowerInvariant());
             if (title is { Length: > 64 } || title?.Any(char.IsControl) == true)
             {
@@ -165,7 +169,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
         public static TerraScaleAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId)
         {
-            static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            static string? Clean(string? value)
+            {
+                return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            }
+
             var (id, secret, url, team, key) = (Clean(clientId), Clean(clientSecret), Clean(issuer), Clean(teamId)?.ToUpperInvariant(), Clean(keyId)?.ToUpperInvariant());
             if (AuthenticationProvider.Find(provider) is not { } known)
             {

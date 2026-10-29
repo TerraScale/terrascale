@@ -26,13 +26,13 @@ namespace TerraScale.Dashboard.Features.Support
     // ts-auth owns the support mailbox address, the requester's reply address and the per-user hourly limit.
     public sealed class SupportMail(IHttpClientFactory http, IDashboardIdentity identity) : ISupportMail
     {
-        public async Task<string> SendAsync(SupportRequest support, CancellationToken cancellationToken)
+        public async Task<string> SendAsync(SupportRequest request, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/email/support") { Content = JsonContent.Create(support) };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            using var message = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/email/support") { Content = JsonContent.Create(request) };
+            message.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(
                 Uri.EscapeDataString(credentials.AuthClientId) + ":" + Uri.EscapeDataString(credentials.AuthClientSecret))));
-            using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);
+            using var response = await http.CreateClient("platform").SendAsync(message, cancellationToken);
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 throw new AccountAccessException("You sent too many support requests this hour. Email support@terrascale.tech instead.", 429);

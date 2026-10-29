@@ -343,7 +343,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             JsonElement body = default;
             try { using var document = JsonDocument.Parse(bytes); body = document.RootElement.Clone(); }
-            catch (JsonException) { if (response.IsSuccessStatusCode)
+            catch (JsonException)
+            {
+                if (response.IsSuccessStatusCode)
                 {
                     throw new HttpRequestException("ts-auth answered an invalid body.");
                 }
@@ -443,7 +445,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
 
         public AccountContext Context => Shell.Context;
-        public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
+        public IReadOnlyList<ProjectCredential> Filtered => [.. Keys.Where(key => (Status.Length == 0 || Status == "active" == key.IsActive) && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase)))];
         public string DatabaseFilterTitle => Context.Project?.Databases.GetValueOrDefault(DatabaseId)?.Name ?? "All databases";
         public string With(string path, bool clear = false, string? create = null)
         {

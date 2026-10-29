@@ -205,7 +205,7 @@ namespace TerraScale.Dashboard.Features.Importing
                 [.. tables.SelectMany(table => table.Constraints.Where(constraint => !constraint.Enforced).Select(constraint =>
                     $"{table.Source}: {Kind(constraint.Kind)} {constraint.Name ?? "(unnamed)"} ({string.Join(", ", constraint.Columns)}{(constraint.References is null ? "" : " → " + constraint.References)}) is recorded but not enforced."))],
                 [
-                    .. (job.Preview?.Tables.Where(table => table.Excluded).Select(table => table.Source + " is not imported.") ?? [])
+                    .. job.Preview?.Tables.Where(table => table.Excluded).Select(table => table.Source + " is not imported.") ?? []
     ,
                     .. tables.SelectMany(table => table.Columns.Where(column => column.Excluded).Select(column => $"{table.Source}.{column.Name} is not imported.")),
                 ],

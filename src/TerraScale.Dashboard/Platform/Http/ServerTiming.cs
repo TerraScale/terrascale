@@ -74,7 +74,10 @@ namespace TerraScale.Dashboard.Platform.Http
                 timing.readTasks[key] = (generation, task);
                 return task;
             }
-            async Task<T> StartAsync() => await read();
+            async Task<T> StartAsync()
+            {
+                return await read();
+            }
         }
 
         // Token grants and publishing storage allowances change none of the account/permission/billing

@@ -121,7 +121,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
             // Adapt only the pinned package asset, never document/DOM prototypes or untrusted markup.
             using var resource = typeof(ScalarOptions).Assembly.GetManifestResourceStream("ScalarStaticAssets.scalar.js")
                 ?? throw new InvalidOperationException("Scalar bundle missing");
-            var gzip = resource.ReadByte() == 0x1f && resource.ReadByte() == 0x8b;
+            var gzip = resource.ReadByte() is 0x1f and 0x8b;
             resource.Position = 0;
             using var decoded = gzip ? (Stream)new GZipStream(resource, CompressionMode.Decompress) : resource;
             using var reader = new StreamReader(decoded);

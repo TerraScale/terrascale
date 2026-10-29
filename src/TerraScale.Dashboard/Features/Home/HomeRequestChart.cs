@@ -24,9 +24,21 @@ namespace TerraScale.Dashboard.Features.Home
             }
 
             var scale = maximum == 0 ? 1 : new[] { 1d, 2d, 5d, 10d }.Select(factor => factor * magnitude).First(value => value >= maximum);
-            double X(int index) => 48 + 660d * index / Math.Max(1, points.Count - 1);
-            double Y(long value) => 14 + 154 * (1 - value / scale);
-            string C(double value) => ChartGeometry.Coordinate(value);
+            double X(int index)
+            {
+                return 48 + 660d * index / Math.Max(1, points.Count - 1);
+            }
+
+            double Y(long value)
+            {
+                return 14 + 154 * (1 - value / scale);
+            }
+
+            string C(double value)
+            {
+                return ChartGeometry.Coordinate(value);
+            }
+
             var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? ChartGeometry.Compact(scale * (4 - step) / 4) : step == 4 ? "0" : "")).ToArray();
             var seen = new HashSet<int>();
             var ticks = Enumerable.Range(0, 5).Select(step =>

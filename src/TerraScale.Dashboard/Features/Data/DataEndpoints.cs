@@ -362,7 +362,11 @@ namespace TerraScale.Dashboard.Features.Data
                 }
             }
             var schema = "";
-            string BrowseValue(string key) => submittedForm is not null && submittedForm.ContainsKey(key) ? submittedForm[key].ToString() : http.Request.Query[key].ToString();
+            string BrowseValue(string key)
+            {
+                return submittedForm is not null && submittedForm.ContainsKey(key) ? submittedForm[key].ToString() : http.Request.Query[key].ToString();
+            }
+
             var search = BrowseValue("q").Trim();
             var sort = BrowseValue("sort");
             var descending = BrowseValue("order") == "desc";

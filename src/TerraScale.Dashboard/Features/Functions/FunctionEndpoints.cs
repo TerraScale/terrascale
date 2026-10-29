@@ -112,7 +112,7 @@ namespace TerraScale.Dashboard.Features.Functions
             };
         }
 
-        private static IResult View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
+        private static RazorSlices.RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
             IReadOnlyList<FunctionInvocation> logs, IReadOnlyList<TerraBaseChangeWebhookDelivery> deliveries, string error = "", int status = 200)
         {
             var page = FunctionsView.Create(new(ShellModel.For(http, context, database.Name + " · Functions"), database, items, selected,

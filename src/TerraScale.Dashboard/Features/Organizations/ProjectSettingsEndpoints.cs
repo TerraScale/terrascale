@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return endpoints;
         }
 
-        private static IResult Page(HttpContext http, AccountContext context, string name, string error = "", int status = 200, bool renamed = false)
+        private static RazorSlices.RazorSlice<ProjectSettingsPage> Page(HttpContext http, AccountContext context, string name, string error = "", int status = 200, bool renamed = false)
         {
             http.Response.Headers.CacheControl = "no-store";
             var shell = ShellModel.For(http, context, "Project settings") with { ReturnUrl = WorkspaceUrl.For(context, "/project", replace: true) };

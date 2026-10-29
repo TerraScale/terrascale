@@ -29,7 +29,11 @@ namespace TerraScale.Dashboard.Platform.Persistence
     internal sealed record DashboardStateOperation
     {
         internal TerraBaseTransactionOperation Value { get; }
-        private DashboardStateOperation(TerraBaseTransactionOperation value) => Value = value;
+        private DashboardStateOperation(TerraBaseTransactionOperation value)
+        {
+            Value = value;
+        }
+
         internal static DashboardStateOperation Create(string collection, string key, JsonElement document)
         {
             return new(TerraBaseTransactionOperation.Create(collection, document, TerraBaseDashboardState.DocumentId(collection, key)));

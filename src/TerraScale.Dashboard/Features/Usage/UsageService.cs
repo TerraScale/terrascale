@@ -151,10 +151,17 @@ namespace TerraScale.Dashboard.Features.Usage
                 ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
             };
 
-            UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured) => new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " operation units/month" : allowance,
+            UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured)
+            {
+                return new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " operation units/month" : allowance,
                 measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
                 measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " operation units/month" : null);
-            async Task<UsageStorageSnapshot?> StoredAsync() => tab == "overview" ? await storage.ReadAsync(selection, cancellationToken) : null;
+            }
+
+            async Task<UsageStorageSnapshot?> StoredAsync()
+            {
+                return tab == "overview" ? await storage.ReadAsync(selection, cancellationToken) : null;
+            }
         }
     }
 }

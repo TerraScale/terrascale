@@ -198,7 +198,7 @@ namespace TerraScale.Dashboard.Features.Auth
         }
 
         // A fixed page with a manual retry link: a failed callback never redirects back into ts-auth by itself.
-        private static RazorSlices.RazorSlice Failure(HttpContext context, string returnTo, string error, int status, Exception? exception = null)
+        private static RazorSlices.RazorSlice<AuthFailurePage> Failure(HttpContext context, string returnTo, string error, int status, Exception? exception = null)
         {
             var reference = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(5));
             context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardAuth").TsAuthSignInFailed(reference, exception?.GetType().Name ?? "Rejected");

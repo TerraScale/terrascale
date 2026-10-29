@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             search = search.Trim();
             var list = await keys.ListAsync(context, Cancellation);
-            var page = CursorPaging.Page(list.Where(key => (status.Length == 0 || (status == "active") == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
+            var page = CursorPaging.Page(list.Where(key => (status.Length == 0 || status == "active" == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
                 && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata),
                 key => key.KeyId, CursorPaging.Scope(context, "credentials", "", status, databaseId, search), limit, after);
             return new(page.Items, page.NextCursor, page.HasMore, page.Limit);

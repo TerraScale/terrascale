@@ -51,7 +51,11 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
                 context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
-                IResult Error(string message, int status) => Page(http, context, [], error: message, status: status);
+                IResult Error(string message, int status)
+                {
+                    return Page(http, context, [], error: message, status: status);
+                }
+
                 if (!Csrf.Validate(http, form))
                 {
                     return Error("The form expired. Reload project invitations and try again.", 400);
@@ -75,7 +79,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return endpoints;
         }
 
-        private static IResult Page(HttpContext http, AccountContext context, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations,
+        private static RazorSlices.RazorSlice<ProjectInvitationPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations,
             string? next = null, string error = "", int status = 200, bool previous = false, string after = "", string notice = "")
         {
             http.Response.Headers.CacheControl = "no-store";

@@ -70,8 +70,10 @@ namespace TerraScale.Dashboard.Features.Home
                     return;
                 }
 
-                static int CountStatus(IReadOnlyList<UsageReplica> regions, string status) =>
-                    regions.Count(region => string.Equals(region.Status, status, StringComparison.OrdinalIgnoreCase));
+                static int CountStatus(IReadOnlyList<UsageReplica> regions, string status)
+                {
+                    return regions.Count(region => string.Equals(region.Status, status, StringComparison.OrdinalIgnoreCase));
+                }
 
                 var directions = report.Pairs.GroupBy(pair => (pair.FromRegion, pair.ToRegion))
                     .OrderBy(group => group.Key.FromRegion, StringComparer.Ordinal)

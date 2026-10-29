@@ -147,7 +147,9 @@ namespace TerraScale.Dashboard.Features.Usage
                         fact = new(project.Id, database.Id, contents.Sum(collection => collection.Bytes), contents.Sum(collection => collection.Documents));
                     }
                     catch (Exception error) when (Unavailable(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); }
-                    finally { if (acquired)
+                    finally
+                    {
+                        if (acquired)
                         {
                             concurrency.Release();
                         }

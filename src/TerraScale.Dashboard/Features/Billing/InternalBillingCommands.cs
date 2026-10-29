@@ -253,7 +253,10 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             return (long)(negative ? -total : total);
-            CommandRejectedException Invalid() => new("--" + name + " requires a signed 64-bit integer.");
+            CommandRejectedException Invalid()
+            {
+                return new("--" + name + " requires a signed 64-bit integer.");
+            }
         }
 
         private static bool DependencyFailure(Exception error, CancellationToken cancellationToken)

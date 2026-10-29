@@ -54,7 +54,11 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
                 var userId = form["userId"].ToString();
                 var role = form["role"].ToString();
-                IResult Error(string message, int status) => Page(http, context, [], error: message, status: status, draftUserId: userId, draftRole: role);
+                IResult Error(string message, int status)
+                {
+                    return Page(http, context, [], error: message, status: status, draftUserId: userId, draftRole: role);
+                }
+
                 if (!Csrf.Validate(http, form))
                 {
                     return Error("The form expired. Reload project grants and try again.", 400);
@@ -91,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return endpoints;
         }
 
-        private static IResult Page(HttpContext http, AccountContext context, IReadOnlyList<TerraScaleAuthPlatformProjectMember> grants,
+        private static RazorSlices.RazorSlice<ProjectGrantPage> Page(HttpContext http, AccountContext context, IReadOnlyList<TerraScaleAuthPlatformProjectMember> grants,
             string? next = null, string error = "", int status = 200, bool previous = false, string draftUserId = "", string draftRole = "viewer", string notice = "")
         {
             http.Response.Headers.CacheControl = "no-store";

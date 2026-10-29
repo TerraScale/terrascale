@@ -27,14 +27,30 @@ namespace TerraScale.Dashboard.Features.Analytics
                 return new(label, "", [], [], [], [], []);
             }
 
-            bool Missing(AnalyticsSeries row, int index) => row.Missing?[index] == true;
+            bool Missing(AnalyticsSeries row, int index)
+            {
+                return row.Missing?[index] == true;
+            }
+
             var maximum = series.SelectMany(row => row.Values.Where((value, index) => !Missing(row, index))).DefaultIfEmpty().Max();
             // Four whole, round grid steps (1, 2 or 5 × 10ⁿ each): 40 → 0, 10, 20, 30, 40 rather than 0, 12, 25, 37, 50.
             var gridStep = Enumerable.Range(firstPower, 20 - firstPower).SelectMany(power => new[] { 1d, 2d, 5d }.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= (double)maximum);
             var scale = maximum == 0 ? 1 : gridStep * 4;
-            double X(int index) => 48 + 660d * index / Math.Max(1, starts.Count - 1);
-            double Y(decimal value) => 14 + 154 * (1 - (double)value / scale);
-            string C(double value) => ChartGeometry.Coordinate(value);
+            double X(int index)
+            {
+                return 48 + 660d * index / Math.Max(1, starts.Count - 1);
+            }
+
+            double Y(decimal value)
+            {
+                return 14 + 154 * (1 - (double)value / scale);
+            }
+
+            string C(double value)
+            {
+                return ChartGeometry.Coordinate(value);
+            }
+
             var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? axis(scale * (4 - step) / 4) : step == 4 ? "0" : "")).ToArray();
             var seen = new HashSet<int>();
             var ticks = Enumerable.Range(0, 5).Select(step =>

@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Profile
             finally { http.RequestAborted = caller; }
         }
 
-        private static IResult PendingPage(HttpContext http, string title, string message, int attempt, int statusCode, bool attention = false)
+        private static RazorSlices.RazorSlice<AccountDeletionPendingPage> PendingPage(HttpContext http, string title, string message, int attempt, int statusCode, bool attention = false)
         {
             http.Response.Headers.CacheControl = "no-store";
             var view = AccountDeletionPendingView.Create(new(new(title, DocumentModel.NonceFor(http)), title, message,

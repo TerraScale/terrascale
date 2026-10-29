@@ -36,7 +36,8 @@ namespace TerraScale.Dashboard.Platform.Http
         }
 
         public static void ValidateLimit(int limit)
-        { if (limit is < 1 or > 100)
+        {
+            if (limit is < 1 or > 100)
             {
                 throw Invalid();
             }

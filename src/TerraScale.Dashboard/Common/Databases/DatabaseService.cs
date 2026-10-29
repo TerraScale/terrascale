@@ -451,9 +451,13 @@ namespace TerraScale.Dashboard.Common.Databases
                     return;
                 }
 
-                bool Unchanged(DatabaseRecord record) => observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
+                bool Unchanged(DatabaseRecord record)
+                {
+                    return observed.TryGetValue(record.Id, out var before) && record.Name == before.Name && record.ProjectId == before.ProjectId &&
                     record.PreviousName == before.PreviousName && record.ConflictOf == before.ConflictOf &&
                     record.PlacementRevision == before.PlacementRevision && record.Region == before.Region && record.AllRegions == before.AllRegions && Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase);
+                }
+
                 void Apply(ProjectRecord target)
                 {
                     // Rechecked on every storage CAS attempt: a newer dashboard placement must survive an older listing.

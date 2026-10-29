@@ -149,10 +149,13 @@ namespace TerraScale.Dashboard
                     editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
                 // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe,
                 // and an MCP consent's return to the client's registered redirect URI.
-                string Policy() =>
-                    $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
+                string Policy()
+                {
+                    return $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
                     $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self'" + fileOrigins + "; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
                     (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
+                }
+
                 context.Response.OnStarting(() =>
                 {
                     // Error handling can clear headers; preserve endpoint policies and restore the baseline before writing.
@@ -272,8 +275,8 @@ namespace TerraScale.Dashboard
             app.MapGet("/healthz", () => Results.Text("ok"));
             // ts-orch probes /readyz and ts-status probes /health/ready; both name the failing dependency. Public
             // bodies never carry the build revision.
-            app.MapGet("/readyz", (DependencyReadiness readiness, CancellationToken cancellationToken) => readiness.CheckAsync(cancellationToken));
-            app.MapGet("/health/ready", (DependencyReadiness readiness, CancellationToken cancellationToken) => readiness.CheckAsync(cancellationToken));
+            app.MapGet("/readyz", (DependencyReadiness readiness, HttpContext context, CancellationToken cancellationToken) => readiness.CheckAsync(context, cancellationToken));
+            app.MapGet("/health/ready", (DependencyReadiness readiness, HttpContext context, CancellationToken cancellationToken) => readiness.CheckAsync(context, cancellationToken));
             app.MapGet("/health/live", (DependencyReadiness readiness) => Results.Json(new { status = "ok", region = readiness.Region }));
             app.MapAuth();
             app.MapAccountFeatures();

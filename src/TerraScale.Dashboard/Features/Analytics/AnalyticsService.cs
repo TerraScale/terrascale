@@ -167,7 +167,10 @@ namespace TerraScale.Dashboard.Features.Analytics
                 Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
                 Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
                 return charts;
-                void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
+                void Add(string title, params AnalyticsSeries[] series)
+                {
+                    charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
+                }
             }
             void AddCounters(SortedDictionary<string, decimal[]> target, IReadOnlyDictionary<string, long> values, int index, ref long total)
             {

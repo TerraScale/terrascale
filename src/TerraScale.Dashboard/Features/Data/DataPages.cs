@@ -57,7 +57,9 @@ namespace TerraScale.Dashboard.Features.Data
             }
 
             if (changes.Any(change => change.Key is "q" or "sort" or "order")) { query.Remove("cursor"); query.Remove("page"); }
-            foreach (var (Key, Value) in changes) { if (Value.Length == 0)
+            foreach (var (Key, Value) in changes)
+            {
+                if (Value.Length == 0)
                 {
                     query.Remove(Key);
                 }
@@ -121,7 +123,9 @@ namespace TerraScale.Dashboard.Features.Data
                         }
                     }
                 }
-                else { fields[("value", true)] = row.Value; if (!names.Contains(("value", true)))
+                else
+                {
+                    fields[("value", true)] = row.Value; if (!names.Contains(("value", true)))
                     {
                         names.Add(("value", true));
                     }

@@ -21,9 +21,9 @@ namespace TerraScale.Dashboard.Features.Auth
 
         // The fresh grant comes from its own ts-auth authorization round trip, so the
         // token's rotating family is never copied from the browser session.
-        public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent proof, CancellationToken cancellationToken)
+        public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent stepUp, CancellationToken cancellationToken)
         {
-            return IssueAsync(context, name, expiresInDays, fresh, proof, cancellationToken);
+            return IssueAsync(context, name, expiresInDays, fresh, stepUp, cancellationToken);
         }
 
         private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, StepUpIntent proof, CancellationToken cancellationToken)
@@ -50,7 +50,9 @@ namespace TerraScale.Dashboard.Features.Auth
             catch
             {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                try { if (credential is not null)
+                try
+                {
+                    if (credential is not null)
                     {
                         await sessions.DeleteCredentialAsync(credential, cleanup.Token);
                     }

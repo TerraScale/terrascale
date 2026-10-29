@@ -16,16 +16,16 @@ namespace TerraScale.Dashboard.Features.Backups
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
         { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
 
-        public async Task<IReadOnlyList<ProducerBackup>> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
+        public async Task<IReadOnlyList<ProducerBackup>> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            var path = await PathAsync(scope, home, databaseId, ct);
+            var path = await PathAsync(scope, home, databaseId, cancellationToken);
             var result = new List<ProducerBackup>();
             var cursors = new HashSet<string>(StringComparer.Ordinal);
             string? after = null;
             do
             {
                 var page = await SendAsync<BackupResponse>(scope, home, "databases:read", HttpMethod.Get, path + "/backups?limit=100" +
-                    (string.IsNullOrEmpty(after) ? "" : "&after=" + Segment(after)), null, ct);
+                    (string.IsNullOrEmpty(after) ? "" : "&after=" + Segment(after)), null, cancellationToken);
                 result.AddRange(page.Items);
                 after = page.Next;
                 if (!string.IsNullOrEmpty(after) && !cursors.Add(after))
@@ -36,55 +36,55 @@ namespace TerraScale.Dashboard.Features.Backups
             return result;
         }
 
-        public async Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
+        public async Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return await SendAsync<ProducerBackup>(scope, home, "databases:write", HttpMethod.Post, await PathAsync(scope, home, databaseId, ct) + "/backups", null, ct);
+            return await SendAsync<ProducerBackup>(scope, home, "databases:write", HttpMethod.Post, await PathAsync(scope, home, databaseId, cancellationToken) + "/backups", null, cancellationToken);
         }
 
-        public async Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
+        public async Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return await SendAsync<ProducerBackupPolicy>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, ct) + "/backup-policy", null, ct);
+            return await SendAsync<ProducerBackupPolicy>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, cancellationToken) + "/backup-policy", null, cancellationToken);
         }
 
         public async Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? fullBackupCron,
-                int retentionDays, bool disabled, CancellationToken ct)
+                int retentionDays, bool disabled, CancellationToken cancellationToken)
         {
-            return await SendAsync<ProducerBackupPolicy>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, ct) + "/backup-policy",
-                    new { fullBackupCron, retentionDays, disabled }, ct);
+            return await SendAsync<ProducerBackupPolicy>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, cancellationToken) + "/backup-policy",
+                    new { fullBackupCron, retentionDays, disabled }, cancellationToken);
         }
 
         // The destination is the project's; mode both keeps platform backups and mirrors them to the customer's bucket.
-        public async Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct)
+        public async Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            try { return await SendAsync<BackupDestinationView>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/backup-destination", null, ct); }
+            try { return await SendAsync<BackupDestinationView>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/backup-destination", null, cancellationToken); }
             catch (DatabaseProviderException error) when (error.StatusCode == HttpStatusCode.NotFound) { return null; }
         }
         public Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket,
-            string accessKeyId, string secretKey, CancellationToken ct)
+            string accessKeyId, string secretKey, CancellationToken cancellationToken)
         {
             return SendAsync<BackupDestinationView>(scope, home, "databases:write", HttpMethod.Put, ProjectPath(scope) + "/backup-destination",
-                new { endpoint, region, bucket, accessKeyId, secretKey, mode = "both" }, ct);
+                new { endpoint, region, bucket, accessKeyId, secretKey, mode = "both" }, cancellationToken);
         }
 
-        public Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct)
+        public Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
         {
-            return SendAsync<JsonElement?>(scope, home, "databases:write", HttpMethod.Delete, ProjectPath(scope) + "/backup-destination", null, ct);
+            return SendAsync<JsonElement?>(scope, home, "databases:write", HttpMethod.Delete, ProjectPath(scope) + "/backup-destination", null, cancellationToken);
         }
 
-        public async Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
+        public async Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return await SendAsync<ExportScheduleView>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, ct) + "/export-schedule", null, ct);
+            return await SendAsync<ExportScheduleView>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, cancellationToken) + "/export-schedule", null, cancellationToken);
         }
 
-        public async Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken ct)
+        public async Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken cancellationToken)
         {
-            return await SendAsync<ExportScheduleView>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, ct) + "/export-schedule", new { cron }, ct);
+            return await SendAsync<ExportScheduleView>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, cancellationToken) + "/export-schedule", new { cron }, cancellationToken);
         }
 
-        public async Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken ct)
+        public async Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
         {
             var restored = await SendAsync<ManagedDatabase>(scope, home, "databases:write", HttpMethod.Post,
-                await PathAsync(scope, home, databaseId, ct) + "/backups/" + Segment(backupId) + "/restore", new { name }, ct);
+                await PathAsync(scope, home, databaseId, cancellationToken) + "/backups/" + Segment(backupId) + "/restore", new { name }, cancellationToken);
             if (!TerraScale.DotNet.TerraScaleIds.IsValid(restored.Id) || restored.ProjectId != scope.ProjectId ||
                 restored.Id == databaseId || restored.BranchedFrom != databaseId)
             {
@@ -92,7 +92,7 @@ namespace TerraScale.Dashboard.Features.Backups
             }
             // The restore route returns the raw catalog record: null replicas is legitimate there.
             // The managed GET body normalizes the actual current placement.
-            var placed = await SendAsync<ManagedDatabase>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/databases/" + Segment(restored.Name), null, ct);
+            var placed = await SendAsync<ManagedDatabase>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/databases/" + Segment(restored.Name), null, cancellationToken);
             if (placed.Id != restored.Id || placed.ProjectId != scope.ProjectId || placed.Name != restored.Name ||
                 placed.BranchedFrom != databaseId || placed.CreatedAt != restored.CreatedAt ||
                 placed.HomeRegion != home.Id || placed.ReplicaRegions is null)
@@ -103,11 +103,11 @@ namespace TerraScale.Dashboard.Features.Backups
             return placed;
         }
 
-        private async Task<T> SendAsync<T>(DatabaseScope scope, DatabaseRegion home, string permission, HttpMethod method, string path, object? body, CancellationToken ct)
+        private async Task<T> SendAsync<T>(DatabaseScope scope, DatabaseRegion home, string permission, HttpMethod method, string path, object? body, CancellationToken cancellationToken)
         {
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], ct);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             using var request = new HttpRequestMessage(method, new Uri(home.Api, path));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -139,13 +139,13 @@ namespace TerraScale.Dashboard.Features.Backups
             catch (JsonException error) { throw new HttpRequestException("The backup provider returned an invalid response.", error); }
         }
 
-        private static async Task<Exception> FailureAsync(HttpResponseMessage response, string path, CancellationToken ct)
+        private static async Task<Exception> FailureAsync(HttpResponseMessage response, string path, CancellationToken cancellationToken)
         {
             // Read a bounded envelope, keep only a recognized code, and never retain upstream text in exceptions or logs.
             string? code = null;
             try
             {
-                using var json = await PlatformJson.ReadAsync(response.Content, ct);
+                using var json = await PlatformJson.ReadAsync(response.Content, cancellationToken);
                 if (json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("error", out var error) &&
                     error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.String)
                 {
@@ -168,9 +168,9 @@ namespace TerraScale.Dashboard.Features.Backups
         }
 
         // UI URLs use database IDs; the authoritative project list resolves them to the route names TerraBase expects.
-        private async Task<string> PathAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
+        private async Task<string> PathAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
         {
-            return ProjectPath(scope) + "/databases/" + Segment((await databases.ListAsync(scope, home, ct)).SingleOrDefault(item => item.Id == databaseId)?.Name
+            return ProjectPath(scope) + "/databases/" + Segment((await databases.ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)?.Name
                 ?? throw new DatabaseProviderException(HttpStatusCode.NotFound));
         }
 

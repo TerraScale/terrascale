@@ -108,7 +108,7 @@ namespace TerraScale.Dashboard.Features.Webhooks
             catch (AccountAccessException access) { return DatabaseResults.PageFailure(http, context, access); }
         }
 
-        private static IResult View(HttpContext http, AccountContext context, DatabaseRecord database, string collection,
+        private static RazorSlices.RazorSlice<WebhooksPage> View(HttpContext http, AccountContext context, DatabaseRecord database, string collection,
             IReadOnlyList<TerraBaseChangeWebhook> hooks, IReadOnlyList<TerraBaseChangeWebhookDelivery> deliveries, string selected,
             TerraBaseCreatedChangeWebhook? created = null, string error = "", int status = 200)
         {

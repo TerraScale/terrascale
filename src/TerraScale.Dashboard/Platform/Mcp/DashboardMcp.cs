@@ -145,7 +145,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or DatabaseWrongRegionException or DocumentWriteOutcomeUnknownException ||
                                                   error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
-                        if (DatabaseResults.Status(error) >= 500 || DatabaseResults.Status(error) == 408)
+                        if (DatabaseResults.Status(error) is >= 500 or 408)
                         {
                             ServiceSloTelemetry.MarkBad(http);
                         }

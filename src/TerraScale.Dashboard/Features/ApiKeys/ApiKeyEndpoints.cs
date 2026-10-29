@@ -228,7 +228,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { keys = await service.ListAsync(context, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && (failure is HttpRequestException || revealed is not null && ApiKeyService.FollowUpFailure(failure)))
             {
-                if (revealed is null) { if (error.Length == 0)
+                if (revealed is null)
+                {
+                    if (error.Length == 0)
                     {
                         error = "The live credential issuer is unavailable. Try again shortly.";
                     }
@@ -237,7 +239,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
             try { projectCidrs = await network; }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && (failure is HttpRequestException or AccountAccessException || revealed is not null && ApiKeyService.FollowUpFailure(failure)))
-            { if (revealed is not null)
+            {
+                if (revealed is not null)
                 {
                     warning = (warning + " Network settings could not be refreshed; the key change succeeded.").Trim();
                 }

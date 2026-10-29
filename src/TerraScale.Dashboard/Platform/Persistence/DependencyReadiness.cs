@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
     {
         private static readonly Uri AuthReady = new("https://auth.terrascale.tech/readyz");
         // The SDK's informational version carries the SourceRevisionId that the image build passes (+<sha>).
-        private static readonly string Revision = typeof(DependencyReadiness).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+        private static readonly string Revision = typeof(DependencyReadiness).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[^1] ?? "unknown";
         private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(2);
         // Probes from ts-orch, ts-status and the internet share one ts-auth check for this long.
         private static readonly TimeSpan AuthReuse = TimeSpan.FromSeconds(5);

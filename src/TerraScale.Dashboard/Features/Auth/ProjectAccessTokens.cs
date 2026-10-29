@@ -34,8 +34,11 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             var now = time.GetUtcNow();
             // A pending exchange is shared; a finished one serves until its reuse ends; a failed one is never reused.
-            bool Usable(Lazy<Task<(string Token, DateTimeOffset Until)>> entry) =>
-                !entry.Value.IsCompleted || entry.Value.IsCompletedSuccessfully && entry.Value.Result.Until > now;
+            bool Usable(Lazy<Task<(string Token, DateTimeOffset Until)>> entry)
+            {
+                return !entry.Value.IsCompleted || entry.Value.IsCompletedSuccessfully && entry.Value.Result.Until > now;
+            }
+
             if (exchanged.Count > 10_000)
             {
                 foreach (var stale in exchanged.Where(entry => !Usable(entry.Value)).Select(entry => entry.Key).ToArray())
@@ -46,7 +49,11 @@ namespace TerraScale.Dashboard.Features.Auth
 
             var key = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
                 string.Join('\n', session.AccessToken, organizationId, projectId, string.Join(' ', scopes.Order(StringComparer.Ordinal))))));
-            Lazy<Task<(string, DateTimeOffset)>> Fresh() => new(() => ExchangeAsync(session, organizationId, projectId, scopes, CancellationToken.None));
+            Lazy<Task<(string, DateTimeOffset)>> Fresh()
+            {
+                return new(() => ExchangeAsync(session, organizationId, projectId, scopes, CancellationToken.None));
+            }
+
             var entry = exchanged.AddOrUpdate(key, _ => Fresh(), (_, current) => Usable(current) ? current : Fresh());
             try { return (await entry.Value.WaitAsync(cancellationToken)).Token; }
             catch when (entry.Value.IsFaulted || entry.Value.IsCanceled)

@@ -86,8 +86,12 @@ namespace TerraScale.Dashboard.Common.Accounts
             var key = plan.GetProperty("id").GetString()!;
             var limits = plan.GetProperty("limits");
             var selectable = Plans.FirstOrDefault(candidate => candidate.Key == key);
-            string Resource(string property, string singular, string plural) => limits.GetProperty(property).ValueKind == JsonValueKind.Null
+            string Resource(string property, string singular, string plural)
+            {
+                return limits.GetProperty(property).ValueKind == JsonValueKind.Null
                 ? plural + ": contact sales" : ValueFormat.Plural(limits.GetProperty(property).GetInt32(), singular, plural);
+            }
+
             var cents = checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100));
             return new PlanComparison(key, plan.GetProperty("name").GetString()!, cents,
                 selectable?.Price ?? MoneyFormat.Money(cents), selectable?.PriceUnit ?? "/ month",

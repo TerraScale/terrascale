@@ -34,7 +34,9 @@ namespace TerraScale.Dashboard.Features.Usage
                     return (project.Id, Value: await ReadAsync(project, "", "day", month));
                 }
                 catch (Exception error) when (Failure(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); return (project.Id, Value: new UsageObservation(UsageSourceState.Unavailable)); }
-                finally { if (acquired)
+                finally
+                {
+                    if (acquired)
                     {
                         concurrency.Release();
                     }
@@ -143,7 +145,7 @@ namespace TerraScale.Dashboard.Features.Usage
             return new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
         }
 
-        private static IReadOnlyList<ActivityPoint> Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket, bool child = false)
+        private static ActivityPoint[] Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket, bool child = false)
         {
             if (child && series.Count == 0)
             {

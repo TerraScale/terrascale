@@ -303,8 +303,11 @@ namespace TerraScale.Dashboard.Features.Databases
                     key => tab == "overview" && http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
             var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error, tab == "backups") : null;
             var choicesRead = tab == "replication" ? backend.RegionsAsync(http.RequestAborted) : null;
-            async Task<IReadOnlyList<CollectionStats>> ContentsAsync() =>
-                await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);
+            async Task<IReadOnlyList<CollectionStats>> ContentsAsync()
+            {
+                return await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);
+            }
+
             var contentsRead = tab == "overview" ? ContentsAsync() : null;
             if (choicesRead is not null)
             {
@@ -333,7 +336,8 @@ namespace TerraScale.Dashboard.Features.Databases
                     contentsAvailable = true;
                 }
                 catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure))
-                { if (error.Length == 0)
+                {
+                    if (error.Length == 0)
                     {
                         error = "Database counts are unavailable. The data plane did not answer.";
                     }

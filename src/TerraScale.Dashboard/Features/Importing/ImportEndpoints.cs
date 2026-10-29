@@ -193,7 +193,9 @@ namespace TerraScale.Dashboard.Features.Importing
         {
             IReadOnlyList<TerraBaseImportJob> jobs = [];
             var unavailable = "";
-            try { (jobs, var partial) = await imports.JobsAsync(context, http.RequestAborted); if (partial)
+            try
+            {
+                (jobs, var partial) = await imports.JobsAsync(context, http.RequestAborted); if (partial)
                 {
                     unavailable = Partial;
                 }

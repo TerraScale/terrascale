@@ -111,7 +111,10 @@ namespace TerraScale.Dashboard.Common.Databases
             project.Databases[id] = resolved;
             return (context, resolved);
 
-            DatabaseRecord Checked(DatabaseRecord record) => record.Id == id && record.ProjectId == project.Id ? record : throw Unavailable();
+            DatabaseRecord Checked(DatabaseRecord record)
+            {
+                return record.Id == id && record.ProjectId == project.Id ? record : throw Unavailable();
+            }
         }
 
         private static DatabaseProviderException Unavailable()

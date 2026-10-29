@@ -98,7 +98,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
         // still needs the user's consent on the dashboard and a sign-in on ts-auth.
         private static async Task<IResult> RegisterAsync(HttpContext context, IDashboardState state, TimeProvider time)
         {
-            static IResult TooLarge() => OAuthError("invalid_client_metadata", "Client metadata exceeds 16 KiB.", StatusCodes.Status413PayloadTooLarge);
+            static IResult TooLarge()
+            {
+                return OAuthError("invalid_client_metadata", "Client metadata exceeds 16 KiB.", StatusCodes.Status413PayloadTooLarge);
+            }
+
             if (context.Request.ContentLength > MaxRegistrationBytes)
             {
                 return TooLarge();
@@ -289,7 +293,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
             catch (Exception error)
             {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                try { if (credential is not null)
+                try
+                {
+                    if (credential is not null)
                     {
                         await sessions.DeleteCredentialAsync(credential, cleanup.Token);
                     }
@@ -408,8 +414,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var stateValue = parameters.GetValueOrDefault("state") is { Length: > 0 } given ? given : null;
             var resource = CanonicalResource(context, parameters.GetValueOrDefault("resource", ""));
             var authorization = new McpAuthorization(clientId, client.Name, redirect, parameters.GetValueOrDefault("code_challenge", ""), stateValue, Issuer(context), resource ?? "");
-            string? Fail(string error, string description) =>
-                QueryHelpers.AddQueryString(redirect, new Dictionary<string, string?> { ["error"] = error, ["error_description"] = description, ["state"] = stateValue, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null));
+            string? Fail(string error, string description)
+            {
+                return QueryHelpers.AddQueryString(redirect, new Dictionary<string, string?> { ["error"] = error, ["error_description"] = description, ["state"] = stateValue, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null));
+            }
+
             var error =
                 parameters.GetValueOrDefault("response_type") != "code" ? Fail("unsupported_response_type", "Use response_type=code.") :
                 parameters.GetValueOrDefault("code_challenge_method") != "S256" || !ChallengePattern().IsMatch(authorization.CodeChallenge) ? Fail("invalid_request", "PKCE with code_challenge_method=S256 is required.") :
@@ -510,7 +519,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }.Where(pair => pair.Value is not null).Select(pair => KeyValuePair.Create(pair.Key, pair.Value!))];
         }
 
-        private static IResult ErrorPage(HttpContext context, string message, int statusCode = 400)
+        private static RazorSlices.RazorSlice<McpConsentPage> ErrorPage(HttpContext context, string message, int statusCode = 400)
         {
             var view = McpConsentView.Create(new(new("Connect an AI client", DocumentModel.NonceFor(context)), "", "", [], "", message));
             view.StatusCode = statusCode;

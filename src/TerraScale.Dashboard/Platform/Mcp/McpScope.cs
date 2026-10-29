@@ -25,7 +25,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
         }
 
         public static void DemandManagement(AccountContext context)
-        { if (!context.CanManage)
+        {
+            if (!context.CanManage)
             {
                 throw new AccountAccessException("Organization management access is required.");
             }

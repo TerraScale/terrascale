@@ -496,8 +496,16 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static DatabaseWrongRegionException From(HttpResponseMessage response)
         {
-            string? Header(string name) => response.Headers.TryGetValues(name, out var values) && values.Count() == 1 ? values.Single() : null;
-            string? Valid(string? id) => DatabaseRegion.FromId(id)?.Id;
+            string? Header(string name)
+            {
+                return response.Headers.TryGetValues(name, out var values) && values.Count() == 1 ? values.Single() : null;
+            }
+
+            string? Valid(string? id)
+            {
+                return DatabaseRegion.FromId(id)?.Id;
+            }
+
             return new(Valid(Header("X-TerraBase-Region")), Valid(Header("X-TerraBase-Database-Home")),
                 [.. (Header("X-TerraBase-Database-Regions") ?? "").Split(',').Select(Valid).OfType<string>()]);
         }

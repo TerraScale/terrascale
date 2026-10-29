@@ -226,8 +226,12 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         private async Task<TerraScaleAuthPlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {
-            static TerraScaleAuthPlatformProject? Existing(IEnumerable<TerraScaleAuthPlatformProject> projects) => projects.Where(project => project.Name == PersonalName)
+            static TerraScaleAuthPlatformProject? Existing(IEnumerable<TerraScaleAuthPlatformProject> projects)
+            {
+                return projects.Where(project => project.Name == PersonalName)
                 .OrderBy(project => project.CreatedAt).ThenBy(project => project.Id, StringComparer.Ordinal).FirstOrDefault();
+            }
+
             if (Existing(await platform.ListProjectsAsync(session, organizationId, cancellationToken)) is { } existing)
             {
                 return existing;
@@ -255,7 +259,11 @@ namespace TerraScale.Dashboard.Common.Accounts
             var early = accessFor is { Length: > 0 } && TerraScaleIds.IsValid(accessFor)
                 ? Deferred(() => platform.ListProjectsAsync(session, accessFor, cancellationToken)) : null;
             // A refusal for an organization the list then leaves out is only ever a discarded task, never this call's failure.
-            static async Task<T> Deferred<T>(Func<Task<T>> read) => await read();
+            static async Task<T> Deferred<T>(Func<Task<T>> read)
+            {
+                return await read();
+            }
+
             var lives = await listing;
             if (account.PersonalOrganizationId.Length != 0 && lives.All(live => live.Id != account.PersonalOrganizationId))
             {

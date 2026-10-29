@@ -100,7 +100,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return Databases.Values.Any(known => known.Name == database) ? database : throw new DatabaseProviderException(HttpStatusCode.NotFound);
         }
 
-        private static IEnumerable<JsonElement> Items(JsonDocument document)
+        private static JsonElement.ArrayEnumerator Items(JsonDocument document)
         {
             return document.RootElement.GetProperty("items").EnumerateArray();
         }

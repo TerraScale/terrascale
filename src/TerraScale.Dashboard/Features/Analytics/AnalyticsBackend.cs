@@ -159,7 +159,7 @@ namespace TerraScale.Dashboard.Features.Analytics
             return value.ValueKind == JsonValueKind.Null ? null : Count(value);
         }
 
-        private static IReadOnlyDictionary<string, long> Counters(JsonElement value)
+        private static Dictionary<string, long> Counters(JsonElement value)
         {
             return value.EnumerateObject().ToDictionary(property => property.Name, property => Count(property.Value), StringComparer.Ordinal);
         }

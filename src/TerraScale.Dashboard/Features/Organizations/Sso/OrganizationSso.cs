@@ -136,7 +136,11 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
         private static AccountAccessException Refusal(HttpStatusCode status, JsonElement body)
         {
             var error = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("error", out var value) && value.ValueKind == JsonValueKind.Object ? value : default;
-            string Text(string name) => error.ValueKind == JsonValueKind.Object && error.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString()! : "";
+            string Text(string name)
+            {
+                return error.ValueKind == JsonValueKind.Object && error.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString()! : "";
+            }
+
             var code = Text("code");
             var message = code switch
             {
@@ -159,11 +163,23 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
         // Reads the configure form. The client secret is write-only: left blank, ts-auth keeps the stored one.
         public static SsoUpdate Parse(IFormCollection form)
         {
-            string Field(string name, int max = 2048) => form[name].ToString().Trim() is var value && value.Length <= max
+            string Field(string name, int max = 2048)
+            {
+                return form[name].ToString().Trim() is var value && value.Length <= max
                 ? value : throw new AccountAccessException("A single sign-on field is too long.", 422);
-            static string Https(string value, string label) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0
-                ? value : throw new AccountAccessException(label + " must be an https:// URL.", 422);
-            static string Required(string value, string label) => value.Length > 0 ? value : throw new AccountAccessException("Enter the " + label + ".", 422);
+            }
+
+            static string Https(string value, string label)
+            {
+                return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0
+                            ? value : throw new AccountAccessException(label + " must be an https:// URL.", 422);
+            }
+
+            static string Required(string value, string label)
+            {
+                return value.Length > 0 ? value : throw new AccountAccessException("Enter the " + label + ".", 422);
+            }
+
             var domain = Field("domain", 253).ToLowerInvariant();
             if (Uri.CheckHostName(domain) != UriHostNameType.Dns || !domain.Contains('.'))
             {

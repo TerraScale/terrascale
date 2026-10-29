@@ -84,8 +84,12 @@ namespace TerraScale.Dashboard.Features.Billing
         // The next invoice is the renewal charge: the scheduled plan's price when a change applies at renewal, else the current plan's.
         private static InvoiceRenewal? Renewal(BillingBinding? binding, BillingPlanState? state)
         {
-            static long Price(string key, string interval) => PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key) is { } plan
+            static long Price(string key, string interval)
+            {
+                return PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key) is { } plan
                 ? plan.IntervalPriceCents(interval) : 0;
+            }
+
             if (state is not null)
             {
                 var scheduled = state.ScheduledPlanKey.Length > 0 && (state.ScheduledAt is null || state.ScheduledAt <= state.RenewalAt);

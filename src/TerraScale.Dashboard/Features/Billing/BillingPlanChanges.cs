@@ -513,7 +513,9 @@ namespace TerraScale.Dashboard.Features.Billing
 
             current.Status = "applied";
             try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
-            catch (TerraBasePreconditionFailedException) { var latest = await state.GetAsync(ChangesCollection, orgId, cancellationToken); if (latest is null || AccountService.Read<BillingChangeReceipt>(latest) is not { Status: "applied" } applied || applied.RequestId != receipt.RequestId)
+            catch (TerraBasePreconditionFailedException)
+            {
+                var latest = await state.GetAsync(ChangesCollection, orgId, cancellationToken); if (latest is null || AccountService.Read<BillingChangeReceipt>(latest) is not { Status: "applied" } applied || applied.RequestId != receipt.RequestId)
                 {
                     throw;
                 }

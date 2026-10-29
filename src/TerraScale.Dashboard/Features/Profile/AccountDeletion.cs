@@ -182,7 +182,9 @@ namespace TerraScale.Dashboard.Features.Profile
             foreach (var orgId in operation.Organizations)
             {
                 // A sole organization can become shared before ts-auth fences it. Only its own deletion proof permits cleanup.
-                try { if (!await platform.AccountDeletionOrganizationCompletedAsync(operation.Receipt, orgId, cancellationToken))
+                try
+                {
+                    if (!await platform.AccountDeletionOrganizationCompletedAsync(operation.Receipt, orgId, cancellationToken))
                     {
                         continue;
                     }

@@ -98,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Billing.Plans
             }
             return new(binding, state, new(plan, interval, price, effect, estimate, errorMessage, canUndo, subscribed ? "/billing/change" : "/billing/checkout", plan is null ? [] : Warnings(context.Organization!, plan, now)), stateError);
         }
-        private static IReadOnlyList<BillingLimitWarning> Warnings(OrganizationRecord org, BillingPlan plan, DateTimeOffset now)
+        private static List<BillingLimitWarning> Warnings(OrganizationRecord org, BillingPlan plan, DateTimeOffset now)
         {
             var limits = PlanCatalog.ResourceLimits(plan.Key); var warnings = new List<BillingLimitWarning>();
             if (limits.Projects > 0 && org.Projects.Count > limits.Projects)

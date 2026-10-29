@@ -61,7 +61,9 @@ namespace TerraScale.Dashboard.Features.Organizations
                 else if (http.Request.Query["tab"] == "billing" && context.Organization is not null)
                 {
                     // A provider failure leaves the stored state; the page still loads and the next reload retries.
-                    try { if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted))
+                    try
+                    {
+                        if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted))
                         {
                             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                         }
@@ -179,7 +181,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return endpoints;
         }
 
-        private static IResult Notice(HttpContext http, AccountContext context, string tab, string message, int status)
+        private static RazorSlices.RazorSlice<OrganizationPage> Notice(HttpContext http, AccountContext context, string tab, string message, int status)
         {
             var view = OrganizationView.Create(new(ShellModel.For(http, context, "Organization"), tab, [], Notice: message, NoticeStatus: status));
             view.StatusCode = status;
@@ -226,13 +228,9 @@ namespace TerraScale.Dashboard.Features.Organizations
                 {
                     wizard = "organization";
                 }
-                else if (!context.Organization.CanProvision(context.UserId))
-                {
-                    wizard = "payment";
-                }
                 else
                 {
-                    wizard = "project";
+                    wizard = !context.Organization.CanProvision(context.UserId) ? "payment" : "project";
                 }
             }
             if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError)
