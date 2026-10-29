@@ -146,7 +146,7 @@ console.log('Saved query draft copies current SQL on activation and preserves su
 // Exercise the browser receiver with deterministic DOM/network boundaries, without reconnect sleeps.
 globalThis.HTMLElement = class {};
 globalThis.customElements = { get() { return true; } };
-const { DocumentChanges } = await import('../src/TerraScale.Dashboard/web/assets/js/document-changes.js');
+const { DocumentChanges } = await import('../../src/TerraScale.Dashboard/web/assets/js/document-changes.js');
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
 const originalTimeout = globalThis.setTimeout;

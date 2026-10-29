@@ -224,7 +224,7 @@ sdk-go-test-fast:
 	cd sdk/go && go test -count=1 ./...
 
 sdk-python-test-fast:
-	cd sdk/python && uv venv --python 3.12 .venv && uv pip sync --python .venv/bin/python --require-hashes --only-binary :all: requirements-ci.txt
+	cd sdk/python && uv venv --allow-existing --python 3.12 .venv && uv pip sync --python .venv/bin/python --require-hashes --only-binary :all: requirements-ci.txt
 	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/pytest -q
 
 sdk-rust-test-fast:

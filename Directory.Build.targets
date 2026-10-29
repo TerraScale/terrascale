@@ -34,7 +34,7 @@
       <AssetsFile ParameterType="System.String" Required="true" />
     </ParameterGroup>
     <Task>
-      <Reference Include="$(MSBuildToolsPath)/System.Text.Json.dll" />
+      <Reference Include="$(NetCoreRoot)shared/Microsoft.NETCore.App/$(BundledNETCoreAppPackageVersion)/System.Text.Json.dll" />
       <Using Namespace="System" />
       <Using Namespace="System.IO" />
       <Using Namespace="System.Text.Json" />

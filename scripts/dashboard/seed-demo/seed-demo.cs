@@ -2,9 +2,9 @@
 // some reads, queries and writes so analytics show activity. Re-running drops and rewrites every demo collection,
 // so the data returns to the same known state (iot readings stay relative to now).
 //
-// Usage: dotnet run scripts/seed-demo/seed-demo.cs -- <projectId> <api-key-file | ->
+// Usage: dotnet run scripts/dashboard/seed-demo/seed-demo.cs -- <projectId> <api-key-file | ->
 // The API key is a Full access project key (API keys → Full access) read from a 0600 file, or from stdin with "-".
-#:package TerraScale.DotNet
+#:project ../../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj
 #:property PublishAot=false
 
 using System.Diagnostics;
