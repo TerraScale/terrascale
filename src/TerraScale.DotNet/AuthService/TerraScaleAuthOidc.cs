@@ -10,7 +10,9 @@ namespace TerraScale.DotNet;
 /// </summary>
 public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
 {
-    /// <summary>Fetches the OIDC discovery document for the instance.</summary>
+    /// <summary>Fetches the OIDC discovery document for the instance. Project issuers advertise only
+    /// authorization_code and refresh_token grants and openid, email, profile and offline_access scopes;
+    /// platform-only grants and device authorization metadata belong to the terrascale issuer.</summary>
     public Task<TerraScaleAuthOidcDiscovery> GetDiscoveryDocumentAsync(CancellationToken cancellationToken = default) =>
         client.GetMetadataAsync(
             InstanceRoute("/.well-known/openid-configuration"),
@@ -120,7 +122,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     }
 
     /// <summary>
-    /// Revokes a token and its sign-in, scoped to the calling client. Unknown or
+    /// Revokes a token and its sign-in (RFC 7009), scoped to the calling platform or project client. Unknown or
     /// already-invalid tokens also succeed. Offline access tokens live until expiry.
     /// </summary>
     public Task RevokeTokenAsync(string clientId, string clientSecret, string token, CancellationToken cancellationToken = default)
