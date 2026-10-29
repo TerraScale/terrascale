@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -61,7 +62,8 @@ public sealed class TenantIsolationTests
     [Test]
     public async Task A_tenant_reaches_nothing_of_another_tenant_through_any_client_route()
     {
-        await using var api = await ManagementApi.StartAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: clock);
         // Every client scope, so each route answers past its scope check.
         using var a = await api.CreateTenantAsync("documents:read", "documents:write");
         using var b = await api.CreateTenantAsync("documents:read", "documents:write");
@@ -98,6 +100,7 @@ public sealed class TenantIsolationTests
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean()).IsTrue();
         }
 
+        clock.Advance(TimeSpan.FromSeconds(1));
         var aBefore = await SnapshotAsync(api, a, aDashboard, aSecret);
         var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
 
@@ -116,15 +119,15 @@ public sealed class TenantIsolationTests
         List<(string Request, HttpStatusCode Status)> answers =
         [
             // A's credentials (its API key, or its member on the dashboard) with B's organization and B's project.
-            .. await SendAsync(addressing, aDashboard, a.Data, aProject, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+            .. await SendAsync(addressing, aDashboard, a.Data, aProject, b.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling, clock),
             // A's organization, where A is an owner, with B's project.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)),
-                aDashboard, a.Data, aProject, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling),
+                aDashboard, a.Data, aProject, a.OrganizationId, b.ProjectId, bSecret, b.User, bInvitation, bTooling, clock),
             // B's organization with A's project: A's member on B's organization, and B's key (whose organization is B) on A's project.
-            .. await SendAsync(withProject, aDashboard, b.Data, bProject, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling),
+            .. await SendAsync(withProject, aDashboard, b.Data, bProject, b.OrganizationId, a.ProjectId, aSecret, b.User, bInvitation, aTooling, clock),
             // A's organization and project with B's database.
             .. await SendAsync(foreignDatabases,
-                aDashboard, a.Data, aProject, a.OrganizationId, a.ProjectId, bForeign, b.User, bInvitation, bTooling, databaseName: "foreign"),
+                aDashboard, a.Data, aProject, a.OrganizationId, a.ProjectId, bForeign, b.User, bInvitation, bTooling, clock, databaseName: "foreign"),
         ];
 
         // Routes that address no tenant show A only its own organization.
@@ -139,6 +142,7 @@ public sealed class TenantIsolationTests
         await Assert.That(listed.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
             .IsEquivalentTo([a.OrganizationId]);
         await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        clock.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(await SnapshotAsync(api, a, aDashboard, aSecret)).IsEquivalentTo(aBefore);
         await Assert.That(await SnapshotAsync(api, b, bDashboard, bSecret)).IsEquivalentTo(bBefore);
     }
@@ -275,11 +279,12 @@ public sealed class TenantIsolationTests
     // Project management takes a project JWT, hidden identity routes a dashboard token, and legacy data an API key.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(
         IEnumerable<(string Method, string Pattern, bool ProjectManagement)> routes, HttpClient dashboard, HttpClient data, HttpClient projectToken,
-        string organization, string project, string database, string user, string invitation, Tooling tooling, string databaseName = "secret")
+        string organization, string project, string database, string user, string invitation, Tooling tooling, FakeTimeProvider clock, string databaseName = "secret")
     {
         var sent = new List<(string Request, HttpStatusCode Status)>();
         foreach (var (method, pattern, projectManagement) in routes)
         {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
             var path = pattern
                 .Replace("{organization}", organization, StringComparison.Ordinal)
                 .Replace("{project}", project, StringComparison.Ordinal)

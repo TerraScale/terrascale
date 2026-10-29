@@ -4,6 +4,8 @@ using System.Text.Json;
 using Bogus;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -202,6 +204,40 @@ public sealed class BoundedShutdownTests
     }
 
     [Test]
+    public async Task A_changes_write_in_progress_at_shutdown_completes_before_clean_eof()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var barrier = new ChangesWriteBarrier();
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IStartupFilter>(barrier));
+        var lifetime = api.Server.Services.GetRequiredService<IHostApplicationLifetime>();
+        var completion = api.Server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(api.DatabasePath() + "/changes?cursor=now", UriKind.Relative));
+        var pending = api.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        try
+        {
+            await barrier.Entered.Task.WaitAsync(token);
+            lifetime.StopApplication();
+        }
+        finally
+        {
+            barrier.Release.TrySetResult();
+        }
+
+        using var response = await pending;
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
+        await ReadEventAsync(reader, "cursor", token);
+        while (await reader.ReadLineAsync(token) is not null)
+        {
+        }
+
+        await completion.WaitAsync(TimeSpan.FromSeconds(45), token);
+        await Assert.That(engine.CleanupCompletion.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task A_changes_producer_cancelled_before_the_linked_stream_token_ends_the_response_cleanly()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -312,6 +348,30 @@ public sealed class BoundedShutdownTests
         }
 
         throw new EndOfStreamException("changes stream ended before its event");
+    }
+
+    private sealed class ChangesWriteBarrier : IStartupFilter
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, continuation) =>
+            {
+                if (context.Request.Path.Value?.EndsWith("/changes", StringComparison.Ordinal) == true)
+                {
+                    context.Response.OnStarting(async () =>
+                    {
+                        Entered.TrySetResult();
+                        await Release.Task.WaitAsync(context.RequestAborted);
+                    });
+                }
+
+                await continuation(context);
+            });
+            next(app);
+        };
     }
 
     private sealed class HeldShutdown : IHostedService
