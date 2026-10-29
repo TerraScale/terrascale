@@ -328,6 +328,10 @@ public sealed class ReviewRoundFiveCapacityJourneyTests
             inner.AcceptInvitationAsync(Invitee with { Email = email, UserId = new TerraScaleIdGenerator().NewId() }, token, default);
         private static SessionRecord Invitee => new("invitee", "Invitee", "", "", null, DateTimeOffset.UtcNow.AddHours(1));
 
+        public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>> ListProjectInvitationsAsync(SessionRecord session,
+            string organizationId, string projectId, string? after, CancellationToken cancellationToken) =>
+            inner.ListProjectInvitationsAsync(session, organizationId, projectId, after, cancellationToken);
+
         public async Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {
             var result = await inner.ListInvitationsAsync(session, organizationId, cancellationToken);

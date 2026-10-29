@@ -86,6 +86,8 @@ jobs:
         with:
           name: dashboard-flow-evidence-${{ github.sha }}
           path: |
+            **/test-results/dotnet/q03-project-invitation-list/
+            **/test-results/dotnet/q03-project-invitation-revoke/
             test-results/dotnet/directory-export-browser/
             test-results/dotnet/code-editor-styling/
             test-results/dotnet/hosted-auth-v3/
