@@ -10,6 +10,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
 

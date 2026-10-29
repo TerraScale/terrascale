@@ -11,7 +11,7 @@ public sealed class ClientAccessShapeTests
     [Test]
     public async Task Owner_snapshots_and_handles_are_isolated_even_with_a_broader_user_filter()
     {
-        await using var api = await CollectionAccessFixture.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await RulesAsync(api, OwnerRules());
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
@@ -50,7 +50,7 @@ public sealed class ClientAccessShapeTests
     [Test]
     public async Task Owner_chunks_emit_only_proven_deletes_and_authorized_afterimages()
     {
-        await using var api = await CollectionAccessFixture.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         await RulesAsync(api, OwnerRules());
         var alice = DocumentApi.NewId();
         var bob = DocumentApi.NewId();
@@ -80,7 +80,7 @@ public sealed class ClientAccessShapeTests
     [Test]
     public async Task A_user_where_filter_cannot_authorize_unrelated_deletes_or_old_policy_proofs()
     {
-        await using var api = await CollectionAccessFixture.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var rules = OwnerRules();
         await RulesAsync(api, rules);
         var actor = DocumentApi.NewId();
@@ -108,7 +108,7 @@ public sealed class ClientAccessShapeTests
     [Test]
     public async Task Missing_rules_deny_end_users_while_roles_public_and_legacy_project_access_work()
     {
-        await using var api = await CollectionAccessFixture.StartAsync();
+        await using var api = await DocumentApi.StartIsolatedAsync();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { value = "visible" })).Status.ShouldBe(HttpStatusCode.Created);
         var shape = Shape(api);
