@@ -33,3 +33,26 @@ jobs:
         run: rustup toolchain install 1.99.1 --profile minimal
       - name: Build the pinned native page host and restore the official client
         run: bash benchmark/lag-lab/build.sh
+      - name: Run real page, push, provisional and combined namespace cases
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y btrfs-progs iproute2 iputils-ping
+          truncate -s 2G "$RUNNER_TEMP/lag-data.img"
+          sudo mkfs.btrfs -f "$RUNNER_TEMP/lag-data.img"
+          mkdir "$RUNNER_TEMP/lag-data"
+          sudo mount -o loop "$RUNNER_TEMP/lag-data.img" "$RUNNER_TEMP/lag-data"
+          sudo find benchmark/lag-lab -maxdepth 1 -type f -exec cp {} "$RUNNER_TEMP/lag-data/" \;
+          sudo ln -s "$GITHUB_WORKSPACE/benchmark/lag-lab/turso" "$RUNNER_TEMP/lag-data/turso"
+          sudo ln -s "$GITHUB_WORKSPACE/benchmark/lag-lab/node_modules" "$RUNNER_TEMP/lag-data/node_modules"
+          sudo env PATH="$PATH" python3 "$RUNNER_TEMP/lag-data/lab.py" run 2 smoke normal
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: lag-lab-integration
+          path: ${{ runner.temp }}/lag-data/run-*/
+      - name: Unmount owned scratch filesystem
+        if: always()
+        run: |
+          if mountpoint -q "$RUNNER_TEMP/lag-data"; then
+            sudo umount "$RUNNER_TEMP/lag-data"
+          fi
