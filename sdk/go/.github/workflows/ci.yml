@@ -1,0 +1,113 @@
+name: CI
+
+# One required check: "test".
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Weekly maintenance keeps caches and advisory checks current.
+  schedule:
+    - cron: '41 3 * * 1'
+  workflow_dispatch:
+
+# Main validation finishes; superseded PR runs are cancelled.
+concurrency:
+  group: ${{ github.workflow }}-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Draft PRs run nothing; marking the PR ready runs it.
+    if: ${{ !github.event.pull_request.draft }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Select affected checks
+        id: changes
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'check=false' >> "$GITHUB_OUTPUT"
+            echo "cache=$([[ "$GITHUB_REF" == refs/heads/main ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          else
+            echo 'check=true' >> "$GITHUB_OUTPUT"
+            echo "cache=$([[ "$GITHUB_REF" == refs/heads/main ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        id: go
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Locate Go caches
+        id: cache-paths
+        run: |
+          {
+            echo "modules=$(go env GOMODCACHE)"
+            echo "build=$(go env GOCACHE)"
+            echo "platform=setup-go-${RUNNER_OS}-${RUNNER_ARCH,,}-${ImageOS}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore module and build cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: cache
+        with:
+          path: |
+            ${{ steps.cache-paths.outputs.modules }}
+            ${{ steps.cache-paths.outputs.build }}
+          key: ${{ steps.cache-paths.outputs.platform }}-go-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ steps.cache-paths.outputs.platform }}-go-${{ steps.go.outputs.go-version }}-
+      - name: Restore advisory scanner
+        id: advisory-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/terrascale/govulncheck-v1.9.0-go1.27.3
+          key: ${{ runner.os }}-${{ runner.arch }}-govulncheck-v1.9.0-${{ hashFiles('.go-version', 'scripts/install-govulncheck.sh') }}
+      - name: Check every module's current advisories and source reachability
+        run: bash scripts/audit-dependencies.sh
+      - name: Save verified scanner on main
+        if: steps.changes.outputs.cache == 'true' && steps.advisory-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/terrascale/govulncheck-v1.9.0-go1.27.3
+          key: ${{ steps.advisory-cache.outputs.cache-primary-key }}
+      - if: steps.changes.outputs.check == 'true'
+        run: test -z "$(gofmt -l .)"
+      - if: steps.changes.outputs.check == 'true'
+        run: go vet ./...
+      # -count=1: the build cache stays warm, but tests always run on the current head (no cached passes).
+      - if: steps.changes.outputs.check == 'true'
+        run: go test -race -count=1 ./...
+      - name: Warm main cache during maintenance
+        if: steps.changes.outputs.cache == 'true' && steps.changes.outputs.check != 'true'
+        run: |
+          go mod download
+          go build -race ./...
+      - name: Save main cache
+        if: steps.changes.outputs.cache == 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ${{ steps.cache-paths.outputs.modules }}
+            ${{ steps.cache-paths.outputs.build }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: Select supported consumer floor
+        if: steps.changes.outputs.check == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.0'
+          cache: false
+      - name: Compile SDK consumer at supported floor
+        if: steps.changes.outputs.check == 'true'
+        run: bash scripts/check-consumer.sh

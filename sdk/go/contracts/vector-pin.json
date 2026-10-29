@@ -1,0 +1,81 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "commit": "a3cbf8b1c73d304189a489fa8033d41f3b508de3",
+  "sources": {
+    "src/TerraBase/Features/Documents/QueryParser.cs": "970b443deec0dc7232f527bb02c726107aa55a966dd6a7f4bde7b3f51ebf4adc",
+    "src/TerraBase/Features/Documents/QueryDocumentsEndpoint.cs": "5c640daf2e68dbe23a4fe42bb94d2104659ccb2f8554eb624cfa8b4aad5a8e8f",
+    "src/TerraBase/Features/Documents/DocumentRoute.cs": "6add2f7cc95edd8ddb54be992ffc2999ec22e05d91d1837c1f3643e791d2b6e8",
+    "src/TerraBase/Features/Management/ProjectApiRoute.cs": "f78ac4888e34b0aa76158e9666efaf5de996d73e2b220018e44167ea2d7372cc",
+    "src/TerraBase/Features/Management/Indexes/CreateIndexEndpoint.cs": "79309357ab033758ed25d63d10bdd9794a8920b5fe56c77ea4638d24c620fe53",
+    "src/TerraBase/Features/Management/Indexes/IIndexService.cs": "283cb81a25a122515feed8f4bc56000d321da0612b9fc0eaf11f8a17af7bba5e",
+    "src/TerraBase/Features/Management/Indexes/ListIndexesEndpoint.cs": "0b75cf7bb6bccb81c33236130794624798779c191d70fd14758c9deaa4fbe2f7",
+    "docs/terrabase/vector-index.md": "ea0ac28bc20f79615b106a00ab52e0a703985c2f6e7cc7694f2fa87b727f70a6",
+    "src/TerraBase/Hosting/TerraBaseJsonContext.cs": "448816c44361d03fbe5bce6168e9f743d4847f903ca489ed44131617e875c026"
+  },
+  "operations": [
+    {
+      "operation": "queryDocuments",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/query",
+      "scope": "documents:read"
+    },
+    {
+      "operation": "createIndex",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/indexes",
+      "scope": "databases:write"
+    },
+    {
+      "operation": "listIndexes",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/indexes",
+      "scope": "databases:read"
+    }
+  ],
+  "contract": {
+    "mediaType": "application/json",
+    "near": {
+      "maxLimit": 1000,
+      "defaultLimit": 50,
+      "maxDimensions": 4096,
+      "geoMaxLimit": 1000,
+      "cursor": false,
+      "additionalSortKeys": false,
+      "search": false
+    },
+    "createIndex": {
+      "kinds": [
+        "btree",
+        "text",
+        "vector"
+      ],
+      "vectorFields": 1,
+      "minDimensions": 1,
+      "maxDimensions": 4096,
+      "dimensionsOnlyForVector": true,
+      "status": 201,
+      "errors": [
+        400,
+        403,
+        404,
+        409,
+        503
+      ],
+      "retry": "never automatically retry create"
+    },
+    "index": {
+      "required": [
+        "name",
+        "collection",
+        "fields",
+        "state"
+      ],
+      "kindDefault": "btree",
+      "dimensions": "optional integer; present for vector indexes",
+      "states": [
+        "active",
+        "building"
+      ]
+    }
+  }
+}
