@@ -630,7 +630,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 
     private static async Task MatchesSnapshotAsync(string name, string actual, [CallerFilePath] string source = "")
     {
-        var path = Path.Combine(Path.GetDirectoryName(source)!, "..", "..", "TerraScale.Authentication.Fast", "Email", "Snapshots", name);
+        var path = Path.Combine(Path.GetDirectoryName(source)!, "Snapshots", name);
         if (Environment.GetEnvironmentVariable("TS_AUTH_UPDATE_SNAPSHOTS") == "1")
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
