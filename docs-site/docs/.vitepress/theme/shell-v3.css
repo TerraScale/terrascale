@@ -1,0 +1,230 @@
+/* Docs shell, v3: full width, 240px sidebar, 56px frosted top bar, neutral nav with icons,
+   TOC with an ink rule, mobile drawer and search modal. Colours follow the v3 prototype in light and dark.
+   Loads after style.css, so equal-specificity rules here win. Every selector starts with .Layout to
+   outrank VitePress's scoped component styles. */
+
+:root {
+  --v3-frost: blur(20px) saturate(1.15);
+  --v3-icon-file: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z'/%3E%3Cpath d='M14 2v5a1 1 0 0 0 1 1h5'/%3E%3Cpath d='M10 9H8M16 13H8M16 17H8'/%3E%3C/svg%3E");
+  --vp-nav-bg-color: transparent;
+  --vp-nav-screen-bg-color: var(--ts-canvas);
+  --vp-sidebar-bg-color: var(--ts-sidebar);
+  --vp-local-nav-bg-color: var(--ts-glass);
+  --vp-backdrop-bg-color: var(--ts-scrim);
+  --vp-local-search-bg: var(--ts-glass-strong);
+  --vp-local-search-result-bg: transparent;
+  --vp-local-search-result-border: transparent;
+  --vp-local-search-result-selected-bg: var(--ts-surface-3);
+  --vp-local-search-result-selected-border: transparent;
+  --vp-local-search-highlight-bg: var(--ts-accent-soft);
+  --vp-local-search-highlight-text: var(--ts-ink);
+}
+
+/* ---------- Top bar: frosted chrome, one line, full width ---------- */
+.Layout .VPNavBar::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: var(--ts-glass);
+  -webkit-backdrop-filter: var(--v3-frost);
+  backdrop-filter: var(--v3-frost);
+}
+.Layout .VPNavBarMenuLink:hover,
+.Layout .VPNavBarMenuLink.active { color: var(--ts-ink); }
+.Layout .VPNavBarMenuLink { color: var(--ts-ink-2); }
+.Layout .VPNavBarTitle .title { color: var(--ts-ink); }
+.Layout .VPNavBarTitle .logo { display: none; }
+.docs-brand-mark { width: 25px; height: 28px; flex-shrink: 0; }
+.docs-brand-word { color: var(--ts-ink); font: 600 17px / 1 var(--ts-font-sans); letter-spacing: -.02em; }
+
+@media (min-width: 768px) {
+  .Layout .VPNavBarSearch .DocSearch-Button {
+    width: 240px; height: 32px; padding: 0 8px 0 12px;
+    border: 1px solid var(--ts-line-strong); border-radius: 6px;
+    background: transparent; color: var(--ts-ink-3);
+  }
+  .Layout .VPNavBarSearch .DocSearch-Button:hover {
+    border-color: var(--ts-control-line-hover); background: transparent;
+  }
+  .Layout .VPNavBarSearch .DocSearch-Button-Placeholder { color: var(--ts-ink-3); font-size: 13px; font-weight: 400; }
+  .Layout .VPNavBarSearch .DocSearch-Search-Icon { color: var(--ts-ink-3); }
+}
+/* Narrower screens get tight (five links in most locales): drop link icons, then shrink search, then the wordmark. */
+@media (min-width: 768px) and (max-width: 1439px) {
+  .Layout .VPNavBarMenuLink::before { display: none; }
+}
+@media (min-width: 1280px) and (max-width: 1439px) {
+  .Layout .VPNavBarSearch .DocSearch-Button { width: 160px; }
+}
+@media (min-width: 768px) and (max-width: 1279px) {
+  .Layout .VPNavBarSearch .DocSearch-Button { width: 32px; min-width: 0; padding: 0; justify-content: center; }
+  .Layout .VPNavBarSearch .DocSearch-Button-Placeholder,
+  .Layout .VPNavBarSearch .DocSearch-Button-Keys { display: none; }
+  .Layout .VPNavBarSearch .DocSearch-Search-Icon { margin: 0; }
+}
+@media (min-width: 768px) and (max-width: 959px) {
+  .Layout .VPNavBarTitle .title > span,
+  .Layout .docs-brand-word { display: none; }
+}
+/* Local nav (On this page) lines up with the article column. */
+@media (min-width: 960px) {
+  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { padding-inline: clamp(16px, 2.5vw, 40px); }
+}
+
+/* ---------- Sidebar: 240px, frosted, neutral nav with icons ---------- */
+@media (min-width: 960px) {
+  .Layout .VPSidebar {
+    width: var(--vp-sidebar-width); max-width: none;
+    padding: calc(var(--vp-nav-height) + 8px) 12px 96px;
+    background-color: var(--vp-sidebar-bg-color);
+    -webkit-backdrop-filter: var(--v3-frost);
+    backdrop-filter: var(--v3-frost);
+    border-inline-end: 1px solid var(--ts-line);
+  }
+  .Layout .VPSidebar .group { width: auto; }
+  .Layout .VPContent.has-sidebar { padding-left: var(--vp-sidebar-width); padding-right: 0; }
+  .Layout .VPNavBar.has-sidebar .title { width: var(--vp-sidebar-width); padding: 0 12px; }
+  .Layout .VPNavBar.has-sidebar .content { padding-left: var(--vp-sidebar-width); padding-right: 24px; }
+  .Layout .VPLocalNav.has-sidebar { padding-left: var(--vp-sidebar-width); }
+}
+@media (min-width: 1440px) {
+  .Layout .VPSidebar { width: var(--vp-sidebar-width); padding-left: 12px; }
+  .Layout .VPContent.has-sidebar { padding-left: var(--vp-sidebar-width); padding-right: 0; }
+  .Layout .VPNavBar.has-sidebar .title { width: var(--vp-sidebar-width); padding-left: 12px; }
+  .Layout .VPNavBar.has-sidebar .content { padding-left: var(--vp-sidebar-width); padding-right: 24px; }
+  .Layout .VPLocalNav.has-sidebar { padding-left: var(--vp-sidebar-width); }
+}
+
+.Layout .VPSidebar .VPSidebarItem.level-0 > .item > .text {
+  padding: 4px 10px; font-size: 11.5px; line-height: 16px; font-weight: 500;
+  font-family: var(--vp-font-family-mono);
+  color: var(--ts-ink-3); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.Layout .VPSidebar .VPSidebarItem.level-1 > .item,
+.Layout .VPSidebar .VPSidebarItem.level-2 > .item {
+  gap: 10px; min-height: 32px; padding: 0 10px; border-radius: 8px;
+}
+.Layout .VPSidebar .VPSidebarItem.level-1 .text,
+.Layout .VPSidebar .VPSidebarItem.level-2 .text {
+  font-size: 13px; line-height: 20px; padding: 6px 0; font-weight: 400; color: var(--ts-ink-2);
+}
+.Layout .VPSidebar .VPSidebarItem.is-link:not(.level-0) > .item:hover { background: var(--ts-nav-hover-bg); }
+.Layout .VPSidebar .VPSidebarItem.level-1.is-active > .item,
+.Layout .VPSidebar .VPSidebarItem.level-2.is-active > .item { background: var(--ts-nav-active-bg); }
+.Layout .VPSidebar .VPSidebarItem.level-1.is-active > .item .link > .text,
+.Layout .VPSidebar .VPSidebarItem.level-2.is-active > .item .link > .text { color: var(--ts-ink); font-weight: 500; }
+.Layout .VPSidebar .VPSidebarItem.is-link:not(.level-0) > .item > .link:hover .text { color: var(--ts-ink); }
+
+/* Icon on every link: a neutral mask, so the colour follows the text. */
+.Layout .VPSidebar .VPSidebarItem.is-link:not(.level-0) > .item::before {
+  content: ""; flex: none; align-self: center; width: 14px; height: 14px;
+  background-color: var(--ts-ink-3);
+  -webkit-mask: var(--v3-icon-file) center / contain no-repeat;
+  mask: var(--v3-icon-file) center / contain no-repeat;
+}
+.Layout .VPSidebar .VPSidebarItem.is-link:not(.level-0).is-active > .item::before { background-color: var(--ts-ink); }
+
+/* ---------- Content: full width, paragraphs ~80ch ---------- */
+@media (min-width: 960px) {
+  .Layout .VPDoc { padding: 32px clamp(16px, 2.5vw, 40px) 64px; }
+  .Layout .VPDoc > .container > .content { min-width: 0; padding: 0 48px 0 0; }
+  .Layout .VPDoc:not(.has-aside) > .container > .content { padding: 0; }
+}
+.Layout .VPDoc .content-container { max-width: none !important; }
+.Layout .vp-doc > div > :is(p, ul, ol, blockquote) { max-width: 80ch; }
+
+/* ---------- Right-hand TOC: ink + 1px rule on the active heading ---------- */
+@media (min-width: 1280px) {
+  .Layout .VPDoc .aside { max-width: 220px; padding-left: 0; }
+  .Layout .VPDoc .aside-container { width: 220px; padding-top: calc(var(--vp-nav-height) + 32px); }
+  .Layout .VPDoc .aside-curtain { width: 220px; }
+}
+.Layout .VPDocAsideOutline > .content { border-left: 0; padding-left: 0; font-size: 13px; font-weight: 400; }
+.Layout .VPDocAsideOutline .outline-title {
+  margin-bottom: 8px; font: 500 11.5px / 1.4 var(--vp-font-family-mono);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--ts-ink-3);
+}
+.Layout .VPDocAsideOutline .outline-marker { display: none; }
+.Layout .VPDocAsideOutline .VPDocOutlineItem.nested { padding: 0; }
+.Layout .VPDocAsideOutline .outline-link {
+  padding-left: 12px; border-left: 1px solid var(--ts-line);
+  line-height: 28px; font-size: 13px; font-weight: 400; color: var(--ts-ink-3);
+}
+.Layout .VPDocAsideOutline .nested .outline-link { padding-left: 24px; }
+.Layout .VPDocAsideOutline .outline-link:hover { color: var(--ts-ink); }
+.Layout .VPDocAsideOutline .outline-link.active { color: var(--ts-ink); border-left-color: var(--ts-ink); }
+.Layout .VPDocAsideOutline .content > ul:not(:has(.outline-link.active)) > li:first-child > .outline-link { color: var(--ts-ink); border-left-color: var(--ts-ink); }
+
+/* ---------- Search modal: prototype dialog, frosted, 56px input row ---------- */
+@media (min-width: 768px) {
+  body .VPLocalSearchBox .shell {
+    width: min(100vw - 48px, 640px); max-height: min(100vh - 24vh, 620px);
+    margin: 12vh auto; padding: 0; gap: 0; border-radius: 10px;
+    background: var(--vp-local-search-bg);
+    -webkit-backdrop-filter: var(--v3-frost);
+    backdrop-filter: var(--v3-frost);
+    box-shadow: 0 0 0 1px var(--ts-line-strong), 0 16px 40px -16px light-dark(rgb(0 0 0 / .14), rgb(0 0 0 / .56));
+  }
+}
+body .VPLocalSearchBox .search-bar {
+  height: 56px; padding: 0 16px; gap: 12px;
+  border: 0; border-bottom: 1px solid var(--ts-line); border-radius: 0;
+}
+body .VPLocalSearchBox .search-bar:focus-within { border-color: var(--ts-line); }
+body .VPLocalSearchBox .search-icon { margin: 0; color: var(--ts-ink-3); }
+body .VPLocalSearchBox .search-input { padding: 0; height: 100%; background: transparent; color: var(--ts-ink); font-size: 16px; }
+body .VPLocalSearchBox .results { padding: 8px; gap: 2px; }
+body .VPLocalSearchBox .result { border: 0; border-radius: 6px; }
+body .VPLocalSearchBox .result > div { margin: 8px 12px; }
+body .VPLocalSearchBox .result.selected .titles,
+body .VPLocalSearchBox .result.selected .title-icon { color: var(--ts-ink) !important; }
+body .VPLocalSearchBox .title-icon { color: var(--ts-ink-3); }
+body .VPLocalSearchBox .search-keyboard-shortcuts { padding: 12px 16px; }
+body .VPLocalSearchBox .excerpt-gradient-bottom,
+body .VPLocalSearchBox .excerpt-gradient-top { display: none; }
+
+/* ---------- Mobile: sticky top bar, drawer under it ---------- */
+@media (max-width: 959px) {
+  .Layout .VPNav { position: sticky; }
+  .Layout .VPLocalNav { top: var(--vp-nav-height); background-color: var(--ts-glass); }
+  .Layout .VPSidebar {
+    top: var(--vp-nav-height); width: min(300px, 86vw); max-width: none;
+    padding: 16px 12px 96px; background-color: var(--ts-glass-strong);
+    -webkit-backdrop-filter: var(--v3-frost);
+    backdrop-filter: var(--v3-frost);
+    box-shadow: 0 0 0 1px var(--ts-line-strong), 0 16px 40px -16px light-dark(rgb(0 0 0 / .14), rgb(0 0 0 / .56));
+  }
+  .Layout .VPSidebar .VPSidebarItem.level-0 { padding-bottom: 12px; }
+}
+
+.Layout .VPNavBarMenuLink { gap: 8px; }
+.Layout .VPNavBarMenuLink::before {
+  content: ""; width: 14px; height: 14px; background: currentColor;
+  mask: var(--v3-icon-file) center / contain no-repeat;
+}
+.Layout .VPDoc .aside-curtain { display: none; }
+.Layout .VPNavBar .divider { padding-left: 0; }
+.Layout .VPNavBar > .wrapper > .container { max-width: none; }
+
+.Layout .VPNavBarTitle .title > span {
+  padding: 1px 6px; border: 1px solid var(--ts-line-strong); border-radius: 4px;
+  color: var(--ts-ink-3); font: 400 11px / 16px var(--vp-font-family-mono);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+
+.Layout .VPSidebar .VPSidebarItem > .item > .link { min-width: 0; }
+.Layout .VPSidebar .VPSidebarItem > .item > .link > .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 767px) {
+  .Layout .VPDoc { padding: 32px 16px 64px; }
+  .Layout .VPNavBar > .wrapper { padding: 0 8px 0 56px; }
+  .Layout .VPNavBarTitle .logo { content: url('/favicon.svg'); width: 24px; height: 24px; margin-right: 0; }
+  .Layout .VPNavBarTitle .title > span { display: none; }
+  .Layout .docs-brand-word { display: none; }
+  .Layout .VPNavBarAppearance { display: flex; align-items: center; }
+  .Layout .VPLocalNav { height: 0; padding: 0; border: 0; z-index: calc(var(--vp-z-index-nav) + 1); }
+  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { display: none; }
+  .Layout .VPLocalNav .menu {
+    position: fixed; top: 8px; left: 8px; z-index: var(--vp-z-index-nav);
+    width: 40px; height: 40px; justify-content: center; padding: 0;
+  }
+  .Layout .VPLocalNav .menu-icon { margin: 0; font-size: 18px; }
+  .Layout .VPLocalNav .menu-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}
