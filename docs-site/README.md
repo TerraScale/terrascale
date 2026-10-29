@@ -19,20 +19,38 @@ TerraBase engine; engine qualification belongs in the monorepo.
 
 ## Deploy
 
-GitHub Actions builds and tests every PR and `main`. After all checks pass on
-`main`, that same job publishes the checked static assets with
-`env -u CLOUDFLARE_API_TOKEN cf deploy --prebuilt`; it does not rebuild the site.
-`cloudflare.config.ts` serves the VitePress output on `docs.terrascale.tech`.
-CI verifies eight hosted pages/assets against the local build and the custom
-HTTP 404 page. Publication credentials come from GitHub's secret store.
-The hosted check retries once after five seconds while Cloudflare propagates a
-new publication; a repeated HTTP, content-type or content-hash failure fails CI.
+The site lives at `docs-site/` in the public `TerraScale/terrascale` monorepo.
+Run its commands from that directory. `make docs-test-fast` at the root runs
+locked installation, the site build and the core tests on a dev host through
+`ts-ship`.
 
-`cf` is pinned to `1.0.0-beta.10`. Its supported `CF_API_TOKEN` credential alias
-allows `CLOUDFLARE_API_TOKEN` to remain unset for every invocation. Cloudflare's
-required `workersDev`, `previewUrls` and `buildContext.isPreview` fields describe
-hosting/output semantics. `CLOUDFLARE_PREVIEW_BUILD` is cf's required platform
-build context for branch previews; application feature switches are rejected by CI.
+Before shipping a docs change, qualify its clean commit on a dev host:
+
+```bash
+ts-heavy-any bash docs-site/scripts/prepare-deployment.sh --repo terrascale --branch <staging-ref>
+```
+
+This audits all locked npm graphs, builds the site, runs the full examples and
+starter checks, and uploads immutable artifacts under `docs/qualified-<sha>`.
+It does not deploy. After `ts-ship` pushes that same commit and monorepo CI is
+green, `docs-deploy.yml` publishes the checked artifact through Cloudflare
+Workers. The workflow also accepts a manual dispatch on `main`. It verifies
+`build-info.json` and the checked pages/assets against `docs.terrascale.tech`.
+Publication uses the existing scoped `CLOUDFLARE_API_TOKEN` Actions secret and
+`CLOUDFLARE_ACCOUNT_ID` variable.
+
+For an operator deployment after green main, use the existing host's Cloudflare
+authentication, without moving its broader user token into CI:
+
+```bash
+cd docs-site
+cf deploy --prebuilt --message "$(git rev-parse HEAD)"
+node scripts/check-hosted.mjs
+```
+
+`cf` is pinned in `package-lock.json`. Its required `workersDev`, `previewUrls`
+and `CLOUDFLARE_PREVIEW_BUILD` fields describe production and preview hosting;
+application feature switches remain rejected by the source gate.
 
 ## Edit public content
 
