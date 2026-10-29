@@ -1,0 +1,28 @@
+name: SDK rust Fast
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/rust/**'
+      - '.github/workflows/sdk-rust-*.yml'
+      - '.github/workflows/sdk-fast.yml'
+      - 'scripts/sdk/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdk/rust/**'
+      - '.github/workflows/sdk-rust-*.yml'
+      - '.github/workflows/sdk-fast.yml'
+      - 'scripts/sdk/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  fast:
+    uses: ./.github/workflows/sdk-fast.yml
+    with:
+      area: sdk-rust

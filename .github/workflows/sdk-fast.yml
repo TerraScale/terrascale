@@ -1,0 +1,28 @@
+name: SDK dev-host proof
+
+on:
+  workflow_call:
+    inputs:
+      area:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require this commit's dev-host Fast result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AREA: ${{ inputs.area }}
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/sdk/check-proof.py "$AREA" "$REVISION"
