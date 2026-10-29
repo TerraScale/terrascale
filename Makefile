@@ -240,3 +240,7 @@ sdk-python-test-fast:
 
 sdk-rust-test-fast:
 	cd sdk/rust && bash scripts/test-fast.sh
+
+.PHONY: docs-test-fast
+docs-test-fast:
+	cd docs-site && bash scripts/test-fast.sh

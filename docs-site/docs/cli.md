@@ -21,8 +21,8 @@ export PATH="$HOME/.local/bin:$PATH"
 ts --version
 ```
 
-The installer downloads the latest `v0.0.X` release from the
-[releases page](https://github.com/TerraScale/ts-go/releases), checks its
+The installer downloads the latest `sdk/go/v0.0.X` release from the
+[releases page](https://github.com/TerraScale/terrascale/releases), checks its
 SHA-256 against `checksums.txt`, and installs `ts` to `~/.local/bin` without
 sudo. `sh install.sh 0.0.2` installs a specific release.
 
@@ -33,7 +33,7 @@ brew install terrascale/tap/ts
 ```
 
 On Windows, download `ts_windows_amd64.zip` or `ts_windows_arm64.zip` from the
-[releases page](https://github.com/TerraScale/ts-go/releases), verify it against
+[releases page](https://github.com/TerraScale/terrascale/releases), verify it against
 `checksums.txt` (`Get-FileHash .\ts_windows_amd64.zip -Algorithm SHA256`), and
 extract `ts.exe` into a user-owned directory on `PATH`.
 
