@@ -58,6 +58,8 @@
   </ItemGroup>
   <ItemGroup Label="Integrations">
     <PackageVersion Include="Sentry.AspNetCore" Version="6.12.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageVersion Include="Stripe.net" Version="53.0.0" />
   </ItemGroup>
   <!-- OpenTelemetry: keep every package on the same release train. The Prometheus
        exporter is only published as beta; it serves the required /metrics scrape. -->
@@ -99,11 +101,16 @@
   <ItemGroup Label="Integration tests">
     <PackageVersion Include="TUnit" Version="1.73.19" />
     <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
+    <PackageVersion Include="Deque.AxeCore.Playwright" Version="4.13.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
     <!-- A real PostgreSQL client for TerraBase's wire listener (Fast). -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- FakeTimeProvider: drives the backup scheduler's clock. Ships on the 10.x train with Resilience. -->
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
+  </ItemGroup>
+  <!-- Preserve the dashboard's imported Scalar dependency without changing other areas. -->
+  <ItemGroup Condition="$(MSBuildProjectName.StartsWith('TerraScale.Dashboard'))">
+    <PackageVersion Update="Scalar.AspNetCore" Version="2.18.0" />
   </ItemGroup>
 </Project>
