@@ -72,6 +72,12 @@ internal static partial class PostgresStatements
     /// <summary>Splits a query string at top-level semicolons and translates each statement.</summary>
     public static PgParse Parse(string sql)
     {
+        // SqlParserCS uses U+FFFF as EOF; accepting it could discard predicates after a recognised catalog query.
+        if (sql.Contains(char.MaxValue))
+        {
+            return new PgError("42601", "U+FFFF is not supported in SQL text");
+        }
+
         IList<Token> tokens;
         try
         {
@@ -123,7 +129,7 @@ internal static partial class PostgresStatements
             return savepoint;
         }
 
-        PgKind? kind = text switch
+        var kind = text switch
         {
             _ when SetPattern().IsMatch(text) => PgKind.Set,
             _ when ShowPattern().IsMatch(text) => PgKind.Show,
@@ -132,7 +138,7 @@ internal static partial class PostgresStatements
             _ when BeginPattern().IsMatch(text) => PgKind.Begin,
             _ when CommitPattern().IsMatch(text) => PgKind.Commit,
             _ when RollbackPattern().IsMatch(text) => PgKind.Rollback,
-            _ when PgCatalog.IsCatalog(text) => PgKind.Catalog,
+            _ when PgCatalog.IsCatalog(text, tokens) => PgKind.Catalog,
             _ => PgKind.Sql,
         };
         return kind switch

@@ -14,6 +14,14 @@ refusal and `f8fec2d6e` typed message regression; use main's existing shared
 `PostgresWireClient` and `PostgresSql` instead of duplicate test clients. This
 local-only ref is additional to the 194 remote refs below.
 
+Its separately saved uncommitted patch
+`postgres-hastables-slice-f8fec2d6e.patch` contributes the exact Npgsql EF
+table-existence query, executed through the real SQL session, and additional
+savepoint bounds/identifier tests. Preserve main's known catalog relation set so
+ordinary `pg_orders` tables remain SQL. Add listener coverage for transaction,
+savepoint and prepared-portal visibility and strict predicate matching; do not
+claim general EF compatibility from this single introspection operation.
+
 Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
 
 | Branch | Original tip | Decision | Evidence / retained behavior |

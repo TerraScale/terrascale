@@ -672,8 +672,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 {
                     if (!portal.Described)
                     {
-                        var (columns, readOnly, error) = await DescribeAsync(session, portal.Statement, cancellationToken).ConfigureAwait(false);
-                        if (error is null && readOnly)
+                        var (columns, prefetch, error) = await DescribeAsync(session, portal.Statement, cancellationToken).ConfigureAwait(false);
+                        if (error is null && prefetch)
                         {
                             // A read runs now, so its columns carry the types of its values; Execute sends the kept rows.
                             var outcome = await RunAsync(session, portal.Statement, portal.Args, cancellationToken).ConfigureAwait(false);
@@ -753,11 +753,13 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
-    // A statement's result columns before it runs, and whether it only reads; SHOW and catalog reads run to find out.
-    private async ValueTask<(PgColumn[]? Columns, bool ReadOnly, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
+    // Result columns and whether portal Describe must run a read to capture value-dependent types.
+    private async ValueTask<(PgColumn[]? Columns, bool Prefetch, PgError? Error)> DescribeAsync(Session session, PgStatement statement, CancellationToken cancellationToken)
     {
         switch (statement.Kind)
         {
+            case PgKind.Catalog when PgCatalog.SessionSql(statement.Text) is not null:
+                return ([new PgColumn("case", 16)], false, null);
             case PgKind.Show or PgKind.Catalog:
                 var outcome = await RunAsync(session, statement, [], cancellationToken, Counting.Failures).ConfigureAwait(false);
                 return (outcome is PgResult[] { Length: > 0 } results ? results[0].Columns : null, true, outcome is PgError error ? error : null);
@@ -824,6 +826,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         return await GuardAsync(session, async (database, token) => statement.Kind switch
         {
+            PgKind.Catalog when PgCatalog.SessionSql(statement.Text) is { } catalogSql =>
+                await session.Sql.ExecuteAsync(new SqlCommand(catalogSql, [], NoNamed), token).ConfigureAwait(false) switch
+                {
+                    SqlResult result => new[] { PgCatalog.HasTablesResult(result) },
+                    SqlError error => PostgresStatements.Error(error),
+                },
             PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
