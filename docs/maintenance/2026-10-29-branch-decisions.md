@@ -30,6 +30,10 @@ remains on hold until security review explicitly approves it. It is independent
 of the rejected/unresolved CORS span-matcher performance experiment; that runtime
 matcher remains excluded.
 
+| Additional salvage source | Decision | Hold / evidence |
+| --- | --- | --- |
+| delta `fix-dependency-advisories-3086c1c81.bundle` (native upgrade) | held, not ported | Publication, ARM64 and storage-format holds remain. Source bundle stays in `~/Backups/worktree-salvage-20261029/terrascale/`; no upgrade or activation in this PR. |
+
 Decisions: 45 already in main, 23 dropped evidence, 17 ported, 109 superseded.
 
 | Branch | Original tip | Decision | Evidence / retained behavior |
