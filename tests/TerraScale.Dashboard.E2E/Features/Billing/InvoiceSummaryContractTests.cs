@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {

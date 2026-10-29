@@ -1,8 +1,6 @@
-using System.Net.Http.Json;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {

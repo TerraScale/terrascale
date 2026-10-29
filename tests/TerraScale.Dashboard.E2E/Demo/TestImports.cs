@@ -8,7 +8,6 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using TerraScale.Dashboard.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using TUnit.Core;
 using Win32Exception = System.ComponentModel.Win32Exception;
 
 namespace TerraScale.Dashboard.E2E.Platform

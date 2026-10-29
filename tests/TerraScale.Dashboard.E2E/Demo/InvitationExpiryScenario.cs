@@ -1,8 +1,5 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Organizations;
 
 namespace TerraScale.Dashboard.E2E
 {
