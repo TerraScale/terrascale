@@ -20,7 +20,7 @@ using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
-namespace TerraScale.Authentication.Fast.SignIn;
+namespace TerraScale.Authentication.Slow.SignIn;
 
 /// <summary>Hosted provider sign-in through HTTP, real TerraBase and a controlled provider backchannel.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
