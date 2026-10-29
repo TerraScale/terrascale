@@ -7,8 +7,8 @@ import sys
 
 
 def require_proof(area, revision, release=False):
-    if not re.fullmatch(r"sdk-(dotnet|js|go|python|rust)", area):
-        raise SystemExit("Unknown SDK area")
+    if not re.fullmatch(r"sdk-(dotnet|js|go|python|rust)|docs|dashboard", area):
+        raise SystemExit("Unknown monorepo area")
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise SystemExit("A full source revision is required")
     context = f"sdk-release/{area}" if release else f"ts-ship/{area}"
