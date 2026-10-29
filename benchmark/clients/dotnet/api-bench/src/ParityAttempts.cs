@@ -44,6 +44,10 @@ internal sealed class ParityAttempts(HttpMessageHandler inner, Uri target, strin
 internal readonly record struct ParityAttemptSnapshot(long Attempts, long Ok, long H1, long H2,
     long WrongTarget, long WrongPin, long WrongRegion, long WrongProtocol)
 {
+    internal ParityAttemptSnapshot Since(ParityAttemptSnapshot before) => new(Attempts - before.Attempts, Ok - before.Ok,
+        H1 - before.H1, H2 - before.H2, WrongTarget - before.WrongTarget, WrongPin - before.WrongPin,
+        WrongRegion - before.WrongRegion, WrongProtocol - before.WrongProtocol);
+
     // A cell still needs successful full-body/document validation and a bounded drain; metadata alone cannot qualify it.
     internal string? RejectionSince(ParityAttemptSnapshot before, long logicalStarts)
     {

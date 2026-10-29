@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.SignIn;
 
 namespace TerraScale.Authentication.Features.Ui;
 
@@ -102,11 +103,26 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>Whether the error is a rate limit (a warning, not a failure).</summary>
     public bool Limited { get; init; }
 
+    /// <summary>The server-derived deadline for retrying a refused request.</summary>
+    public DateTimeOffset? RetryAt { get; init; }
+
+    /// <summary>The server's rounded remaining wait, independent of the browser's wall clock.</summary>
+    public long? RetrySeconds { get; init; }
+
+    /// <summary>A conservative resend deadline after a mail request; refusal always supplies the authoritative remaining wait.</summary>
+    public DateTimeOffset? ResendAt { get; init; }
+
     /// <summary>The pending sign-up's token, carried from the sign-up form to its code form.</summary>
     public string? PendingToken { get; init; }
 
     /// <summary>The device's user code, as entered or opened from the CLI's link.</summary>
     public string? UserCode { get; init; }
+
+    /// <summary>The registered application requesting device consent.</summary>
+    public string? ClientName { get; init; }
+
+    /// <summary>Descriptions of the validated scopes bound to the device code.</summary>
+    public IReadOnlyList<string> RequestedPermissions { get; init; } = [];
 
     /// <summary>The signed-in account's email, shown before approving a device.</summary>
     public string? Account { get; init; }
@@ -116,6 +132,9 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     /// <summary>The end-session parameters the sign-out confirmation posts back (<see cref="SignInStep.SignOutConfirm"/>).</summary>
     public IReadOnlyList<KeyValuePair<string, string>> LogoutFields { get; init; } = [];
+    /// <summary>The validated first-party account page, when this ceremony started there.</summary>
+    public string? AccountReturn => HostedAccountReturn.Allowed(this.Slug, this.Next)
+        ? HostedAccountReturn.AccountUrl : null;
 
     /// <summary>The same-origin page that starts the single sign-on (<see cref="SignInStep.Sso"/>).</summary>
     public string? SsoUrl { get; init; }
@@ -186,6 +205,10 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(model);
+        if (model.Step is SignInStep.Security or SignInStep.TotpSetup or SignInStep.RecoveryCodes)
+        {
+            model = model with { Next = HostedAccountReturn.Next(context) };
+        }
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
         var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin });

@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using SqlParser;
-using SqlParser.Dialects;
+using SqlParser.Tokens;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
@@ -26,7 +26,7 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, stats, memory, new SqlExecutor(documents, time, _reads, database.DatabaseId), time, database, canWrite, _reads);
+        return new SqlSession(engine, quota, usage, stats, memory, new SqlExecutor(documents, memory, time, _reads, database.DatabaseId), time, database, canWrite, _reads);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -89,12 +89,15 @@ internal sealed class SqlSession(
 {
     private const int MaxStatements = 256;
     private const long MaxLogBytes = 1024 * 1024;
+    private const int MaxSavepoints = 128, MaxSavepointBytes = 24 * 1024;
 
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
     private static readonly SqlError Conflict = SqlErrors.Busy("transaction conflict: data changed since the transaction read it; retry the transaction");
 
     private readonly List<(SqlCommand Command, byte[] Hash)> _log = [];
+    private readonly List<Savepoint> _savepoints = [];
+    private long _savepointBytes;
     private long _logBytes;
     private long? _scriptStarted;
     private long? _transportStarted;
@@ -106,6 +109,66 @@ internal sealed class SqlSession(
     private SqlParseResult _parsed;
 
     public bool IsAutocommit => _readOnly is null;
+
+    public async ValueTask<SqlOutcome> SavepointAsync(SqlSavepointKind kind, string name, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsAutocommit)
+        {
+            return SqlErrors.Error("savepoints require an explicit transaction");
+        }
+
+        if (kind == SqlSavepointKind.Create)
+        {
+            var bytes = 128L + (2L * name.Length);
+            if (_savepoints.Count == MaxSavepoints || _savepointBytes + bytes > MaxSavepointBytes)
+            {
+                return SqlErrors.TooBig("a transaction holds at most 128 savepoints and 24 KiB of savepoint state");
+            }
+
+            var reservation = memory.TryReserve(MemoryLane.Foreground, bytes, database);
+            if (reservation is null)
+            {
+                return new SqlError("SQLITE_NOMEM", "the server's memory budget is exhausted; retry");
+            }
+
+            _savepoints.Add(new Savepoint(name, _log.Count, _logBytes, _keys.Count, reservation));
+            _savepointBytes += bytes;
+            return Empty;
+        }
+
+        var index = _savepoints.FindLastIndex(saved => string.Equals(saved.Name, name, StringComparison.Ordinal));
+        if (index < 0)
+        {
+            return SqlErrors.Error("savepoint does not exist");
+        }
+
+        if (kind == SqlSavepointKind.RollbackTo)
+        {
+            // Drop the physical writes and their tally, then replay only the surviving read/write log on next use.
+            await EndRequestAsync().ConfigureAwait(false);
+            var saved = _savepoints[index];
+            _log.RemoveRange(saved.Statements, _log.Count - saved.Statements);
+            _logBytes = saved.LogBytes;
+            _keys.Truncate(saved.Keys);
+            index++; // ROLLBACK TO keeps its target; RELEASE removes it too.
+        }
+
+        RemoveSavepoints(index);
+        return Empty;
+    }
+
+    private void RemoveSavepoints(int start)
+    {
+        for (var i = _savepoints.Count - 1; i >= start; i--)
+        {
+            _savepointBytes -= _savepoints[i].Memory.Bytes;
+            _savepoints[i].Memory.Dispose();
+            _savepoints.RemoveAt(i);
+        }
+    }
+
+    private sealed record Savepoint(string Name, int Statements, long LogBytes, int Keys, IMemoryReservation Memory);
 
     public void BeginRequest() => _transportStarted = time.GetTimestamp();
 
@@ -162,7 +225,13 @@ internal sealed class SqlSession(
         {
             // The whole text passes the literal and name checks before it is split.
             _ = SqlRead.Number(sql);
-            statements = new Parser().ParseSql(sql, new SQLiteDialect());
+            var parser = new Parser();
+            statements = parser.ParseSql(sql, new SqlDialect());
+            // Reject an unconsumed tail before any statement in the script executes.
+            if (parser.PeekToken() is not EOF)
+            {
+                throw Parser.Expected("end of input", parser.PeekToken());
+            }
         }
         catch (FormatException error)
         {
@@ -292,6 +361,7 @@ internal sealed class SqlSession(
 
         // A failed statement undoes only itself, as in SQLite: this request's storage transaction (which a refused write
         // may leave uncommittable) is dropped, and the next statement replays the log without it.
+        var keys = _keys.Count;
         var outcome = await RunAsync(_request!, statement, command, _keys, cancellationToken).ConfigureAwait(false);
         if (outcome is SqlResult answered && admit?.Invoke(answered) is { } inadmissible)
         {
@@ -301,6 +371,7 @@ internal sealed class SqlSession(
         if (outcome is not SqlResult result)
         {
             await EndRequestAsync().ConfigureAwait(false);
+            _keys.Truncate(keys);
             return outcome;
         }
 
@@ -308,6 +379,7 @@ internal sealed class SqlSession(
         if (_log.Count == MaxStatements || _logBytes + size > MaxLogBytes)
         {
             await EndRequestAsync().ConfigureAwait(false);
+            _keys.Truncate(keys);
             return SqlErrors.TooBig("a transaction holds at most 256 statements and 1 MiB of statements");
         }
 
@@ -318,6 +390,7 @@ internal sealed class SqlSession(
             if (grown is null)
             {
                 await EndRequestAsync().ConfigureAwait(false);
+                _keys.Truncate(keys);
                 return new SqlError("SQLITE_NOMEM", "the server's memory budget is exhausted; retry");
             }
 
@@ -342,7 +415,7 @@ internal sealed class SqlSession(
         var (opened, error) = await OpenAsync(write: _readOnly != true, cancellationToken).ConfigureAwait(false);
         if (opened is not { } request)
         {
-            await AbortAsync().ConfigureAwait(false);
+            await EndRequestAsync().ConfigureAwait(false);
             return error;
         }
 
@@ -355,7 +428,8 @@ internal sealed class SqlSession(
                 : SqlErrors.Error("the statement no longer parses");
             if (replayed is not SqlResult result || !Hash(result).AsSpan().SequenceEqual(hash))
             {
-                await AbortAsync().ConfigureAwait(false);
+                // A statement failure preserves markers so ROLLBACK TO can discard conflicting reads.
+                await EndRequestAsync().ConfigureAwait(false);
                 return replayed is SqlError { Code: "SQLITE_BUSY" } busy ? busy : Conflict;
             }
         }
@@ -367,6 +441,7 @@ internal sealed class SqlSession(
     {
         if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
         {
+            await AbortAsync().ConfigureAwait(false);
             return refused;
         }
 
@@ -383,6 +458,7 @@ internal sealed class SqlSession(
         await EndRequestAsync().ConfigureAwait(false);
         _readOnly = null;
         _log.Clear();
+        RemoveSavepoints(0);
         _logBytes = 0;
         _logMemory?.Dispose();
         _logMemory = null;

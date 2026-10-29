@@ -271,7 +271,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 /// OpenIddict authorizations on TerraBase, one per sign-in. Revoking one rejects every token issued under it, because
 /// OpenIddict checks the authorization whenever it validates such a token.
 /// </summary>
-public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http) : IOpenIddictAuthorizationStore<OidcAuthorization>
+public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http, OidcRetention retention) : IOpenIddictAuthorizationStore<OidcAuthorization>
 {
     private const string Collection = AuthStore.OidcAuthorizationCollection;
 
@@ -403,7 +403,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
     public IAsyncEnumerable<TResult> ListAsync<TState, TResult>(Func<IQueryable<OidcAuthorization>, TState, IQueryable<TResult>> query, TState state, CancellationToken cancellationToken) => throw OidcApplicationStore.Unsupported();
 
     /// <inheritdoc />
-    public ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken) => throw OidcApplicationStore.Unsupported();
+    public ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken) => retention.PruneAuthorizationsAsync(threshold, this.Tenant, cancellationToken);
 
     private async IAsyncEnumerable<OidcAuthorization> FindAsync(string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -459,7 +459,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
 /// wrote first, so concurrent redemptions of one code or refresh token have exactly one winner. A reference token's
 /// digest is reserved in <c>uniques</c> in the same transaction that stores it, which is how a handle is found.
 /// </summary>
-public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http) : IOpenIddictTokenStore<OidcToken>
+public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http, OidcRetention retention) : IOpenIddictTokenStore<OidcToken>
 {
     private const string Collection = AuthStore.OidcTokenCollection;
 
@@ -714,7 +714,7 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
     public IAsyncEnumerable<TResult> ListAsync<TState, TResult>(Func<IQueryable<OidcToken>, TState, IQueryable<TResult>> query, TState state, CancellationToken cancellationToken) => throw OidcApplicationStore.Unsupported();
 
     /// <inheritdoc />
-    public ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken) => throw OidcApplicationStore.Unsupported();
+    public ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken) => retention.PruneTokensAsync(threshold, this.Tenant, cancellationToken);
 
     // ponytail: TerraBase query scan, used only for revocation; add an index when token volume makes it slow.
     private async IAsyncEnumerable<OidcToken> FindAsync(string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken)

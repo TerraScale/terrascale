@@ -78,6 +78,21 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         return (pending, null);
     }
 
+    /// <summary>Resends a pending sign-up using the existing shared mail budgets and original pending token.</summary>
+    public async Task<TimeSpan?> ResendSignUpAsync(string email, string pendingToken, string ip, string locale, CancellationToken cancellationToken)
+    {
+        using var reservation = mail.Reserve();
+        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
+        {
+            return wait;
+        }
+
+        var tenant = this.Tenant;
+        cancellationToken.ThrowIfCancellationRequested();
+        await reservation.EnqueueSignUpResendAsync(tenant, email, pendingToken, locale);
+        return null;
+    }
+
     /// <summary>Emails a password-reset code when <paramref name="email"/> has an account. Null, or how long to wait.</summary>
     public async Task<TimeSpan?> StartPasswordResetAsync(string email, string ip, string locale, CancellationToken cancellationToken)
     {

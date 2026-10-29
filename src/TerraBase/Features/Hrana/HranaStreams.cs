@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using TerraBase.Features.Sql;
@@ -109,9 +110,9 @@ internal sealed class HranaStreams : IHranaStreams, IAsyncDisposable
 
     public string Park(HranaStream stream)
     {
-        // 128 random bits, base64url; the suffix records whether losing the stream would lose state.
+        // The database identity survives stream expiry/restart; the suffix records whether losing state is safe.
         var baton = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-            + (stream.IsStateless ? StatelessSuffix : ".t");
+            + "." + stream.Database.DatabaseId + (stream.IsStateless ? StatelessSuffix : ".t");
         stream.ParkedAt = _time.GetTimestamp();
         _parked[baton] = stream;
         return baton;
@@ -119,6 +120,12 @@ internal sealed class HranaStreams : IHranaStreams, IAsyncDisposable
 
     /// <summary>Ends batons of streams that held no transaction and no stored statements when they were parked.</summary>
     public const string StatelessSuffix = ".a";
+
+    /// <summary>Checks the opaque envelope before either taking a stream or recovering a stateless one.</summary>
+    public static bool IsForDatabase(string baton, string? databaseId) =>
+        baton.Length == 51 && databaseId is { Length: 26 } && baton[22] == '.' && baton[49] == '.'
+        && baton[50] is 'a' or 't' && baton.AsSpan(23, 26).SequenceEqual(databaseId)
+        && Base64Url.IsValid(baton.AsSpan(0, 22), out var length) && length == 16;
 
     public async ValueTask CloseAsync(HranaStream stream)
     {

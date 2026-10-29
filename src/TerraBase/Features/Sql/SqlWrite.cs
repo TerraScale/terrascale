@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Text.Json;
 using SqlParser;
 using SqlParser.Ast;
-using SqlParser.Dialects;
 
 namespace TerraBase.Features.Sql;
 
@@ -176,7 +175,7 @@ internal static class SqlWrite
     {
         var sql = $"SELECT \"_id\"{string.Concat(values.Select(value => ", " + value))}{(everyColumn ? ", *" : "")} FROM {relation.ToSql()}"
             + (where is null ? "" : " WHERE " + where.ToSql()) + $" LIMIT {MaxRows + 1}";
-        return new Parser().ParseSql(sql, new SQLiteDialect()) is [Statement.Select { Query: var query }]
+        return new Parser().ParseSql(sql, new SqlDialect()) is [Statement.Select { Query: var query }]
             ? SqlRead.Read(query)
             : throw new FormatException("the statement's rows cannot be read");
     }

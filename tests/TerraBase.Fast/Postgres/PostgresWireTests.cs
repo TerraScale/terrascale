@@ -211,6 +211,46 @@ public sealed class PostgresWireTests
             ["id,bigint,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
     }
 
+    [Test]
+    public async Task An_aborted_transaction_refuses_every_portal_and_rollback_discards_reads_run_at_describe()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var wire = await RawClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        await wire.QueryAsync(People);
+        await wire.SyncAsync(RawClient.Parse("described", "SELECT name FROM people"), RawClient.Describe('S', "described"),
+            RawClient.Parse("plain", "SELECT name FROM people"));
+        await wire.QueryAsync("BEGIN; SAVEPOINT s; INSERT INTO people (name) VALUES ('ghost')");
+        // "inherited" takes its statement's columns; Describe runs the reads of "cached" and "ghost" ahead of Execute.
+        var bound = await wire.SyncAsync(RawClient.Bind("inherited", "described"), RawClient.Bind("fresh", "plain"),
+            RawClient.Bind("cached", "plain"), RawClient.Describe('P', "cached"), RawClient.Bind("ghost", "plain"), RawClient.Describe('P', "ghost"));
+        var failed = await wire.QueryAsync("INSERT INTO people (name) VALUES (NULL)");
+        List<string> refused = [Tags(await wire.QueryAsync("SELECT oid FROM pg_type AS typ JOIN pg_namespace ns ON ns.oid = typnamespace"))];
+        foreach (var message in new[] { RawClient.Parse("again", "SELECT 1"), RawClient.Bind("rebound", "plain"), RawClient.Describe('S', "described"),
+            RawClient.Describe('S', "plain"), RawClient.Describe('P', "inherited"), RawClient.Describe('P', "cached"), RawClient.Describe('P', "fresh"),
+            RawClient.Execute("cached") })
+        {
+            refused.Add(Tags(await wire.SyncAsync(message)));
+        }
+
+        await wire.QueryAsync("ROLLBACK TO s");
+        var recovered = await wire.SyncAsync(RawClient.Execute("ghost"));
+        await wire.QueryAsync("INSERT INTO people (name) VALUES ('kept'); SAVEPOINT t; INSERT INTO people (name) VALUES ('late')");
+        await wire.SyncAsync(RawClient.Bind("late", "plain"), RawClient.Describe('P', "late"));
+        await wire.QueryAsync("ROLLBACK TO t");
+        var kept = await wire.SyncAsync(RawClient.Execute("late"));
+        await wire.SyncAsync(RawClient.Bind("ended", "plain"), RawClient.Describe('P', "ended"));
+        await wire.QueryAsync("ROLLBACK");
+        var ended = await wire.SyncAsync(RawClient.Execute("ended"));
+
+        await Assert.That(Tags(bound)).IsEqualTo("Z:T");
+        await Assert.That(Tags(failed)).IsEqualTo("E:23502,Z:E");
+        await Assert.That(refused).IsEquivalentTo(Enumerable.Repeat("E:25P02,Z:E", 9));
+        await Assert.That(Tags(recovered)).IsEqualTo("C:SELECT 0,Z:T");
+        await Assert.That(Tags(kept)).IsEqualTo("D:kept,C:SELECT 1,Z:T");
+        await Assert.That(Tags(ended)).IsEqualTo("C:SELECT 0,Z:I");
+    }
+
     // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).
     [Test]
     public async Task Rows_are_written_with_parameters_and_read_with_joins()
@@ -264,6 +304,27 @@ public sealed class PostgresWireTests
         await Assert.That(inserted).IsEqualTo(3);
         await Assert.That(conflict!.SqlState).IsEqualTo("23505");
         await Assert.That(count[0][0]).IsEqualTo("3");
+    }
+
+    [Test]
+    public async Task Alter_add_column_refuses_a_prepared_result_whose_width_changed()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        await ExecuteAsync(connection, "INSERT INTO t VALUES (1)");
+        await using var select = new NpgsqlCommand("SELECT * FROM t", connection);
+        await select.PrepareAsync();
+        await ExecuteAsync(connection, "ALTER TABLE t ADD extra TEXT");
+        var changed = await Assert.ThrowsAsync<PostgresException>(select.ExecuteScalarAsync);
+        await Assert.That(changed!.SqlState).IsEqualTo("0A000");
+        await using var current = new NpgsqlCommand("SELECT id, extra FROM t", connection);
+        await using var row = await current.ExecuteReaderAsync();
+        await Assert.That(await row.ReadAsync()).IsTrue();
+        await Assert.That(row.GetInt64(0)).IsEqualTo(1);
+        await Assert.That(row.IsDBNull(1)).IsTrue();
     }
 
     // Needs SQ1-d (writes) and SQ1-e (transactions).
@@ -378,6 +439,20 @@ public sealed class PostgresWireTests
         var recovery = await simple.QueryAsync("SELECT 1");
         await Assert.That(recovery.Single(message => message.Type == 'D').Fields[0]).IsEqualTo("1");
     }
+    private static string Tags(List<(char Type, string?[] Fields)> messages) => string.Join(',', messages.Select(message => $"{message.Type}:{message.Fields[0]}"));
+
+    [Test]
+    [Arguments("main@")]
+    [Arguments("main@@gru")]
+    [Arguments("main@GRU")]
+    public async Task Malformed_database_pins_fail_closed_before_key_lookup(string database)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var failure = await OpenFailureAsync(api, "invalid", database);
+        await Assert.That(failure!.SqlState).IsEqualTo("08004");
+        await Assert.That(failure.MessageText).StartsWith("misdirected_request:");
+        await Assert.That(failure.MessageText).DoesNotContain("database regions:");
+    }
 
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
@@ -418,5 +493,108 @@ public sealed class PostgresWireTests
     {
         var database = await api.CreateManagedDatabaseAsync();
         return (database, await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, scopes));
+    }
+
+    // The simple-query protocol as psql speaks it: one Query message, every response until ReadyForQuery.
+    private sealed class RawClient(TcpClient tcp, NetworkStream stream) : IAsyncDisposable
+    {
+        public static async Task<RawClient> ConnectAsync(int port, string key, string database)
+        {
+            var tcp = new TcpClient();
+            await tcp.ConnectAsync("127.0.0.1", port);
+            var client = new RawClient(tcp, tcp.GetStream());
+            await client.SendAsync(null, [0, 3, 0, 0, .. CString("user"), .. CString("wire"), .. CString("database"), .. CString(database), 0]);
+            await client.ReadAsync(); // AuthenticationCleartextPassword
+            await client.SendAsync('p', CString(key));
+            while ((await client.ReadAsync()).Type != 'Z')
+            {
+            }
+
+            return client;
+        }
+
+        public async Task<List<(char Type, string?[] Fields)>> QueryAsync(string sql)
+        {
+            await SendAsync('Q', CString(sql));
+            return await ReadyAsync();
+        }
+
+        // Extended-protocol messages, then Sync: errors skip to it, so each refusal is its own call.
+        public async Task<List<(char Type, string?[] Fields)>> SyncAsync(params (char Type, byte[] Body)[] messages)
+        {
+            foreach (var (type, body) in messages)
+            {
+                await SendAsync(type, body);
+            }
+
+            await SendAsync('S', []);
+            return await ReadyAsync();
+        }
+
+        public static (char, byte[]) Parse(string name, string sql) => ('P', [.. CString(name), .. CString(sql), 0, 0]);
+
+        public static (char, byte[]) Bind(string portal, string statement) => ('B', [.. CString(portal), .. CString(statement), 0, 0, 0, 0, 0, 0]);
+
+        public static (char, byte[]) Describe(char kind, string name) => ('D', [(byte)kind, .. CString(name)]);
+
+        public static (char, byte[]) Execute(string portal) => ('E', [.. CString(portal), 0, 0, 0, 0]);
+
+        public async ValueTask DisposeAsync()
+        {
+            await stream.DisposeAsync();
+            tcp.Dispose();
+        }
+
+        private async Task<List<(char Type, string?[] Fields)>> ReadyAsync()
+        {
+            var messages = new List<(char Type, string?[] Fields)>();
+            for (var message = await ReadAsync(); ; message = await ReadAsync())
+            {
+                var body = message.Body;
+                messages.Add((message.Type, message.Type switch
+                {
+                    'D' => Values(body),
+                    'E' => [Encoding.UTF8.GetString(body).Split('\0').First(field => field.StartsWith('C'))[1..]],
+                    'C' => [Encoding.UTF8.GetString(body).TrimEnd('\0')],
+                    'Z' => [((char)body[0]).ToString()],
+                    _ => [null],
+                }));
+                if (message.Type == 'Z')
+                {
+                    return [.. messages.Where(entry => entry.Type is 'D' or 'E' or 'C' or 'Z')];
+                }
+            }
+        }
+
+        private static string?[] Values(byte[] body)
+        {
+            var values = new string?[BinaryPrimitives.ReadInt16BigEndian(body)];
+            for (int i = 0, at = 2; i < values.Length; i++)
+            {
+                var length = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(at));
+                values[i] = length < 0 ? null : Encoding.UTF8.GetString(body, at + 4, length);
+                at += 4 + Math.Max(0, length);
+            }
+
+            return values;
+        }
+
+        private static byte[] CString(string value) => [.. Encoding.UTF8.GetBytes(value), 0];
+
+        private async Task SendAsync(char? type, byte[] body)
+        {
+            var length = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(length, body.Length + 4);
+            await stream.WriteAsync((byte[])[.. type is { } t ? new[] { (byte)t } : [], .. length, .. body]);
+        }
+
+        private async Task<(char Type, byte[] Body)> ReadAsync()
+        {
+            var header = new byte[5];
+            await stream.ReadExactlyAsync(header);
+            var body = new byte[BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1)) - 4];
+            await stream.ReadExactlyAsync(body);
+            return ((char)header[0], body);
+        }
     }
 }

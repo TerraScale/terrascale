@@ -12,7 +12,7 @@ public sealed class SqlWriteTests
     private static async Task<JsonElement> OneAsync(DocumentApi api, object statement)
     {
         var response = await SqlApi.SendAsync(api, api.Client, statement);
-        response.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK).Because(response.Message ?? "SQL response");
         return response.Json.GetProperty("results")[0];
     }
 

@@ -111,6 +111,18 @@ public sealed class WireProtocolTests
     }
 
     [Test]
+    public async Task Pinned_hello_bounds_and_region_syntax_fail_closed_before_key_lookup()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var hello = Hello("invalid", Ulid.NewUlid().ToString(), "main");
+        await Assert.That(await RefusedAsync(api, 4, hello)).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 0])).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 64, .. Encoding.ASCII.GetBytes(new string('a', 64))])).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 3, .. "gru"u8, 0])).IsEqualTo((400, "invalid_frame"));
+        await Assert.That(await RefusedAsync(api, 4, [.. hello, 3, .. "GRU"u8])).IsEqualTo((421, "misdirected_request"));
+    }
+
+    [Test]
     public async Task A_frame_beyond_its_bound_answers_invalid_frame_and_closes_the_connection()
     {
         await using var api = await ManagementApi.StartAsync();

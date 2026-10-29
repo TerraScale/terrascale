@@ -100,6 +100,13 @@ internal static class HranaRoute
         var owner = $"{context.User.Identity?.AuthenticationType}\n{context.User.FindFirstValue(ClaimTypes.NameIdentifier)}\n{(canWrite ? "write" : "read")}";
         if (baton is not null)
         {
+            // A canonical name can be recreated with a different database identity. A lost stateless stream
+            // may recover only on its original identity, even after its issuing node has forgotten the stream.
+            if (!HranaStreams.IsForDatabase(baton, database.DatabaseId))
+            {
+                return (null, Expired());
+            }
+
             if (streams.Take(baton, owner, database) is { } taken)
             {
                 return (taken, null);
@@ -107,7 +114,7 @@ internal static class HranaRoute
 
             if (!baton.EndsWith(HranaStreams.StatelessSuffix, StringComparison.Ordinal))
             {
-                return (null, Refuse(StatusCodes.Status400BadRequest, "STREAM_EXPIRED", "stream not found: the baton is unknown or expired; open a new stream"));
+                return (null, Expired());
             }
         }
 
@@ -117,6 +124,9 @@ internal static class HranaRoute
             HranaError refused => (null, RetryLater(context, refused)),
         };
     }
+
+    private static IResult Expired() =>
+        Refuse(StatusCodes.Status400BadRequest, "STREAM_EXPIRED", "stream not found: the baton is unknown or expired; open a new stream");
 
     private static IResult RetryLater(HttpContext context, HranaError refused)
     {

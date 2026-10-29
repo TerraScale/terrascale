@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text;
 using SqlParser;
 using SqlParser.Ast;
-using SqlParser.Dialects;
 using TerraBase.Engine;
 
 namespace TerraBase.Features.Sql;
@@ -99,9 +98,11 @@ internal static class SqlCatalog
         }
 
         text.Append(" SELECT 1");
-        return new Parser().ParseSql(text.ToString(), new SQLiteDialect()) is [Statement.Select { Query.With.CteTables: var ctes }]
-            ? ctes
+        var query = new Parser().ParseSql(text.ToString(), new SqlDialect()) is [Statement.Select { Query: var parsed }]
+            ? parsed
             : throw new InvalidOperationException("the catalog does not parse");
+        SqlGuard.Normalize(query);
+        return query.With!.CteTables;
     }
 
     private sealed record IndexEntry(string Name, bool Unique, string Origin, IReadOnlyList<string> Columns, string? Sql);

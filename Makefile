@@ -40,7 +40,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-nativeaot-check \
-	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
+	auth-browser-assets auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-chunks
 
@@ -95,7 +95,13 @@ libs-nativeaot-check: restore
 	dotnet publish src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj --configuration Release --runtime $(RUNTIME) --output artifacts/nativeaot/endpoints-example
 
 # ts-auth.
-auth-build: restore
+# Pinned test-only scanner; npm verifies the lockfile integrity without package scripts.
+auth-browser-assets: tests/TerraScale.Authentication.Fast/Accessibility/node_modules/axe-core/axe.min.js
+
+tests/TerraScale.Authentication.Fast/Accessibility/node_modules/axe-core/axe.min.js: tests/TerraScale.Authentication.Fast/Accessibility/package.json tests/TerraScale.Authentication.Fast/Accessibility/package-lock.json
+	npm ci --ignore-scripts --prefix tests/TerraScale.Authentication.Fast/Accessibility
+
+auth-build: restore auth-browser-assets
 	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo
 
 auth-audit:
@@ -109,7 +115,7 @@ auth-openapi-check: auth-build
 
 # Builds only the Fast suite and its references; the Slow suite has its own target.
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
-auth-test-fast: restore
+auth-test-fast: restore auth-browser-assets
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
@@ -174,7 +180,7 @@ terrabase-replication-matrix: terrabase-build
 # and restored, a cursor's issuer stopped, a canceled outage's recovery) and the routing and outage harness checks.
 # CI's required TerraBase test stage runs it; the deploy E2E job excludes the category with a visible filter. Exactly
 # $(E2E_LOCAL_TESTS) tests, each an actual pass or a harness check: a skip, a failure or a missing test fails the target.
-E2E_LOCAL_TESTS := 67
+E2E_LOCAL_TESTS := 75
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
