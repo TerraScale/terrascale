@@ -1,0 +1,10 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Imports.ImportJobPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@using TerraScale.Dashboard.Features.Imports
+@inject AssetUrls Assets
+<main class="ts-page ts-imports">
+<header class="ts-db-head"><nav class="ts-breadcrumb" aria-label="Breadcrumb"><a href="/databases">Databases</a><span aria-hidden="true">/</span><a href="/imports">Import</a><span aria-hidden="true">/</span><span aria-current="page">@Model.Job.Database</span></nav><h1 class="ts-db-title">Import into @Model.Job.Database</h1></header>
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Imports.ImportJobSection, ImportJobPage>(Model))
+</main>
+<script type="module" src="@Assets.Url("js/import-upload.js")" nonce="@Model.Shell.Nonce"></script>
+@functions { public ShellModel LayoutModel => Model.Shell; }

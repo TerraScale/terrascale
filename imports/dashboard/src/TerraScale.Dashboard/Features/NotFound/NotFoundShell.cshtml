@@ -1,0 +1,8 @@
+@inherits RazorSlice<ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page ts-notfound-shell" aria-labelledby="notfound-title">
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.NotFound.NotFoundCopy>())
+</main>
+@functions {
+    public ShellModel LayoutModel => Model;
+}

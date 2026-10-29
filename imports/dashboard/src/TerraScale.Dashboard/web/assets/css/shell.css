@@ -1,0 +1,747 @@
+/* Signed-in shell: flat sidebar, context switcher, neutral navigation,
+   account menu, and the mobile drawer. */
+
+.ts-shell {
+  display: grid;
+  grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+  /* The sidebar column keeps its fill below the pinned sidebar. */
+  background: var(--ts-sidebar);
+}
+
+/* The sidebar stays pinned at full viewport height while the page scrolls,
+   so its own background covers the column. */
+.ts-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-s3);
+  height: 100dvh;
+  padding: var(--ts-s5) var(--ts-s3) var(--ts-s3);
+  overflow: hidden;
+  background: var(--ts-sidebar);
+}
+
+/* Logo top-left, in line with the nav icons; the drawer's close button
+   comes first in the DOM so it takes focus when the drawer opens. */
+.ts-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding-inline: var(--ts-s2);
+}
+
+/* Visual order only: DOM order keeps the drawer's focus trap boundaries. */
+.ts-sidebar-brand {
+  display: flex;
+  align-items: center;
+  order: 1;
+  flex: 1;
+  min-width: 0;
+}
+
+.ts-sidebar-brand img {
+  height: var(--ts-control-h-sm);
+  width: auto;
+}
+
+.ts-sidebar-brand:hover {
+  text-decoration: none;
+}
+
+.ts-sidebar-notifications {
+  position: relative;
+  order: 2;
+}
+
+.ts-sidebar .ts-sidebar-notifications > .ts-nav-count {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 18px;
+  padding: 0 5px;
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  line-height: 18px;
+  box-shadow: 0 0 0 2px var(--ts-canvas);
+}
+
+.ts-sidebar .ts-sidebar-close {
+  display: none;
+  order: 3;
+  margin-left: auto;
+}
+
+.ts-shell > .ts-fab-nav,
+.ts-mobile-context {
+  display: none;
+}
+
+/* Organization and project switcher. Sidebar menus span the width of their
+   trigger, so their rules outrank the generic menu sizing in overlays.css. */
+.ts-context-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-3);
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-context-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.ts-context-trigger:hover,
+details[open] > .ts-context-trigger {
+  border-color: var(--ts-line-strong);
+  background-color: var(--ts-surface-2);
+}
+
+/* Organization and project initials sit on neutral tiles. */
+.ts-context-icon,
+.ts-menu-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  font-weight: 700;
+}
+
+.ts-context-icon {
+  width: 28px;
+  height: var(--ts-control-h-sm);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-menu-tile {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--ts-radius-sm);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-context-chevron {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--ts-ink-3);
+}
+
+.ts-context-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.ts-context-kind {
+  overflow: hidden;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-context-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+.ts-context-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ts-ink-3);
+}
+
+.ts-context-menu {
+  display: block;
+}
+
+.ts-sidebar details.ts-context-menu > .ts-menu-panel {
+  left: 0;
+  width: 100%;
+  min-width: 0;
+  max-height: min(70dvh, 520px);
+  overflow-y: auto;
+}
+
+.ts-context-list {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* Navigation: neutral icons and labels; the active row is an 8% white fill. */
+.ts-sidebar-content {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: var(--ts-s4);
+  min-height: 0;
+  margin-inline: calc(-1 * var(--ts-s1));
+  padding-inline: var(--ts-s1);
+  overflow-y: auto;
+}
+
+.ts-nav-group {
+  display: grid;
+  gap: var(--ts-s1);
+}
+
+.ts-nav-group-label {
+  padding: 0 var(--ts-s3);
+  color: var(--ts-ink-3);
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+}
+
+.ts-nav {
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+
+.ts-nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--ts-ink-2);
+  font-weight: 400;
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-link:hover {
+  background: rgb(255 255 255 / 0.04);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-nav-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--ts-ink-3);
+  transition: color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+.ts-nav-link:hover .ts-nav-icon {
+  color: var(--ts-ink);
+}
+
+.ts-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-nav-link[aria-current="page"] {
+  background: rgb(255 255 255 / 0.08);
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+.ts-nav-link[aria-current="page"] .ts-nav-icon {
+  color: var(--ts-ink);
+}
+
+/* Collapsible section: the summary looks like a link and the chevron turns
+   when open; sub-links hang off a tinted guide line. */
+.ts-nav-collapsible > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.ts-nav-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ts-nav-chevron {
+  display: grid;
+  color: var(--ts-ink-3);
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-collapsible[open] .ts-nav-chevron {
+  transform: rotate(90deg);
+}
+
+.ts-nav-collapsible:has([aria-current="page"]) > summary {
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+.ts-subnav {
+  display: grid;
+  gap: 1px;
+  margin: 2px 0 var(--ts-s1) calc(var(--ts-s2) + 13px);
+  padding-left: var(--ts-s3);
+  border-left: 1px solid var(--ts-line);
+  list-style: none;
+}
+
+.ts-subnav-group {
+  padding: var(--ts-s2) var(--ts-s2) 2px;
+  color: var(--ts-ink-3);
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+}
+
+.ts-subnav-link {
+  position: relative;
+  display: block;
+  padding: 5px var(--ts-s2);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-subnav-link:hover {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.ts-subnav-link[aria-current="page"] {
+  background: rgb(255 255 255 / 0.08);
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+/* Counts are plain numbers, never tinted pills. */
+.ts-sidebar .ts-nav-count {
+  min-width: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  background: transparent;
+  color: var(--ts-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Status link: the platform status page, from every app. */
+.ts-status-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--ts-s2);
+  height: var(--ts-control-h-sm);
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-status-link:hover {
+  border-color: var(--ts-line-strong);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+/* Account. */
+.ts-sidebar-footer {
+  display: grid;
+  gap: var(--ts-s2);
+  padding-top: var(--ts-s3);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-sidebar-links {
+  display: grid;
+  gap: 2px;
+}
+
+.ts-sidebar-links .ts-nav-link {
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-account-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s2);
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius);
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-account-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.ts-account-trigger:hover,
+details[open] > .ts-account-trigger {
+  border-color: var(--ts-line);
+  background: var(--ts-surface-2);
+}
+
+.ts-account-card {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s2);
+  border-radius: var(--ts-radius);
+}
+
+.ts-account-avatar,
+.ts-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+}
+
+/* The account avatar is a neutral initials tile. */
+.ts-account-avatar {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-account-avatar-lg {
+  width: 36px;
+  height: 36px;
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-account-meta {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.ts-account-name,
+.ts-account-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-account-name {
+  font-weight: 500;
+}
+
+.ts-account-email,
+.ts-account-chevron {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-sidebar details.ts-account > .ts-menu-panel {
+  left: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Search: a full-width field under the switcher that opens the search dialog. */
+.ts-search {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--ts-s2);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius);
+  background: transparent;
+  color: var(--ts-ink-3);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-search:hover {
+  background: var(--ts-hover);
+  color: var(--ts-ink-2);
+}
+
+.ts-search > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.ts-search > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#ts-search-dialog {
+  width: min(560px, calc(100vw - 32px));
+  margin-top: 12vh;
+  padding: var(--ts-s2);
+}
+
+/* The search icon sits inside the field, ahead of the query. */
+#ts-search-dialog .ts-input-group > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-s3);
+  translate: 0 -50%;
+  color: var(--ts-ink-3);
+  pointer-events: none;
+}
+
+#ts-search-dialog .ts-input-group > .ts-input {
+  padding-left: 34px;
+}
+
+.ts-search-context {
+  display: block;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 400;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ts-context-search-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--ts-s2);
+  padding: var(--ts-s2);
+  color: var(--ts-ink-2);
+}
+
+/* Page area. */
+.ts-inset {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--ts-line);
+  background: var(--ts-canvas);
+}
+
+/* Containment also scopes fixed descendants and stacks in-page overlays below
+   the mobile nav button. Viewport overlays belong outside this container or
+   in the dialog top layer. */
+.ts-main {
+  flex: 1;
+  container: page / inline-size;
+  outline: none;
+}
+
+.ts-nav-backdrop {
+  display: none;
+}
+
+/* Status page banner: unresolved incidents and maintenance above the page,
+   one hairline-divided row each, tinted by impact. */
+.ts-status-banner {
+  display: grid;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-status-notice {
+  --impact: var(--ts-info);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) var(--ts-s10);
+  border-left: 2px solid var(--impact);
+  background: color-mix(in oklab, var(--impact) 8%, transparent);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-status-notice + .ts-status-notice {
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-status-notice[data-impact="minor"] { --impact: var(--ts-warning); }
+.ts-status-notice[data-impact="major"] { --impact: var(--ts-severe); }
+.ts-status-notice[data-impact="critical"] { --impact: var(--ts-danger); }
+
+.ts-status-notice > .ts-dot {
+  color: var(--impact);
+}
+
+.ts-status-notice-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--ts-s2);
+  min-width: 0;
+}
+
+.ts-status-notice-label {
+  color: var(--impact);
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+}
+
+.ts-status-notice-title {
+  color: var(--ts-ink);
+  font-weight: 600;
+}
+
+/* The status page holds the full update; two lines keep the banner short. */
+.ts-status-notice-message {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ts-ink-2);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.ts-status-notice-link {
+  white-space: nowrap;
+}
+
+/* Mobile drawer below 48rem. A closed drawer is hidden from focus and
+   assistive technology; the open one locks page scrolling. */
+@media (max-width: 47.99rem) {
+  .ts-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-inset {
+    border-left: 0;
+  }
+
+  .ts-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: var(--ts-z-modal);
+    width: min(86vw, 300px);
+    border-right: 1px solid var(--ts-line-strong);
+    background: var(--ts-surface);
+    transform: translateX(-102%);
+    visibility: hidden;
+  }
+
+  html:has(.ts-shell.nav-open) {
+    overflow: hidden;
+  }
+
+  /* Animate only the opening slide, so resizing from desktop never shows
+     the drawer sweeping off screen. */
+  .ts-shell.nav-open .ts-sidebar {
+    transform: none;
+    visibility: visible;
+    transition: transform var(--ts-base) var(--ts-ease);
+  }
+
+  .ts-sidebar .ts-sidebar-close {
+    display: inline-grid;
+  }
+
+  .ts-shell.nav-open .ts-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ts-z-overlay);
+    display: block;
+    background: var(--ts-scrim);
+  }
+
+  /* Floating nav button, top-left over the page; the page reserves its space
+     (see layout.css). Hidden while the drawer is open. */
+  .ts-shell > .ts-fab-nav {
+    position: fixed;
+    top: var(--ts-s3);
+    left: var(--ts-s3);
+    z-index: var(--ts-z-overlay);
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--ts-line-strong);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-surface-2);
+    color: var(--ts-ink);
+    cursor: pointer;
+  }
+
+  html:has(.ts-shell.nav-open) .ts-fab-nav {
+    display: none;
+  }
+
+  .ts-mobile-context {
+    position: fixed;
+    inset: var(--ts-s3) var(--ts-s3) auto 64px;
+    z-index: var(--ts-z-overlay);
+    display: grid;
+    align-content: center;
+    height: 40px;
+    padding-inline: var(--ts-s3);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius);
+    background: var(--ts-canvas);
+    color: var(--ts-ink-2);
+    font-size: var(--ts-fs-xs);
+    line-height: 16px;
+  }
+
+  .ts-mobile-context > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  html:has(.ts-shell.nav-open) .ts-mobile-context {
+    display: none;
+  }
+
+  .ts-status-notice {
+    padding-inline: var(--ts-s4);
+  }
+}
+
