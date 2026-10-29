@@ -7,7 +7,8 @@
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
-    <PackageReference Include="Deque.AxeCore.Playwright" />
+    <PackageReference Include="Stripe.net" />
+    <None Update="Support/axe-core/axe.min.js" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Bogus" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Using Include="TerraScale.Dashboard.Demo" />

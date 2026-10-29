@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Deque.AxeCore.Playwright;
 using Microsoft.Playwright;
 using TUnit.Core;
 
@@ -38,7 +37,7 @@ public sealed class PaymentCurrencyEvidenceJourneyTests
             await table.EvaluateAsync("el => { el.scrollLeft = el.scrollWidth; }");
         }
         await Assert.That(await table.EvaluateAsync<bool>("el => el === document.activeElement")).IsTrue();
-        var accessibility = await page.Locator("#recent-invoices").RunAxe();
+        var accessibility = await BrowserAccessibility.RunAsync(page, selector: "#recent-invoices");
         await Assert.That(accessibility.Violations.Length).IsEqualTo(0);
         var evidence = Path.Combine(scenario.Root, "docs/reviews/2026-10-13/payment-webhook-correctness/evidence/test-results");
         Directory.CreateDirectory(evidence);

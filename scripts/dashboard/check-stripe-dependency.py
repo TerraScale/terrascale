@@ -15,6 +15,8 @@ for target in assets['targets'].values():
                 raise SystemExit(f'Only Stripe.net may bring Newtonsoft.Json into a dashboard project: {package} -> {dependency}')
             stripe_edges += 1
 for framework in assets['project']['frameworks'].values():
+    if 'Stripe.net' not in framework.get('dependencies', {}):
+        raise SystemExit('The exception requires a direct reference to the official Stripe.net SDK')
     if any('newtonsoft' in dependency.lower() for dependency in framework.get('dependencies', {})):
         raise SystemExit('Direct Newtonsoft package references are banned; use System.Text.Json')
 if not stripe_edges:
