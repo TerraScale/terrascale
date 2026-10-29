@@ -1,0 +1,14 @@
+{
+  "id": "01JA0000000000000000000004",
+  "projectId": "01JA0000000000000000000001",
+  "name": "app",
+  "branchedFrom": null,
+  "createdAt": "2026-10-12T00:00:00+00:00",
+  "region": "sjc",
+  "homeRegion": "gru",
+  "replicaRegions": [
+    "sjc",
+    "fra"
+  ],
+  "allRegions": false
+}

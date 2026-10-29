@@ -1,0 +1,210 @@
+# Tags publish qualified bytes to GitHub Packages, verify a clean registry restore, then publish to nuget.org.
+# Manual dispatch only prepares the reproducible artifact and provenance, without registry credentials or writes.
+# See docs/automatic-nuget-releases.md for the credential handoff and preparation commands.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  GITHUB_FEED: https://nuget.pkg.github.com/TerraScale/index.json
+
+jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # Release jobs install the SDK and restore packages into folders of their own.
+      - run: |
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet"
+            echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages"
+            echo "NUGET_HTTP_CACHE_PATH=$RUNNER_TEMP/nuget-http"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: |
+            10.0.401
+            11.0.100-rc.1.26425.128
+      - id: version
+        run: |
+          version=$(dotnet msbuild src/TerraScale.DotNet -getProperty:Version)
+          if ! [[ "$version" =~ ^0\.0\.[0-9]+$ ]]; then
+            echo "::error::Package version must be 0.0.X."; exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            if [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match the package version $version."; exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::$GITHUB_SHA is not on main."; exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Run release build and tests
+        run: bash scripts/check-release.sh
+      - id: pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 scripts/pack-reproducible.py "$RUNNER_TEMP/qualified-package"
+          package="$RUNNER_TEMP/qualified-package/TerraScale.DotNet.$VERSION.nupkg"
+          unzip -p "$package" TerraScale.DotNet.nuspec | grep -F "commit=\"$GITHUB_SHA\""
+          echo "sha256=$(sha256sum "$package" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: package
+          path: |
+            ${{ runner.temp }}/qualified-package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
+            ${{ runner.temp }}/qualified-package/provenance.json
+            ${{ runner.temp }}/qualified-package/consumer-nuget-audit.log
+            ${{ runner.temp }}/qualified-package/consumer.packages.lock.json
+          if-no-files-found: error
+
+  github-packages:
+    if: github.event_name == 'push'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: package
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.401
+      - env:
+          VERSION: ${{ needs.package.outputs.version }}
+          SHA256: ${{ needs.package.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$SHA256  TerraScale.DotNet.$VERSION.nupkg" | sha256sum --check
+          # A re-run after a push whose answer was lost finds the version present; restore then checks it holds these bytes.
+          dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source "$GITHUB_FEED" --api-key "$GITHUB_TOKEN" --skip-duplicate
+
+  # Verify the GitHub Packages bytes with fresh caches and an isolated consumer before the nuget.org push.
+  restore:
+    needs: [package, github-packages]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            tests/TerraScale.DotNet.PackageConsumer
+            scripts
+      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: |
+            10.0.401
+            11.0.100-rc.1.26425.128
+      - env:
+          SHA256: ${{ needs.package.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ] || ! [[ "$GITHUB_REF_NAME" =~ ^v0\.0\.[0-9]+$ ]] || ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Expected a v0.0.X release tag and its package SHA-256."; exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          export NUGET_PACKAGES="$RUNNER_TEMP/nuget-packages" NUGET_HTTP_CACHE_PATH="$RUNNER_TEMP/nuget-http"
+          consumer="$RUNNER_TEMP/consumer"
+          cp -r tests/TerraScale.DotNet.PackageConsumer "$consumer"
+          checker="$GITHUB_WORKSPACE/scripts/check-nuget-vulnerabilities.cs"
+          dotnet restore "$checker" --locked-mode
+          cd "$consumer"
+          cat > nuget.config <<EOF
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+              <add key="github" value="$GITHUB_FEED" />
+            </packageSources>
+            <packageSourceMapping>
+              <packageSource key="github"><package pattern="TerraScale.DotNet" /></packageSource>
+              <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+            </packageSourceMapping>
+            <packageSourceCredentials>
+              <github>
+                <add key="Username" value="$GITHUB_ACTOR" />
+                <add key="ClearTextPassword" value="%GITHUB_TOKEN%" />
+              </github>
+            </packageSourceCredentials>
+          </configuration>
+          EOF
+          export TerraScaleDotNetVersion="$VERSION"
+          dotnet restore --use-lock-file
+          echo "$SHA256  $NUGET_PACKAGES/terrascale.dotnet/$VERSION/terrascale.dotnet.$VERSION.nupkg" | sha256sum --check
+          dotnet run --no-restore --file "$checker" -- "$consumer/TerraScale.DotNet.PackageConsumer.csproj" | tee "$RUNNER_TEMP/consumer-nuget-audit.log"
+          for framework in net10.0 net11.0; do
+            dotnet run --no-restore --configuration Release --framework "$framework" -p:TerraScaleDotNetVersion="$VERSION" -- "$VERSION" "$GITHUB_SHA"
+          done
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: registry-consumer-audit
+          path: |
+            ${{ runner.temp }}/consumer/packages.lock.json
+            ${{ runner.temp }}/consumer-nuget-audit.log
+          if-no-files-found: error
+      # Registry metadata, for the record: the REST API may refuse the job token, which does not fail the release.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api orgs/TerraScale/packages/nuget/TerraScale.DotNet --jq '{name, visibility, repository: .repository.full_name, html_url}' \
+            || echo "::warning::GitHub Packages metadata is not readable with the job token."
+
+  nuget-org:
+    needs: [package, restore]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: package
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.401
+      - env:
+          VERSION: ${{ needs.package.outputs.version }}
+          SHA256: ${{ needs.package.outputs.sha256 }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          echo "$SHA256  TerraScale.DotNet.$VERSION.nupkg" | sha256sum --check
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::Set the repository Actions secret NUGET_API_KEY before publishing a tag."; exit 1
+          fi
+          dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"

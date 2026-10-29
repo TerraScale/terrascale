@@ -1,0 +1,33 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "inputs": {
+    "src/TerraBase/Features/Functions/ListFunctionsEndpoint.cs": "67da2dccfa21ad4a8a298130a4f39a14915558702c95ac59ca4c65d4195fbe4c",
+    "src/TerraBase/Features/Functions/DeployFunctionEndpoint.cs": "ca0e4919810c1419a42ed79a673c027ad1b084fee39de2d51d10689b86f83008",
+    "src/TerraBase/Features/Functions/GetFunctionEndpoint.cs": "2bd938d51b4371ef6f654fece80e89f9e10194e0cbbde56bfa0b5ff52312d586",
+    "src/TerraBase/Features/Functions/DeleteFunctionEndpoint.cs": "7c6bbe03b90f29f5f359a2656549ea66aa6b01b0cad000a30f2adfac0b8fa14b",
+    "src/TerraBase/Features/Functions/InvokeFunctionEndpoint.cs": "6efde44e9198c7f25e6575b77265ac7ae8b81f36f0d5671e1370652f1226b16d",
+    "src/TerraBase/Features/Functions/ListFunctionLogsEndpoint.cs": "ec74794e84847e6e30ac2ea9740613fdc300c130bbfd47e420504637742c93db",
+    "src/TerraBase/Features/Functions/ListFunctionDeliveriesEndpoint.cs": "d23b15381fd9d88522ffe58a90ca035f3a0a61fb29a8e8106bf3df661680b7e3",
+    "src/TerraBase/Features/Functions/FunctionRoute.cs": "b5ceb4be880749ffed5fc7666a9c58108b778d87a88291cd5cf3b4076fd62fe9",
+    "src/TerraBase/Features/Functions/Functions.cs": "0061891a2f27f41ba44092970ae03f68d3ec4e860efd58fe672bc8b75d6568a1",
+    "src/TerraBase/Features/Functions/FunctionService.cs": "170bf5318eb2464b96643d634b46b938e3663e05694ec23847f6aa89d4d38aa0"
+  },
+  "security": "Bearer project credential; both listed scopes required; anonymous/end-user refused",
+  "mediaType": "application/json",
+  "retry": "none; no idempotency contract; cancellation or transport loss may leave mutations committed",
+  "pagination": "listFunctions is a direct name-ordered array; at most 32; no checkpoint",
+  "request": "Deploy: source required string; optional trigger {collection:string, events?:[upsert|delete]}; optional cron:string. Replacement clears omitted trigger/cron.",
+  "response": "Function: name:string, source:string|null (omitted in list), trigger:object|null, cron:string|null, createdAt:date-time, updatedAt:date-time. Delete: empty 204.",
+  "errors": "400 validation, 401/403 credential/scope, 404 database/function, 409 function_limit (deploy), 503 unavailable",
+  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Deliveries direct array, empty without trigger; pending attempts/errorCode are dead-letter state. Change delivery at least once; missed cron skipped.",
+  "operations": [
+    {"operation":"listFunctions","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
+    {"operation":"deployFunction","method":"PUT","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
+    {"operation":"getFunction","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
+    {"operation":"deleteFunction","method":"DELETE","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["documents:read","documents:write"],"success":204,"implemented":true},
+    {"operation":"invokeFunction","method":"POST","path":"/v1/projects/{project}/databases/{database}/functions/{function}/invoke","scopes":["documents:read"],"success":200,"implemented":true},
+    {"operation":"listFunctionLogs","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","scopes":["documents:read","documents:write"],"success":200,"implemented":true},
+    {"operation":"listFunctionDeliveries","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/deliveries","scopes":["documents:read","documents:write"],"success":200,"implemented":true}
+  ]
+}

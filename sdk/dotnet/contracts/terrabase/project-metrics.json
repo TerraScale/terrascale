@@ -1,0 +1,32 @@
+{
+  "producer": "TerraScale/terrascale",
+  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "source": "src/TerraBase/Features/Management/Usage/GetProjectMetricsEndpoint.cs",
+  "sha256": "16a2d21b49f305acf1fe6970709eb0b35f05d483f2ec7d69994000681ea82623",
+  "publicOpenApiSha256": "bf2b7bbf393bd6c63207a57863d730ccb1c3c51be584f0eea2089684067cc756",
+  "operation": "getProjectMetrics",
+  "method": "GET",
+  "path": "/v1/projects/{project}/metrics",
+  "security": "TsAuth project access JWT; project_id binding and database narrowing",
+  "scopes": [
+    "databases:read"
+  ],
+  "parameters": "required canonical ULID project path; optional existing region pin; no query/body",
+  "success": 200,
+  "mediaType": "text/plain; version=0.0.4; charset=utf-8",
+  "cacheControl": "no-store",
+  "errorMediaType": "application/json",
+  "errors": {
+    "400": "invalid_request",
+    "401": "invalid_key",
+    "403": "forbidden_scope",
+    "404": "unknown_database|unknown_route|not_found",
+    "421": "misdirected_request|wrong_region",
+    "503": "storage_busy|capacity|unavailable"
+  },
+  "pagination": "none; fixed last hour, rates over last five complete UTC minutes",
+  "retry": "SDK sends once; no idempotency or checkpoint contract",
+  "observations": "best effort, flushed every 10 seconds; never billing truth",
+  "fixtureKind": "synthetic text derived from producer Format/Family/Line, not live evidence",
+  "body": "# HELP terrascale_database_requests_per_second Client requests per second over the last 5 complete minutes.\n# TYPE terrascale_database_requests_per_second gauge\nterrascale_database_requests_per_second{database=\"main\",database_id=\"01JA0000000000000000000002\",region=\"gru\"} 1\n# HELP terrascale_database_errors_per_second Error responses per second over the last 5 complete minutes.\n# TYPE terrascale_database_errors_per_second gauge\nterrascale_database_errors_per_second{database=\"main\",database_id=\"01JA0000000000000000000002\",region=\"gru\"} 0\n# HELP terrascale_database_operations_per_second Committed document operations per second by kind over the last 5 complete minutes.\n# TYPE terrascale_database_operations_per_second gauge\n# HELP terrascale_database_latency_milliseconds Approximate request latency percentiles of the newest complete minute with requests.\n# TYPE terrascale_database_latency_milliseconds gauge\n# HELP terrascale_database_storage_bytes Newest sampled on-disk storage within the last hour.\n# TYPE terrascale_database_storage_bytes gauge\n"
+}

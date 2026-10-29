@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/SDK/">
+    <Project Path="src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj" />
+  </Folder>
+</Solution>
