@@ -6,6 +6,8 @@ namespace TerraScale.Dashboard.Features.Home
     public sealed record HomeRequestPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests);
     public sealed record HomeRequestChart(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestColumn> Columns)
     {
+        private static readonly double[] GridFactors = [1d, 2d, 5d, 10d];
+
         public static HomeRequestChart For(HomePage page)
         {
             var points = page.Measurement.RequestPoints;
@@ -23,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Home
                 magnitude *= 10;
             }
 
-            var scale = maximum == 0 ? 1 : new[] { 1d, 2d, 5d, 10d }.Select(factor => factor * magnitude).First(value => value >= maximum);
+            var scale = maximum == 0 ? 1 : GridFactors.Select(factor => factor * magnitude).First(value => value >= maximum);
             double X(int index)
             {
                 return 48 + 660d * index / Math.Max(1, points.Count - 1);

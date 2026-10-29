@@ -25,6 +25,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
         private const int MaxRegistrationBytes = 16 * 1024;
         private const string Scope = "mcp";
         private static readonly string[] BlockedSchemes = ["javascript", "data", "file", "vbscript", "about", "blob", "ftp", "ws", "wss"];
+        private static readonly string[] BearerMethods = ["header"];
+        private static readonly string[] ResponseTypes = ["code"];
+        private static readonly string[] GrantTypes = ["authorization_code"];
+        private static readonly string[] CodeChallengeMethods = ["S256"];
+        private static readonly string[] TokenEndpointAuthMethods = ["none"];
 
         public static void MapMcpOAuth(this WebApplication app)
         {
@@ -69,7 +74,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 ["resource"] = Resource(context),
                 ["authorization_servers"] = new[] { Issuer(context) },
                 ["scopes_supported"] = new[] { Scope },
-                ["bearer_methods_supported"] = new[] { "header" },
+                ["bearer_methods_supported"] = BearerMethods,
                 ["resource_name"] = "TerraScale",
                 ["resource_documentation"] = "https://docs.terrascale.tech/guides/mcp"
             });
@@ -85,10 +90,10 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 ["token_endpoint"] = issuer + "/oauth/token",
                 ["registration_endpoint"] = issuer + "/oauth/register",
                 ["scopes_supported"] = new[] { Scope },
-                ["response_types_supported"] = new[] { "code" },
-                ["grant_types_supported"] = new[] { "authorization_code" },
-                ["code_challenge_methods_supported"] = new[] { "S256" },
-                ["token_endpoint_auth_methods_supported"] = new[] { "none" },
+                ["response_types_supported"] = ResponseTypes,
+                ["grant_types_supported"] = GrantTypes,
+                ["code_challenge_methods_supported"] = CodeChallengeMethods,
+                ["token_endpoint_auth_methods_supported"] = TokenEndpointAuthMethods,
                 ["authorization_response_iss_parameter_supported"] = true,
                 ["service_documentation"] = "https://docs.terrascale.tech/guides/mcp"
             });
@@ -184,8 +189,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 ["client_id_issued_at"] = client.CreatedAt.ToUnixTimeSeconds(),
                 ["client_name"] = client.Name,
                 ["redirect_uris"] = client.RedirectUris,
-                ["grant_types"] = new[] { "authorization_code" },
-                ["response_types"] = new[] { "code" },
+                ["grant_types"] = GrantTypes,
+                ["response_types"] = ResponseTypes,
                 ["token_endpoint_auth_method"] = "none"
             }, statusCode: StatusCodes.Status201Created);
         }
@@ -344,8 +349,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
             // Deleting first makes the code single use across replicas: only one redemption wins the version.
             try { await state.DeleteAsync(CodeCollection, document.Id, document.Version, context.RequestAborted); }
-            catch (Exception error) when (error is TerraBasePreconditionFailedException ||
-                                          error is HttpRequestException { StatusCode: System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound })
+            catch (Exception error) when (error is TerraBasePreconditionFailedException or
+                                          HttpRequestException { StatusCode: System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound })
             { return OAuthError("invalid_grant", "The authorization code is invalid or was already used."); }
             var grant = document.Document.Deserialize<McpCode>() ?? throw new JsonException("Invalid authorization code.");
             var verifier = form["code_verifier"].ToString();
