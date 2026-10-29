@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "terrascale"
+dynamic = ["version"]
+description = "Python SDK for TerraScale TerraBase: documents, queries, vector search, TTL and SQL. Sync and async."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "TerraScale", email = "admin@terrascale.tech" }]
+keywords = ["terrascale", "terrabase", "database", "dbaas", "document-database", "vector", "sql"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Database",
+  "Typing :: Typed",
+]
+dependencies = ["httpx[http2]>=0.27,<1"]
+
+[project.urls]
+Homepage = "https://terrascale.tech"
+Documentation = "https://docs.terrascale.tech/getting-started/python"
+Source = "https://github.com/TerraScale/ts-python"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11"]
+
+[tool.hatch.version]
+path = "src/terrascale/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/terrascale"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = false
+files = ["src/terrascale", "tests/typing/request_id.py"]
