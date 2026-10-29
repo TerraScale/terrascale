@@ -138,5 +138,5 @@ internal sealed class RevisionDatabase
     }
 
     private async Task<TursoDatabaseStore?> StoreAsync(TerraBaseTestServer server) =>
-        (TursoDatabaseStore?)await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None);
+        (TursoDatabaseStore?)await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None);
 }
