@@ -1,0 +1,6 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsNoticeModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page"><header><h1>Analytics</h1></header>
+    <section class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Could not open analytics</p><p class="ts-alert-body">@Model.Message</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p><a class="ts-link" href="/analytics">Reset analytics filters</a></section>
+</main>
+@functions { public ShellModel LayoutModel => Model.Shell; }

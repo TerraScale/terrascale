@@ -1,0 +1,2 @@
+auditEventId,occurredAt,actor,actorType,action,target,source,severity,outcome
+"audit-unknown","2026-10-13T02:05:59.4250577+00:00","Synthetic actor","user","audit.unknown","Local unknown severity","dashboard","info","success"

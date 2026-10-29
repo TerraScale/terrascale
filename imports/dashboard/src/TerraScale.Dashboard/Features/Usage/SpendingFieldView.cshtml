@@ -1,0 +1,2 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Usage.SpendingField>
+<input type="hidden" name="@("initial_" + Model.Name)" value="@Model.Value" /><div class="ts-field"><label class="ts-label" for="@Model.Id">@Model.Label</label><input class="ts-input ts-mono" id="@Model.Id" name="@Model.Name" inputmode="@Model.InputMode" pattern="@Model.Pattern" value="@Model.Value" placeholder="No limit" aria-describedby="@(Model.Id + "-hint")" /><p class="ts-hint" id="@(Model.Id + "-hint")">@Model.Hint</p></div>

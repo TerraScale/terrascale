@@ -1,0 +1,101 @@
+{
+  "route": "/?range=1h",
+  "Mode": "foreign-region",
+  "DatabaseId": "01a13320-5626-7e84-afee-f5fbcbcaec8a",
+  "placement": [
+    "GRU"
+  ],
+  "Reads": 2,
+  "producerPayload": {
+    "projectId": "01M4SJ0NGAFC6XKVCXZ7XPJRX8",
+    "range": "1h",
+    "from": "2026-10-12T22:39:00-03:00",
+    "to": "2026-10-12T23:39:00-03:00",
+    "bucketSeconds": 60,
+    "items": [
+      {
+        "databaseId": "01a13320-5626-7e84-afee-f5fbcbcaec8a",
+        "region": "sfo",
+        "series": [
+          {
+            "start": "2026-10-12T22:39:00-03:00",
+            "requests": {
+              "GET": 10
+            },
+            "operations": {
+              "document_read": 4
+            },
+            "errors": 1,
+            "latency": {
+              "p50Ms": 0.5,
+              "p95Ms": 1.75,
+              "p99Ms": 9
+            },
+            "storageBytes": 4096,
+            "clientBandwidth": {
+              "bytesSent": 6,
+              "bytesReceived": 7
+            },
+            "replicationBandwidth": {
+              "bytesSent": 8,
+              "bytesReceived": 9
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "stats": [
+    {
+      "label": "Databases",
+      "value": "1"
+    },
+    {
+      "label": "Organization members",
+      "value": "1"
+    },
+    {
+      "label": "Unread alerts",
+      "value": "0"
+    },
+    {
+      "label": "Requests",
+      "value": "10"
+    },
+    {
+      "label": "Errors",
+      "value": "1"
+    },
+    {
+      "label": "Worst p95 latency",
+      "value": "1.750 ms"
+    },
+    {
+      "label": "Storage",
+      "value": "4.0 KiB"
+    },
+    {
+      "label": "Operations",
+      "value": "4"
+    },
+    {
+      "label": "Client bandwidth",
+      "value": "13 B"
+    },
+    {
+      "label": "Replication bandwidth",
+      "value": "8 B"
+    }
+  ],
+  "charts": [
+    {
+      "label": "Requests by type, 1h",
+      "columns": 1,
+      "paths": [
+        "M 48.0,14.0"
+      ],
+      "missingLabels": 0
+    }
+  ],
+  "error": false
+}

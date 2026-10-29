@@ -1,0 +1,19 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingPage>
+@using TerraScale.Dashboard.Features.Billing
+@using TerraScale.Dashboard.Features.Billing.Plans
+@{
+    var data = Model.PlanChanges;
+    var owner = Model.CanManage;
+    var subscribed = data.Binding?.SubscriptionId is { Length: > 0 } && data.Binding.Status is not ("canceled" or "incomplete_expired");
+}
+@if (data.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@data.Error</p></div> }
+@if (data.State?.PendingPlanKey is { Length: > 0 } pending) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Awaiting payment</p><p class="ts-alert-body">Stripe is confirming the change to @BillingPlanPresentation.Name(pending). Your current plan stays active until confirmation.</p>@if (owner && data.State.PaymentUrl.Length > 0) { <a class="ts-btn ts-btn-primary ts-btn-sm" href="@data.State.PaymentUrl" @(ExternalLink.Attributes)>Complete payment@(ExternalLink.Hint)</a> }</div> }
+@if (data.State?.ScheduledPlanKey is { Length: > 0 } scheduled)
+{
+    <div class="ts-stack-sm"><div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Change scheduled</p><p class="ts-alert-body">Your plan will change to @BillingPlanPresentation.Name(scheduled) @BillingPlanPresentation.Scheduled(data.State.ScheduledAt).</p></div>@if (owner) { <form method="post" action="/billing/change/undo"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Undo scheduled change</button></form> }</div>
+}
+@if (owner)
+{
+    <div class="ts-row"><button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="change-billing-plan">@(subscribed ? "Change plan" : "Choose plan")</button>@if (subscribed) { <a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage payment</a> }@if (data.Binding is { CheckoutId.Length: > 0, SubscriptionId.Length: 0, Status: "pending" }) { <form method="post" action="/billing/checkout/cancel"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-danger" type="submit">Cancel checkout</button></form> }</div>
+}
+else { <div class="ts-row"><p class="ts-meta">@(Model.InternalBill is not null ? "Internal billing reports usage without Stripe charges." : "Only the organization owner can manage billing.")</p></div> }

@@ -1,0 +1,34 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>
+@using TerraScale.Dashboard.Features.Organizations
+@using TerraScale.Dashboard.Features.Organizations.Projects
+@inject AssetUrls Assets
+@if (Model.Project is { } project)
+{
+    var current = Model.Page.Shell.Context.Project?.Id == project.Id;
+    <tr>
+        <td><div class="ts-stack-sm ts-org-project-name"><span class="ts-table-strong">@project.Name</span><span class="ts-meta ts-mono">@project.Id</span></div></td>
+        <td class="ts-muted">@(project.Slug.Length > 0 ? project.Slug : "—")</td>
+        <td>@if (project.Regions.Count == 0) { <span class="ts-meta">None</span> } else { foreach (var code in project.Regions.Select(item => item.ToLowerInvariant()).OrderBy(Regions.Rank)) { var country = Regions.Country(code); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@code</span></span> } }</td>
+        <td>@if (project.Region.Length > 0) { var primary = project.Region.ToLowerInvariant(); var country = Regions.Country(primary); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@primary</span></span> } else { <span class="ts-meta">None</span> }</td>
+        <td>@if (project.BackupRegion.Length > 0) { var backup = project.BackupRegion.ToLowerInvariant(); var country = Regions.Country(backup); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@backup</span></span> } else { <span class="ts-meta">None</span> }</td>
+        <td class="ts-table-num">@project.Databases.Count</td>
+        <td><span class="ts-badge @(current ? "ts-badge-info" : "ts-badge-neutral")">@(current ? "Current" : "Available")</span></td>
+        <td class="ts-muted">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : ValueFormat.UtcDate(project.CreatedAt))</td>
+        <td class="ts-table-actions"><div class="ts-row ts-row-end">
+            @if (!current)
+            {
+                <form method="post" action="/api/v1/dashboard/switch-project"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><input type="hidden" name="projectId" value="@project.Id" /><input type="hidden" name="returnUrl" value="/organization?tab=projects" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select</button></form>
+            }
+            @if (Model.Page.CanManage)
+            {
+                <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="rename-project-@project.Id">@Icons.Render("Pencil", 14)<span>Rename</span></button>
+                @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialog, ProjectDialogModel>(Model))
+                @if (!current && !project.IsDefault && Model.Page.Shell.Context.Organization?.Projects.Count > 1)
+                {
+                    <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="delete-project-@project.Id" aria-label="Delete @project.Name">@Icons.Render("Trash2", 14)</button>
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDeleteView, ProjectDialogModel>(Model))
+                }
+            }
+        </div></td>
+    </tr>
+}

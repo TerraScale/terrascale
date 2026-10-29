@@ -1,0 +1,21 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingPage>
+@if (Model.CanManage && Model.InternalBill is null)
+{
+    <section class="ts-card" aria-labelledby="billing-details-title">
+        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-details-title">Billing details and tax IDs</h2><p class="ts-card-description">Use your legal business name, billing address and VAT or tax ID for future invoices.</p></div></header>
+        <div class="ts-card-body ts-stack">
+        @if (Model.DetailsUnavailable) { <p class="ts-alert ts-alert-warning" role="status">Billing details could not be loaded. Reload billing to retry.</p> }
+        else if (Model.Details is { } details)
+        {
+            @if (details.Name.Length > 0) { <p>@details.Name</p> }
+            @if (details.Address.Count == 0) { <p class="ts-meta">No billing address recorded.</p> }
+            else { <address>@foreach (var line in details.Address) { <span>@line</span><br /> }</address> }
+            @if (details.TaxIds.Count == 0) { <p class="ts-meta">No tax IDs recorded.</p> }
+            else { <ul>@foreach (var id in details.TaxIds) { <li>@id.Type.ToUpperInvariant().Replace('_', ' '): @id.Value <span class="ts-meta">(@id.Verification)</span></li> }</ul> }
+        }
+        else { <p class="ts-meta">Your billing address and applicable VAT or tax ID are collected during checkout.</p> }
+        @if (Model.Binding?.CustomerId is { Length: > 0 }) { <a class="ts-btn ts-btn-secondary" href="@TerraScale.Dashboard.Shared.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")">Edit billing details</a> }
+        <p class="ts-meta">Stripe calculates applicable taxes, including reverse charge where applicable. Invoice PDFs in payment history contain the seller and customer tax details recorded when each invoice was finalized.</p>
+        </div>
+    </section>
+}

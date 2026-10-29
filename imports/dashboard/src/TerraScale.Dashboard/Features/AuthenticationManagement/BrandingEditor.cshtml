@@ -1,0 +1,42 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
+@inject AssetUrls Assets
+@{
+    var brand = Model.Settings!.Branding;
+    string Field(string name, string? saved) => Model.Draft is { } draft ? draft[name].ToString() : saved ?? "";
+    var theme = Field("default_theme", brand.DefaultTheme ?? "system");
+    var footer = string.Join("\n", (brand.FooterLinks ?? [new("Status", "https://status.terrascale.tech"), new("Docs", "https://docs.terrascale.tech"), new("Privacy", "https://docs.terrascale.tech/legal/privacy"), new("Terms", "https://docs.terrascale.tech/legal/terms")]).Select(link => link.Label + " | " + link.Url));
+}
+<form id="auth-branding-form" method="post" action="/api/v1/auth-management/branding" data-project-name="@Model.Context.Project?.Name">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<header class="ts-idp-brand-head"><div><h2 id="auth-branding-title">Branding</h2><p class="ts-meta">Brand your hosted pages and verification, sign-in and password reset emails.</p></div><div class="ts-row"><span class="ts-badge ts-badge-warning" data-brand-dirty hidden>Unsaved changes</span>@if(Model.Context.CanManageProject){<button class="ts-btn ts-btn-ghost" type="reset">Discard</button><button class="ts-btn ts-btn-secondary" type="button" data-brand-defaults>Reset to defaults</button><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Check", 16) Save</button>}</div></header>
+</form>
+<div class="ts-idp-branding">
+<section class="ts-card ts-idp-brand-controls" aria-label="Branding controls"><fieldset class="ts-stack" form="auth-branding-form" disabled="@(!Model.Context.CanManageProject)">
+<div class="ts-field"><label class="ts-label" for="auth-brand-name">App name</label><input class="ts-input" form="auth-branding-form" id="auth-brand-name" name="name" data-saved="@(brand.Name ?? "")" value="@Field("name", brand.Name)" maxlength="64" placeholder="@Model.Context.Project?.Name" /><p class="ts-hint">Empty uses the project name.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-brand-logo">Logo URL</label><input class="ts-input" form="auth-branding-form" id="auth-brand-logo" type="url" name="logo_url" data-saved="@(brand.LogoUrl ?? "")" value="@Field("logo_url", brand.LogoUrl)" placeholder="https://assets.example.com/logo.svg" /><p class="ts-hint">HTTPS image. Empty shows the TerraScale mark.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-brand-email-message">Email message (optional)</label><textarea class="ts-input" form="auth-branding-form" id="auth-brand-email-message" name="email_message" data-saved="@(brand.EmailMessage ?? "")" rows="3" maxlength="500">@Field("email_message", brand.EmailMessage)</textarea><p class="ts-hint">Verification, sign-in and password reset emails use this app name, logo and accent color. Add up to 500 plain text characters; newlines are allowed and content is safely escaped. The verified TerraScale sender remains unchanged. Empty clears the message.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-brand-mode">Default theme</label><select class="ts-select" form="auth-branding-form" id="auth-brand-mode" name="default_theme" data-saved="@(brand.DefaultTheme ?? "system")">@foreach(var mode in new[]{"light", "dark", "system"}){<option value="@mode" selected="@(theme == mode)">@char.ToUpperInvariant(mode[0])@mode[1..]</option>}</select></div>
+@foreach(var (name, label, saved, placeholder) in new[]{("theme_color", "Accent color", brand.ThemeColor, "#2158e8"), ("background_color", "Background color", brand.BackgroundColor, "Theme default"), ("text_color", "Text color", brand.TextColor, "Theme default")}){
+<div class="ts-field"><label class="ts-label" for="@("auth-brand-" + name)">@label</label><input class="ts-input ts-mono" form="auth-branding-form" id="@("auth-brand-" + name)" name="@name" data-saved="@(saved ?? "")" value="@Field(name, saved)" placeholder="@placeholder" pattern="#[0-9a-fA-F]{6}" maxlength="7" /><p class="ts-hint">#rrggbb. Empty uses the theme default.</p></div>
+}
+<div class="ts-field"><label class="ts-label" for="auth-brand-title-size">Title size</label><div class="ts-row"><input type="range" min="20" max="40" step="1" value="@Field("title_size", (brand.TitleSize ?? 24).ToString(System.Globalization.CultureInfo.InvariantCulture))" aria-label="Title size slider" data-brand-size /><input class="ts-input ts-mono" form="auth-branding-form" id="auth-brand-title-size" type="number" name="title_size" data-saved="@((brand.TitleSize ?? 24).ToString(System.Globalization.CultureInfo.InvariantCulture))" min="20" max="40" required value="@Field("title_size", (brand.TitleSize ?? 24).ToString(System.Globalization.CultureInfo.InvariantCulture))" /><span class="ts-hint">px</span></div></div>
+<div class="ts-field"><label class="ts-label" for="auth-brand-footer">Footer links</label><textarea class="ts-input ts-mono" form="auth-branding-form" id="auth-brand-footer" name="footer_links" data-saved="@footer" rows="4" spellcheck="false">@Field("footer_links", footer)</textarea><p class="ts-hint">One per line: Label | HTTPS URL. Up to 5; labels up to 24 characters.</p></div>
+</fieldset></section>
+<section class="ts-idp-brand-preview" aria-label="Live preview">
+<div class="ts-idp-brand-toolbar"><div class="ts-segmented" role="group" aria-label="Preview page">@foreach(var (page,label) in new[]{("sign-in","Sign in"),("sign-up","Sign up"),("reset","Reset")}){<button class="ts-btn ts-btn-sm" type="button" data-brand-page="@(page)" hidden="@(page == "sign-up" && !Model.Settings.Methods.SignUp || page == "reset" && !Model.Settings.Methods.Password)" aria-pressed="@(page == "sign-in" ? "true" : "false")">@label</button>}</div><div class="ts-segmented" role="group" aria-label="Preview theme">@foreach(var (mode,label) in new[]{("","As set"),("light","Light"),("dark","Dark")}){<button class="ts-btn ts-btn-sm" type="button" data-brand-mode="@mode" aria-pressed="@(mode == "" ? "true" : "false")">@label</button>}</div></div>
+<div id="auth-brand-preview" class="ts-idp-brand-canvas"><div class="ts-idp-brand-card">
+<div class="ts-idp-brand-logo"><img data-brand-logo data-default-src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" referrerpolicy="no-referrer" hidden /><span data-brand-initial></span><span data-brand-name></span></div>
+<h3 data-brand-heading>Sign in</h3><p class="ts-idp-brand-subtitle" data-brand-subtitle>Welcome back. Use the email you signed up with.</p>
+<div class="ts-field"><label class="ts-label" for="auth-preview-email">Email</label><input class="ts-input" id="auth-preview-email" disabled placeholder="you@company.com" /></div>
+<div class="ts-field" data-brand-form="sign-up" hidden><label class="ts-label" for="auth-preview-password">Password</label><input class="ts-input" id="auth-preview-password" type="password" disabled /><span class="ts-hint">At least 15 characters. A passphrase of a few words works well.</span></div>
+<div class="ts-stack" data-brand-form="sign-in">
+@if(Model.Settings.Methods.Passcode){<button class="ts-btn ts-btn-primary ts-btn-block" type="button" disabled>Email me a sign-in code @Icons.Render("ArrowRight", 16)</button>}
+@if(Model.Settings.Methods.Password){<button class="ts-btn @(Model.Settings.Methods.Passcode ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-block" type="button" disabled>@(Model.Settings.Methods.Passcode ? "Use a password instead" : "Continue with a password")</button>}
+</div>
+<button class="ts-btn ts-btn-primary ts-btn-block" data-brand-form="sign-up" type="button" disabled hidden>Create account</button>
+<button class="ts-btn ts-btn-primary ts-btn-block" data-brand-form="reset" type="button" disabled hidden>Email me a reset code</button><p class="ts-hint">Visual preview</p>
+</div><nav class="ts-idp-brand-footer" aria-label="Preview footer" data-brand-footer></nav><p class="ts-idp-brand-powered">Powered by <b>TerraScale</b></p></div>
+<p class="ts-hint">Changes appear here as you edit. Save to update the hosted pages and emails. Colors adapt for readable contrast.</p>
+</section></div>
+<style id="auth-brand-preview-style" nonce="@Model.Shell.Nonce"></style>
+<script type="module" src="@Assets.Url("js/auth-branding.js")" nonce="@Model.Shell.Nonce" data-auth-branding></script>

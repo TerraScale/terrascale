@@ -1,0 +1,4 @@
+<Project>
+  <!-- Audit-only import: compile against committed assets without running the source-writing bundlers. -->
+  <Target Name="BundleDashboardAssets" />
+</Project>
