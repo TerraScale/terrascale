@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Documents;
+using TerraBase.Testing;
 
 namespace TerraBase.E2E
 {
