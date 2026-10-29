@@ -11,6 +11,7 @@ import (
 )
 
 func TestRepeatedAggregationKeepsDistinctReports(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	w := benchmark.Workload{Name: "point-reads", DurationS: 1, Concurrency: 1, Dataset: benchmark.Dataset{Documents: 1, DocSizeBytes: 32}, Mix: []benchmark.Mix{{Op: "doc.get", Weight: 100}}, Targets: benchmark.Targets{P99MS: 100}}
 	body, err := json.Marshal(w)
@@ -24,12 +25,10 @@ func TestRepeatedAggregationKeepsDistinctReports(t *testing.T) {
 	if err := os.WriteFile(input, clientFixture(t, w, ""), 0600); err != nil {
 		t.Fatal(err)
 	}
-	saved := os.Args
-	defer func() { os.Args = saved }()
-	os.Args = []string{"bench-runner", "--input", input, "--workload", workload, "--region", "gru", "--out-dir", dir, "--store=false"}
+	args := []string{"bench-runner", "--input", input, "--workload", workload, "--region", "gru", "--out-dir", dir, "--store=false"}
 	previous := map[string][]byte{}
 	for invocation := 1; invocation <= 2; invocation++ {
-		if err := run(); err != nil {
+		if err := run(args[1:]); err != nil {
 			t.Fatalf("aggregation %d failed: %v", invocation, err)
 		}
 		reports, err := filepath.Glob(filepath.Join(dir, "bench", "gru", "*", "report.json"))
@@ -66,11 +65,11 @@ func TestRepeatedAggregationKeepsDistinctReports(t *testing.T) {
 }
 
 func TestFailedClientRetainsEvidenceWithoutSecrets(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	client := filepath.Join(dir, "client")
 	secret := "test-secret-must-never-enter-evidence"
-	t.Setenv("TS_BENCH_CLIENT_SECRET", secret)
-	if err := os.WriteFile(client, []byte("#!/bin/sh\nprintf '%s' \"$TS_BENCH_CLIENT_SECRET\" >&2\nexit 1\n"), 0700); err != nil {
+	if err := os.WriteFile(client, []byte("#!/bin/sh\nprintf '%s' "+secret+" >&2\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	w := benchmark.Workload{Name: "point-reads", DurationS: 1, Concurrency: 1, Dataset: benchmark.Dataset{Documents: 1, DocSizeBytes: 32}, Mix: []benchmark.Mix{{Op: "doc.get", Weight: 100}}, Targets: benchmark.Targets{P99MS: 100}}
@@ -79,10 +78,8 @@ func TestFailedClientRetainsEvidenceWithoutSecrets(t *testing.T) {
 	if err := os.WriteFile(path, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	saved := os.Args
-	defer func() { os.Args = saved }()
-	os.Args = []string{"bench-runner", "--client", client, "--workload", path, "--region", "gru", "--out-dir", dir, "--store=false"}
-	err := run()
+	args := []string{"bench-runner", "--client", client, "--workload", path, "--region", "gru", "--out-dir", dir, "--store=false"}
+	err := run(args[1:])
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatal("failure or secret handling failed")
 	}

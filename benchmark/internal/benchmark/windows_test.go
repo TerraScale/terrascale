@@ -7,6 +7,7 @@ import (
 )
 
 func TestCompletionBucketsSurviveSlowEmission(t *testing.T) {
+	t.Parallel()
 	w := fixture()
 	w.Targets.P99MS = 1000
 	completed := make(chan time.Time, 32)

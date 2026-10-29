@@ -10,6 +10,7 @@ import (
 )
 
 func TestMonitorStopsAtEachG1Limit(t *testing.T) {
+	t.Parallel()
 	g1 := limits{stored: MonitorMaxStoredBytes, usd: MonitorMaxUSD, run: MonitorMaxRunBytes, rss: MonitorMaxRSSBytes}
 	ok := MonitorSample{StoredBytes: 4_499_999_999, USD: 0.79, RunBytes: 27_999_999_999, NodeRSSMax: 7_999_999_999}
 	if b := g1.breach(ok); b != "" {
@@ -28,6 +29,7 @@ func TestMonitorStopsAtEachG1Limit(t *testing.T) {
 }
 
 func TestMonitorCostEstimate(t *testing.T) {
+	t.Parallel()
 	// 4 GiB stored, 1,000 objects in 2 generations, 100 MiB of snapshots uploaded, 3 failed passes, 4 drills; the
 	// monitor listed 6 pages, the harness 10 and it read 2,000 objects.
 	s := MonitorSample{StoredBytes: 4 << 30, Objects: 1000, MonitorLists: 6,
@@ -48,6 +50,7 @@ func TestMonitorCostEstimate(t *testing.T) {
 }
 
 func TestMonitorCountersSurviveNodeRestarts(t *testing.T) {
+	t.Parallel()
 	var c counters
 	c.add(map[string]float64{"failures": 2, "drills": 1})
 	got := c.add(map[string]float64{"failures": 5, "drills": 1})
@@ -61,12 +64,12 @@ func TestMonitorCountersSurviveNodeRestarts(t *testing.T) {
 }
 
 func TestMonitorPassesBucketSettingsButNeverTheMasterKey(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "node.env")
 	if err := os.WriteFile(path, []byte("AWS_ENDPOINT_URL_S3=https://127.0.0.1:1\nBUCKET_NAME=pitr\nAWS_ACCESS_KEY_ID=k\nAWS_SECRET_ACCESS_KEY=s\nTERRABASE_MASTER_KEY=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AWS_PROFILE", "someone-else")
-	env, err := inventoryEnv(path)
+	env, err := inventoryEnvFrom(path, []string{"AWS_PROFILE=someone-else"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +82,7 @@ func TestMonitorPassesBucketSettingsButNeverTheMasterKey(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inventoryEnv(path); err == nil {
+	if _, err := inventoryEnvFrom(path, []string{"AWS_PROFILE=someone-else"}); err == nil {
 		t.Fatal("a world-readable env file was accepted")
 	}
 }

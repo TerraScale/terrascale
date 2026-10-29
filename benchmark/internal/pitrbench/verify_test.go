@@ -193,6 +193,7 @@ func TestBoundedInclusionComesFromTheObservedShippedHistory(t *testing.T) {
 }
 
 func TestShippedRecorderKeepsEveryDistinctValue(t *testing.T) {
+	t.Parallel()
 	r, _ := newTestRun(t, testDocs, testSplit)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -314,6 +315,7 @@ func TestReconcileGuardsEveryRestart(t *testing.T) {
 }
 
 func TestMarkersBetweenTheirSendAndTheirCutAreOptional(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, 4000, 4000)
 	// Exact cut e: marker sent at 500, cut at 1000. Bounded cuts before the marker (400), between (700), after (1100).
 	_ = r.AddCut(Cut{Name: "e", Kind: "exact", AtMs: 1000, MarkerMs: 500})

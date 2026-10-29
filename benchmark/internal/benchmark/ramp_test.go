@@ -72,6 +72,7 @@ func encodeOutput(t *testing.T, o Output) []byte {
 }
 
 func TestSummaryMustMatchFullWorkload(t *testing.T) {
+	t.Parallel()
 	w, o := rampFixture(t)
 	raw := encodeOutput(t, o)
 	if _, err := read(bytes.NewReader(raw), w, "gru"); err != nil {
@@ -115,6 +116,7 @@ func TestSummaryMustMatchFullWorkload(t *testing.T) {
 }
 
 func TestWindowsMustAgreeWithAssignedPhase(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		mutate func(*Output)
@@ -138,6 +140,7 @@ func TestWindowsMustAgreeWithAssignedPhase(t *testing.T) {
 }
 
 func TestPhaseAllowsFinalPartialDrainBucket(t *testing.T) {
+	t.Parallel()
 	w, o := rampFixture(t)
 	last := &o.Summary.Steps[2]
 	last.End = last.End.Add(750 * time.Millisecond)
@@ -164,6 +167,7 @@ func TestPhaseAllowsFinalPartialDrainBucket(t *testing.T) {
 }
 
 func TestRampRequiresCompletionOrSafetyStop(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		completed []bool
@@ -210,6 +214,7 @@ func TestRampRequiresCompletionOrSafetyStop(t *testing.T) {
 }
 
 func TestRampGuardUsesTotalErrorRate(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name    string
 		errors  int
@@ -243,6 +248,7 @@ func TestRampGuardUsesTotalErrorRate(t *testing.T) {
 }
 
 func TestMultipleClientRamps(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		stop      string

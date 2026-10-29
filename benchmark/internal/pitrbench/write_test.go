@@ -72,6 +72,7 @@ func checkExactlyOnce(t *testing.T, r *Run, db *fakeDB, phases ...string) {
 }
 
 func TestDelayedCommitOfATimedOutAttemptAppliesOnce(t *testing.T) {
+	t.Parallel()
 	for _, late := range []string{"first attempt commits before the retry", "retry commits before the first attempt"} {
 		t.Run(late, func(t *testing.T) {
 			r, db := newTestRun(t, testDocs, testSplit)
@@ -103,6 +104,7 @@ func TestDelayedCommitOfATimedOutAttemptAppliesOnce(t *testing.T) {
 }
 
 func TestLostAcknowledgementIsProvenNotAssumed(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"stream reset", "500 after commit"} {
 		t.Run(mode, func(t *testing.T) {
 			r, db := newTestRun(t, testDocs, testSplit)
@@ -123,6 +125,7 @@ func TestLostAcknowledgementIsProvenNotAssumed(t *testing.T) {
 }
 
 func TestDuplicatedRetriesNeverInflateCounts(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	holds := []chan struct{}{make(chan struct{}), make(chan struct{})}
 	evaluated := make(chan int, 2)
@@ -148,6 +151,7 @@ func TestDuplicatedRetriesNeverInflateCounts(t *testing.T) {
 }
 
 func TestDeleteAndRecreateTrackTombstoneVersions(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	for _, p := range []string{"load-a", "load-b", "u1"} {
 		write(t, r, p, WriteConfig{})
@@ -173,6 +177,7 @@ func TestDeleteAndRecreateTrackTombstoneVersions(t *testing.T) {
 }
 
 func TestRecreateCannotHideAMissedDelete(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	for _, p := range []string{"load-a", "load-b", "u1"} {
 		write(t, r, p, WriteConfig{})
@@ -197,6 +202,7 @@ func TestRecreateCannotHideAMissedDelete(t *testing.T) {
 }
 
 func TestAbsentWithoutTombstoneIsNotProofOfDelete(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	for _, p := range []string{"load-a", "load-b", "u1"} {
 		write(t, r, p, WriteConfig{})
@@ -220,6 +226,7 @@ func TestAbsentWithoutTombstoneIsNotProofOfDelete(t *testing.T) {
 }
 
 func TestCrashesAroundIntentCommitAcknowledgementAndCompletionResume(t *testing.T) {
+	t.Parallel()
 	for _, point := range []string{"after-intent", "after-commit", "after-response", "after-versions"} {
 		t.Run(point, func(t *testing.T) {
 			r, db := newTestRun(t, testDocs, testSplit)
@@ -271,6 +278,7 @@ func TestCrashesAroundIntentCommitAcknowledgementAndCompletionResume(t *testing.
 }
 
 func TestExactCutPinsTheLedgerPrefixAndRefusesUnresolvedBatches(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	cfg := WriteConfig{Phase: "load-a", Writers: 1, Timeout: 2 * time.Second, hook: func(at string, b int64) error {
 		if at == "after-response" && b == 1 {
@@ -300,6 +308,7 @@ func TestExactCutPinsTheLedgerPrefixAndRefusesUnresolvedBatches(t *testing.T) {
 }
 
 func TestUnshippedCutVerifiesTheSourceButIsNeverRestorable(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	db.noBackup = true
 	write(t, r, "load-a", WriteConfig{})
@@ -319,6 +328,7 @@ func TestUnshippedCutVerifiesTheSourceButIsNeverRestorable(t *testing.T) {
 }
 
 func TestIdsAreUniqueOrderedAndBodiesCanonical(t *testing.T) {
+	t.Parallel()
 	const seed = 7
 	prev := ""
 	for i := range int64(20_000) {
@@ -344,6 +354,7 @@ func TestIdsAreUniqueOrderedAndBodiesCanonical(t *testing.T) {
 }
 
 func TestOracleAtTheCutsAroundMutations(t *testing.T) {
+	t.Parallel()
 	r := &Run{Docs: 100_000, LoadSplit: 40_000}
 	count := func(applied ...string) (alive, deleted int) {
 		o, err := NewOracle(r, applied)
@@ -387,6 +398,7 @@ func TestOracleAtTheCutsAroundMutations(t *testing.T) {
 }
 
 func TestAnInterruptedWriteFailsAndIsNotFenced(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	ctx, cancel := context.WithCancel(context.Background())
 	db.setFault(func(n int) *fault {

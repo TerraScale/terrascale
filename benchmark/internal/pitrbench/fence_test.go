@@ -48,6 +48,7 @@ func checkOracle(t *testing.T, r *Run, db *fakeDB, phases ...string) {
 }
 
 func TestFenceRejectsALoadAttemptHeldPastTheDelete(t *testing.T) {
+	t.Parallel()
 	for _, control := range []bool{false, true} {
 		name := "fenced"
 		if control {
@@ -84,6 +85,7 @@ func TestFenceRejectsALoadAttemptHeldPastTheDelete(t *testing.T) {
 }
 
 func TestFenceRejectsAnUpdateAttemptHeldPastDeleteAndRecreate(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, fenceDocs, fenceSplit)
 	write(t, r, "load-a", WriteConfig{})
 	write(t, r, "load-b", WriteConfig{})
@@ -106,6 +108,7 @@ func TestFenceRejectsAnUpdateAttemptHeldPastDeleteAndRecreate(t *testing.T) {
 }
 
 func TestFenceRejectsLoadAttemptsHeldAcrossDeleteAndRecreate(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, fenceDocs, fenceSplit)
 	write(t, r, "load-a", WriteConfig{})
 	holds, evaluated := holdNext(db, 2)
@@ -135,6 +138,7 @@ func TestFenceRejectsLoadAttemptsHeldAcrossDeleteAndRecreate(t *testing.T) {
 }
 
 func TestAnUnresolvedBatchBlocksTheFenceTheNextPhaseAndCuts(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	db.setFault(func(n int) *fault { return &fault{reject: 503} })
 	if _, err := Write(context.Background(), r, WriteConfig{Phase: "load-a", Writers: 1, MaxAttempts: 1, Timeout: time.Second}); err == nil {
@@ -160,6 +164,7 @@ func TestAnUnresolvedBatchBlocksTheFenceTheNextPhaseAndCuts(t *testing.T) {
 }
 
 func TestAFencedPhaseNeverRunsAgain(t *testing.T) {
+	t.Parallel()
 	r, _ := newTestRun(t, testDocs, testSplit)
 	if stats := write(t, r, "load-a", WriteConfig{}); !stats.Fenced {
 		t.Fatalf("a complete load-a was not fenced: %+v", stats)
@@ -171,6 +176,7 @@ func TestAFencedPhaseNeverRunsAgain(t *testing.T) {
 }
 
 func TestALostFenceAcknowledgementIsRetriedAndProvenByRead(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 
 	db.setFault(func(n int) *fault { return map[bool]*fault{true: {abortAfter: true}}[n == 3] })

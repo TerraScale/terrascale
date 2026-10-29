@@ -56,6 +56,7 @@ func clientFixture(t *testing.T, w benchmark.Workload, stopped string) []byte {
 }
 
 func TestClientExitsAppearInRetainedReports(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, verdict string
 		ramp, failed  bool
@@ -95,10 +96,7 @@ func TestClientExitsAppearInRetainedReports(t *testing.T) {
 				}
 				args = append(args, "--client", client)
 			}
-			saved := os.Args
-			defer func() { os.Args = saved }()
-			os.Args = args
-			if err := run(); (err != nil) != test.failed {
+			if err := run(args[1:]); (err != nil) != test.failed {
 				t.Fatal("unexpected runner exit", err)
 			}
 			files, _ := filepath.Glob(filepath.Join(dir, "bench", "gru", "*", "report.json"))
@@ -139,6 +137,7 @@ func TestClientExitsAppearInRetainedReports(t *testing.T) {
 }
 
 func TestSequentialBudgetCheckedBeforeLaunch(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name                      string
 		clients, duration, warmup int
@@ -181,10 +180,7 @@ func TestSequentialBudgetCheckedBeforeLaunch(t *testing.T) {
 				clients = append(clients, client)
 				args = append(args, "--client", client)
 			}
-			saved := os.Args
-			defer func() { os.Args = saved }()
-			os.Args = args
-			err = run()
+			err = run(args[1:])
 			if test.rejected {
 				if err == nil || !strings.Contains(err.Error(), "shared execution budget") {
 					t.Fatal("missing budget rejection", err)

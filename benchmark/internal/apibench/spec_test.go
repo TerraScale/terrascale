@@ -10,6 +10,7 @@ import (
 const workload = "../../workloads/api-bench.json"
 
 func TestLoadSpecAcceptsWorkload(t *testing.T) {
+	t.Parallel()
 	s, err := LoadSpec(workload)
 	if err != nil {
 		t.Fatal(err)
@@ -20,6 +21,7 @@ func TestLoadSpecAcceptsWorkload(t *testing.T) {
 }
 
 func TestLoadSpecRejects(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(workload)
 	if err != nil {
 		t.Fatal(err)

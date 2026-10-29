@@ -17,6 +17,7 @@ import (
 )
 
 func TestPayloadBytesExact(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{256, 4096, 65536} {
 		bodies, err := payloads(size)
 		if err != nil {
@@ -32,6 +33,7 @@ func TestPayloadBytesExact(t *testing.T) {
 }
 
 func TestSeedSize(t *testing.T) {
+	t.Parallel()
 	if err := (&bench{}).ensure(context.Background(), 0); err != nil {
 		t.Fatalf("auth.token size 0 needs no seed: %v", err)
 	}
@@ -50,6 +52,7 @@ func TestSeedSize(t *testing.T) {
 }
 
 func TestStatusKeys(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		err  error
 		want string
@@ -69,6 +72,7 @@ func TestStatusKeys(t *testing.T) {
 }
 
 func TestCredentialsNeedOwnerOnly(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	if err := os.WriteFile(path, []byte(`{"api_key":"01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","project":"p1"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -89,6 +93,7 @@ func TestCredentialsNeedOwnerOnly(t *testing.T) {
 }
 
 func TestStartupLine(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if err := startup(&out); err != nil {
 		t.Fatal(err)
@@ -100,6 +105,7 @@ func TestStartupLine(t *testing.T) {
 }
 
 func TestRawDoStatusKeys(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Header.Get("Authorization") != "Bearer tok":

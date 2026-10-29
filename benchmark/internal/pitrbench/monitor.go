@@ -287,12 +287,16 @@ watch:
 // inventoryEnv is the env file's bucket settings for PitrLab (no master key: listing opens nothing), plus this
 // process's environment without any AWS or TLS-trust setting. Errors name settings, never values.
 func inventoryEnv(path string) ([]string, error) {
+	return inventoryEnvFrom(path, os.Environ())
+}
+
+func inventoryEnvFrom(path string, inherited []string) ([]string, error) {
 	vars, err := readEnvFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var env []string
-	for _, kv := range os.Environ() {
+	for _, kv := range inherited {
 		name, _, _ := strings.Cut(kv, "=")
 		if !strings.HasPrefix(name, "AWS_") && !strings.HasPrefix(name, "SSL_CERT_") && !strings.HasPrefix(name, "TERRABASE_") && name != "BUCKET_NAME" {
 			env = append(env, kv)

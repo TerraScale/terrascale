@@ -11,6 +11,7 @@ import (
 )
 
 func TestRunStepClosedCountsOK(t *testing.T) {
+	t.Parallel()
 	s := Step{Scenario: "doc.get", Transport: "sdk", PayloadBytes: 256, Mode: "closed", Concurrency: 4, StepS: 1, AbortErrorRate: 0.01}
 	op := func(context.Context, int, int) string {
 		time.Sleep(time.Millisecond)
@@ -23,6 +24,7 @@ func TestRunStepClosedCountsOK(t *testing.T) {
 }
 
 func TestRunStepAbortsOnErrorRate(t *testing.T) {
+	t.Parallel()
 	s := Step{Scenario: "doc.get", Transport: "sdk", Mode: "closed", Concurrency: 1, StepS: 2, AbortErrorRate: 0.01}
 	op := func(_ context.Context, _, i int) string {
 		time.Sleep(time.Millisecond)
@@ -38,6 +40,7 @@ func TestRunStepAbortsOnErrorRate(t *testing.T) {
 }
 
 func TestResultStatusIsDetached(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	r := newRecorder(Step{Mode: "closed", Concurrency: 1, StepS: 1}, now, now.Add(time.Hour))
 	r.observe(now, now, "ok")
@@ -49,6 +52,7 @@ func TestResultStatusIsDetached(t *testing.T) {
 }
 
 func TestRunStepOpenRecordsDropped(t *testing.T) {
+	t.Parallel()
 	s := Step{Scenario: "doc.get", Transport: "sdk", Mode: "open", Concurrency: 1, Rate: 100, StepS: 1, AbortErrorRate: 0.99}
 	op := func(context.Context, int, int) string {
 		time.Sleep(50 * time.Millisecond)
@@ -61,6 +65,7 @@ func TestRunStepOpenRecordsDropped(t *testing.T) {
 }
 
 func TestRestartExcludesSetupFromLatency(t *testing.T) {
+	t.Parallel()
 	s := Step{Scenario: "doc.delete", Transport: "sdk", Mode: "closed", Concurrency: 1, StepS: 1, AbortErrorRate: 0.99}
 	op := func(ctx context.Context, _, _ int) string {
 		time.Sleep(20 * time.Millisecond)
@@ -74,6 +79,7 @@ func TestRestartExcludesSetupFromLatency(t *testing.T) {
 }
 
 func TestMeterCountsBodyBytes(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		_, _ = w.Write(make([]byte, 1000))

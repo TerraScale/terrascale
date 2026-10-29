@@ -25,6 +25,15 @@ The [.NET client preflight](clients/dotnet/README.md) is SDK-linked; load genera
 nice -n 19 make check
 ```
 
+`make test-fast` is the pre-push suite (`ts-ship/benchmark` runs
+`make -C benchmark test-fast`). It runs the main-feature Go tests in parallel
+with the race detector, uncached, with a four-minute per-package deadline.
+`make test-slow` runs the exhaustive 108-cell parity matrix across three regions,
+three repeats, three transport lanes, two payload sizes and two concurrency
+levels. `make test` and `make check` include both suites. Fast retains individual
+transport-lane, measurement, document-validation and owned-database cleanup
+coverage. All parity tests use local HTTPS fixtures.
+
 Go 1.25+ is required. Local build, test and benchmark commands run at low CPU
 priority; CI runs at full priority. Tests exercise scheduling and protocol
 accounting without contacting production.

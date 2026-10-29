@@ -11,6 +11,7 @@ import (
 
 // A shell stand-in for a client: ready, one result per step line, done on EOF.
 func TestRunClientDrivesProtocol(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "fake-client")
 	script := "#!/bin/sh\n" +
 		"echo '{\"type\":\"ready\",\"client\":\"fake\",\"sdk\":\"fake\"}'\n" +

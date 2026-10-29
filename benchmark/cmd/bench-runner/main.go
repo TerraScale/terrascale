@@ -31,12 +31,12 @@ func (p *paths) Set(value string) error {
 	return nil
 }
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
-func run() error {
+func run(args []string) error {
 	var clients, inputs paths
 	f := flag.NewFlagSet("bench-runner", flag.ContinueOnError)
 	f.Var(&clients, "client", "client executable (repeatable)")
@@ -45,7 +45,7 @@ func run() error {
 	region := f.String("region", "", "gru or sfo")
 	root := f.String("out-dir", ".", "repository/report output root")
 	store := f.Bool("store", true, "persist in TerraBase; false produces explicitly unstored evidence")
-	if err := f.Parse(os.Args[1:]); err != nil {
+	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || (*region != "gru" && *region != "sfo") || len(clients)+len(inputs) == 0 || len(clients) > 3 || (len(clients) > 0 && len(inputs) > 0) {

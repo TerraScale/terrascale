@@ -20,14 +20,14 @@ func useKeyFile(t *testing.T, content string) string {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(benchKeyEnv, path)
 	return path
 }
 
 func TestBenchCredentialsStagesKeyFile(t *testing.T) {
+	t.Parallel()
 	want := fmt.Sprintf(`{"api_key":"%s","project":"%s"}`, fakeAPIKey, fakeProject)
 	src := useKeyFile(t, want)
-	path, cleanup, err := benchCredentials()
+	path, cleanup, err := benchCredentialsFrom(src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,26 +62,21 @@ func TestBenchCredentialsStagesKeyFile(t *testing.T) {
 	}
 }
 
-func TestBenchCredentialsRequiresEnv(t *testing.T) {
-	t.Setenv(benchKeyEnv, "")
-	if _, _, err := benchCredentials(); err == nil || !strings.Contains(err.Error(), benchKeyEnv) {
-		t.Fatalf("empty env: error = %v, want naming %s", err, benchKeyEnv)
-	}
-	t.Setenv(benchKeyEnv, "x")
-	os.Unsetenv(benchKeyEnv)
-	if _, _, err := benchCredentials(); err == nil || !strings.Contains(err.Error(), benchKeyEnv) {
-		t.Fatalf("unset env: error = %v, want naming %s", err, benchKeyEnv)
+func TestBenchCredentialsRequiresPath(t *testing.T) {
+	t.Parallel()
+	if _, _, err := benchCredentialsFrom(""); err == nil || !strings.Contains(err.Error(), benchKeyEnv) {
+		t.Fatalf("empty path: error = %v, want naming %s", err, benchKeyEnv)
 	}
 }
 
 func TestBenchCredentialsRejectsUnreadableFile(t *testing.T) {
+	t.Parallel()
 	for name, path := range map[string]string{
 		"missing":   filepath.Join(t.TempDir(), "absent.json"),
 		"directory": t.TempDir(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(benchKeyEnv, path)
-			if _, _, err := benchCredentials(); err == nil || !strings.Contains(err.Error(), benchKeyEnv) {
+			if _, _, err := benchCredentialsFrom(path); err == nil || !strings.Contains(err.Error(), benchKeyEnv) {
 				t.Fatalf("error = %v, want naming %s", err, benchKeyEnv)
 			}
 		})
@@ -89,6 +84,7 @@ func TestBenchCredentialsRejectsUnreadableFile(t *testing.T) {
 }
 
 func TestBenchCredentialsRejectsInvalidKey(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"not json":    `not json SECRETVALUE`,
 		"bad api_key": `{"api_key":"bad_SECRETVALUE","project":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}`,
@@ -98,8 +94,8 @@ func TestBenchCredentialsRejectsInvalidKey(t *testing.T) {
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
-			useKeyFile(t, content)
-			_, _, err := benchCredentials()
+			path := useKeyFile(t, content)
+			_, _, err := benchCredentialsFrom(path)
 			if !errors.Is(err, errBenchKey) {
 				t.Fatalf("error = %v, want errBenchKey", err)
 			}

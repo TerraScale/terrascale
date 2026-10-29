@@ -26,7 +26,10 @@ type benchKey struct {
 
 // benchCredentials stages the key file named by TS_BENCH_KEY_FILE in a 0600 file inside a fresh 0700 dir; cleanup removes the dir.
 func benchCredentials() (string, func(), error) {
-	src := os.Getenv(benchKeyEnv)
+	return benchCredentialsFrom(os.Getenv(benchKeyEnv))
+}
+
+func benchCredentialsFrom(src string) (string, func(), error) {
 	if src == "" {
 		return "", nil, fmt.Errorf("%s is not set: point it at the benchmark key JSON file (mode 0600)", benchKeyEnv)
 	}

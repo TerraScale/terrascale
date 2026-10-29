@@ -16,6 +16,7 @@ func loadWorkload(t *testing.T) Spec {
 }
 
 func TestPlanCounts(t *testing.T) {
+	t.Parallel()
 	s := loadWorkload(t)
 	stable, err := Plan(s, nil, "stable")
 	if err != nil || len(stable) != 24 {
@@ -40,6 +41,7 @@ func TestPlanCounts(t *testing.T) {
 }
 
 func TestPlanErrorsWhenNoConcurrencyLeft(t *testing.T) {
+	t.Parallel()
 	s := loadWorkload(t)
 	s.Scenarios = []Scenario{{Name: "doc.get", Concurrency: []int{512}}}
 	if _, err := Plan(s, nil, "changing"); err == nil || !strings.Contains(err.Error(), "doc.get") || !strings.Contains(err.Error(), "changing") {
@@ -48,6 +50,7 @@ func TestPlanErrorsWhenNoConcurrencyLeft(t *testing.T) {
 }
 
 func TestPlanOpenLoopOnSDKOnly(t *testing.T) {
+	t.Parallel()
 	plan, err := Plan(loadWorkload(t), []int{4096}, "stable")
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +63,7 @@ func TestPlanOpenLoopOnSDKOnly(t *testing.T) {
 }
 
 func TestRunSweepStopsOnErrorRate(t *testing.T) {
+	t.Parallel()
 	sw := Sweep{Scenario: "doc.get", Transport: "sdk", PayloadBytes: 4096, Concurrency: []int{1, 8, 32}}
 	var steps []Step
 	rs, err := RunSweep(sw, loadWorkload(t), func(st Step) (Result, error) {
@@ -82,6 +86,7 @@ func TestRunSweepStopsOnErrorRate(t *testing.T) {
 }
 
 func TestRunSweepStopsOnP99Ratio(t *testing.T) {
+	t.Parallel()
 	sw := Sweep{Scenario: "doc.get", Transport: "sdk", PayloadBytes: 4096, Concurrency: []int{1, 8, 32}}
 	rs, err := RunSweep(sw, loadWorkload(t), func(st Step) (Result, error) {
 		p99 := 1000.0
@@ -99,6 +104,7 @@ func TestRunSweepStopsOnP99Ratio(t *testing.T) {
 }
 
 func TestRunSweepDerivesOpenLoopSteps(t *testing.T) {
+	t.Parallel()
 	sw := Sweep{Scenario: "doc.get", Transport: "sdk", PayloadBytes: 4096, Concurrency: []int{1, 8, 32}, OpenFractions: []float64{0.5, 0.9}}
 	var steps []Step
 	rs, err := RunSweep(sw, loadWorkload(t), func(st Step) (Result, error) {
@@ -127,6 +133,7 @@ func TestRunSweepDerivesOpenLoopSteps(t *testing.T) {
 }
 
 func TestRunSweepSkipsOpenLoopWhenNothingPassed(t *testing.T) {
+	t.Parallel()
 	sw := Sweep{Scenario: "doc.get", Transport: "sdk", PayloadBytes: 4096, Concurrency: []int{1, 8}, OpenFractions: []float64{0.5}}
 	rs, err := RunSweep(sw, loadWorkload(t), func(st Step) (Result, error) {
 		return Result{ErrorRate: 1}, nil

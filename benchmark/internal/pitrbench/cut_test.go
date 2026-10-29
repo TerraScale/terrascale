@@ -15,6 +15,7 @@ import (
 )
 
 func TestExactCutWaitsForAPassThatBeganAfterTheMarker(t *testing.T) {
+	t.Parallel()
 	t.Run("a pass ends as the marker commits, without it; later passes ship it", func(t *testing.T) {
 		r, db := newTestRun(t, testDocs, testSplit)
 		write(t, r, "load-a", WriteConfig{})
@@ -49,6 +50,7 @@ func TestExactCutWaitsForAPassThatBeganAfterTheMarker(t *testing.T) {
 }
 
 func TestExactCutExtendsTheRestoreWindowPastTheCut(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	write(t, r, "load-a", WriteConfig{})
 	cut, err := TakeCut(context.Background(), r, "c1", []string{"load-a"}, "", false, 10*time.Second)
@@ -74,6 +76,7 @@ func TestExactCutExtendsTheRestoreWindowPastTheCut(t *testing.T) {
 }
 
 func TestExactCutEnforcesQuiescence(t *testing.T) {
+	t.Parallel()
 	t.Run("a written phase outside applied", func(t *testing.T) {
 		r, _ := newTestRun(t, testDocs, testSplit)
 		write(t, r, "load-a", WriteConfig{})
@@ -96,6 +99,7 @@ func TestExactCutEnforcesQuiescence(t *testing.T) {
 }
 
 func TestRejectionAfterAnAmbiguousAttemptIsUnresolved(t *testing.T) {
+	t.Parallel()
 	check := func(t *testing.T, r *Run, db *fakeDB, err error) {
 		t.Helper()
 		if err == nil || !strings.Contains(err.Error(), "after an ambiguous attempt") {
@@ -146,6 +150,7 @@ func TestRejectionAfterAnAmbiguousAttemptIsUnresolved(t *testing.T) {
 }
 
 func TestExactCutWaitsForTheBackupToListTheDatabase(t *testing.T) {
+	t.Parallel()
 	r, db := newTestRun(t, testDocs, testSplit)
 	write(t, r, "load-a", WriteConfig{})
 	setListed := func(listed bool) {
@@ -166,6 +171,7 @@ func TestExactCutWaitsForTheBackupToListTheDatabase(t *testing.T) {
 }
 
 func TestDataRoutesCarryNoOwnerHeader(t *testing.T) {
+	t.Parallel()
 	var got []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		got = append(got, req.URL.Path+"="+req.Header.Get("X-TerraBase-User-Id"))

@@ -17,6 +17,7 @@ import (
 )
 
 func TestWriteReportRowsAndNoOverwrite(t *testing.T) {
+	t.Parallel()
 	r := Run{
 		ID: "01J0TESTRUN", Host: "bench-host", ClusterState: "stable", Endpoint: "https://example.invalid",
 		Start: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 11, 12, 5, 0, 0, time.UTC),
@@ -50,12 +51,14 @@ func TestWriteReportRowsAndNoOverwrite(t *testing.T) {
 }
 
 func TestNewStat(t *testing.T) {
+	t.Parallel()
 	if s := NewStat([]float64{4, 1, 3, 2}); s.Min != 1 || s.Median != 2.5 {
 		t.Fatalf("got %+v", s)
 	}
 }
 
 func TestServeAnswersEachStep(t *testing.T) {
+	t.Parallel()
 	in := bytes.NewBufferString(`{"type":"step","scenario":"doc.get","transport":"sdk","payload_bytes":256,"mode":"closed","concurrency":1,"warmup_s":0,"step_s":1,"abort_error_rate":0.01,"abort_p99_us":0}` + "\n")
 	var out bytes.Buffer
 	err := Serve(in, &out, Ready{Client: "go"}, func(s Step) Result { return Result{Scenario: s.Scenario, OK: 1} })
@@ -77,6 +80,7 @@ func TestServeAnswersEachStep(t *testing.T) {
 }
 
 func TestProbeEndpointReusesHandshake(t *testing.T) {
+	t.Parallel()
 	var conns, healthz atomic.Int64
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { healthz.Add(1) }))
 	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
@@ -99,6 +103,7 @@ func TestProbeEndpointReusesHandshake(t *testing.T) {
 }
 
 func TestWriteReportCleansUpAfterWriteError(t *testing.T) {
+	t.Parallel()
 	r := Run{ID: "01J0FAILRUN", Host: "bench-host", Start: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
 	var old syscall.Rlimit
 	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {

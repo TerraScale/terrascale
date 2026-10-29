@@ -9,6 +9,7 @@ import (
 
 // A fault case's injected object is expected in its audit; any other problem still fails the verify.
 func TestReadAuditSetsTheInjectedKeyApart(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "audit.json")
 	audit := `{"verdict":"problems","problems":[
 		{"kind":"unparseable_key","key":"v1/o/p/d/wal/g/0000000400000000-stray","detail":"not a snapshot or segment key"},

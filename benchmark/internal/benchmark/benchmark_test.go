@@ -19,6 +19,7 @@ func fixture() Workload {
 	return Workload{Name: "point-reads", DurationS: 1, Concurrency: 4, Dataset: Dataset{Documents: 1, DocSizeBytes: 32}, Mix: []Mix{{Op: "doc.get", Weight: 100}}, Targets: Targets{P99MS: 100}}
 }
 func TestWorkloads(t *testing.T) {
+	t.Parallel()
 	files, e := filepath.Glob("../../workloads/*.json")
 	files = slices.DeleteFunc(files, func(f string) bool { return filepath.Base(f) == "api-bench.json" })
 	if e != nil || len(files) != 6 {
@@ -51,6 +52,7 @@ func TestWorkloads(t *testing.T) {
 	}
 }
 func TestAdmissionAccountingAndCancellation(t *testing.T) {
+	t.Parallel()
 	w := fixture()
 	w.Concurrency = 1
 	w.Targets.P99MS = 1
@@ -82,6 +84,7 @@ func TestAdmissionAccountingAndCancellation(t *testing.T) {
 	}
 }
 func TestLatencyUsesIntendedStartAndDrain(t *testing.T) {
+	t.Parallel()
 	w := fixture()
 	var windows []Window
 	step, e := RunPhase(context.Background(), w, 4, 80*time.Millisecond, 0, func(context.Context, int, Mix) error { time.Sleep(15 * time.Millisecond); return nil }, func(r Window) error { windows = append(windows, r); return nil }, "sfo", "test")
@@ -97,6 +100,7 @@ func TestLatencyUsesIntendedStartAndDrain(t *testing.T) {
 	}
 }
 func TestSchedulerWaitsForNextSlotAfterStall(t *testing.T) {
+	t.Parallel()
 	w := fixture()
 	type arrival struct {
 		index int
@@ -127,6 +131,7 @@ func TestSchedulerWaitsForNextSlotAfterStall(t *testing.T) {
 }
 
 func TestRampStopsOnErrors(t *testing.T) {
+	t.Parallel()
 	w := fixture()
 	w.Name = "ramp"
 	w.DurationS = 10
@@ -159,6 +164,7 @@ func output(t *testing.T, region string, us int64) ([]byte, Workload) {
 	return b.Bytes(), w
 }
 func TestJSONLAndHistogramValidation(t *testing.T) {
+	t.Parallel()
 	raw, w := output(t, "gru", 1000)
 	if _, e := read(bytes.NewReader(raw), w, "gru"); e != nil {
 		t.Fatal(e)
@@ -177,6 +183,7 @@ func TestJSONLAndHistogramValidation(t *testing.T) {
 	}
 }
 func TestAggregationMergesHistograms(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var inputs []string
 	var w Workload
@@ -204,6 +211,7 @@ func TestAggregationMergesHistograms(t *testing.T) {
 	}
 }
 func TestEmitterFailureAndInvalidPhase(t *testing.T) {
+	t.Parallel()
 	w := fixture()
 	step, e := RunPhase(context.Background(), w, 4, 20*time.Millisecond, 0, func(context.Context, int, Mix) error { return nil }, func(Window) error { return errors.New("disk full") }, "gru", "test")
 	if e == nil || step.Completed {
@@ -215,6 +223,7 @@ func TestEmitterFailureAndInvalidPhase(t *testing.T) {
 }
 
 func TestRejectsFalseCompletionAndTiming(t *testing.T) {
+	t.Parallel()
 	raw, w := output(t, "gru", 1000)
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 	var s Summary
