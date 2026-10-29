@@ -14,7 +14,7 @@
             else { <ul>@foreach (var id in details.TaxIds) { <li>@id.Type.ToUpperInvariant().Replace('_', ' '): @id.Value <span class="ts-meta">(@id.Verification)</span></li> }</ul> }
         }
         else { <p class="ts-meta">Your billing address and applicable VAT or tax ID are collected during checkout.</p> }
-        @if (Model.Binding?.CustomerId is { Length: > 0 }) { <a class="ts-btn ts-btn-secondary" href="@TerraScale.Dashboard.Shared.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")">Edit billing details</a> }
+        @if (Model.Binding?.CustomerId is { Length: > 0 }) { <a class="ts-btn ts-btn-secondary" href="@TerraScale.Dashboard.Common.Accounts.WorkspaceUrl.For(Model.Shell.Context, "/billing/portal")">Edit billing details</a> }
         <p class="ts-meta">Stripe calculates applicable taxes, including reverse charge where applicable. Invoice PDFs in payment history contain the seller and customer tax details recorded when each invoice was finalized.</p>
         </div>
     </section>

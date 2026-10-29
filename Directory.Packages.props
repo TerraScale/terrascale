@@ -101,7 +101,6 @@
   <ItemGroup Label="Integration tests">
     <PackageVersion Include="TUnit" Version="1.73.19" />
     <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
-    <PackageVersion Include="Deque.AxeCore.Playwright" Version="4.13.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
     <!-- A real PostgreSQL client for TerraBase's wire listener (Fast). -->

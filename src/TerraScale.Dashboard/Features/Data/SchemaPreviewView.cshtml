@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.SchemaPreviewPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "schema", Model.Collection)))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "schema", Model.Collection)))
 <section class="ts-card"><header class="ts-card-head"><div class="ts-card-heading"><h1 class="ts-card-title">Preview document schema</h1><p class="ts-card-description">Inspect existing documents without changing them or the active schema. Each page examines at most 100 documents and 1 MiB, returning at most 16 hashed diagnostics.</p></div></header><div class="ts-card-body ts-stack-lg">
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
 <form method="post" class="ts-form" action="@("/databases/" + Model.Database.Id + "/schema/preview")">

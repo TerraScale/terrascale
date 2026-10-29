@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingRecoveryModel>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-login" aria-labelledby="billing-recovery-title">
     <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
@@ -11,7 +11,7 @@
                 <span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span>
                 <div class="ts-auth-heading"><h1 class="ts-auth-title" id="billing-recovery-title">@Model.Heading</h1></div>
                 <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Detail</p></div>
-                <a class="ts-btn ts-btn-primary ts-btn-block" href="@TerraScale.Dashboard.Shared.Accounts.WorkspaceUrl.PreserveRequest(HttpContext!, "/organization?tab=billing")" autofocus>Return to billing</a>
+                <a class="ts-btn ts-btn-primary ts-btn-block" href="@TerraScale.Dashboard.Common.Accounts.WorkspaceUrl.PreserveRequest(HttpContext!, "/organization?tab=billing")" autofocus>Return to billing</a>
             </div>
         </div>
     </div>

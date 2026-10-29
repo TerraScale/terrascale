@@ -1,12 +1,12 @@
 @using System.Globalization
-@using TerraScale.Dashboard.Shared.Charts
+@using TerraScale.Dashboard.Common.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.Data
 @using System.Text.Json
 @inject AssetUrls Assets
 <main class="ts-page" data-database-id="@Model.Database.Id">
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, Model.Section == "history" ? "documents" : Model.Section, Model.Collection)))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, Model.Section == "history" ? "documents" : Model.Section, Model.Collection)))
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div>}
 @if(Model.FormError.Length > 0 && Model.Dialog.Length == 0 && Model.Section != "sql"){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.FormError</p></div>}
 @if(Model.Error.Length > 0 || Model.FormError.Length > 0){<p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code> · <a href="@("/support?relatedRequestId=" + RequestIdentity.Id)">Contact support</a></p>}

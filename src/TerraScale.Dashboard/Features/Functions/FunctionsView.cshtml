@@ -1,9 +1,9 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionsPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using System.Globalization
 @{ var list = DatabaseService.Path(Model.Database.Id, "functions"); }
 <main class="ts-page" data-database-id="@Model.Database.Id">
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "functions")))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "functions")))
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><a class="ts-link" href="@list">Reload functions</a></div>}
 <section class="ts-card ts-card-flush" aria-labelledby="functions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-title">Functions</h2><p class="ts-card-description">JavaScript handlers that run on an HTTPS call, on collection changes or on a UTC cron schedule. Deploy them with the CLI or the API.</p></div></header><div class="ts-card-body">
 @if(Model.Functions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No functions yet.</p><p class="ts-empty-detail">Deploy one with <code>PUT /v1/projects/{project}/databases/@Model.Database.Name/functions/{name}</code>.</p></div>}else{

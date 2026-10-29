@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabaseSettingsPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page ts-db-detail" data-database-id="@Model.Database.Id">
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "settings")))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "settings")))
 <section class="ts-card ts-card-boxed" aria-labelledby="database-settings-title">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="database-settings-title">Settings</h2><p class="ts-card-description">Rename this database</p></div></header>
 <div class="ts-card-body ts-stack-lg">

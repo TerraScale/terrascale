@@ -1,15 +1,15 @@
 using TerraScale.Dashboard.Platform.Persistence;
 
-namespace TerraScale.Dashboard.Features.Home;
-
-// Copy-ready connect snippets for the Connect tab. Each SDK lists the first page of one collection with an access
-// token exchanged from a dashboard API key (ts-docs docs/getting-started; sending the raw key as a bearer answers 401).
-public static class HomeConnectSnippets
+namespace TerraScale.Dashboard.Features.Home
 {
-    public const string Collection = "posts";
-    public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
+    // Copy-ready connect snippets for the Connect tab. Each SDK lists the first page of one collection with an access
+    // token exchanged from a dashboard API key (ts-docs docs/getting-started; sending the raw key as a bearer answers 401).
+    public static class HomeConnectSnippets
+    {
+        public const string Collection = "posts";
+        public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
 
-    public const string TokenExchange = """
+        public const string TokenExchange = """
         set +x
         set -o pipefail
         read -rs TERRASCALE_API_KEY &&  # paste the key, then press Enter
@@ -22,27 +22,34 @@ public static class HomeConnectSnippets
         export TERRASCALE_ACCESS_TOKEN
         """;
 
-    // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
-    public static string Postgres(string database) => $"""
+        // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
+        public static string Postgres(string database)
+        {
+            return $"""
         read -rs PGPASSWORD && export PGPASSWORD  # paste the API key, then press Enter
         psql "postgresql://app@pg.terrascale.tech:5432/{Uri.EscapeDataString(database)}?sslmode=verify-full&sslrootcert=system"
         """;
+        }
 
-    public static string CreateCollection(string projectId, string database) => $$"""
+        public static string CreateCollection(string projectId, string database)
+        {
+            return $$"""
         curl -sS --fail-with-body --header @/dev/fd/3 \
           -H 'Content-Type: application/json' -d '{"name":"{{Collection}}"}' \
           "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/collections" \
           3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
         """;
+        }
 
-    public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database) =>
-    [
-        ("curl", "curl", "", $"""
+        public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database)
+        {
+            return [
+            ("curl", "curl", "", $"""
             curl -sS --fail-with-body --header @/dev/fd/3 \
               "{ApiUrl}/v1/projects/{projectId}/databases/{database}/collections/{Collection}/documents?limit=10" \
               3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
             """),
-        ("js", "JavaScript", $"npm install @terrascale/sdk@{SdkVersions.JavaScript}", $$"""
+            ("js", "JavaScript", $"npm install @terrascale/sdk@{SdkVersions.JavaScript}", $$"""
             import { createTerraBaseV1Client } from "@terrascale/sdk";
 
             const client = createTerraBaseV1Client({
@@ -53,7 +60,7 @@ public static class HomeConnectSnippets
             const page = await client.database("{{database}}").collection("{{Collection}}").list({ limit: 10 });
             console.log(page.items);
             """),
-        ("go", "Go", $"go get terrascale.tech/sdk@{SdkVersions.Go}", $$"""
+            ("go", "Go", $"go get terrascale.tech/sdk@{SdkVersions.Go}", $$"""
             package main
 
             import (
@@ -76,7 +83,7 @@ public static class HomeConnectSnippets
             	fmt.Println(len(page.Items))
             }
             """),
-        ("python", "Python", $"pip install \"terrascale @ git+https://github.com/TerraScale/ts-python@{SdkVersions.Python}\"", $$"""
+            ("python", "Python", $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@history/ts-python/{SdkVersions.Python}\"", $$"""
             import os
 
             from terrascale import TerraScale
@@ -85,7 +92,7 @@ public static class HomeConnectSnippets
                 page = ts.database("{{database}}").collection("{{Collection}}").list(limit=10)
                 print(len(page.items))
             """),
-        ("rust", "Rust", $"cargo add terrascale --git https://github.com/TerraScale/ts-rust --tag {SdkVersions.Rust}\ncargo add serde_json\ncargo add tokio --features full", $$"""
+            ("rust", "Rust", $"cargo add terrascale --git https://github.com/TerraScale/terrascale --tag history/ts-rust/{SdkVersions.Rust}\ncargo add serde_json\ncargo add tokio --features full", $$"""
             use terrascale::v1::Client;
 
             #[tokio::main]
@@ -97,5 +104,7 @@ public static class HomeConnectSnippets
                 Ok(())
             }
             """),
-    ];
+        ];
+        }
+    }
 }

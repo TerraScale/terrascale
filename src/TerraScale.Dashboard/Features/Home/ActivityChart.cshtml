@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.OperationChart>
-@using TerraScale.Dashboard.Shared.Charts
+@using TerraScale.Dashboard.Common.Charts
 <svg class="ts-chart" viewBox="0 0 720 180" role="group" aria-label="@Model.Label" data-init="el.querySelectorAll('.ts-chart-column').forEach((column, i, all) => column.setAttribute('tabindex', i === all.length - 1 ? '0' : '-1'))" data-on:keydown="evt.target.matches('.ts-chart-column') &amp;&amp; ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(evt.key) &amp;&amp; (evt.preventDefault(), [{ArrowLeft: evt.target.previousElementSibling, ArrowRight: evt.target.nextElementSibling, Home: el.querySelector('.ts-chart-column'), End: el.querySelector('.ts-chart-column:last-of-type')}[evt.key]?.closest('.ts-chart-column')].filter(Boolean).forEach(next => (evt.target.setAttribute('tabindex', '-1'), next.setAttribute('tabindex', '0'), next.focus())))">
     @for (var index = 0; index < Model.Grid.Count; index++)
     { var item = Model.Grid[index]; <line class="ts-chart-grid @(index == Model.Grid.Count - 1 ? "ts-chart-baseline" : "")" x1="48" y1="@item.Y" x2="708" y2="@item.Y"></line>@if (item.Label.Length > 0) { <g><text class="ts-chart-axis" x="38" y="@item.Y" dy="0.32em" text-anchor="end">@item.Label</text></g> } }

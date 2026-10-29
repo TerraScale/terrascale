@@ -1,0 +1,43 @@
+name: Dashboard Fast
+
+on:
+  push:
+    branches: [main]
+    paths: &dashboard-paths
+      - 'src/TerraScale.Dashboard/**'
+      - 'tests/TerraScale.Dashboard*/**'
+      - 'scripts/dashboard/**'
+      - 'sdk/dotnet/**'
+      - 'Directory.*'
+      - '.editorconfig'
+      - 'BannedSymbols.txt'
+      - 'global.json'
+      - 'NuGet.config'
+      - 'Makefile'
+      - '.github/workflows/dashboard-ci.yml'
+      - '.github/workflows/images-ghcr.yml'
+      - 'scripts/dashboard/check-proof.py'
+  pull_request:
+    branches: [main]
+    paths: *dashboard-paths
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require the exact source revision's dev-host Fast result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/dashboard/check-proof.py dashboard "$REVISION"

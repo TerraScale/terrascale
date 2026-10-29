@@ -40,7 +40,7 @@
 - Projects go in `src/<Project>/`, tests in `tests/<Project>/`, scripts in `scripts/<area>/`, and docs in `docs/<area>/`. All benchmark code, datasets and results belong in `benchmark/`; .NET benchmarks use `benchmark/dotnet/`. Save comparable Markdown result tables in `benchmark/bench/`.
 - Use the root Makefile when a target exists. Build: `make build`; Fast: `make test-fast`; Slow: `make test-slow`; full checks: `make check`. Area targets: `libs-build`, `libs-test`, `libs-check`, `auth-build`, `auth-test-fast`, `auth-test-slow`, `auth-check`, `terrabase-build`, `terrabase-test-fast`, `terrabase-test-slow`, `terrabase-check`, `benchmark-build`, `benchmark-check`.
 - Fast pre-push command: `make test-fast`, or the changed area's `make libs-test`, `make auth-test-fast` or `make terrabase-test-fast`.
-- Auth and TerraBase consume the libraries through ProjectReference. ts-dotnet remains a sibling repo, consumed as source via `TsDotnetRoot` in `Directory.Build.props`. Keep SDKs and dashboard separate.
+- Auth and TerraBase consume the libraries through ProjectReference. ts-dotnet remains a sibling repo, consumed as source via `TsDotnetRoot` in `Directory.Build.props`. Dashboard projects live in src/TerraScale.Dashboard and tests/TerraScale.Dashboard.E2E, with scripts/dashboard helpers.
 - Shared build configuration lives in `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig` and `BannedSymbols.txt`.
 
 ## Product rules
@@ -58,7 +58,7 @@
 ## .NET
 
 - Target `net11.0` using the exact SDK in `global.json`. Use source-generated `System.Text.Json` metadata and register every request/response type in its serializer context.
-- Newtonsoft is banned. Preserve `BannedSymbols.txt`, RS0030 enforcement and the package-graph guard in `Directory.Build.targets`. New banned APIs need a reason and replacement.
+- Direct Newtonsoft references and authored API usage are banned. Only Stripe.net's transitive Newtonsoft.Json dependency is allowed in dashboard projects, enforced by the package-graph guard. Preserve `BannedSymbols.txt`, RS0030 enforcement and the package-graph guard in `Directory.Build.targets`. New banned APIs need a reason and replacement.
 - Every HTTP endpoint, including health, admin and examples, uses `TerraScale.Endpoints` via ProjectReference: one endpoint class per file; register with `AddTerraScaleEndpoints()`, `MapTerraScaleEndpoints()` and `MapTerraScaleOpenApi()`. No raw minimal API handlers or controllers. Exceptions: gRPC, Prometheus scraping and OpenAPI/Scalar documents.
 - Public HTTP APIs need OpenAPI rendered by Scalar.
 - Manage versions only in `Directory.Packages.props`; no Version on PackageReference. Prerelease packages only where .NET 11 requires them. Commit lock files; restore locked. `NuGet.config` uses nuget.org; keep source mappings correct if a source is added.

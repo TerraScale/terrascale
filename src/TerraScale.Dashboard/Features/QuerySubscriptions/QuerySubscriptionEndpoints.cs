@@ -1,27 +1,34 @@
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Shared.UI;
+using TerraScale.Dashboard.Common.UI;
 
-namespace TerraScale.Dashboard.Features.QuerySubscriptions;
-
-public sealed record QuerySubscriptionPage(ShellModel Shell, QuerySubscriptionList Configurations);
-
-public static class QuerySubscriptionEndpoints
+namespace TerraScale.Dashboard.Features.QuerySubscriptions
 {
-    public static IServiceCollection AddQuerySubscriptions(this IServiceCollection services) => services.AddSingleton<QuerySubscriptionService>();
+    public sealed record QuerySubscriptionPage(ShellModel Shell, QuerySubscriptionList Configurations);
 
-    public static IEndpointRouteBuilder MapQuerySubscriptions(this IEndpointRouteBuilder endpoints)
+    public static class QuerySubscriptionEndpoints
     {
-        endpoints.MapMethods("/subscriptions", ["GET", "HEAD"], async (HttpContext http, DashboardSessions sessions, AccountService accounts, QuerySubscriptionService service) =>
+        public static IServiceCollection AddQuerySubscriptions(this IServiceCollection services)
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountRequest.LoginRedirect(http);
-            try
+            return services.AddSingleton<QuerySubscriptionService>();
+        }
+
+        public static IEndpointRouteBuilder MapQuerySubscriptions(this IEndpointRouteBuilder endpoints)
+        {
+            endpoints.MapMethods("/subscriptions", ["GET", "HEAD"], async (HttpContext http, DashboardSessions sessions, AccountService accounts, QuerySubscriptionService service) =>
             {
-                var configurations = await service.ListAsync(context, http.RequestAborted);
-                return (IResult)QuerySubscriptionViewPage.Create(new(ShellModel.For(http, context, "Query subscriptions"), configurations));
-            }
-            catch (AccountAccessException error) { return Results.Text(error.Message + "\n", statusCode: error.StatusCode); }
-        });
-        return endpoints;
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                if (context is null)
+                {
+                    return AccountRequest.LoginRedirect(http);
+                }
+
+                try
+                {
+                    var configurations = await service.ListAsync(context, http.RequestAborted);
+                    return (IResult)QuerySubscriptionViewPage.Create(new(ShellModel.For(http, context, "Query subscriptions"), configurations));
+                }
+                catch (AccountAccessException error) { return Results.Text(error.Message + "\n", statusCode: error.StatusCode); }
+            });
+            return endpoints;
+        }
     }
 }

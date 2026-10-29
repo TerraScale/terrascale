@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileStoragePage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using TerraScale.Dashboard.Features.FileStorage
 @using TerraScale.DotNet.TerraBase
 @inject AssetUrls Assets
@@ -64,7 +64,7 @@
                             <form method="post" action="/api/v1/dashboard/storage/download" target="_blank" rel="noopener"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-btn ts-btn-ghost" type="submit" aria-label="@("Download " + file.Name + " (opens in a new tab)")">Download</button></form>
                             @if (canWrite)
                             {
-                                @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, "This permanently deletes the file. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id })))
+                                @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file", file.Name, "This permanently deletes the file. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id })))
                             }
                         </td></tr>
                     }
@@ -98,7 +98,7 @@
                 }
                 @if (selected is not null)
                 {
-                    @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-bucket-" + bucketId, "/api/v1/dashboard/storage/delete-bucket", "Delete empty bucket", selected.Name, "Delete every file and wait for storage cleanup first. Only empty buckets can be deleted. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["bucketAfter"] = listing.BucketAfter ?? "" }, selected.Name)))
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ConfirmDialog, ConfirmDialogModel>(new("delete-bucket-" + bucketId, "/api/v1/dashboard/storage/delete-bucket", "Delete empty bucket", selected.Name, "Delete every file and wait for storage cleanup first. Only empty buckets can be deleted. This cannot be undone.", Model.Shell.CsrfToken, new Dictionary<string, string> { ["bucket"] = bucketId, ["bucketAfter"] = listing.BucketAfter ?? "" }, selected.Name)))
                 }
             }
         }

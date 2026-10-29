@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.ApiKeys.ApiKeysPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page ts-apikeys-page" data-project-id="@Model.Context.Project?.Id" data-organization-id="@Model.Context.Organization?.Id">
 <header class="ts-apikeys-header"><div class="ts-stack-sm"><h1>API keys</h1><p class="ts-meta">API keys let your applications and services reach this project’s databases.</p></div>@if (Model.Context.CanManage) { <div class="ts-page-actions"><button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="create-key">@Icons.Render("KeyRound", 16)<span>Create key</span></button></div> }</header>
 @if (Model.Error.Length > 0 && Model.Create.Length == 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }

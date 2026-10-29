@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-# The application's in-memory demo host (src/TerraScale.Dashboard/Demo). Its port is the
+# The E2E project's synthetic host (tests/TerraScale.Dashboard.E2E/Demo). Its port is the
 # worktree development port + 2000; all interfaces admit the Tailscale network.
-# .NET 10 file-app watch cannot reload its transient project after new files
+# .NET 11 file-app watch cannot reload its transient project after new files
 # appear. Materialize a launcher for the demo host outside the repo for a stable watch
 # graph; the solution still contains exactly one committed application project.
 # This machine's tailnet name, so the demo is reachable over Tailscale.
@@ -15,7 +15,7 @@ from xml.sax.saxutils import quoteattr
 import sys
 root, target = map(Path, sys.argv[1:])
 (target / 'Program.cs').write_text('''using System.Security.Cryptography;
-using TerraScale.Dashboard.Demo;
+using TerraScale.Dashboard.E2E.Demo;
 using System.Text;
 var root = args[0];
 var host = args[1];
@@ -29,7 +29,7 @@ await app.RunAsync();
 (target / 'DemoHost.csproj').write_text(f'''<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup><TargetFramework>net11.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><PublishAot>false</PublishAot></PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include={quoteattr(str(root / 'src/TerraScale.Dashboard/TerraScale.Dashboard.csproj'))} />
+    <ProjectReference Include={quoteattr(str(root / 'tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj'))} />
   </ItemGroup>
 </Project>
 ''')

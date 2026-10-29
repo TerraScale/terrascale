@@ -7,11 +7,12 @@
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
-    <PackageReference Include="Deque.AxeCore.Playwright" />
+    <PackageReference Include="Stripe.net" />
+    <None Update="Support/axe-core/axe.min.js" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Bogus" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <Using Include="TerraScale.Dashboard.Demo" />
+    <Using Include="TerraScale.Dashboard.E2E.Demo" />
     <!-- TUnit.Core also has a TestState. -->
-    <Using Include="TerraScale.Dashboard.Demo.TestState" Alias="TestState" />
+    <Using Include="TerraScale.Dashboard.E2E.Demo.TestState" Alias="TestState" />
   </ItemGroup>
 </Project>

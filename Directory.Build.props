@@ -21,13 +21,15 @@
     <!-- ts-libs keeps style out of the build: its public signatures carry unused parameters that are API. -->
     <EnforceCodeStyleInBuild Condition="'$(IsLibsArea)' != 'true'">true</EnforceCodeStyleInBuild>
     <!-- Required for IDE0005 (unused usings) in the build; TerraBase's public APIs carry XML docs. -->
-    <GenerateDocumentationFile Condition="'$(IsTerraBaseArea)' == 'true'">true</GenerateDocumentationFile>
-    <!-- CS1591: TerraBase is a server, not a library, and its code carries no comments (user rule 2026-10-29: "do not
-         comment the code"). The documentation file stays generated because IDE0005 needs it in the build. -->
-    <NoWarn Condition="'$(IsTerraBaseArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
+    <GenerateDocumentationFile Condition="'$(IsTerraBaseArea)' == 'true' or '$(IsDashboardArea)' == 'true'">true</GenerateDocumentationFile>
+    <!-- CS1591: service executables and tests are not public libraries. Preserve the existing service exception
+         for Dashboard; XML generation keeps unused-import diagnostics active. -->
+    <NoWarn Condition="'$(IsTerraBaseArea)' == 'true' or '$(IsDashboardArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
     <!-- ts-libs tests use real cultures (fr-FR), so the invariant mode stays with TerraBase and ts-auth. -->
     <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
+    <!-- Keep Razor generator state private to dashboard builds. -->
+    <UseSharedCompilation Condition="'$(IsDashboardArea)' == 'true'">false</UseSharedCompilation>
     <Authors>TerraScale</Authors>
     <!-- Container tooling builds Linux images; the release binaries are linux-x64 and linux-arm64. -->
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>

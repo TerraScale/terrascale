@@ -10,7 +10,8 @@ import tempfile
 
 root = Path(__file__).resolve().parents[3]
 scanner = str(Path(sys.argv[1]).resolve())
-tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
+tracked = subprocess.check_output(["git", "ls-files", "-z", "--", "src/TerraScale.Dashboard",
+                                   "tests/TerraScale.Dashboard.E2E", "scripts/dashboard", "sdk/dotnet"], cwd=root).decode().split("\0")
 with tempfile.TemporaryDirectory(prefix="terrascale-advisory-locks-") as directory:
     staging = Path(directory)
     expected = set()

@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectSettingsPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-settings-title">
     <header class="ts-page-header"><h1 id="project-settings-title">Project settings</h1><p>These permissions apply to the selected project only. Project admin access allows renaming this project; organization settings require a separate organization role.</p></header>
     <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Explicit project grants</a>
