@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Primitives;
@@ -10,6 +11,8 @@ namespace TerraBase.Fast.Management;
 
 public sealed class PlanDatabaseLimitTests
 {
+    private static readonly Action<IServiceCollection> PlanAllowances = services => services.Replace(ServiceDescriptor.Singleton(new DatabaseAllowance()));
+
     private const string AllScopes = "databases:read databases:write documents:read documents:write";
     private const string HobbyLimit =
         "the organization's hobby plan allows 1 database; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing";

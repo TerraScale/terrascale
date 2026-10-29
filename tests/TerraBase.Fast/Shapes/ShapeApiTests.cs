@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -18,6 +19,10 @@ namespace TerraBase.Fast.Shapes;
 /// </summary>
 public sealed class ShapeApiTests
 {
+    // Fixture bytes the fake page returns verbatim; the endpoint must not re-serialize them.
+    private static readonly byte[] FixtureBody = Encoding.UTF8.GetBytes(
+        """{"shape_id":"0123456789abcdef0123456789abcdef","handle":"h1-0123456789abcdef","offset":"snap.7.0","next_offset":"7","covered_offset":"7","values_at":"7","up_to_date":false,"changes":[{"offset":"7","ops":[]}]}""");
+
     private const string Handle = "h1-0123456789abcdef";
 
     // Base64url of the document id 0000000000E008000000000001, as a snapshot page position.

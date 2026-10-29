@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Testing;
+using static TerraBase.Testing.CollectionAccessFixture;
 
 namespace TerraBase.Fast.Documents;
 
