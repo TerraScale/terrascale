@@ -29,7 +29,7 @@ RUN dotnet publish src/TerraScale.Dashboard --configuration Release --output /ap
       -p:ContinuousIntegrationBuild=true -p:SourceRevisionId=$SOURCE_REVISION
 
 # No shell or package manager; runs as the non-root app user and listens on 8080.
-FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.1-resolute-chiseled@sha256:af930df2f1e6da76666d818c5922534cc7f2a4077adfae27e7c81c28a6406d29
+FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.3-resolute-chiseled@sha256:1431d55bf5bd5708450c10664f3d4c4603d7e60cc059e64397787de3978f3e8c
 WORKDIR /app
 COPY --from=publish /app .
 EXPOSE 8080
