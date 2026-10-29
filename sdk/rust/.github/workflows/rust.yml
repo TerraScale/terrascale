@@ -1,0 +1,136 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+    tags: ['v0.0.*']
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Refresh default-branch dependency and advisory caches weekly.
+  schedule:
+    - cron: '11 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.deleted && !github.event.pull_request.draft && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Select changes that need Rust validation
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" != pull_request ]] ||
+             ! git diff --quiet HEAD^ HEAD -- '*.rs' 'Cargo.*' 'rust-toolchain*' \
+               .cargo src tests examples .github/workflows/rust.yml ':(exclude)*.md'; then
+            echo 'rust=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        id: cache
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install checksum-verified cargo-audit
+        run: |
+          archive="$HOME/.cargo/bin/cargo-audit-0.22.2.tgz"
+          mkdir -p "$HOME/.cargo/bin"
+          if [[ ! -f "$archive" ]]; then
+            curl --fail --location --silent --show-error \
+              https://github.com/rustsec/rustsec/releases/download/cargo-audit/v0.22.2/cargo-audit-x86_64-unknown-linux-musl-v0.22.2.tgz \
+              --output "$archive"
+          fi
+          echo "7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428  $archive" | sha256sum --check
+          tar -xOf "$archive" cargo-audit-x86_64-unknown-linux-musl-v0.22.2/cargo-audit > "$HOME/.cargo/bin/cargo-audit"
+          chmod +x "$HOME/.cargo/bin/cargo-audit"
+      - name: Audit every locked dependency against current RustSec advisories
+        run: |
+          test -s Cargo.lock
+          git ls-files -z -- Cargo.lock '**/Cargo.lock' > "$RUNNER_TEMP/cargo-lockfiles"
+          test -s "$RUNNER_TEMP/cargo-lockfiles"
+          while IFS= read -r -d '' lock; do
+            test -s "$lock"
+            cargo audit --deny warnings --file "$lock"
+          done < "$RUNNER_TEMP/cargo-lockfiles"
+      - name: Check formatting
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        run: cargo fmt --all -- --check
+      - name: Test with HTTP fakes and conformance fixtures
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        run: cargo test --locked --all-features
+      - name: Clippy
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Qualify crates.io package without credentials
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        run: cargo publish --dry-run --locked --all-features --registry crates-io
+      - name: Audit the qualified package lock before publication
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        run: |
+          package_lock=$(python3 - <<'PYTHON'
+          import tomllib
+          from pathlib import Path
+
+          package = tomllib.loads(Path("Cargo.toml").read_text())["package"]
+          print(f"target/package/{package['name']}-{package['version']}/Cargo.lock")
+          PYTHON
+          )
+          test -s "$package_lock"
+          cargo audit --deny warnings --file "$package_lock"
+      - name: Prime default-branch dependency cache without running tests
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --locked --all-features --no-run
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: false
+      - name: Validate release tag and current main
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          python3 - <<'PY'
+          import os
+          import re
+          import tomllib
+
+          with open("Cargo.toml", "rb") as manifest:
+              package = tomllib.load(manifest)["package"]
+          assert package["name"] == "terrascale", "unexpected package name"
+          assert re.fullmatch(r"0\.0\.(0|[1-9][0-9]*)", package["version"]), "version must be 0.0.X"
+          assert os.environ["RELEASE_TAG"] == f"v{package['version']}", "tag must match Cargo.toml version exactly"
+          PY
+      - name: Publish tagged crate to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "$CARGO_REGISTRY_TOKEN" ]]; then
+            echo 'CARGO_REGISTRY_TOKEN must be installed by the release owner.' >&2
+            exit 1
+          fi
+          cargo publish --locked --all-features --registry crates-io

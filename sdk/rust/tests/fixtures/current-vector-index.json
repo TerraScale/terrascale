@@ -1,0 +1,10 @@
+{
+  "collection": "rs_q13_core",
+  "dimensions": 2,
+  "fields": [
+    "embedding"
+  ],
+  "kind": "vector",
+  "name": "rs_q13_vector_fixture",
+  "state": "building"
+}

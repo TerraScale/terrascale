@@ -1,0 +1,57 @@
+[package]
+name = "terrascale"
+version = "0.0.5"
+edition = "2021"
+description = "Typed Rust client for TerraBase documents and TerraScale authentication"
+license = "Apache-2.0"
+repository = "https://github.com/TerraScale/ts-rust"
+exclude = ["AGENTS.md", "CLAUDE.md", ".agents/"]
+
+[features]
+default = []
+postgres = ["dep:tokio-postgres", "dep:tokio-rustls", "dep:rustls", "tokio/net"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+url = "2"
+httpdate = "1"
+uuid = { version = "1.26.1", features = ["serde", "v4"] }
+thiserror = "2"
+ulid = { version = "3.0.0", features = ["serde"] }
+async-trait = "0.1"
+futures-util = "0.3"
+base64 = "0.22"
+bytes = "1"
+sha2 = "0.10"
+ring = "0.17"
+zeroize = "1"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream", "http2"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+
+tokio-postgres = { version = "=0.7.18", optional = true }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"], optional = true }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"], optional = true }
+
+[[example]]
+name = "postgres_journey"
+path = "examples/postgres_journey.rs"
+required-features = ["postgres"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util", "net"] }
+rcgen = "0.14"
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
+http-body-util = "0.1"
+caseless = "0.2"
+base64 = "0.22"
+sha2 = "0.10"
+
+[lints.clippy]
+# The single crate Error type carries every diagnostic field in full (never
+# boxed) so callers can match without dereferencing; that keeps it above
+# clippy's Result-size threshold.
+result_large_err = "allow"
