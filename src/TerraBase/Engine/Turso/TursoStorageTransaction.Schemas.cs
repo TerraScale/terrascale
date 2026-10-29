@@ -103,43 +103,6 @@ internal sealed partial class TursoStorageTransaction
             return true;
         }, cancellationToken, mutation: true);
 
-    public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            if (!IsClient || Command(TursoStatements.GetCollection, name).ExecuteScalar() is null)
-            {
-                return null;
-            }
-
-            using var reservation = ReserveCollectionMetadata(name, out _);
-            using var metadata = ReadCollectionMetadata(name);
-            return metadata is not null && metadata.RootElement.TryGetProperty("sql", out var table) ? table.Clone() : (JsonElement?)null;
-        }, cancellationToken);
-
-    public ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            ThrowIfReadOnly();
-            if (!IsClient)
-            {
-                throw new InvalidOperationException("table definitions belong to client databases");
-            }
-
-            long createdAt;
-            using (var reader = Command(TursoStatements.GetCollection, name).ExecuteReader())
-            {
-                if (!reader.Read())
-                {
-                    return false;
-                }
-
-                createdAt = reader.GetInt64(1);
-            }
-
-            RewriteCollectionMetadata(name, createdAt, static member => member == "sql", [("sql", JsonMarshal.GetRawUtf8Value(definition).ToArray())], cancellationToken);
-            return true;
-        }, cancellationToken, mutation: true);
-
     public ValueTask<string?> GetCollectionTtlAsync(string name, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {

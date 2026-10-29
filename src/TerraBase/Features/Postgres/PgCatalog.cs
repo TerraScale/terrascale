@@ -167,6 +167,7 @@ internal static partial class PgCatalog
         16 => "boolean",
         114 => "json",
         3802 => "jsonb",
+        17 => "bytea",
         1082 => "date",
         1114 => "timestamp without time zone",
         1184 => "timestamp with time zone",

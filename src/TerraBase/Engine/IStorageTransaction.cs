@@ -291,18 +291,6 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Reads a client collection's relational table definition (member <c>sql</c> of its <c>_collections</c> metadata),
-    /// or <see langword="null"/> when it has none or the collection is absent.
-    /// </summary>
-    ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Attaches or replaces a client collection's table definition, keeping every other metadata member; it replicates
-    /// with the metadata (last writer wins). <see langword="false"/> when the collection is absent.
-    /// </summary>
-    ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken);
-
     /// <summary>Reads a collection's TTL member (a JSON Pointer), or <see langword="null"/> when none is declared or the collection is absent.</summary>
     ValueTask<string?> GetCollectionTtlAsync(string name, CancellationToken cancellationToken);
 
@@ -342,12 +330,9 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <remarks><paramref name="observation"/> retains candidate visits when the stream is cancelled or disposed early.</remarks>
     IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null);
 
-    /// <summary>
-    /// Runs one relational read (docs/terrabase/sql/relational-sql.md section 4) under the query work budget of
-    /// <see cref="QueryAsync"/>: past it a <see cref="QueryCapacityException"/>. Reads at most the program's rows and bytes,
-    /// fully, before returning. A statement the engine refuses throws <see cref="SqlProgramException"/>.
-    /// </summary>
-    ValueTask<SqlProgramResult> ExecuteSqlAsync(SqlProgram program, CancellationToken cancellationToken);
+    internal ValueTask<SqlStatementResult> ExecuteStatementAsync(SqlStatement statement, CancellationToken cancellationToken);
+
+    internal ValueTask<SqlStatementShape> DescribeStatementAsync(string sql, CancellationToken cancellationToken);
 
     /// <summary>Describes how the engine would run <paramref name="query"/>, without running it.</summary>
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
@@ -377,10 +362,6 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>Reads the unique keys declared for a collection.</summary>
     ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken);
-
-    /// <summary>Reads at most <paramref name="limit"/> conflicting keys, including hidden contenders, without mutating state.</summary>
-    ValueTask<IReadOnlyList<(string Constraint, string Id)>> GetUniqueConflictsAsync(
-        string collection, ReadOnlyMemory<byte> json, int limit, CancellationToken cancellationToken);
 
     /// <summary>
     /// Declares unique keys for an empty collection; an unchanged declaration is idempotent. With <paramref name="reindex"/>, a

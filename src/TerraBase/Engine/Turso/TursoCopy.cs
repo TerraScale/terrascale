@@ -103,7 +103,7 @@ internal static class TursoCopy
         var names = alias >= 0 ? columns.Select(TableShape.Quote).ToList() : ["rowid", .. columns.Select(TableShape.Quote)];
         var insert = $"INSERT INTO {TableShape.Quote(table)} ({string.Join(", ", names)}) VALUES ({string.Join(", ", names.Select((_, i) => $"$v{i}"))});";
         using var read = source.CreateCommand();
-        read.CommandText = alias >= 0 ? $"SELECT * FROM {TableShape.Quote(table)};" : $"SELECT rowid, * FROM {TableShape.Quote(table)};";
+        read.CommandText = $"SELECT {string.Join(", ", names)} FROM {TableShape.Quote(table)};";
         // One native program per table, reset and rebound by the driver across chunk commits. No DDL runs until it is disposed.
         using var write = copy.CreateCommand();
         write.CommandText = insert;

@@ -216,7 +216,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(SqlExecuteRequest))]
 [JsonSerializable(typeof(SqlExecuteBody))]
 [JsonSerializable(typeof(SqlErrorBody))]
-[JsonSerializable(typeof(SqlTableDefinition))]
 [JsonSerializable(typeof(long))]
 [JsonSerializable(typeof(double))]
 [JsonSerializable(typeof(StatusBody))]

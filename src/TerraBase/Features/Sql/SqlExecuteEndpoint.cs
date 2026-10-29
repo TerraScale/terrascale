@@ -23,7 +23,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         Name("executeSql");
         Summary("Runs relational SQL statements");
         Description("""
-            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Tables are collections created with CREATE TABLE; rows are their documents. Arguments are null, numbers, booleans (1 or 0) or strings. Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}. All statements run as one transaction: all or nothing; transaction statements (BEGIN, COMMIT, ROLLBACK) are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error, 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
+            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Statements are SQLite SQL over the database's own tables: CREATE, ALTER and DROP TABLE, indexes (unique, partial, expression), views and triggers pass through, foreign keys are always enforced, and JSON columns are TEXT read with json_extract, -> and ->>. Arguments are null, numbers, booleans (1 or 0), strings, or blobs written {"base64":"…"} (standard base64). Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}; row values are null, numbers, strings, or blobs as {"base64":"…"}. All statements run as one transaction: all or nothing; BEGIN, COMMIT and ROLLBACK are refused, SAVEPOINT, RELEASE and ROLLBACK TO are accepted. Names starting with _tb_ or turso_, ATTACH, DETACH, VACUUM, ANALYZE and PRAGMAs other than the schema-reading ones are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error (constraint failures carry SQLITE_CONSTRAINT_PRIMARYKEY, _UNIQUE, _NOTNULL, _CHECK or _FOREIGNKEY), 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
             """);
         Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(SqlExecuteRequest), DocumentRoute.JsonMediaType));
@@ -78,10 +78,8 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             }
         }
 
-        // Every request is one transaction: its own transaction statements would break that.
-        Dictionary<string, SqlParseResult> distinct = [with(StringComparer.Ordinal)];
-        var parsed = commands.Select(command => distinct.TryGetValue(command.Sql, out var known) ? known : distinct[command.Sql] = SqlParse.Parse(command.Sql)).ToList();
-        if (parsed.FindIndex(statement => statement is TransactionSql) is var control and >= 0)
+        var plans = commands.Select(command => SqlScript.Classify(command.Sql)).ToList();
+        if (plans.FindIndex(plan => plan is SqlStatementPlan { IsControl: true }) is var control and >= 0)
         {
             return ErrorResponse.From(new Validation("transaction statements are not accepted: every request runs as one transaction"), control);
         }
@@ -90,8 +88,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
-            // Reads only: a READONLY transaction, which never takes the database writer.
-            var begin = parsed.Any(statement => statement is ParsedSql { IsWrite: true }) ? "BEGIN" : "BEGIN READONLY";
+            var begin = plans.Exists(plan => plan is SqlStatementPlan { Kind: SqlStatementKind.Write }) ? "BEGIN" : "BEGIN READ ONLY";
             _ = await session.ExecuteAsync(new SqlCommand(begin, [], new Dictionary<string, SqlValue>()), cancellationToken);
             var results = new List<SqlStatementBody>(commands.Count);
             var reads = new List<SqlReadCharge>(commands.Count);

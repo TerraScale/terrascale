@@ -7,4 +7,4 @@
   exactly like a catalog relation is shadowed, as in PostgreSQL, where `pg_catalog` is searched first.
 - `LISTEN`, `NOTIFY`, `UNLISTEN` and `CREATE`/`ALTER`/`DROP EXTENSION` get `0A000` (feature not supported), not a
   syntax error.
-- `INSERT`/`UPDATE`/`DELETE … RETURNING` is supported over the wire (see `relational-sql.md`).
+- `INSERT`/`UPDATE`/`DELETE … RETURNING` is supported over the wire (see `native-sql.md`).

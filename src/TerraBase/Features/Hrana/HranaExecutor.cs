@@ -283,11 +283,11 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, in
 
         if (bind)
         {
-            switch (SqlParse.Parse(sql))
+            switch (SqlScript.Classify(sql))
             {
                 case SqlError error:
                     return HranaError.From(error);
-                case ParsedSql parsed:
+                case SqlStatementPlan parsed:
                     // SQLite numbers through the highest slot, including ?NNN gaps. Repeated names share a slot.
                     // Keep this stricter Hrana contract out of the HTTP SQL core, where unbound values are NULL.
                     var expected = new HashSet<string>(StringComparer.Ordinal);

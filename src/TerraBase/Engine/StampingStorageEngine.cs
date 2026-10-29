@@ -312,8 +312,11 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             }
         }
 
-        public ValueTask<SqlProgramResult> ExecuteSqlAsync(SqlProgram program, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.ExecuteSqlAsync(program, cancellationToken), cancellationToken);
+        ValueTask<SqlStatementResult> IStorageTransaction.ExecuteStatementAsync(SqlStatement statement, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ExecuteStatementAsync(statement, cancellationToken), cancellationToken);
+
+        ValueTask<SqlStatementShape> IStorageTransaction.DescribeStatementAsync(string sql, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.DescribeStatementAsync(sql, cancellationToken), cancellationToken);
 
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ExplainSqlAsync(query, cancellationToken), cancellationToken);
@@ -335,10 +338,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetUniqueConstraintsAsync(collection, cancellationToken), cancellationToken);
-
-        public ValueTask<IReadOnlyList<(string Constraint, string Id)>> GetUniqueConflictsAsync(
-            string collection, ReadOnlyMemory<byte> json, int limit, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetUniqueConflictsAsync(collection, json, limit, cancellationToken), cancellationToken);
 
         public async ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, bool reindex, CancellationToken cancellationToken) =>
             await WriteCollectionAsync(async () =>
@@ -362,12 +361,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) =>
             WriteCollectionAsync(() => inner.SetCollectionSchemaAsync(name, schema, cancellationToken), cancellationToken);
-
-        public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetCollectionTableAsync(name, cancellationToken), cancellationToken);
-
-        public ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken) =>
-            WriteCollectionAsync(() => inner.SetCollectionTableAsync(name, definition, cancellationToken), cancellationToken);
 
         public ValueTask<string?> GetCollectionTtlAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetCollectionTtlAsync(name, cancellationToken), cancellationToken);
