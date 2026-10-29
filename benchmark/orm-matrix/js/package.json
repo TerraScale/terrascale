@@ -1,0 +1,16 @@
+{
+  "name": "terrascale-orm-matrix-js",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.11.0" },
+  "scripts": { "probe": "node probe.mjs" },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "drizzle-kit": "0.31.11",
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1",
+    "prisma": "7.10.1",
+    "ulid": "3.0.2"
+  }
+}
