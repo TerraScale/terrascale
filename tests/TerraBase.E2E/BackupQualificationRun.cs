@@ -42,7 +42,7 @@ internal static class BackupQualificationRun
             var acknowledged = new Dictionary<string, string>(StringComparer.Ordinal);
             var acknowledgedVersions = new Dictionary<string, string>(StringComparer.Ordinal);
             var fake = new Faker();
-            foreach (var region in cluster.Regions)
+            foreach (var region in Cluster.Regions)
             {
                 var ops = Enumerable.Range(0, 3).Select(_ =>
                 {
@@ -159,11 +159,11 @@ internal static class BackupQualificationRun
                     outcome = outcomes[^1],
                     expected = cut.Acknowledged,
                     point_in_time = cut.Name == cuts[0] ? (DateTimeOffset?)null : at,
-                    nodes = cluster.Regions.Select(cluster.Identity).ToArray(),
+                    nodes = Cluster.Regions.Select(Cluster.Identity).ToArray(),
                 }));
             }
 
-            result = new(plan, outcomes, [.. cluster.Regions.Select(cluster.Identity)], points);
+            result = new(plan, outcomes, [.. Cluster.Regions.Select(Cluster.Identity)], points);
         }
         catch (Exception error)
         {
@@ -188,7 +188,7 @@ internal static class BackupQualificationRun
         {
             Outcomes.Mark("fail", JsonSerializer.Serialize(new
             {
-                backup = new Run(plan, outcomes, [.. cluster.Regions.Select(cluster.Identity)], points),
+                backup = new Run(plan, outcomes, [.. Cluster.Regions.Select(Cluster.Identity)], points),
                 errors = errors.Select(error => error.Message).ToArray(),
             }));
         }
@@ -207,7 +207,7 @@ internal static class BackupQualificationRun
         }, token);
         await RecordAcknowledgementsAsync(committed, versions, token);
         _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker", token);
-        var dates = await Task.WhenAll(cluster.Regions.Select(async region =>
+        var dates = await Task.WhenAll(Cluster.Regions.Select(async region =>
         {
             var served = await ServedAtAsync(cluster[region], cluster.DatabasePath, token);
             return await Converge.UntilAsync(() => ServedAtAsync(cluster[region], cluster.DatabasePath, token), date => date > served, $"a refreshed {region} server Date", token);

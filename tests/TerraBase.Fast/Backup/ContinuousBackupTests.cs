@@ -8,10 +8,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Errors;
-using TerraBase.Features.Management;
 using TerraBase.Features.Backup;
-using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -380,9 +377,6 @@ public sealed class ContinuousBackupTests
             return JsonDocument.Parse(document!.Json).RootElement.Clone();
         }
     }
-
-    private static BackupFileStatus Status(TerraBaseTestServer member, string file) =>
-        member.Services.GetRequiredService<IContinuousBackup>().Status.Files.Single(status => status.File == file);
 
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
         $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId(document)}";

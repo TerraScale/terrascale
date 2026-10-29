@@ -111,13 +111,8 @@ internal sealed class PowerLossNode : IAsyncDisposable
         }
 
         Client.Dispose();
-        Client = new HttpClient(PeerTls.Credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
-        {
-            BaseAddress = new Uri(JsonNode.Parse(await File.ReadAllTextAsync(info))!["internal"]!.GetValue<string>()),
-            DefaultRequestVersion = HttpVersion.Version20,
-            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            Timeout = TimeSpan.FromSeconds(30),
-        };
+        Client = PeerTls.CreateClient(new Uri(JsonNode.Parse(await File.ReadAllTextAsync(info))!["internal"]!.GetValue<string>()));
+        Client.Timeout = TimeSpan.FromSeconds(30);
     }
 
     public async Task CommitAsync(string user, JsonObject commit)

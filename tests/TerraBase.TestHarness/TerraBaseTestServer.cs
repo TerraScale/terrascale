@@ -284,6 +284,23 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         deadline.Token.ThrowIfCancellationRequested();
     }
 
+    public async Task<double> MetricAsync(string name, string label = "", CancellationToken cancellationToken = default)
+    {
+        var text = await Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), cancellationToken);
+        var samples = text.Split('\n')
+            .Where(line => (line.StartsWith(name + "{", StringComparison.Ordinal) || line.StartsWith(name + " ", StringComparison.Ordinal))
+                && line.Contains(label, StringComparison.Ordinal))
+            .Select(line =>
+            {
+                var start = line.Contains('}', StringComparison.Ordinal) ? line.LastIndexOf('}') + 1 : name.Length;
+                return double.Parse(line[start..].Trim().Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
+            }).ToArray();
+        return samples.Length == 0
+            ? throw new InvalidOperationException(
+                $"metric '{name}' with labels containing '{label}' has no samples; the scrape {(text.Contains($"# TYPE {name} ", StringComparison.Ordinal) ? "declares" : "does not declare")} it")
+            : samples.Sum();
+    }
+
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();

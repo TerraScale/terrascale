@@ -1,7 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
 

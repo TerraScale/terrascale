@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -14,7 +13,6 @@ public sealed class RegionalRoutingContractTests
     private const string Replay = "ts-replay";
     private const string ReplaySource = "ts-replay-src";
     private const string ReplayedFromSjc = "region=sjc";
-    private static readonly string[] InSjc = ["sjc"];
 
     [Test]
     public async Task The_answering_node_reports_its_own_region()
@@ -149,15 +147,5 @@ public sealed class RegionalRoutingContractTests
         }
 
         return await client.SendAsync(request);
-    }
-
-    private static async Task AssertWrongRegionAsync(HttpResponseMessage response, string? replay, string regions)
-    {
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
-        await Assert.That(response.Headers.TryGetValues(Replay, out var replayed) ? replayed.Single() : null).IsEqualTo(replay);
-        await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["sjc"]);
-        await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Home")).IsEquivalentTo(["gru"]);
-        await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions")).IsEquivalentTo([regions]);
-        await ErrorAssert.ErrorAsync(response, HttpStatusCode.MisdirectedRequest, "wrong_region", "the database is served in gru");
     }
 }

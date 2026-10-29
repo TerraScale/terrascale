@@ -22,7 +22,7 @@ internal sealed partial class HistoryErasures
                 return new NotFound("the history erasure was not found");
             }
 
-            var holders = await HoldersAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+            var holders = Holders(record);
             var receipts = await ReceiptsAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             var status = Compute(record, holders, receipts);
             return new HistoryErasureInspection(record.ErasureId, record.RequestedAt, status.Status, status.PendingHolders,

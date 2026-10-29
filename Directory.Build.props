@@ -33,6 +33,7 @@
          EXTEXP0001: experimental Microsoft.Extensions resilience APIs are accepted on .NET 11 previews.
          IDE0007/IDE0008: `var` versus an explicit type is left to the author (human decision, 2026-10-04). -->
     <NoWarn>$(NoWarn);NU1507;NU1801;EXTEXP0001;IDE0007;IDE0008</NoWarn>
+    <NoWarn Condition="'$(MSBuildProjectName)' == 'TerraBase'">$(NoWarn);CS1591</NoWarn>
     <!-- The releases are self-contained single-file linux-x64 and linux-arm64 executables. Declaring the
          runtimes and the single-file analyzer here makes build and publish restore the
          same graph, so one set of lock files serves both in locked mode, and single-file

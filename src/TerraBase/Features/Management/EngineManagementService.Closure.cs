@@ -77,7 +77,7 @@ internal sealed partial class EngineManagementService
         && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
 
     internal static HashSet<string> CatalogHolders(string machineId) =>
-        new(StringComparer.Ordinal) { machineId };
+        new([machineId], StringComparer.Ordinal);
 
     private async ValueTask RefreshClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {

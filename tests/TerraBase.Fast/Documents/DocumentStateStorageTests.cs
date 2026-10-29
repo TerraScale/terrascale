@@ -5,7 +5,6 @@ using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Turso;
 
 namespace TerraBase.Fast.Documents;
 

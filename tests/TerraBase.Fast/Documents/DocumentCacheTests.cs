@@ -420,7 +420,7 @@ public sealed class DocumentCacheTests
         await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
 
         var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
-        await management.Server.Services.GetRequiredService<TursoStorageEngine>().Ledger.RecordAsync(database, store.Incarnation, "a test fault", deadline.Token);
+        await management.Server.Services.GetRequiredService<TursoStorageEngine>().Ledger.RecordAsync(database, store.Incarnation, "a test fault");
         await Assert.ThrowsAsync<StorageCopyFaultedException>(async () => await documents.GetAsync(key, deadline.Token));
     }
 

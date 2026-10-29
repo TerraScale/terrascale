@@ -708,17 +708,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(error.TryGetProperty("key", out _)).IsFalse();
     }
 
-    private static async Task AssertReleasedAsync(CryptoHost host, HttpResponseMessage response)
-    {
-        using (response)
-        {
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
-            var key = Base64Url.DecodeFromChars((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
-            await Assert.That(key.AsSpan().SequenceEqual(Client.EpochKey(host.DataKey, host.Handle, host.Crypto.CurrentEpoch))).IsTrue();
-        }
-    }
-
     private static async Task<string?> CodeAsync(HttpResponseMessage response)
     {
         var text = await response.Content.ReadAsStringAsync();

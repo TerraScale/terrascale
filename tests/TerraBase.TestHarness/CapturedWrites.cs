@@ -30,7 +30,7 @@ internal static class CapturedWrites
             {
                 if (rows.GetInt64(1) == 2)
                 {
-                    commits.Add(new(rows.GetInt64(0), ids.ToArray()));
+                    commits.Add(new(rows.GetInt64(0), [.. ids]));
                     ids.Clear();
                 }
                 else if (rows.GetString(2) == "items" && !rows.IsDBNull(3)

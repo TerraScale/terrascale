@@ -28,9 +28,9 @@ public sealed class Cluster : IAsyncDisposable
 
     public string Collection { get; } = "e2e-" + EntityIds.New().ToString().ToLowerInvariant();
 
-    public IReadOnlyList<string> Regions => [Gru];
+    public static IReadOnlyList<string> Regions => [Gru];
 
-    public string Identity(string region) => region == Gru ? "local:" + Gru : throw new ArgumentOutOfRangeException(nameof(region));
+    public static string Identity(string region) => region == Gru ? "local:" + Gru : throw new ArgumentOutOfRangeException(nameof(region));
 
     public HttpClient this[string region] => region == Gru ? _client : throw new ArgumentOutOfRangeException(nameof(region));
 

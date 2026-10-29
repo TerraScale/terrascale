@@ -4,7 +4,6 @@ using System.Text;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Primitives;
@@ -80,7 +79,7 @@ public sealed class HealthyRewriteConcurrentTests
                 }, token);
                 await Assert.That(after - before).IsGreaterThan(1024);
             }
-            await ledger.RecordAsync(database, tenant.Incarnation, reason, token);
+            await ledger.RecordAsync(database, tenant.Incarnation, reason);
         }
         finally
         {

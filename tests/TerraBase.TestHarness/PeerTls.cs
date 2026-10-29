@@ -37,7 +37,10 @@ public sealed class PeerTls : IDisposable
         {
             request.Version = HttpVersion.Version20;
             request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
-            credential.Authenticate(request);
+            var secret = credential.CorrelationKey
+                ?? throw new InvalidOperationException($"{InternalCredential.EnvironmentVariable} is required for internal requests");
+            request.Headers.Remove(InternalCredential.HeaderName);
+            request.Headers.Add(InternalCredential.HeaderName, secret);
             return base.SendAsync(request, cancellationToken);
         }
     }

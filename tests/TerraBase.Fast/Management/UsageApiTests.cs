@@ -13,7 +13,6 @@ using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
-using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;

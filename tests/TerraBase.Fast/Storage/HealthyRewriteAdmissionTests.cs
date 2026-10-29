@@ -31,7 +31,7 @@ public sealed class HealthyRewriteAdmissionTests
         await Assert.That(second.SourceIncarnation).IsEqualTo(first.TargetIncarnation);
         await Assert.That(faults.Refusal(store)).IsNull();
         await PutAsync(store, EntityIds.New().ToString(), token);
-        await faults.RecordAsync(database, second.TargetIncarnation, "injected copy fault", token);
+        await faults.RecordAsync(database, second.TargetIncarnation, "injected copy fault");
         await Assert.That(faults.Refusal(store)).IsNotNull();
         await Assert.ThrowsAsync<StorageCopyFaultedException>(async () => await PutAsync(store, EntityIds.New().ToString(), token));
     }

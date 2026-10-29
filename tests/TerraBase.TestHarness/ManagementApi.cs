@@ -88,6 +88,16 @@ public sealed class ManagementApi : IAsyncDisposable
         }
     }
 
+    public HttpClient As(string user, string? email = null) =>
+        Authorized(() => email is null ? Issuer.Mint(user) : Issuer.MintWithEmail(user, email));
+
+    public HttpClient Service(string user)
+    {
+        var client = PeerTls.CreateClient(Server.BaseAddress, credential: Server.Credential);
+        client.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
+        return client;
+    }
+
     public async Task SetPlanAsync(string user, string organization, string plan, CancellationToken cancellationToken = default)
     {
         using var service = Service(user);

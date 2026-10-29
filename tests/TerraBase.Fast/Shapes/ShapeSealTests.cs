@@ -8,16 +8,13 @@ using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -661,7 +658,7 @@ public sealed class ShapeSealTests
     }
 
     private sealed record Op(long Commit, string Kind, string Id, string? Version, string? Document);
-    private sealed class Database(TerraBaseTestServer server, TenantContext tenant, IDatabaseStore store, TursoDatabaseStore turso, string collectionName)
+    private sealed class Database(TerraBaseTestServer server, IDatabaseStore store, TursoDatabaseStore turso, string collectionName)
     {
         public string CollectionName { get; } = collectionName;
 
@@ -676,7 +673,7 @@ public sealed class ShapeSealTests
             var store = await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is missing");
             var turso = (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
-            return new Database(server, tenant, store, turso, collection);
+            return new Database(server, store, turso, collection);
         }
 
         public async Task<long> SealAsync(ShapeSealDefinition shape, long offset) =>

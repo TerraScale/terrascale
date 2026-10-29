@@ -16,7 +16,6 @@ using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
-using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Shapes;
 

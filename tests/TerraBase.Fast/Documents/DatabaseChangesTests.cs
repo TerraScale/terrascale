@@ -5,11 +5,9 @@ using System.Threading.Channels;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using Turso.Data.Sqlite;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
-using TerraBase.Features.Health;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -301,8 +299,6 @@ public sealed class DatabaseChangesTests
             return timer;
         }
     }
-
-    private static Hlc Stamp(DateTimeOffset at) => new((ulong)at.ToUnixTimeMilliseconds() << 16);
 
     private static async Task<Hlc> PutStampAsync(IDatabaseStore store)
     {

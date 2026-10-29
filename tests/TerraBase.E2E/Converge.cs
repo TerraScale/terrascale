@@ -31,7 +31,7 @@ internal static class Converge
 
     public static Task<Dictionary<string, Listing>> ListedAsync(Cluster cluster, string expected, string what, CancellationToken token = default) =>
         UntilAsync(
-            async () => (await Task.WhenAll(cluster.Regions.Select(async region => (region, await Docs.ListAsync(cluster[region], cluster, token)))))
+            async () => (await Task.WhenAll(Cluster.Regions.Select(async region => (region, await Docs.ListAsync(cluster[region], cluster, token)))))
                 .ToDictionary(listing => listing.region, listing => listing.Item2, StringComparer.Ordinal),
             listings => listings.Values.All(listing => listing.Digest == expected), what, token);
 }

@@ -10,7 +10,6 @@ using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
-using TerraBase.Tenancy;
 
 using TerraBase.Testing;
 

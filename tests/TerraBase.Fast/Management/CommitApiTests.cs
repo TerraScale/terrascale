@@ -25,6 +25,7 @@ public sealed class CommitApiTests
     private static readonly Faker Faker = new();
     private static readonly string[] StatusField = ["status"];
     private static readonly string[] RecoveryReplicas = [];
+    private static readonly string[] ConflictingReplicas = ["fra"];
 
     [Test]
     public async Task Identical_catalog_creates_initialize_missing_storage_without_rewriting_the_registration()
@@ -102,7 +103,7 @@ public sealed class CommitApiTests
                 project,
                 id = database,
                 name = conflict == "database" ? "changed" : "original",
-                replica_regions = conflict == "placement" ? new[] { "fra" } : Array.Empty<string>()
+                replica_regions = conflict == "placement" ? ConflictingReplicas : RecoveryReplicas
             });
         await Assert.That((attempted.Status, attempted.Code)).IsEqualTo((HttpStatusCode.Conflict, "id_taken"));
         await Assert.That(attempted.Op).IsEqualTo((int?)(conflict == "organization" ? 0 : conflict == "project" ? 1 : 2));

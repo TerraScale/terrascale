@@ -1,9 +1,6 @@
 <Project>
   <Import Project="../../Directory.Build.targets" />
-  <!-- Reuse the real TCP faults and WAL sync shim without bringing E2E scenarios into Slow. -->
   <ItemGroup>
-    <Compile Include="../TerraBase.E2E/PeerLink.cs" Link="Replication/PeerLink.cs" />
-    <Compile Include="../TerraBase.E2E/LossyLink.cs" Link="Replication/LossyLink.cs" />
     <Compile Include="../TerraBase.E2E/WalFaults/WalSyncFaults.cs" Link="Replication/WalSyncFaults.cs" />
     <None Include="../TerraBase.E2E/WalFaults/walfaults.c" Link="WalFaults/walfaults.c" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

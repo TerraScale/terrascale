@@ -1,8 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Lattices;
 using static TerraBase.Fast.Documents.CollectionAccessRulesTests;
 
 namespace TerraBase.Fast.Documents;
