@@ -118,7 +118,7 @@ public sealed class RestoreWindowTests
         await Assert.That(outsidePlan.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
         // Discovery crosses the retention boundary; restore must use its clock captured before the snapshot LIST.
-        s3.ObservedListPrefix = backup.Status.Files.Single(file => file.File.EndsWith("/" + database.Id, StringComparison.Ordinal)).File + "/snapshots/";
+        s3.ObservedListPrefix = BackupLayout.Snapshots(backup.Status.Files.Single(file => file.File == File(database)).File);
         var lists = s3.ListRequests;
         s3.BeforeList = (prefix, _) =>
         {
@@ -155,7 +155,7 @@ public sealed class RestoreWindowTests
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshotted = time.GetUtcNow();
-        var prefix = backup.Status.Files.Single(file => file.File.EndsWith("/" + database.Id, StringComparison.Ordinal)).File + "/";
+        var prefix = backup.Status.Files.Single(file => file.File == File(database)).File + "/";
         s3.FailPut = _ => true;
         var retained = s3.Objects.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
         await Assert.That(retained.Length).IsGreaterThan(0);
@@ -183,6 +183,8 @@ public sealed class RestoreWindowTests
         s3.Route(services);
         ManualBackupHosting.Configure(services);
     }
+
+    private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}/nodes/local";
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 }

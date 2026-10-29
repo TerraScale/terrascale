@@ -111,7 +111,7 @@ public sealed class PlatformDatabasesTests
     }
 
     [Test]
-    public async Task Regions_seeding_at_the_same_time_write_identical_records_placed_in_all_regions()
+    public async Task Regions_seeding_at_the_same_time_write_the_same_ids_with_local_placement()
     {
         var servers = await Task.WhenAll(Regions.Select(region => TerraBaseTestServer.StartAsync(settings =>
         {
@@ -123,17 +123,18 @@ public sealed class PlatformDatabasesTests
             await Task.WhenAll(servers.Select(SeededAsync));
             var records = await Task.WhenAll(servers.Select(RecordsAsync));
 
-            foreach (var other in records.Skip(1))
+            for (var index = 0; index < records.Length; index++)
             {
-                await Assert.That(other).IsEquivalentTo(records[0]);
-            }
+                var local = records[index];
+                await Assert.That(local).IsEquivalentTo(records[0].Select(record => record with { HomeRegion = Regions[index] }));
 
-            foreach (var database in records[0])
-            {
-                await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name].Id);
-                await Assert.That(database.HomeRegion).IsNull();
-                await Assert.That(database.Replicas).IsEqualTo("");
-                await Assert.That(database.AllRegions).IsTrue();
+                foreach (var database in local)
+                {
+                    await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name].Id);
+                    await Assert.That(database.HomeRegion).IsEqualTo(Regions[index]);
+                    await Assert.That(database.Replicas).IsEqualTo("");
+                    await Assert.That(database.AllRegions).IsFalse();
+                }
             }
         }
         finally
