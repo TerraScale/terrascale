@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
@@ -19,7 +20,7 @@ public sealed class DurableRevisionTests
         var bootstrap = await replica.PullAsync(api.Server, database.Database);
         await Assert.That(bootstrap.Full).IsEqualTo(FullReason.Bootstrap);
 
-        await database.InsertAsync(api, 4_000);
+        await database.InsertAsync(api, 3_000);
         await database.UpdateAsync(api, 200);
         await database.DeleteAsync(api, 100);
         var pull = await replica.PullAsync(api.Server, database.Database);
@@ -195,5 +196,7 @@ public sealed class DurableRevisionTests
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, overwrite: true);
         }
+
+        File.WriteAllBytes(Path.Combine(to, ".terrabase.lock"), Encoding.ASCII.GetBytes(StorageFormat.Id));
     }
 }

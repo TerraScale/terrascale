@@ -89,22 +89,22 @@ internal sealed class RevisionDatabase
 
     public async Task UpdateAsync(ManagementApi api, int rows)
     {
-        foreach (var chunk in _acked.Keys.Take(rows).Chunk(1).ToList())
+        var tail = new string('y', 900);
+        foreach (var chunk in _acked.Keys.Take(rows).Chunk(PerRequest).ToList())
         {
-            var values = chunk.Select(id => (Id: id, Value: $"u-{EntityIds.New()}-{new string('y', 900)}")).ToList();
-            await ExecuteAsync(api, [.. values.Select(row => Statement("UPDATE items SET v = ? WHERE id = ?", row.Value, row.Id))]);
-            foreach (var (id, value) in values)
+            await ExecuteAsync(api, [Statement($"UPDATE items SET v = 'u-' || id || '-' || ? WHERE id IN ({Marks(chunk.Length)})", [tail, .. chunk])]);
+            foreach (var id in chunk)
             {
-                _acked[id] = value;
+                _acked[id] = $"u-{id}-{tail}";
             }
         }
     }
 
     public async Task DeleteAsync(ManagementApi api, int rows)
     {
-        foreach (var chunk in _acked.Keys.Skip(rows).Take(rows).Chunk(1).ToList())
+        foreach (var chunk in _acked.Keys.Skip(rows).Take(rows).Chunk(PerRequest).ToList())
         {
-            await ExecuteAsync(api, [.. chunk.Select(id => Statement("DELETE FROM items WHERE id = ?", id))]);
+            await ExecuteAsync(api, [Statement($"DELETE FROM items WHERE id IN ({Marks(chunk.Length)})", chunk)]);
             foreach (var id in chunk)
             {
                 _acked.Remove(id);
@@ -138,4 +138,6 @@ internal sealed class RevisionDatabase
     }
 
     private static object Statement(string sql, params string[] args) => new { sql, args };
+
+    private static string Marks(int count) => string.Join(", ", Enumerable.Repeat("?", count));
 }
