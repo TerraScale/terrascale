@@ -1,0 +1,75 @@
+--- a/sqlite/parser/src/parser.rs
++++ b/sqlite/parser/src/parser.rs
+@@ -55,7 +55,7 @@
+ macro_rules! eat_assert {
+     ( $parser:expr, $( $x:ident ),* $(,)?) => {
+         {
+-            let token = $parser.eat().unwrap().unwrap();
++            let token = $parser.eat()?.ok_or(Error::ParseUnexpectedEOF)?;
+ 
+             #[cfg(debug_assertions)]
+             match token.token_type {
+@@ -164,6 +164,8 @@
+ 
+ pub struct Parser<'a> {
+     lexer: Lexer<'a>,
++    tokens_remaining: usize,
++    delimiter_depth: usize,
+ 
+     /// The current token being processed
+     current_token: Token<'a>,
+@@ -206,6 +208,8 @@
+     pub fn new(input: &'a [u8]) -> Self {
+         Self {
+             lexer: Lexer::new(input),
++            tokens_remaining: 512,
++            delimiter_depth: 0,
+             peekable: false,
+             current_token: Token::new(&input[..0], TokenType::TK_NONE),
+             last_variable_id: 0,
+@@ -645,8 +649,10 @@
+         let old_peekable = self.peekable;
+         let old_current_token = self.current_token.clone();
+         let start_offset = self.lexer.offset;
++        let budget = (self.tokens_remaining, self.delimiter_depth);
+         let result = exc(self);
+         if result.is_err() {
++            (self.tokens_remaining, self.delimiter_depth) = budget;
+             self.peekable = old_peekable;
+             self.current_token = old_current_token;
+             self.lexer.offset = start_offset;
+@@ -661,7 +667,9 @@
+     {
+         debug_assert!(!self.peekable);
+         let start_offset = self.lexer.offset;
++        let budget = (self.tokens_remaining, self.delimiter_depth);
+         let result = exc(self);
++        (self.tokens_remaining, self.delimiter_depth) = budget;
+         self.peekable = false;
+         self.lexer.offset = start_offset;
+         result
+@@ -674,6 +682,16 @@
+             None => Ok(None),
+             Some(tok) => {
+                 let result = tok.clone();
++                self.tokens_remaining = self.tokens_remaining.checked_sub(1)
++                    .ok_or_else(|| Error::Custom("Routing parser resource limit".into()))?;
++                match result.token_type {
++                    TK_LP | TK_LBRACKET => self.delimiter_depth += 1,
++                    TK_RP | TK_RBRACKET => self.delimiter_depth = self.delimiter_depth.saturating_sub(1),
++                    _ => {}
++                }
++                if self.delimiter_depth > 32 {
++                    return Err(Error::Custom("Routing parser resource limit".into()));
++                }
+                 self.peekable = false; // Clear the peek mark after consuming
+                 Ok(Some(result))
+             }
+@@ -791,6 +809,7 @@
+         let name = String::from_utf8_lossy(raw).into_owned();
+         // Advance lexer past the closing `]`
+         self.lexer.offset = start + end_pos + 1;
++        self.delimiter_depth -= 1;
+         Ok(Name::bracketed(name))
+     }
+ 
