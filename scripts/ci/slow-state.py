@@ -16,13 +16,16 @@ def fingerprint(area, revision="HEAD"):
     paths = ["Dockerfile", "Makefile", "global.json", "NuGet.config", "BannedSymbols.txt",
              ".editorconfig", "Directory.*", "*.sln*", ".config",
              "src/TerraScale.Endpoints*", "src/TerraScale.Logging", "src/vendor",
-             "src/TerraBase*", "sdk/dotnet", "scripts/vendor", "scripts/ci/slow-state.py",
+             "src/TerraBase*", "src/TerraScale.Authentication*", "sdk/dotnet",
+             "scripts/vendor", "scripts/ci/slow-state.py",
              ".github/workflows/ci.yml"]
     if area == "auth":
         paths += ["src/TerraScale.Authentication*", "tests/TerraScale.Authentication*",
                   "scripts/auth", "docs/auth/*.yaml"]
     else:
-        paths += ["tests/TerraBase*", "tests/Turso.Data.Sqlite.Tests", "scripts/terrabase"]
+        paths += ["tests/TerraBase*", "tests/Turso.Data.Sqlite.Tests", "scripts/terrabase",
+                  "tests/TerraScale.Authentication.TestHarness/FakeGitHubActions.cs",
+                  "benchmark/dotnet/TerraBase.LiveRestoreDrill/ScratchCleanup.cs"]
     entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", revision]).split(b"\0")
     selected = []
     for entry in entries:
