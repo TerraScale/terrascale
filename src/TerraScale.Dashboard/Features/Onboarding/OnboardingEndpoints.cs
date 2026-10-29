@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 Error = error.Length > 0 ? error : context.Request.Query["error"].ToString(),
                 ProjectName = draft?["name"].ToString() ?? "Personal",
                 Region = draft?["region"].ToString() ?? "",
-                Plan = OfferedPlan(plans, requested).Length == 0 ? plans.FirstOrDefault()?.Key ?? "" : requested,
+                Plan = OfferedPlan(plans, requested).Length == 0 ? (plans is [var firstPlan, ..] ? firstPlan?.Key ?? "" : "") : requested,
                 Document = new("Activate your TerraScale account", DocumentModel.NonceFor(context))
             };
             if (payment == "success" && page.Step == "payment-method")

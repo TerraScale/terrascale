@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Auth
                     await client.Oidc.GetJwksAsync(cancellationToken), time.GetUtcNow(), "at+jwt", 8192);
                 if (claims.GetProperty("sub").GetString() != freshlyRotatedSession.UserId ||
                     claims.GetProperty("email_verified").ValueKind != System.Text.Json.JsonValueKind.True ||
-                    claims.GetProperty("email").GetString()?.Trim().ToLowerInvariant() != freshlyRotatedSession.Email.Trim().ToLowerInvariant())
+                    !string.Equals(claims.GetProperty("email").GetString()?.Trim(), freshlyRotatedSession.Email.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
                     return null;
                 }

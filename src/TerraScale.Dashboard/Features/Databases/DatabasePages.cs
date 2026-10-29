@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Databases
         public IReadOnlyList<string> Selected => Selection ?? [.. Choices.Select(region => region.Code)];
         public string? HomeSelection { get; init; }
         public bool AllRegions { get; init; }
-        public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? Choices.FirstOrDefault()?.Code ?? "";
+        public string HomeRegion => HomeSelection ?? Choices.FirstOrDefault(region => region.Code.Equals(Context.Project?.Region, StringComparison.OrdinalIgnoreCase))?.Code ?? (Choices is [var firstRegion, ..] ? firstRegion?.Code ?? "" : "");
         public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
         public string Description => Search.Length == 0 ? $"{ValueFormat.Plural(Databases.Count, "database")} in this project" : $"{ValueFormat.Plural(Databases.Count, "database")} matching \"{Search}\"";
         public static string Tone(string status)

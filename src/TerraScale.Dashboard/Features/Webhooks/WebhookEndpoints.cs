@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.Features.Webhooks
                     var collections = await data.CollectionsAsync(context, databaseId, http.RequestAborted);
                     if (collection.Length == 0)
                     {
-                        collection = collections.FirstOrDefault()?.Name ?? "";
+                        collection = (collections is [var firstCollection, ..] ? firstCollection?.Name ?? "" : "");
                     }
 
                     var items = collection.Length == 0 ? [] : await hooks.ListAsync(context, databaseId, collection, http.RequestAborted);
