@@ -1,0 +1,123 @@
+{
+  "registryOrigin": "https://git.terrascale.tech",
+  "producer": "TerraScale/terrabase",
+  "branch": "main",
+  "revision": "6cb97456b9b52a92a61856601cc025c4f2833518",
+  "version": "0.1.0",
+  "release": "ci-6cb97456b9b52a92a61856601cc025c4f2833518-run-16729",
+  "asset": "terrabase-linux-amd64",
+  "sha256": "cc2db35b18c385c6d58036c6c94e59460b0e12b0d5616da2222713efbe666700",
+  "openapiSha256": "313c56c95826d99f6d4f55416276fd2d20bcdc273d949cf0f8da478adb2f39c3",
+  "inputs": {
+    "0004-document-api-v1.md": {
+      "sourcePath": "docs/decisions/0004-document-api-v1.md",
+      "sha256": "ef046f163e46811e27b355e9f201d42f45de5df10ca1a9a3bcfe7c993b2d3b99"
+    },
+    "0005-multi-tenancy.md": {
+      "sourcePath": "docs/decisions/0005-multi-tenancy.md",
+      "sha256": "7d1c1efeb985621cb750bf6ebf90cc45ade7e0c09f51f54d1a9af0cbed5e768d"
+    },
+    "shape-reads.md": {
+      "sourcePath": "docs/shape-reads.md",
+      "sha256": "fb49de900a71f1caded21d8660dd6b6b7b607aeff801488e6efd395f0d0724c1"
+    },
+    "DocumentRoute.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/DocumentRoute.cs",
+      "sha256": "309b5c33e010d44fde9945db9977e6631901b5bd1bc2a429590ad94d27adc924"
+    },
+    "GetShapeEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/GetShapeEndpoint.cs",
+      "sha256": "a530ab36242a4ff1d873ae691778cd0e436e036c6780ecb3dbd1fa711524bcb5"
+    },
+    "IApiKeyStore.cs": {
+      "sourcePath": "src/TerraBase/Features/ApiKeys/IApiKeyStore.cs",
+      "sha256": "423f8270b2e5d9dd5ad0d6192fe31f20cad2abeb9c10ee0cff90d2886110f01e"
+    },
+    "GetDocumentEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/GetDocumentEndpoint.cs",
+      "sha256": "f2c960cafe784acc67108de412df1134e8c89a2ceac71d1bed6c5654bd5884fa"
+    },
+    "PutDocumentEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/PutDocumentEndpoint.cs",
+      "sha256": "894fc735975b86c980a27a73df898fe454f920e7eca0e5c536b5af4cdae25134"
+    },
+    "CreateDocumentEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/CreateDocumentEndpoint.cs",
+      "sha256": "25678dbe2d651d1291be796b1e9c75f93762e1e476648629427acce027d99fc5"
+    },
+    "PatchDocumentEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/PatchDocumentEndpoint.cs",
+      "sha256": "c094d20414f2d36375c5f80210f53478b29059e03856f2b32301896746151f29"
+    },
+    "DeleteDocumentEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/DeleteDocumentEndpoint.cs",
+      "sha256": "c8062dde557574824d5278f77c736bbe62277d4f2b659c602b6fa4d3a44f9908"
+    },
+    "TransactionEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/TransactionEndpoint.cs",
+      "sha256": "b391c824604cbe40f9ac6646b67bd82ab667f093617d6cddffbe13fa24230999"
+    },
+    "QueryDocumentsEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/QueryDocumentsEndpoint.cs",
+      "sha256": "9052c75d80ec46bbe113312f45b2cee4b198ae1730ffe90d3eb07f7507db2a93"
+    },
+    "CreateCollectionEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/CreateCollectionEndpoint.cs",
+      "sha256": "dfc7b259119127dd6bdafc34b97194659441500c47bdf7a3171e052c1547bc83"
+    },
+    "GetCollectionEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/GetCollectionEndpoint.cs",
+      "sha256": "28af27dda8c6dceadebdc00562c33ef93b8f88f8f6b30e784edfa7dea4a18907"
+    },
+    "ListCollectionsEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/ListCollectionsEndpoint.cs",
+      "sha256": "e421d2627ae3eb110ec5ff03803938590114383cdc38dcf9d737879544b296d0"
+    },
+    "DropCollectionEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/DropCollectionEndpoint.cs",
+      "sha256": "e1a91ca3a740218ea7c994af994ca54301308f92414759f044650d6717f4f2d9"
+    },
+    "api.md": {
+      "sourcePath": "docs/api.md",
+      "sha256": "9b092e897988abbdc0bc5f0a174be2644d08d8b091f831db3b28d5e736847daa"
+    },
+    "ApiReferenceExtensions.cs": {
+      "sourcePath": "src/TerraBase/Features/ApiReference/ApiReferenceExtensions.cs",
+      "sha256": "afe89034e355a07c90f10104e6636d337874dc9d13f1cf1b028dba1931494ec4"
+    },
+    "ApiKeyAuthenticationHandler.cs": {
+      "sourcePath": "src/TerraBase/Features/ApiKeys/ApiKeyAuthenticationHandler.cs",
+      "sha256": "ff55b316403eaad56ff2941b75d06ce2e561d01bb1ff0cda3fcb3eb49e17e494"
+    },
+    "EngineApiKeyStore.cs": {
+      "sourcePath": "src/TerraBase/Features/ApiKeys/EngineApiKeyStore.cs",
+      "sha256": "ff0fd02e9b9ce633789f6c2a1945ec9bf5b560051ee0a1d20f54b5b3fadc7b87"
+    },
+    "ManagementRoute.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/ManagementRoute.cs",
+      "sha256": "2e159ccdf3ebe08acb06614730c785f6a1f4d971067a4f8778148f1af48f4435"
+    },
+    "CreateApiKeyEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/ApiKeys/CreateApiKeyEndpoint.cs",
+      "sha256": "9d080fab82ca9a49a5a2934a3b104b863c0832a4ca3a07bf65af4849fa3f661a"
+    },
+    "CreateOrganizationEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/CreateOrganizationEndpoint.cs",
+      "sha256": "d35af4644f1bf0dd5a4b2ff87a97a19162c52c8bb02e4b4569c1d925d13c8c11"
+    },
+    "CreateProjectEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/CreateProjectEndpoint.cs",
+      "sha256": "6e5636739f980d3978380c5fbcbcf0c56fad6d7294ed16250e635cbdb0cc50da"
+    },
+    "CreateDatabaseEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/CreateDatabaseEndpoint.cs",
+      "sha256": "4c1e5a0c3b530f96b93d81af76254b16f2f2d55eeacf27bf6739a94b035394f4"
+    },
+    "SetOrganizationPlanEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/SetOrganizationPlanEndpoint.cs",
+      "sha256": "de56327ed14b7990544e3c505f1d7ada2a844536c56b4762936cf72f7621382c"
+    }
+  },
+  "openapiBytesSha256": "af84145b3472baf04fe9d76bd553ddf8e0f5bd9a0d4c70a791d99e6dd177b6d6",
+  "openapiNormalization": "JSON.parse, remove generated servers, JSON.stringify"
+}
