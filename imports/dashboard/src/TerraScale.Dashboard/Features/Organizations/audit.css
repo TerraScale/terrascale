@@ -1,0 +1,69 @@
+/* Audit: filter bar inside the activity card and severity share meters. */
+
+.ts-audit-page {
+  padding-top: var(--ts-s4);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-audit-page {
+    padding-top: var(--ts-s3);
+  }
+}
+
+.ts-audit-filters {
+  padding: var(--ts-s4) var(--ts-s5);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-audit-search-field {
+  flex: 1 1 150px;
+}
+
+.ts-audit-apply {
+  margin-left: auto;
+}
+
+.ts-audit-table td:first-child {
+  white-space: nowrap;
+}
+
+.ts-audit-share {
+  --share: var(--ts-info);
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s1);
+}
+
+.ts-audit-share-warning { --share: var(--ts-warning); }
+.ts-audit-share-danger { --share: var(--ts-danger); }
+
+.ts-audit-share > .ts-stat-value {
+  color: var(--share);
+}
+
+.ts-audit-meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: var(--ts-s2);
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+  appearance: none;
+}
+
+.ts-audit-meter::-webkit-meter-bar {
+  border: 0;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-3);
+}
+
+.ts-audit-meter::-webkit-meter-optimum-value {
+  border-radius: var(--ts-radius-pill);
+  background: var(--share);
+}
+
+.ts-audit-meter::-moz-meter-bar {
+  border-radius: var(--ts-radius-pill);
+  background: var(--share);
+}

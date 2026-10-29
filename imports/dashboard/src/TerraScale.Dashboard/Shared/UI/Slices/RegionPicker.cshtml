@@ -1,0 +1,18 @@
+@inherits RazorSlice<RegionMapField>
+@inject AssetUrls Assets
+<div class="ts-region-map" role="group" aria-label="Choose regions on the map" data-select-id="@Model.SelectId" data-selected="@Model.Visible" data-init="@Model.Sync" data-on:change__window="@Model.Change">
+    <img class="ts-region-map-image" src="@Assets.Url("brand/region-map.svg")" alt="" loading="lazy" decoding="async" />
+    @foreach (var code in new[] { "GRU", "FRA", "SJC", "SFO" })
+    {
+        @if (Model.Shows(code))
+        {
+            <button type="button" class="ts-region-node" data-region="@code" aria-label="@($"{Regions.Name(code)} ({code})")" aria-pressed="@(Model.IsSelected(code) ? "true" : "false")" data-on:click="@Model.Pick" aria-description="@Model.Ping(code)">
+                <img class="ts-region-node-flag" src="@Assets.Url($"flags/{Regions.Country(code)}.svg")" alt="" aria-hidden="true" />
+                <span class="ts-region-node-ring" aria-hidden="true"></span><span class="ts-region-node-core" aria-hidden="true"></span>
+                <span class="ts-region-node-label" aria-hidden="true"><strong>@Regions.Name(code)</strong>
+                    @if (Model.Ping(code) is { Length: > 0 } ping) { <span class="ts-region-node-ping">@ping</span> }
+                </span>
+            </button>
+        }
+    }
+</div>

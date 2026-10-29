@@ -1,0 +1,80 @@
+/* 404 page: standalone, centered copy under the brand mark. No app shell. */
+
+.ts-notfound {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: clamp(2rem, 4vw, 4rem);
+  width: min(100rem, 100%);
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 3vw, 3rem) clamp(1.5rem, 4vw, 4rem);
+}
+
+.ts-notfound .ts-brand-logo {
+  height: clamp(28px, 2.5vw, 44px);
+}
+
+.ts-notfound-copy {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: clamp(1rem, 1.5vw, 1.75rem);
+  text-align: center;
+}
+
+.ts-notfound-copy .ts-eyebrow {
+  color: var(--ts-ink-2);
+}
+
+.ts-notfound-num {
+  font: 500 clamp(80px, 14vw, 120px) / 1 var(--ts-font-mono);
+  letter-spacing: -0.06em;
+  color: var(--ts-ink-3);
+}
+
+.ts-notfound-copy .ts-auth-title {
+  font-size: clamp(28px, 2.8vw, 48px);
+}
+
+.ts-notfound-copy .ts-auth-subtitle {
+  max-width: 36rem;
+  font-size: clamp(14px, 1.25vw, 20px);
+}
+
+.ts-notfound-copy .ts-row {
+  justify-content: center;
+}
+
+.ts-notfound-copy .ts-btn {
+  height: clamp(44px, 3.5vw, 56px);
+  font-size: clamp(14px, 1vw, 18px);
+}
+
+/* Signed-in 404: renders inside the app shell, centered, with no brand mark. */
+.ts-notfound-shell {
+  display: grid;
+  place-items: center;
+}
+
+.ts-notfound-shell .ts-notfound-copy {
+  min-height: 70vh;
+  gap: var(--ts-s4);
+  max-width: 520px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-notfound-num {
+  font-size: 120px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-auth-title {
+  font-size: 24px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-btn {
+  height: 36px;
+  font-size: 14px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-auth-subtitle {
+  font-size: var(--ts-fs-lg);
+}

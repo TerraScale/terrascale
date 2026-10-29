@@ -1,0 +1,190 @@
+/* Overview page: compact toolbar, metrics, activity, and setup steps. */
+
+.ts-home-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+}
+
+.ts-home-header-title {
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ts-home-toolbar {
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s6);
+}
+
+.ts-home-toolbar > .ts-page-actions {
+  padding-bottom: var(--ts-s1);
+}
+
+.ts-home-overview {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+
+.ts-home-overview .ts-home-steps {
+  gap: var(--ts-s3);
+}
+
+.ts-home-overview .ts-home-step .ts-link {
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-home-ranges {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+}
+
+.ts-home-ranges a {
+  padding: 4px 10px;
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  text-decoration: none;
+}
+
+.ts-home-ranges a[aria-current="page"] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-home .ts-chart-area {
+  fill: var(--ts-chart-1);
+  fill-opacity: 0.16;
+}
+
+.ts-home-regions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s6);
+}
+
+.ts-home-region-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--ts-radius-lg);
+}
+
+@container page (width < 960px) {
+  .ts-home-overview,
+  .ts-home-regions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-home-toolbar > .ts-page-actions {
+    margin-left: auto;
+  }
+}
+
+.ts-home-activity-total {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-home-activity-total > .ts-chart-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ts-home-steps {
+  display: grid;
+  gap: var(--ts-s4);
+  list-style: none;
+}
+
+.ts-home-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--ts-s3);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-home-step-number {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 700;
+}
+
+.ts-home-step-done .ts-home-step-number {
+  background: color-mix(in oklab, var(--ts-success) 20%, transparent);
+  color: var(--ts-success);
+}
+
+.ts-home-kpi-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--hue);
+  flex: none;
+}
+
+.ts-home-connect {
+  list-style: none;
+}
+
+.ts-home-connect-item {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s3);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-home-connect-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-accent-soft);
+  color: var(--ts-link);
+}
+
+.ts-home-kpi-dot[data-hue="1"] { --hue: var(--ts-chart-1); }
+.ts-home-kpi-dot[data-hue="3"] { --hue: var(--ts-chart-3); }
+.ts-home-kpi-dot[data-hue="5"] { --hue: var(--ts-chart-5); }
+
+.ts-home-region-code { display: inline-flex; align-items: center; gap: 6px; }
+.ts-home-region-flag { width: 16px; height: 12px; object-fit: cover; border-radius: 2px; }
+.ts-home-region-map .ts-region-node[data-region="gru"] { top: 74.7%; left: 36.76%; }
+.ts-home-region-map .ts-region-node[data-region="fra"] { top: 28%; left: 52.4%; }
+.ts-home-region-map .ts-region-node[data-region="sjc"] { top: 35.73%; left: 15.44%; }
+.ts-home-region-map .ts-region-node-ring { animation: none; }
+.ts-home-region-map .ts-region-map-image { filter: grayscale(1); }
+
+.ts-home-sdk > summary {
+  padding: var(--ts-s2) 0;
+  cursor: pointer;
+}
+
+.ts-home-sdk .ts-snippet-body {
+  tab-size: 4;
+}

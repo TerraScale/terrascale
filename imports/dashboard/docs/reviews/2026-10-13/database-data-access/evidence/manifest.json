@@ -1,0 +1,258 @@
+{
+  "schemaVersion": 1,
+  "auditedSourceSha": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+  "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+  "captureRunResult": {
+    "exitCode": 2,
+    "total": 10,
+    "passed": 4,
+    "failed": 6,
+    "skipped": 0,
+    "classification": "six expected product-defect regression failures; assertions retained",
+    "durationSeconds": 26.95,
+    "trx": "docs/reviews/2026-10-13/database-data-access/obj/head-results/TerraScale.Dashboard.E2E_net10.0_x64.trx",
+    "log": "docs/reviews/2026-10-13/database-data-access/obj/head-tests.log"
+  },
+  "sanitizedUtc": "2026-10-13T03:12:36.419306+00:00",
+  "sanitization": "Opaque rectangles replace the desktop workspace/account switcher and account name/email/avatar. All decoded pixels outside those rectangles are unchanged. Mobile PNGs and saved-query observation JSON are exact original copies. PNG ancillary metadata is omitted from re-encoded desktop files.",
+  "sanitizer": "Python standard-library PNG RGB decoder, opaque pixel replacement and lossless PNG encoder; raw CRC/hash and pixel-preservation self-checks passed.",
+  "committedPngCount": 8,
+  "committedPngBytes": 556805,
+  "video": "No video captured or committed.",
+  "browserSignInDuringFollowUp": false,
+  "newCaptureDuringFollowUp": false,
+  "artifacts": [
+    {
+      "path": "api-key-dialog-1440.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:28:52.781535+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/api-key-dialog-1440.png",
+      "rawSha256": "42dfa455dc8beb89fd12e459cbd904145dae1f3867b0038c0b37e35a53d681c3",
+      "rawBytes": 98609,
+      "sanitizedSha256": "d737e7abdb57bcbad03c8432e3e64dc49ff2b34855c8752678285df979f4c663",
+      "sanitizedBytes": 86327,
+      "maskRectanglesPx": [
+        {
+          "x": 12,
+          "y": 20,
+          "width": 240,
+          "height": 56
+        },
+        {
+          "x": 12,
+          "y": 826,
+          "width": 240,
+          "height": 74
+        }
+      ],
+      "maskRgb": [
+        28,
+        32,
+        40
+      ],
+      "imageDimensionsPx": [
+        1440,
+        900
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "api-key-dialog-390.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:28:58.919572+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/api-key-dialog-390.png",
+      "rawSha256": "8c303b868d08389cc94196ab5cd8f3c87b817eda49ceeb4f3d9d379c465b6348",
+      "rawBytes": 37089,
+      "sanitizedSha256": "8c303b868d08389cc94196ab5cd8f3c87b817eda49ceeb4f3d9d379c465b6348",
+      "sanitizedBytes": 37089,
+      "maskRectanglesPx": [],
+      "maskRgb": null,
+      "imageDimensionsPx": [
+        390,
+        844
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "query-draft-1440.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:07.963626+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/query-draft-1440.png",
+      "rawSha256": "96fcc4fcc50a99e30c0d8b6f7a30d828d0d8d8c939cc4934e8d08da2326ea159",
+      "rawBytes": 75924,
+      "sanitizedSha256": "c22a24a4058849a96e94003b946bcbd212d22b4c9ae79de5c923e1eb9cfe4f01",
+      "sanitizedBytes": 56682,
+      "maskRectanglesPx": [
+        {
+          "x": 12,
+          "y": 20,
+          "width": 240,
+          "height": 56
+        },
+        {
+          "x": 12,
+          "y": 826,
+          "width": 240,
+          "height": 74
+        }
+      ],
+      "maskRgb": [
+        28,
+        32,
+        40
+      ],
+      "imageDimensionsPx": [
+        1440,
+        900
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "query-draft-390.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:11.139644+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/query-draft-390.png",
+      "rawSha256": "ce7c5353279d139acbd8de3049a8b90ab1175c77ebe043936ea9ecd312ce5d8b",
+      "rawBytes": 52705,
+      "sanitizedSha256": "ce7c5353279d139acbd8de3049a8b90ab1175c77ebe043936ea9ecd312ce5d8b",
+      "sanitizedBytes": 52705,
+      "maskRectanglesPx": [],
+      "maskRgb": null,
+      "imageDimensionsPx": [
+        390,
+        1305
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "save-query-1440.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:08.184627+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/save-query-1440.png",
+      "rawSha256": "4f052200811fd377c289fa0e9d36f6cb7752246ddb124aa7cac711ed0c6141f4",
+      "rawBytes": 145021,
+      "sanitizedSha256": "ab61562c555430d17c941d5f183e2514dd74855291dd18b88a3b936650476505",
+      "sanitizedBytes": 136343,
+      "maskRectanglesPx": [
+        {
+          "x": 12,
+          "y": 20,
+          "width": 240,
+          "height": 56
+        },
+        {
+          "x": 12,
+          "y": 826,
+          "width": 240,
+          "height": 74
+        }
+      ],
+      "maskRgb": [
+        28,
+        32,
+        40
+      ],
+      "imageDimensionsPx": [
+        1440,
+        900
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "save-query-390.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:11.315645+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/save-query-390.png",
+      "rawSha256": "fcac3018b2feb694bdb000379ffe443295b9d41c61b7fbdbe03e7bc444a8ec20",
+      "rawBytes": 72294,
+      "sanitizedSha256": "fcac3018b2feb694bdb000379ffe443295b9d41c61b7fbdbe03e7bc444a8ec20",
+      "sanitizedBytes": 72294,
+      "maskRectanglesPx": [],
+      "maskRgb": null,
+      "imageDimensionsPx": [
+        390,
+        1305
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "saved-query-values-1440.json",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:09.061632+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/saved-query-values-1440.json",
+      "rawSha256": "c2ef90dc94e85005bc2dc4d3bae2a071eb83745df2638e90f12f359392c599e2",
+      "rawBytes": 188,
+      "sanitizedSha256": "c2ef90dc94e85005bc2dc4d3bae2a071eb83745df2638e90f12f359392c599e2",
+      "sanitizedBytes": 188,
+      "maskRectanglesPx": [],
+      "maskRgb": null
+    },
+    {
+      "path": "saved-query-values-390.json",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:12.052649+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/saved-query-values-390.json",
+      "rawSha256": "c2ef90dc94e85005bc2dc4d3bae2a071eb83745df2638e90f12f359392c599e2",
+      "rawBytes": 188,
+      "sanitizedSha256": "c2ef90dc94e85005bc2dc4d3bae2a071eb83745df2638e90f12f359392c599e2",
+      "sanitizedBytes": 188,
+      "maskRectanglesPx": [],
+      "maskRgb": null
+    },
+    {
+      "path": "sql-check-1440.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:03.466599+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/sql-check-1440.png",
+      "rawSha256": "afa59e8d502737dbe5ac367db39a8f58f8ce6f17ce5f35048665811661b7877b",
+      "rawBytes": 79144,
+      "sanitizedSha256": "1537db13ef533d8031b1a9f8462e8470d89420526a75eb525dff70e996a97434",
+      "sanitizedBytes": 59280,
+      "maskRectanglesPx": [
+        {
+          "x": 12,
+          "y": 20,
+          "width": 240,
+          "height": 56
+        },
+        {
+          "x": 12,
+          "y": 826,
+          "width": 240,
+          "height": 74
+        }
+      ],
+      "maskRgb": [
+        28,
+        32,
+        40
+      ],
+      "imageDimensionsPx": [
+        1440,
+        945
+      ],
+      "sanitizedPixelsInspected": true
+    },
+    {
+      "path": "sql-check-390.png",
+      "captureHeadSha": "6d05a7ee374547ee8ceab938ee14eabc86d9a22f",
+      "capturedUtc": "2026-10-13T02:29:05.944614+00:00",
+      "rawLocalPath": "docs/reviews/2026-10-13/database-data-access/obj/evidence/sql-check-390.png",
+      "rawSha256": "8b7d8686bc986b26c4c2d955ebd590febbb399bb5e204d39cbf64b74edc3eb9d",
+      "rawBytes": 56085,
+      "sanitizedSha256": "8b7d8686bc986b26c4c2d955ebd590febbb399bb5e204d39cbf64b74edc3eb9d",
+      "sanitizedBytes": 56085,
+      "maskRectanglesPx": [],
+      "maskRgb": null,
+      "imageDimensionsPx": [
+        390,
+        1391
+      ],
+      "sanitizedPixelsInspected": true
+    }
+  ],
+  "rawLocalManifestSha256": "289d03abaebdb4ffe6721712cda650460c6b22489cd1ddeabaa62fa1e9ad48f4",
+  "captureSourceTreeSha": "a0891b885f7cc8a0ab3d429f163d95dade6f603c",
+  "sanitizedPixelsInspectedUtc": "2026-10-13T03:14:57.600290+00:00",
+  "manifestScope": "Sanitization and publication preparation of the original 6d05a7ee captures only. The false follow-up sign-in/new-capture fields describe that completed sanitization phase. Later authorized synthetic local sign-in and final-head verification are recorded separately; they do not change the original image capture SHA or hashes."
+}

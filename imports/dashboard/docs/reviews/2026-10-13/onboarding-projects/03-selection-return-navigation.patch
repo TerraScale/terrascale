@@ -1,0 +1,38 @@
+--- a/src/TerraScale.Dashboard/Features/Accounts/AccountEndpoints.cs
++++ b/src/TerraScale.Dashboard/Features/Accounts/AccountEndpoints.cs
+@@ -28,7 +28,8 @@
+             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+             try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
+             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
+-            return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
++            var selected = await accounts.GetContextAsync(session, http.RequestAborted);
++            return AuthEndpoints.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
+         }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
+             .WithSummary("Select an organization the current user can access")
+             .Accepts<SwitchOrganizationRequest>("application/x-www-form-urlencoded")
+@@ -42,13 +43,24 @@
+             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+             try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
+             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
+-            return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
++            var selected = await accounts.GetContextAsync(session, http.RequestAborted);
++            return AuthEndpoints.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
+         }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
+             .WithSummary("Select a project the current user can access")
+             .Accepts<SwitchProjectRequest>("application/x-www-form-urlencoded")
+             .Produces(StatusCodes.Status303SeeOther).Produces(StatusCodes.Status400BadRequest)
+             .Produces(StatusCodes.Status401Unauthorized).ProducesProblem(StatusCodes.Status403Forbidden);
+         return endpoints;
++    }
++
++    private static string SwitchReturnPath(string? returnUrl, AccountContext selected)
++    {
++        var path = Csrf.LocalRedirect(returnUrl);
++        var route = path.Split('?', '#')[0];
++        const string prefix = "/databases/";
++        if (!route.StartsWith(prefix, StringComparison.Ordinal)) return path;
++        var databaseId = Uri.UnescapeDataString(route[prefix.Length..].Split('/')[0]);
++        return selected.Project?.Databases.ContainsKey(databaseId) == true ? path : "/databases";
+     }
+
+     public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)

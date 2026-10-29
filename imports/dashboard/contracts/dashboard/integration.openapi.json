@@ -1,0 +1,1286 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "TerraScale Dashboard integration API",
+    "description": "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. New public APIs use /v1. Mutations require the current session and the _csrf form token bound to the same origin; authentication and membership checks run before actions. This document covers explicitly annotated integration routes, not every UI page.",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "https://dash.terrascale.tech"
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Read the current dashboard session and workspace",
+        "operationId": "getDashboardIdentity",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountIdentityResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/switch-organization": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Select an organization the current user can access",
+        "operationId": "switchDashboardOrganization",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchOrganizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "See Other"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/switch-project": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Select a project the current user can access",
+        "operationId": "switchDashboardProject",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "See Other"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/v1/dashboard/databases/{databaseId}/changes": {
+      "get": {
+        "tags": [
+          "DocumentChangesEndpoints"
+        ],
+        "summary": "Stream document changes for one collection",
+        "description": "Requires the current session and project membership. Last-Event-ID overrides cursor; retain the same collection on resume. Events are change, cursor, reconnect and resync_required. On resync_required discard the checkpoint, connect with cursor=now before rereading documents, and report unavailable retained history. This is not a live SQL subscription. Reconnecting exchanges fresh project authority; mutations are never replayed.",
+        "operationId": "ReadDocumentChanges",
+        "parameters": [
+          {
+            "name": "databaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "collection",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentChangesUpdate"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/credentials": {
+      "get": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "List ts-auth project keys without secrets",
+        "description": "Cursor paging: limit 1–100 (default 100); pass nextCursor as after with the same scope and filters. Ordinal immutable-ID order. Continue until hasMore=false; nextCursor is then null. Invalid limits/cursors are rejected. Upstream uses 100 keys/page; traversal fails at 100 pages instead of truncating. DatabaseId (a ULID) is the restriction; DatabaseName is its display name (Deleted database once the ID is gone). A key with DatabaseName but no DatabaseId was narrowed by name and mints no token. LastUsedAt is the last token exchange (up to five minutes stale).",
+        "operationId": "listDashboardCredentials",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Rows per page, 1–100; default 100. Invalid values return 422.",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Opaque nextCursor from this list with the same scope and filters. Omit for the first page.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPageOfProjectCredentialMetadata"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/credentials/{kind}": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Create a project key and reveal its secret once",
+        "description": "Uses the original user session at ts-auth. Choose a non-empty subset of exactly documents:read, documents:write, databases:read, databases:write. Document scopes cover documents, collections, queries, SQL over the Hrana/libSQL and Postgres wire protocols, file storage, functions, and change feeds. Database scopes cover databases, backups/restores, indexes, imports, read-only HTTP SQL (run, check, explain), saved queries, usage, and metrics. Read scopes grant reads; write scopes grant changes. Some operations require both: function management needs documents:read and documents:write; writing imports also needs documents:write; selective recovery also needs the corresponding document scope. No aliases, wildcards, or unknown scopes are accepted. expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Kind is key (api-key also accepted); services exchange the key with grant_type=client_credentials at ts-auth. Secrets are never persisted by the dashboard.",
+        "operationId": "createDashboardCredential",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectApiKeySecret"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/credentials/{keyId}/revoke": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Revoke a project key",
+        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone.",
+        "operationId": "revokeDashboardCredentialById",
+        "parameters": [
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeProjectCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "303": {
+            "description": "See Other"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/credentials/revoke": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Revoke a key selected by its form ID",
+        "operationId": "revokeDashboardCredential",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeProjectCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "303": {
+            "description": "See Other"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/credentials/rotate": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Rotate a project key and reveal its new secret once",
+        "description": "Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period. With 0, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With grace, these bounds apply from its end. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.",
+        "operationId": "rotateDashboardCredential",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateProjectCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectApiKeySecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    },
+    "/billing/checkout": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Start or resume a bound Stripe checkout",
+        "description": "Requires the current session, organization-owner permission and a same-origin CSRF form token. An unavailable provider returns 503; return to billing to resume or cancel rather than automatically retrying a mutation.",
+        "operationId": "startDashboardCheckout",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "See Other"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": [ ]
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountIdentityResponse": {
+        "required": [
+          "userId",
+          "accountId",
+          "name",
+          "email",
+          "phoneNumber",
+          "locale",
+          "onboardingCompleted",
+          "organizationId",
+          "projectId",
+          "role"
+        ],
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phoneNumber": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "onboardingCompleted": {
+            "type": "boolean"
+          },
+          "organizationId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "projectId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckoutRequest": {
+        "required": [
+          "_csrf",
+          "plan",
+          "interval",
+          "return"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "plan": {
+            "type": "string"
+          },
+          "interval": {
+            "type": "string"
+          },
+          "return": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateProjectCredentialRequest": {
+        "required": [
+          "_csrf",
+          "name",
+          "databaseId",
+          "scope",
+          "scopes"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "databaseId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "scope": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "scopes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "expiresInDays": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "allowedCidrs": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "CursorPageOfProjectCredentialMetadata": {
+        "required": [
+          "items",
+          "nextCursor",
+          "limit"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectCredentialMetadata"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "limit": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DocumentChangesUpdate": {
+        "required": [
+          "state",
+          "cursor"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "change": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerraBaseChange"
+              }
+            ]
+          },
+          "region": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "JsonElement": { },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ProjectApiKeyMetadata": {
+        "required": [
+          "keyId",
+          "projectId",
+          "name",
+          "prefix",
+          "lastFour",
+          "scopes",
+          "databaseId",
+          "createdByEmail",
+          "createdAt",
+          "expiresAt",
+          "lastUsedAt",
+          "revokedAt",
+          "isActive"
+        ],
+        "type": "object",
+        "properties": {
+          "keyId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "lastFour": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "databaseId": {
+            "type": "string"
+          },
+          "createdByEmail": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "lastUsedAt": {
+            "type": "string"
+          },
+          "revokedAt": {
+            "type": "string"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "createdByUserId": {
+            "type": "string"
+          },
+          "databaseName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "allowedCidrs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ProjectApiKeySecret": {
+        "required": [
+          "apiKey",
+          "secret"
+        ],
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "$ref": "#/components/schemas/ProjectApiKeyMetadata"
+          },
+          "secret": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectCredentialMetadata": {
+        "required": [
+          "kind",
+          "keyId",
+          "projectId",
+          "name",
+          "prefix",
+          "lastFour",
+          "scopes",
+          "databaseId",
+          "createdByEmail",
+          "createdAt",
+          "expiresAt",
+          "lastUsedAt",
+          "revokedAt",
+          "isActive"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "keyId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "lastFour": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "databaseId": {
+            "type": "string"
+          },
+          "createdByEmail": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "lastUsedAt": {
+            "type": "string"
+          },
+          "revokedAt": {
+            "type": "string"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "createdByUserId": {
+            "type": "string"
+          },
+          "databaseName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "allowedCidrs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RevokeProjectCredentialRequest": {
+        "required": [
+          "_csrf",
+          "keyId"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "keyId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "RotateProjectCredentialRequest": {
+        "required": [
+          "_csrf",
+          "keyId"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "keyId": {
+            "type": "string"
+          },
+          "previousSecretTtl": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "SwitchOrganizationRequest": {
+        "required": [
+          "_csrf",
+          "organizationId",
+          "returnUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "returnUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "SwitchProjectRequest": {
+        "required": [
+          "_csrf",
+          "projectId",
+          "returnUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "returnUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TerraBaseChange": {
+        "required": [
+          "collection",
+          "id",
+          "op",
+          "version",
+          "origin",
+          "document"
+        ],
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "document": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "dashboardSession": {
+        "type": "apiKey",
+        "description": "Server-managed HttpOnly session cookie. Obtain by signing in through ts-auth's hosted pages (GET /login).",
+        "name": "ts-dashboard-session",
+        "in": "cookie"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Session"
+    },
+    {
+      "name": "Workspace"
+    },
+    {
+      "name": "DocumentChangesEndpoints"
+    },
+    {
+      "name": "Credentials"
+    },
+    {
+      "name": "Billing"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectInvitationPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page" aria-labelledby="project-invitations-title" data-signals="{_invitationPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_invitationPending = true)" data-on:pageshow__window="$_invitationPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_invitationPending = false)">
+    <header class="ts-page-header"><h1 id="project-invitations-title">Project invitations</h1><p>@Model.Shell.Context.Project!.Name</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
+    <p>These invitations grant access to this project only. Accepting one does not change the recipient's organization role.</p>
+    @if (Model.Notice.Length > 0) { <p class="ts-alert ts-alert-success" role="status">@Model.Notice</p> }
+    @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }
+    else if (Model.Invitations.Count == 0) { <p class="ts-empty" role="status">No project invitations on this page.</p> }
+    else
+    {
+        <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Project invitations"><table class="ts-table"><thead><tr><th>Email</th><th>Project role</th><th>Status</th><th>Created</th><th>Expires</th><th>Actions</th></tr></thead><tbody>
+        @foreach (var invitation in Model.Invitations)
+        {
+            <tr data-project-invitation="@invitation.Id"><td>@invitation.Email</td><td>@invitation.Role</td><td>@invitation.Status</td><td><time datetime="@invitation.CreatedAt.ToString("O")">@invitation.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'")</time></td><td><time datetime="@invitation.ExpiresAt.ToString("O")">@invitation.ExpiresAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'")</time></td><td>
+            @if (invitation.Status is "pending" or "expired")
+            {
+                <button class="ts-btn ts-btn-secondary" type="button" command="show-modal" commandfor="revoke-invitation-@invitation.Id">Revoke invitation</button>
+                <dialog class="ts-dialog" id="revoke-invitation-@invitation.Id" aria-labelledby="revoke-invitation-title-@invitation.Id" closedby="any"><div class="ts-dialog-content">
+                    <h2 id="revoke-invitation-title-@invitation.Id">Revoke project invitation?</h2><p>@invitation.Email · @invitation.Role</p><p>Its acceptance link will stop working. Existing organization roles and other project grants stay unchanged.</p>
+                    <form method="post" action="@Model.PostUrl" data-submit-once data-attr:aria-busy="$_invitationPending ? 'true' : 'false'">
+                        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="invitationId" value="@invitation.Id" /><input type="hidden" name="after" value="@Model.After" />
+                        <button class="ts-btn ts-btn-danger" type="submit">Confirm revocation</button><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="revoke-invitation-@invitation.Id">Cancel</button>
+                    </form>
+                    <p role="status" aria-live="polite" data-text="$_invitationPending ? 'Revoking project invitation…' : ''"></p>
+                </div></dialog>
+            }
+            </td></tr>
+        }
+        </tbody></table></div>
+    }
+    <nav aria-label="Project invitation pages">
+        @if (Model.HasPrevious) { <a class="ts-link" href="@Model.Url">First page</a> }
+        @if (Model.Next is not null) { <a class="ts-link" rel="next" href="@(Model.Url + "&after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }
+    </nav>
+</main>
+@functions {
+    public ShellModel LayoutModel => Model.Shell;
+}

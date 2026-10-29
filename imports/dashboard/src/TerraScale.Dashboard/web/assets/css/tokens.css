@@ -1,0 +1,131 @@
+/* TerraScale tokens · Direction A1 "Graphite Blue": Graphite + blue primary buttons, blue eyebrow labels, hued chart series.
+   Dark only: the dashboard has no light mode. Hand-maintained; build/build-css.mjs bundles it into static/css/terrascale.css.
+   Flat: opaque surfaces separated by hairlines; no translucency, blur or soft shadows. */
+
+:root {
+  color-scheme: dark;
+
+  /* Graphite canvas and opaque surfaces, darkest to lightest. */
+  --ts-canvas: #151515;
+  --ts-sidebar: #151515;
+  --ts-surface: #1b1b1b;
+  --ts-surface-2: #222222;
+  --ts-surface-3: #2c2c2c;
+  --ts-line: rgb(255 255 255 / 0.08);
+  --ts-line-strong: rgb(255 255 255 / 0.14);
+  /* Form control borders: at least 3:1 against the canvas and all three surfaces
+     (WCAG 1.4.11), so inputs stay identifiable. */
+  --ts-control-line: #767676;
+  --ts-control-line-hover: #8a8a8a;
+
+  /* Text. Every ink keeps at least 4.5:1 on the canvas and all surfaces. */
+  --ts-ink: #f2f2f2;
+  --ts-ink-2: #a8a8a8;
+  --ts-ink-3: #9a9a9a;
+
+  /* Monaco/Shiki syntax and widget depth, consumed by code-editor/theme.js. */
+  --ts-syn-keyword: #7ea6ff;
+  --ts-syn-string: #86efac;
+  --ts-syn-number: #fdba74;
+  --ts-syn-comment: #8f8f8f;
+  --ts-syn-fn: #fafafa;
+  --ts-syn-punct: #a3a3a3;
+  --ts-shadow: rgb(0 0 0 / 0.60);
+
+  /* Logo blue fills; text and focus use --ts-link and --ts-focus instead. */
+  --ts-accent: #2158e8;
+  --ts-accent-soft: rgb(33 88 232 / 0.18);
+  /* White text on the fill: 5.8:1 at rest, 7.1:1 on hover. */
+  --ts-accent-fill: #2158e8;
+  --ts-accent-fill-hover: #1a4bd0;
+  --ts-on-accent: #ffffff;
+  /* Primary buttons are the logo-blue fill. */
+  --ts-primary: var(--ts-accent-fill);
+  --ts-primary-hover: var(--ts-accent-fill-hover);
+  --ts-on-primary: var(--ts-on-accent);
+  --ts-link: #6b93ff;
+  --ts-focus: #6b93ff;
+  --ts-eyebrow: var(--ts-link);
+  --ts-hover: rgb(255 255 255 / 0.05);
+  /* Status colors at full strength. */
+  --ts-success: #6bca92;
+  --ts-warning: #ffa726;
+  --ts-severe: #ff7a33;
+  --ts-danger: #ff5c5c;
+  /* Solid danger fill behind --ts-on-danger text: 4.9:1. */
+  --ts-danger-solid: #d92626;
+  --ts-on-danger: #ffffff;
+  --ts-info: #84b4f8;
+
+  /* Prototype categorical palette. Red, amber and green stay status-only. */
+  --ts-chart-1: #4797e4;
+  --ts-chart-2: #925086;
+  --ts-chart-3: #00a1dd;
+  --ts-chart-4: #7f5794;
+  --ts-chart-5: #00a7bf;
+  --ts-chart-6: #565bc3;
+  --ts-cat-1: #4797e4;
+  --ts-cat-2: #925086;
+  --ts-cat-3: #00a1dd;
+
+  /* Page accent. Navigation icons override it with their [data-tone]. */
+  --tone: var(--ts-link);
+
+  /* Type. Geist carries the interface; Geist Mono carries code and figures. */
+  --ts-font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ts-font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --ts-fs-xs: 12px;
+  --ts-fs-sm: 13px;
+  --ts-fs-md: 14px;
+  --ts-fs-lg: 16px;
+  --ts-fs-xl: 20px;
+  --ts-fs-2xl: 24px;
+  --ts-fs-3xl: 32px;
+  --ts-font-display: var(--ts-font-sans);
+  --ts-font-num: var(--ts-font-mono);
+  --ts-lh-tight: 1.2; --ts-lh: 1.5;
+  --ts-heading-weight: 600; --ts-display-weight: 500; --ts-heading-tracking: -0.015em;
+  /* Label voice: mono, uppercase (eyebrows, nav groups, menu headings). */
+  --ts-label-font: var(--ts-font-mono); --ts-label-size: 11.5px; --ts-label-weight: 400;
+  --ts-label-tracking: 0.06em; --ts-label-case: uppercase;
+  --ts-prose-max: 720px;
+
+  /* Spacing, 4px grid. */
+  --ts-s1: 4px; --ts-s2: 8px; --ts-s3: 12px; --ts-s4: 16px; --ts-s5: 20px; --ts-s6: 24px;
+  --ts-s8: 32px; --ts-s10: 40px; --ts-s12: 48px; --ts-s16: 64px; --ts-s20: 80px; --ts-s24: 96px;
+
+  /* Shape: one radius scale, one control-height scale (32/36/40). */
+  --ts-radius-sm: 4px; --ts-radius: 6px; --ts-radius-lg: 10px; --ts-radius-xl: 14px; --ts-radius-pill: 999px;
+  --ts-control-h-sm: 32px; --ts-control-h: 36px; --ts-control-h-lg: 40px;
+
+  /* Depth: overlays are opaque surfaces with a strong hairline; only the modal scrim dims. */
+  --ts-scrim: rgb(5 6 10 / 0.6);
+  --ts-tint-badge: 14%;
+
+  /* Motion. */
+  --ts-fast: 150ms; --ts-base: 200ms; --ts-loop: 1.4s; --ts-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Layering. */
+  --ts-z-sticky: 10; --ts-z-dropdown: 20; --ts-z-overlay: 30; --ts-z-modal: 40; --ts-z-progress: 50; --ts-z-tooltip: 60;
+
+  /* Shell. */
+  --ts-sidebar-width: 248px;
+}
+
+/* Section tones: every navigation destination owns one, and the page it
+   opens inherits it for headers and highlights. Tones are text-safe on every
+   surface and map onto blue, cyan, violet and magenta only. */
+[data-tone="violet"] { --tone: #a78bfa; }
+[data-tone="blue"] { --tone: #6b93ff; }
+[data-tone="cyan"] { --tone: #00a7bf; }
+[data-tone="teal"] { --tone: #00a7bf; }
+[data-tone="lime"] { --tone: #00a7bf; }
+[data-tone="amber"] { --tone: #e293c0; }
+[data-tone="pink"] { --tone: #e293c0; }
+[data-tone="emerald"] { --tone: #00a7bf; }
+[data-tone="orange"] { --tone: #e293c0; }
+[data-tone="sky"] { --tone: #6b93ff; }
+[data-tone="fuchsia"] { --tone: #e293c0; }
+[data-tone="rose"] { --tone: #e293c0; }
+[data-tone="indigo"] { --tone: #a78bfa; }
+[data-tone="slate"] { --tone: var(--ts-ink-2); }

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>false</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Deque.AxeCore.Playwright" />
+    <PackageReference Include="Bogus" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Using Include="TerraScale.Dashboard.Demo" />
+    <!-- TUnit.Core also has a TestState. -->
+    <Using Include="TerraScale.Dashboard.Demo.TestState" Alias="TestState" />
+  </ItemGroup>
+</Project>

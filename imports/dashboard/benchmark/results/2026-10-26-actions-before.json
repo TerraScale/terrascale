@@ -1,0 +1,34 @@
+{
+  "capturedAt": "2026-10-26T21:14:39.448Z",
+  "phase": "before",
+  "dashboardSource": "018668106e8ca85bf42e791b905d40d19fa88617",
+  "createRefusals": [
+    {
+      "repeat": 1,
+      "action": "create database",
+      "status": 409,
+      "ttfbMs": 9245.599999997765,
+      "totalMs": 9245.89999999851,
+      "timing": "app;dur=9170.4, auth;dur=13138.5;desc=\"19 calls\", state;dur=949.7;desc=\"18 calls\", terrabase;dur=117.4;desc=\"2 calls\""
+    },
+    {
+      "repeat": 2,
+      "action": "create database",
+      "status": 409,
+      "totalMs": 2524.7000000029802,
+      "timing": "app;dur=2502.1, auth;dur=6190.9;desc=\"15 calls\", state;dur=424.5;desc=\"15 calls\", terrabase;dur=167.0;desc=\"2 calls\"",
+      "reason": "Your organization has reached its plan's database limit. Upgrade the plan or delete a database."
+    }
+  ],
+  "cleanupPending": false,
+  "rows": [
+    {"repeat":0,"action":"benchmark collection setup","status":201,"ttfbMs":4400.39999999851,"totalMs":4400.89999999851,"timing":"app;dur=4377.1, auth;dur=8323.1;desc=\"18 calls\", state;dur=437.3;desc=\"15 calls\", terrabase;dur=270.4;desc=\"4 calls\"","reason":null},
+    {"repeat":1,"action":"save document","status":200,"ttfbMs":2988.89999999851,"totalMs":2989.300000000745,"timing":"app;dur=2964.3, auth;dur=7125.8;desc=\"15 calls\", state;dur=831.9;desc=\"15 calls\", terrabase;dur=261.0;desc=\"4 calls\"","reason":null},
+    {"repeat":1,"action":"SQL run","status":200,"ttfbMs":7232.800000000745,"totalMs":7233.300000000745,"timing":"app;dur=7210.4, auth;dur=11357.8;desc=\"21 calls\", state;dur=436.9;desc=\"15 calls\", terrabase;dur=489.6;desc=\"5 calls\"","reason":null,"verified":true},
+    {"repeat":2,"action":"save document","status":200,"ttfbMs":5052.39999999851,"totalMs":5053,"timing":"app;dur=5027.9, auth;dur=11508.1;desc=\"15 calls\", state;dur=1110.8;desc=\"15 calls\", terrabase;dur=375.0;desc=\"4 calls\"","reason":null},
+    {"repeat":2,"action":"SQL run","status":200,"ttfbMs":2392.7999999970198,"totalMs":2393.5,"timing":"app;dur=2368.0, auth;dur=6585.9;desc=\"15 calls\", state;dur=543.5;desc=\"15 calls\", terrabase;dur=168.4;desc=\"5 calls\"","reason":null,"verified":true},
+    {"repeat":3,"action":"save document","status":200,"ttfbMs":3006.900000002235,"totalMs":3007.10000000149,"timing":"app;dur=2982.6, auth;dur=6792.8;desc=\"15 calls\", state;dur=419.7;desc=\"15 calls\", terrabase;dur=385.0;desc=\"4 calls\"","reason":null},
+    {"repeat":3,"action":"SQL run","status":200,"ttfbMs":2807,"totalMs":2807.699999999255,"timing":"app;dur=2782.4, auth;dur=7137.3;desc=\"15 calls\", state;dur=458.3;desc=\"15 calls\", terrabase;dur=311.4;desc=\"5 calls\"","reason":null,"verified":true},
+    {"repeat":0,"action":"benchmark collection cleanup","status":204,"ttfbMs":2607.2999999970198,"totalMs":2607.599999997765,"timing":"app;dur=2584.3, auth;dur=6490.7;desc=\"15 calls\", state;dur=373.8;desc=\"15 calls\", terrabase;dur=263.3;desc=\"4 calls\"","reason":null}
+  ]
+}

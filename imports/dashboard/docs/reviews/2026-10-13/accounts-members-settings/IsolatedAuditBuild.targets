@@ -1,0 +1,5 @@
+<Project>
+  <!-- Read-only source audit: compile C#/Razor without rewriting shipped assets.
+       The local fixture serves the committed Datastar and button-loading sources. -->
+  <Target Name="BundleDashboardAssets" />
+</Project>
