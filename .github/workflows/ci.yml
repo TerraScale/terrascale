@@ -7,21 +7,18 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
 
-  merge_group:
   schedule:
     # Compatibility for the other supported runtime stays weekly.
     - cron: '31 5 * * 3'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
-  actions: read
-  pull-requests: read
 
-# A newer PR push cancels the older run. Main runs finish (so main's caches get saved); a newer main push replaces only
-# a pending one. merge_group runs keep their own group.
+# Superseded PR runs cancel; main runs finish and save caches.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -36,35 +33,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-      - name: Select changed checks
-        id: changes
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.before }}
-        run: |
-          check=true
-          if [[ "$EVENT" == pull_request || "$EVENT" == merge_group ]]; then
-            base=HEAD^1
-          elif [[ "$EVENT" == push && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
-            base="$BASE_SHA"
-          else
-            base=''
-          fi
-          if [[ -n "$base" ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            if ! git diff --name-only "$base" HEAD | grep -vE '(^docs/|\.md$)' > /dev/null; then
-              check=false
-            fi
-          fi
-          echo "check=$check" >> "$GITHUB_OUTPUT"
-          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
-      - name: Reuse successful PR checks for the identical main tree
+      # Preserve the proof output contract without reusing a previous run's tests.
+      - name: Require fresh test proof for this run
         id: proof
-        if: github.event_name == 'push' && steps.changes.outputs.check == 'true'
-        run: bash scripts/ci/proven-pr.sh
-        env:
-          GH_TOKEN: ${{ github.token }}
+        run: echo 'proven=false' >> "$GITHUB_OUTPUT"
       - name: Require the owner-approved 0.0.x version policy
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
         run: |
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
@@ -87,25 +60,23 @@ jobs:
       - name: Audit every committed npm graph
         run: npm run check:vulnerabilities
       - name: Install locked dependencies
-        if: steps.changes.outputs.check == 'true'
         run: npm ci
       - name: Typecheck
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
+        if: steps.proof.outputs.proven != 'true'
         run: npm run typecheck
       - name: Generate SDK type declarations
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
+        if: steps.proof.outputs.proven != 'true'
         run: npm run build
       - name: Check C# route drift
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
+        if: steps.proof.outputs.proven != 'true'
         run: npm run check:v1-route-manifest
       - name: Run SDK tests
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
+        if: steps.proof.outputs.proven != 'true'
         run: npm test
-      - name: Checked tree ${{ steps.changes.outputs.tree }}
-        if: steps.changes.outputs.check == 'true' && steps.proof.outputs.proven != 'true'
+      - name: SDK validation passed
         run: echo 'All checks passed for this Git tree.'
       - name: Save main npm cache
-        if: github.event_name == 'push' && steps.changes.outputs.check == 'true' && steps.npm-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && steps.npm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.npm
