@@ -541,3 +541,9 @@ stale-state publication and backoff.
 
 Mutations are sent once and carry only the caller's `signal`: abandoning one
 makes its outcome uncertain, and index builds, restores and branches can run long.
+
+## Shipping from a TerraScale dev host
+
+Commit your changes, then run `npm run ship` (or `ts-ship`) from the worktree.
+It rebases onto current main, runs the Fast command from `AGENTS.md` on a dev
+host, and pushes main after validation. Run `ts-main` for the latest CI results.

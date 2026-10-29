@@ -64,6 +64,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "ship": "ts-ship",
     "build": "node -e \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "check:v1-route-manifest": "node scripts/generate-v1-route-manifest.js --check",
