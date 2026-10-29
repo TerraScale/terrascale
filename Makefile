@@ -70,7 +70,7 @@ test: test-fast test-slow
 # Everything required before a push.
 check: lint libs-check auth-check terrabase-check benchmark-check test-fast
 
-# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Needs ts-dotnet next to this checkout.
+# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Uses sdk/dotnet from this checkout.
 docker-test:
 	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --build-arg TERRABASE_REVISION=$(shell git rev-parse HEAD) --target test .
 

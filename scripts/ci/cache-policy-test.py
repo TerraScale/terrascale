@@ -68,7 +68,13 @@ for area in ("libs", "auth", "terrabase"):
     assert f"SOLUTION={area}.slnf" in stages[f"build-{area}"][1], area
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
-assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
+# Imported areas retain their own format gates rather than entering platform Fast.
+imported = {"sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj",
+            "sdk/dotnet/tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj",
+            "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj",
+            "tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj"}
+assert imported <= all_projects, imported - all_projects
+assert all_projects <= formatted | imported | {build_check}, all_projects - formatted - imported - {build_check}
 assert "needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
 for job in ("libs", "auth", "auth-package", "terrabase-build", "terrabase"):
@@ -103,6 +109,7 @@ fixtures = {
     "dotnet-tools.json": "{}", "src/nested/server/app.csproj": "<Project/>",
     "src/nested/server/packages.lock.json": "{}", "src/nested/server/Program.cs": "// source",
     "src/nested/server/assets/style.css": "body{}", "docs/ci.md": "documentation",
+    "scripts/dashboard/check-stripe-dependency.py": "# guard\n",
     "src/vendor/driver/locks/Driver.packages.lock.json": "{}", "src/vendor/driver/Directory.Build.targets": "<Project/>",
 }
 expected = set(fixtures) - {"src/nested/server/Program.cs", "src/nested/server/assets/style.css", "docs/ci.md"}
