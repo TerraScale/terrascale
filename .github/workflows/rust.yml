@@ -2,11 +2,11 @@ name: Rust
 
 on:
   push:
+    branches: [main]
     tags: ['v0.0.*']
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
-  # Keep the default-branch Cargo cache warm without repeating PR validation.
+  # Refresh default-branch dependency and advisory caches weekly.
   schedule:
     - cron: '11 14 * * 1'
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -66,19 +66,19 @@ jobs:
             cargo audit --deny warnings --file "$lock"
           done < "$RUNNER_TEMP/cargo-lockfiles"
       - name: Check formatting
-        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
         run: cargo fmt --all -- --check
       - name: Test with HTTP fakes and conformance fixtures
-        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
         run: cargo test --locked --all-features
       - name: Clippy
-        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Qualify crates.io package without credentials
-        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
         run: cargo publish --dry-run --locked --all-features --registry crates-io
       - name: Audit the qualified package lock before publication
-        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push')
         run: |
           package_lock=$(python3 - <<'PYTHON'
           import tomllib
@@ -90,8 +90,25 @@ jobs:
           )
           test -s "$package_lock"
           cargo audit --deny warnings --file "$package_lock"
+      - name: Prime default-branch dependency cache without running tests
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --locked --all-features --no-run
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: false
       - name: Validate release tag and current main
-        if: github.event_name == 'push'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -109,7 +126,6 @@ jobs:
           assert os.environ["RELEASE_TAG"] == f"v{package['version']}", "tag must match Cargo.toml version exactly"
           PY
       - name: Publish tagged crate to crates.io
-        if: github.event_name == 'push'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -118,6 +134,3 @@ jobs:
             exit 1
           fi
           cargo publish --locked --all-features --registry crates-io
-      - name: Prime default-branch dependency cache without running tests
-        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.cache.outputs.cache-hit != 'true'
-        run: cargo test --locked --all-features --no-run
