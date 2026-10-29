@@ -29,7 +29,9 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
         }
 
-        internal void ClearObservation() { lock (gate)
+        internal void ClearObservation()
+        {
+            lock (gate)
             {
                 observation = null;
             }

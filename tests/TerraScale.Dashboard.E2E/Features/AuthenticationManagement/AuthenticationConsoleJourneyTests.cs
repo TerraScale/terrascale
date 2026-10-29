@@ -365,7 +365,9 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
             Check(response.StatusCode == HttpStatusCode.OK, "The workspace producer changes the caller's organization role");
         }
 
-        private static void Check(bool condition, string message) { if (!condition)
+        private static void Check(bool condition, string message)
+        {
+            if (!condition)
             {
                 throw new InvalidOperationException(message);
             }

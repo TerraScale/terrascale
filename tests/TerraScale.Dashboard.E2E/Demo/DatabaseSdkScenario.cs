@@ -735,37 +735,37 @@ namespace TerraScale.Dashboard.E2E
                 lock (gate)
                 {
                     return Results.Json(new
-                {
-                    failures = failures.ToArray(),
-                    requests = requests.ToArray(),
-                    pausedLists = ApiKeys?.PausedLists ?? 0,
-                    pausedCreates,
-                    creates,
-                    branchCreates,
-                    branchConflicts,
-                    documentsRequests,
-                    backupLists,
-                    backupCreates,
-                    backupRestores,
-                    policyWrites,
-                    projectCreates,
-                    projectConflicts,
-                    projectDeletes,
-                    projectDeleteNotFound,
-                    failedProjectMetadataWrites = State.FailedProjectMetadataWrites,
-                    failedProjectDeletionMetadataWrites = State.FailedProjectDeletionMetadataWrites,
-                    failedDatabaseMetadataWrites = State.FailedDatabaseMetadataWrites,
-                    workspaceProjects,
-                    backups = snapshots.Values.Select(value => value.Backup).ToArray(),
-                    credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
-                    authKeys = ApiKeys?.Observations(),
-                    changes = changes.Select(value => new { value.Sequence, value.Transaction, value.DatabaseId, value.Collection, value.Id, value.Op }).ToArray(),
-                    encrypted = State.Encrypted,
-                    credentialReads = State.CredentialReads,
-                    pausedQuotaCommits = State.PausedQuotaCommits,
-                    quotaCasFailures = State.QuotaCasFailures,
-                    databases = databases.Values.ToArray()
-                });
+                    {
+                        failures = failures.ToArray(),
+                        requests = requests.ToArray(),
+                        pausedLists = ApiKeys?.PausedLists ?? 0,
+                        pausedCreates,
+                        creates,
+                        branchCreates,
+                        branchConflicts,
+                        documentsRequests,
+                        backupLists,
+                        backupCreates,
+                        backupRestores,
+                        policyWrites,
+                        projectCreates,
+                        projectConflicts,
+                        projectDeletes,
+                        projectDeleteNotFound,
+                        failedProjectMetadataWrites = State.FailedProjectMetadataWrites,
+                        failedProjectDeletionMetadataWrites = State.FailedProjectDeletionMetadataWrites,
+                        failedDatabaseMetadataWrites = State.FailedDatabaseMetadataWrites,
+                        workspaceProjects,
+                        backups = snapshots.Values.Select(value => value.Backup).ToArray(),
+                        credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
+                        authKeys = ApiKeys?.Observations(),
+                        changes = changes.Select(value => new { value.Sequence, value.Transaction, value.DatabaseId, value.Collection, value.Id, value.Op }).ToArray(),
+                        encrypted = State.Encrypted,
+                        credentialReads = State.CredentialReads,
+                        pausedQuotaCommits = State.PausedQuotaCommits,
+                        quotaCasFailures = State.QuotaCasFailures,
+                        databases = databases.Values.ToArray()
+                    });
                 }
             }
 
@@ -819,7 +819,8 @@ namespace TerraScale.Dashboard.E2E
                 if (parts.Length == 6 && parts[5] == "backup-policy")
                 {
                     if (http.Request.Method == "GET")
-                    { lock (gate)
+                    {
+                        lock (gate)
                         {
                             return Results.Json(policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, false, null));
                         }
@@ -1164,10 +1165,10 @@ namespace TerraScale.Dashboard.E2E
                         lock (gate)
                         {
                             return Results.Json(new
-                        {
-                            items = collections.Where(item => item.Key.StartsWith(project + "/" + current.Name + "/", StringComparison.Ordinal)).Select(item =>
-                                new { name = item.Key.Split('/')[2], documents = (long)item.Value.Count, bytes = item.Value.Values.Sum(value => (long)System.Text.Encoding.UTF8.GetByteCount(value.Document.GetRawText())) }).ToArray()
-                        });
+                            {
+                                items = collections.Where(item => item.Key.StartsWith(project + "/" + current.Name + "/", StringComparison.Ordinal)).Select(item =>
+                                    new { name = item.Key.Split('/')[2], documents = (long)item.Value.Count, bytes = item.Value.Values.Sum(value => (long)System.Text.Encoding.UTF8.GetByteCount(value.Document.GetRawText())) }).ToArray()
+                            });
                         }
 
                     case (7, "GET", "schema"):
@@ -1244,10 +1245,10 @@ namespace TerraScale.Dashboard.E2E
                         lock (gate)
                         {
                             return Results.Json(new
-                        {
-                            items = indexes.GetValueOrDefault(current.Id)?.Values.Where(index => only.Length == 0 || index.Collection == only)
+                            {
+                                items = indexes.GetValueOrDefault(current.Id)?.Values.Where(index => only.Length == 0 || index.Collection == only)
                             .Select(index => new { name = index.Name, collection = index.Collection, fields = index.Fields, state = "active" }).ToArray() ?? []
-                        });
+                            });
                         }
 
                     case (6, "POST", "indexes"):
@@ -1521,7 +1522,9 @@ namespace TerraScale.Dashboard.E2E
                         }
                     }
                     var body = await JsonAsync(http); var name = body.GetProperty("name").GetString()!;
-                    lock (gate) { if (!collections.TryAdd(prefix + name, []))
+                    lock (gate)
+                    {
+                        if (!collections.TryAdd(prefix + name, []))
                         {
                             return Error(409, "name_taken");
                         }
@@ -1530,7 +1533,9 @@ namespace TerraScale.Dashboard.E2E
                 }
                 if (parts.Length == 7 && http.Request.Method == "DELETE")
                 {
-                    lock (gate) { if (!collections.Remove(prefix + parts[6]))
+                    lock (gate)
+                    {
+                        if (!collections.Remove(prefix + parts[6]))
                         {
                             return Error(404, "not_found");
                         }
@@ -1540,7 +1545,9 @@ namespace TerraScale.Dashboard.E2E
                 Require(parts.Length >= 8 && parts[7] is "documents" or "query", "Official document route");
                 var collectionKey = prefix + parts[6];
                 Dictionary<string, TerraBaseDocument> rows;
-                lock (gate) { if (!collections.TryGetValue(collectionKey, out rows!))
+                lock (gate)
+                {
+                    if (!collections.TryGetValue(collectionKey, out rows!))
                     {
                         return Error(404, "not_found");
                     }
@@ -1612,7 +1619,9 @@ namespace TerraScale.Dashboard.E2E
                 }
             }
 
-            private void Require(bool condition, string message) { if (!condition)
+            private void Require(bool condition, string message)
+            {
+                if (!condition)
                 {
                     throw new InvalidOperationException(message);
                 }
@@ -1652,7 +1661,9 @@ namespace TerraScale.Dashboard.E2E
                 }
 
                 var target = current as JsonObject ?? new JsonObject();
-                foreach (var entry in changes) { if (entry.Value is null)
+                foreach (var entry in changes)
+                {
+                    if (entry.Value is null)
                     {
                         target.Remove(entry.Key);
                     }
