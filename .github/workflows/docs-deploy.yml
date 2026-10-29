@@ -1,0 +1,105 @@
+name: Docs Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+concurrency:
+  group: docs-production
+  cancel-in-progress: false
+
+jobs:
+  eligible:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy: ${{ steps.proof.outputs.deploy }}
+      revision: ${{ steps.proof.outputs.revision }}
+    steps:
+      - id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          main=$(gh api repos/TerraScale/terrascale/git/ref/heads/main --jq .object.sha)
+          [[ "$REVISION" = "$main" ]] || { echo 'A newer main revision superseded this deployment.'; exit 0; }
+          gh api --paginate --slurp "repos/TerraScale/terrascale/commits/$REVISION/statuses?per_page=100" > "$RUNNER_TEMP/docs-statuses.json"
+          python3 - "$RUNNER_TEMP/docs-statuses.json" <<'PY'
+          import json, os, sys
+          statuses = [item for page in json.load(open(sys.argv[1])) for item in page]
+          proof = next((item for item in statuses if item['context'] == 'docs-release/docs'), None)
+          qualified = proof and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
+          if not qualified and os.environ['EVENT_NAME'] == 'workflow_dispatch':
+              raise SystemExit('Qualify this exact docs commit on a dev host before deploying it')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"deploy={'true' if qualified else 'false'}\nrevision={os.environ['REVISION']}\n")
+          PY
+
+  deploy:
+    needs: eligible
+    if: needs.eligible.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: docs-site
+    env:
+      REVISION: ${{ needs.eligible.outputs.revision }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.eligible.outputs.revision }}
+          persist-credentials: false
+      - name: Require green main and dev-host Fast for this exact revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 ../scripts/docs/check-proof.py docs "$REVISION"
+          gh run list --repo TerraScale/terrascale --branch main --commit "$REVISION" --event push --limit 100 --json status,conclusion > "$RUNNER_TEMP/docs-main-runs.json"
+          python3 - "$RUNNER_TEMP/docs-main-runs.json" <<'PY'
+          import json, sys
+          runs = json.load(open(sys.argv[1]))
+          assert runs and all(run['status'] == 'completed' and run['conclusion'] in ('success', 'skipped') for run in runs), 'Main must be green before deployment'
+          PY
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: docs-site/.node-version
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+      - name: Download and verify the checked site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "docs/qualified-$REVISION" --repo TerraScale/terrascale --dir "$RUNNER_TEMP/docs-site"
+          python3 - "$RUNNER_TEMP/docs-site" "$REVISION" <<'PY'
+          import hashlib, json, pathlib, sys, tarfile
+          root = pathlib.Path(sys.argv[1])
+          manifest = json.loads((root / 'site-manifest.json').read_text())
+          assert manifest['revision'] == sys.argv[2] and manifest['sourceDirectory'] == 'docs-site', 'Artifact source differs from this revision'
+          archive = root / 'site.tar.gz'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest['sha256'], 'Artifact digest mismatch'
+          with tarfile.open(archive) as package:
+              for member in package.getmembers():
+                  name = pathlib.PurePosixPath(member.name)
+                  assert not name.is_absolute() and '..' not in name.parts and not member.issym() and not member.islnk(), 'Unsafe artifact path'
+                  assert member.name.startswith(('.cloudflare/output', 'docs/.vitepress/dist')), 'Unexpected artifact member'
+              package.extractall(filter='data')
+          info = json.loads(pathlib.Path('docs/.vitepress/dist/build-info.json').read_text())
+          assert info['commit'] == sys.argv[2], 'Static site revision differs from this deployment'
+          PY
+      - name: Deploy the checked site to Workers
+        run: npm run deploy:site -- --message "$REVISION"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Prove hosted pages, assets and revision
+        run: node scripts/check-hosted.mjs

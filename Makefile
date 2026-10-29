@@ -219,3 +219,7 @@ terrabase-test-shard:
 .PHONY: landing-test-fast
 landing-test-fast:
 	cd landing-site && npm ci --no-audit --no-fund && npm run build
+
+.PHONY: docs-test-fast
+docs-test-fast:
+	cd docs-site && bash scripts/test-fast.sh
