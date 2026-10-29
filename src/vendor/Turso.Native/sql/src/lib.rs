@@ -1,10 +1,8 @@
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, panic::catch_unwind, ptr, slice, str};
-use turso_parser::{ast::*, lexer::Lexer, parser::Parser, token::TokenType::*};
+use turso_parser::{ast::*, parser::Parser};
 
 const MAX_BYTES: usize = 1024 * 1024;
-const MAX_TOKENS: usize = 512;
-const MAX_PARENS: usize = 32;
 
 fn independent(expr: &Expr) -> bool {
     let mut pending = vec![expr];
@@ -240,7 +238,8 @@ fn parse_error(error: turso_parser::error::Error) -> i32 {
     match error {
         turso_parser::error::Error::Custom(message)
         | turso_parser::error::Error::ParseError(message)
-            if message.starts_with("Expression tree is too large")
+            if message == "Routing parser resource limit"
+                || message.starts_with("Expression tree is too large")
                 || message.starts_with("STRUCT/UNION nesting depth exceeds") =>
         {
             3
@@ -250,26 +249,6 @@ fn parse_error(error: turso_parser::error::Error) -> i32 {
 }
 
 fn parse(sql: &[u8], offset: usize) -> Result<Option<Vec<u8>>, i32> {
-    let mut depth = 0usize;
-    let mut count = 0usize;
-    for token in Lexer::new(sql) {
-        let token = token.map_err(|_| 2)?;
-        if token.token_type == TK_NONE {
-            continue;
-        }
-        count += 1;
-        if count > MAX_TOKENS {
-            return Err(3);
-        }
-        match token.token_type {
-            TK_LP => depth += 1,
-            TK_RP => depth = depth.checked_sub(1).ok_or(2)?,
-            _ => {}
-        }
-        if depth > MAX_PARENS {
-            return Err(3);
-        }
-    }
     let mut parser = Parser::new(sql);
     let mut selected = None;
     let mut boundary = offset == 0;

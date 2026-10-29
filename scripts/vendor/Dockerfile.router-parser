@@ -14,7 +14,8 @@ RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux
     && test "$(od -An -tx1 -j18 -N2 /parser-target/release/libterrascale_sql_parser.so | tr -d ' \n')" = "$machine" \
     && mkdir -p "/out/router-parser/runtimes/$rid/native" "/out/router-parser/$rid" \
     && cp /parser-target/release/libterrascale_sql_parser.so "/out/router-parser/runtimes/$rid/native/" \
-    && cp src/vendor/Turso.Native/sql/Cargo.lock src/vendor/Turso.Native/sql/ts_sql.h /smoke.txt "/out/router-parser/$rid/" \
+    && cp src/vendor/Turso.Native/sql/Cargo.lock src/vendor/Turso.Native/sql/ts_sql.h src/vendor/Turso.Native/sql/parser-limits.patch /smoke.txt "/out/router-parser/$rid/" \
+    && cp artifacts/router-parser/turso/LICENSE.md artifacts/router-parser/turso/NOTICE.md "/out/router-parser/$rid/" \
     && rustc --version --verbose > "/out/router-parser/$rid/rustc.txt" \
     && nm -D --defined-only /parser-target/release/libterrascale_sql_parser.so > "/out/router-parser/$rid/exports.txt" \
     && cd /out/router-parser && sha256sum "runtimes/$rid/native/libterrascale_sql_parser.so" > "$rid/SHA256SUMS"
