@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Time.Testing;
+using Npgsql;
 using TerraBase.Testing;
 using static TerraBase.Testing.PostgresSql;
 
