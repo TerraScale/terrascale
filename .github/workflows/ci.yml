@@ -1,23 +1,20 @@
-# Build and test changed SDK inputs before main; unproven main pushes still run every check. Tests use HTTP fakes only (the
-# monorepo checks TerraBase serves contracts/terrabase/routes.json).
+# Every main push and release runs the SDK tests with HTTP fakes.
 name: CI
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
   workflow_dispatch:
+  workflow_call:
   push:
     branches: [main]
-    # Markdown and docs never change what CI checks.
-    paths-ignore: ['**.md', 'docs/**']
 
 permissions:
   contents: read
 
-# Superseded PR runs cancel; main cache saves and merge groups finish.
+# Superseded PR runs cancel; main runs finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -25,8 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
-      pull-requests: read
     # Draft PRs run nothing; marking the PR ready runs it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 20
@@ -38,31 +33,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-      - name: Detect changed SDK inputs
-        id: changes
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
-          sdk=false
-          if ! git diff --name-only -z "$BASE" "$HEAD" > "$RUNNER_TEMP/changed"; then
-            sdk=true
-          else
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                *.md|docs/*|.github/dependabot.yml|.github/workflows/codeql.yml) ;;
-                *) sdk=true; break ;;
-              esac
-            done < "$RUNNER_TEMP/changed"
-          fi
-          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
-      - name: Check exact PR proof on main
-        id: proof
-        if: github.event_name == 'push' && steps.changes.outputs.sdk == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/proven-pr.sh
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         id: nuget
         with:
@@ -73,22 +43,15 @@ jobs:
         with:
           global-json-file: global.json
           dotnet-version: 10.0.401
-      - name: Audit dependencies without repeating proven builds
-        if: steps.changes.outputs.sdk != 'true' || steps.proof.outputs.proven == 'true'
-        run: bash scripts/check-dependencies.sh
       - name: Run release build and tests
-        if: steps.changes.outputs.sdk == 'true' && steps.proof.outputs.proven != 'true'
         run: |
-          bash scripts/ci/test-proven-pr.sh
           bash scripts/check-release.sh
       - name: Qualify release package without registry credentials
-        if: steps.changes.outputs.sdk == 'true' && steps.proof.outputs.proven != 'true'
         run: python3 scripts/pack-reproducible.py "$RUNNER_TEMP/qualified-package"
-      - name: Checked tree ${{ steps.changes.outputs.tree }}
-        if: steps.changes.outputs.sdk == 'true' && steps.proof.outputs.proven != 'true'
+      - name: SDK validation passed
         run: echo 'Build, whitespace, security audit, both target-framework suites, and reproducible package qualification passed.'
       - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.changes.outputs.sdk == 'true' && steps.nuget.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.nuget.outputs.cache-hit != 'true'
         with:
           path: ~/.nuget/packages
           key: ${{ steps.nuget.outputs.cache-primary-key }}
