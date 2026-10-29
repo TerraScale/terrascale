@@ -1,9 +1,13 @@
 import { connect } from '@tursodatabase/sync';
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 const [directory, count, warmup, host] = process.argv.slice(2);
 const clock = () => Number(process.hrtime.bigint());
-const save = (name, value) => writeFileSync(`${directory}/${name}.json`, JSON.stringify(value));
+const save = (name, value) => {
+    const target = `${directory}/${name}.json`;
+    writeFileSync(`${target}.tmp`, JSON.stringify(value));
+    renameSync(`${target}.tmp`, target);
+};
 const requests = [];
 const instrumentedFetch = async (url, options) => {
     const start = clock();

@@ -279,20 +279,44 @@ def orchestrate(seconds, smoke=False, synchronous=2):
                             p.wait(timeout=10)
                         processes.clear()
     finally:
+        workload_error = sys.exception()
+        cleanup_errors = []
         for p in processes:
-            if p.poll() is None:
-                p.kill()
-                p.wait()
+            try:
+                if p.poll() is None:
+                    p.kill()
+                p.wait(timeout=10)
+            except Exception as error:
+                cleanup_errors.append(f'process {p.pid}: {error!r}')
         for name in created:
-            S.run(['ip', 'netns', 'del', name], check=False)
-        evidence['root_network_after'] = {c: cmd(*c.split()) for c in root_network}
-        assert evidence['root_network_after'] == root_network, 'root network changed'
-        evidence['cleanup'] = {'namespaces': created, 'remaining': cmd('ip', 'netns', 'list')}
-        assert not set(created) & {line.split()[0] for line in evidence['cleanup']['remaining'].splitlines()}
+            try:
+                cmd('ip', 'netns', 'del', name)
+            except Exception as error:
+                cleanup_errors.append(f'namespace {name}: {error!r}')
+        evidence['root_network_after'] = {}
+        for c in root_network:
+            try:
+                evidence['root_network_after'][c] = cmd(*c.split())
+            except Exception as error:
+                cleanup_errors.append(f'network observation {c}: {error!r}')
+        if evidence['root_network_after'] != root_network:
+            cleanup_errors.append('root network changed')
+        evidence['cleanup'] = {'namespaces': created, 'remaining': None}
+        try:
+            remaining = cmd('ip', 'netns', 'list')
+            evidence['cleanup']['remaining'] = remaining
+            if set(created) & {line.split()[0] for line in remaining.splitlines()}:
+                cleanup_errors.append('owned namespaces remain')
+        except Exception as error:
+            cleanup_errors.append(f'namespace observation: {error!r}')
+        evidence['cleanup_errors'] = cleanup_errors
+        evidence['workload_error'] = repr(workload_error) if workload_error else None
         with gzip.open(result / 'raw.json.gz.tmp', 'wt') as stream:
             json.dump(evidence, stream, separators=(',', ':'))
         (result / 'raw.json.gz.tmp').replace(result / 'raw.json.gz')
         print(result, flush=True)
+        if cleanup_errors and workload_error is None:
+            raise RuntimeError('; '.join(cleanup_errors))
 
 if __name__ == '__main__':
     if sys.argv[1] == 'run':
