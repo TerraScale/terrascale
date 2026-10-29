@@ -264,6 +264,16 @@ public sealed class ProjectClosureTests
         await ErrorAssert.ErrorAsync(PutAsync(api.Server.Client, database.Project, fence.ClosureId, fence.AuthorityOrganizationId, 2),
             HttpStatusCode.Conflict, "binding_conflict", "TerraBase binds this project id to another organization");
         await ((EngineManagementService)api.Server.Services.GetRequiredService<IManagementService>()).ConvergeAsync(CancellationToken.None);
+        await using (var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var machine = api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId;
+            var stored = await transaction.GetAsync(ProjectClosure.Receipts(database.Project), machine, CancellationToken.None);
+            await Assert.That(stored).IsNotNull();
+            var receipt = EntityPayload.Read(stored!, TerraBaseJsonContext.Default.ProjectClosureReceipt)!;
+            await Assert.That(receipt.ClosureId).IsEqualTo(fence.ClosureId);
+            await Assert.That(receipt.Empty).IsFalse();
+        }
+
         using var retained = await api.Client.GetAsync(ManagementApi.Uri(database.Path));
         await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
