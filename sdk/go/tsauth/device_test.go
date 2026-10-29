@@ -1,0 +1,154 @@
+package tsauth
+
+import (
+	"cmp"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"testing"
+)
+
+func newDeviceServer(t *testing.T, verification string, token func(w http.ResponseWriter, form url.Values)) (*Device, *httptest.Server) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		form, _ := url.ParseQuery(string(body))
+		if form.Get("client_id") != CLIClientID || r.Header.Get("Authorization") != "" {
+			t.Errorf("%s: public client form %v", r.URL.Path, form)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/terrascale/oauth/device":
+			if form.Get("scope") != "openid email offline_access" {
+				t.Errorf("device scope %q", form.Get("scope"))
+			}
+			fmt.Fprintf(w, `{"device_code":"dc","user_code":"1234-5678","verification_uri":%q,"expires_in":600,"interval":1}`, cmp.Or(verification, srv.URL+"/ui/terrascale/device"))
+		case "/terrascale/oauth/token":
+			token(w, form)
+		default:
+			t.Errorf("path %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	d, err := NewDevice(DeviceConfig{Issuer: srv.URL + "/terrascale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d, srv
+}
+
+func TestDeviceWaitsForApprovalThenRefreshes(t *testing.T) {
+	polls := 0
+	d, _ := newDeviceServer(t, "", func(w http.ResponseWriter, form url.Values) {
+		switch form.Get("grant_type") {
+		case deviceGrant:
+			if form.Get("device_code") != "dc" {
+				t.Errorf("device_code %q", form.Get("device_code"))
+			}
+			if polls++; polls == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"error":"authorization_pending"}`)
+				return
+			}
+			fmt.Fprint(w, `{"access_token":"at1","token_type":"Bearer","expires_in":3600,"refresh_token":"rt1"}`)
+		case "refresh_token":
+			if form.Get("refresh_token") != "rt1" {
+				t.Errorf("refresh_token %q", form.Get("refresh_token"))
+			}
+			fmt.Fprint(w, `{"access_token":"at2","token_type":"Bearer","expires_in":3600,"refresh_token":"rt2"}`)
+		}
+	})
+	a, err := d.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.VerificationURIComplete != a.VerificationURI || a.UserCode != "1234-5678" {
+		t.Fatalf("authorization %+v", a)
+	}
+	tokens, err := d.Wait(t.Context(), a)
+	if err != nil || tokens.AccessToken != "at1" || tokens.RefreshToken != "rt1" || polls != 2 {
+		t.Fatalf("Wait = %+v, %v after %d polls", tokens, err, polls)
+	}
+	tokens, err = d.Refresh(t.Context(), "rt1")
+	if err != nil || tokens.AccessToken != "at2" || tokens.RefreshToken != "rt2" {
+		t.Fatalf("Refresh = %+v, %v", tokens, err)
+	}
+}
+
+func TestDeviceDenialAndForeignVerificationPage(t *testing.T) {
+	d, _ := newDeviceServer(t, "", func(w http.ResponseWriter, _ url.Values) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"access_denied"}`)
+	})
+	a, err := d.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e *Error
+	if _, err := d.Wait(t.Context(), a); !errors.As(err, &e) || e.Code != "access_denied" {
+		t.Fatalf("Wait = %v, want access_denied", err)
+	}
+	d, _ = newDeviceServer(t, "https://evil.example/device", nil)
+	if _, err := d.Start(t.Context()); err == nil {
+		t.Fatal("Start accepted a verification page off the issuer")
+	}
+}
+
+func TestDeviceWaitKeepsPollingThroughOutages(t *testing.T) {
+	polls := 0
+	d, _ := newDeviceServer(t, "", func(w http.ResponseWriter, _ url.Values) {
+		switch polls++; polls {
+		case 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, "upstream unavailable")
+		case 2:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate_limited"}`)
+		default:
+			fmt.Fprint(w, `{"access_token":"at1","token_type":"Bearer","expires_in":3600,"refresh_token":"rt1"}`)
+		}
+	})
+	a, err := d.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := d.Wait(t.Context(), a)
+	if err != nil || tokens.AccessToken != "at1" || polls != 3 {
+		t.Fatalf("Wait = %+v, %v after %d polls", tokens, err, polls)
+	}
+}
+
+func TestDeviceStartRepeatsAnOutage(t *testing.T) {
+	starts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if starts++; starts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		fmt.Fprintf(w, `{"device_code":"dc","user_code":"1234-5678","verification_uri":%q,"expires_in":600,"interval":1}`, "http://"+r.Host+"/ui/terrascale/device")
+	}))
+	t.Cleanup(srv.Close)
+	d, err := NewDevice(DeviceConfig{Issuer: srv.URL + "/terrascale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, err := d.Start(t.Context()); err != nil || a.DeviceCode != "dc" || starts != 2 {
+		t.Fatalf("Start = %+v, %v after %d requests", a, err, starts)
+	}
+}
+
+func TestDeviceStartReportsAGatewayStatusWithoutACode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	t.Cleanup(srv.Close)
+	d, err := NewDevice(DeviceConfig{Issuer: srv.URL + "/terrascale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Start(t.Context()); err == nil || err.Error() != "tsauth: token endpoint answered 403 Forbidden" {
+		t.Fatalf("Start = %v", err)
+	}
+}

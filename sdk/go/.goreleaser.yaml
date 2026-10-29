@@ -1,0 +1,45 @@
+version: 2
+project_name: ts
+builds:
+  - main: ./cmd/ts
+    binary: ts
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    hooks:
+      post: bash scripts/check-release-binary.sh "{{ .Path }}"
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+archives:
+  - name_template: 'ts_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE]
+checksum:
+  name_template: checksums.txt
+snapshot:
+  version_template: 0.0.0-dev
+release:
+  github:
+    owner: TerraScale
+    name: ts-go
+  extra_files:
+    - glob: scripts/install.sh
+    - glob: dist/homebrew/Formula/ts.rb
+# Formulas support Linux as well as macOS; casks only support macOS.
+brews:
+  - name: ts
+    repository:
+      owner: TerraScale
+      name: homebrew-tap
+    directory: Formula
+    homepage: https://terrascale.tech
+    description: TerraScale CLI
+    license: Apache-2.0
+    # Generate for the release; the dependent Homebrew job publishes to the tap.
+    skip_upload: true
+    install: bin.install "ts"
+    test: |
+      assert_equal "ts #{version}", shell_output("#{bin}/ts --version").strip

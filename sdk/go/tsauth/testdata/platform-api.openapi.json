@@ -1,0 +1,3018 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TerraScale Auth platform API",
+    "version": "v1-contract",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "description": "Contract v1 of the platform identity API (TS-598, epic TS-597): organizations, projects, members, roles,\ninvitations, ownership transfer, audit events and API keys of the `terrascale` tenant, and the token\nendpoint grants that turn API keys and user sign-ins into organization and project tokens.\ndocs/platform-contract.md is the prose half of this contract. Operations are served as their slices land;\nthe served /openapi/v1.json describes what is served.\n"
+  },
+  "servers": [
+    {
+      "url": "https://gru.auth.terrascale.tech"
+    }
+  ],
+  "security": [
+    {
+      "platformUser": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Organizations",
+      "description": "Organizations of the terrascale tenant. The caller is a signed-in platform user."
+    },
+    {
+      "name": "Members",
+      "description": "Organization members and their organization roles (viewer, member, admin, owner)."
+    },
+    {
+      "name": "Invitations",
+      "description": "Email invitations to an organization role or to one project's role."
+    },
+    {
+      "name": "Ownership transfer",
+      "description": "Handing an organization's ownership to another member, confirmed by the nominee."
+    },
+    {
+      "name": "Projects",
+      "description": "Projects of an organization. Each project is also the tenant of its end users."
+    },
+    {
+      "name": "Project members",
+      "description": "Explicit project roles (viewer, member, admin), for organization members and collaborators."
+    },
+    {
+      "name": "API keys",
+      "description": "Client credentials owned by an organization or project, exchanged at the token endpoint for short-lived tokens."
+    },
+    {
+      "name": "Audit",
+      "description": "Audit events of an organization's identity changes."
+    },
+    {
+      "name": "OAuth",
+      "description": "Token endpoint grants for API keys (client credentials) and user organization or project tokens (token exchange)."
+    }
+  ],
+  "paths": {
+    "/v1/terrascale/organizations": {
+      "post": {
+        "operationId": "create_organization",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Create an organization",
+        "description": "The caller becomes its first member, with the owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              },
+              "example": {
+                "name": "Acme"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The organization.",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_organizations",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "List the caller's organizations",
+        "description": "Organizations the caller is a member of, and those where it is a collaborator on a project (role null), in id order.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of organizations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "get": {
+        "operationId": "get_organization",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Get an organization",
+        "description": "Members and collaborators. A caller who is neither gets 404, as for an unknown id.",
+        "responses": {
+          "200": {
+            "description": "The organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "rename_organization",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Rename an organization",
+        "description": "Needs the admin organization role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The renamed organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_organization",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Delete an organization",
+        "description": "Needs the owner role. 409 not_empty while it has projects. Deletes its members, invitations, transfer, organization API keys and audit events.",
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/members": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "get": {
+        "operationId": "list_members",
+        "tags": [
+          "Members"
+        ],
+        "summary": "List organization members",
+        "description": "Needs any organization role. In user id order.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/members/{user}/role": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/User"
+        }
+      ],
+      "put": {
+        "operationId": "change_member_role",
+        "tags": [
+          "Members"
+        ],
+        "summary": "Change a member's organization role",
+        "description": "Needs admin, and owner when the member is or becomes an owner. 409 last_owner when it would demote the last owner.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationRoleRequest"
+              },
+              "example": {
+                "role": "admin"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Member"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/members/{user}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/User"
+        }
+      ],
+      "delete": {
+        "operationId": "remove_member",
+        "tags": [
+          "Members"
+        ],
+        "summary": "Remove a member",
+        "description": "Needs admin, and owner to remove an owner. 409 last_owner for the last owner. Also removes the user's project roles in the organization.",
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/leave": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "post": {
+        "operationId": "leave_organization",
+        "tags": [
+          "Members"
+        ],
+        "summary": "Leave an organization",
+        "description": "Members and collaborators. Removes the caller's organization and project roles. 409 last_owner for the last owner.",
+        "responses": {
+          "204": {
+            "description": "Left."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/invitations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "post": {
+        "operationId": "create_invitation",
+        "tags": [
+          "Invitations"
+        ],
+        "summary": "Invite an email address",
+        "description": "Without project_id: an organization role; needs admin, and owner to invite an owner. With project_id: a role\non that project; needs the project's admin role. ts-auth emails a link to TS_AUTH_INVITATION_URL?token=…;\nthe token is also answered once. Valid 7 days, single use. 409 invitation_pending while an unexpired\ninvitation for the email and target is pending, 409 already_member when the address's user already has it.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInvitationRequest"
+              },
+              "example": {
+                "email": "ada@example.com",
+                "role": "member",
+                "project_id": null
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The invitation and its token, shown once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_invitations",
+        "tags": [
+          "Invitations"
+        ],
+        "summary": "List invitations",
+        "description": "Every invitation with its status, in creation order. Needs admin; a project admin lists its project's with project_id.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "description": "Only invitations to this project.",
+            "schema": {
+              "$ref": "#/components/schemas/Ulid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of invitations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/invitations/{invitation}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Invitation"
+        }
+      ],
+      "delete": {
+        "operationId": "revoke_invitation",
+        "tags": [
+          "Invitations"
+        ],
+        "summary": "Revoke an invitation",
+        "description": "Needs admin, or the project's admin for a project invitation. Its status becomes revoked and its token stops working. 409 when it is no longer pending.",
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/invitations/lookup": {
+      "post": {
+        "operationId": "lookup_invitation",
+        "tags": [
+          "Invitations"
+        ],
+        "summary": "Look up an invitation by token",
+        "description": "Any signed-in user holding the token. A token that is unknown, expired or no longer pending answers 404.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The pending invitation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationLookup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/invitations/accept": {
+      "post": {
+        "operationId": "accept_invitation",
+        "tags": [
+          "Invitations"
+        ],
+        "summary": "Accept an invitation",
+        "description": "The caller's token must carry email_verified true and an email equal to the invitation's, ignoring case\n(403 otherwise). 404 for an unknown token, 409 invitation_expired, 409 when it is no longer pending or the\nuser already has the role.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the caller now holds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedInvitation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/invitations/decline": {
+      "post": {
+        "operationId": "decline_invitation",
+        "tags": [
+          "Invitations"
+        ],
+        "summary": "Decline an invitation",
+        "description": "Same email rule as accept. The invitation's status becomes declined.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Declined."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/ownership-transfer": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "post": {
+        "operationId": "start_ownership_transfer",
+        "tags": [
+          "Ownership transfer"
+        ],
+        "summary": "Offer ownership to a member",
+        "description": "Needs owner. The nominee is a member who is not an owner. Replaces a pending transfer; valid 7 days.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The pending transfer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnershipTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_ownership_transfer",
+        "tags": [
+          "Ownership transfer"
+        ],
+        "summary": "Get the pending transfer",
+        "description": "Needs any organization role. 404 when there is none.",
+        "responses": {
+          "200": {
+            "description": "The pending transfer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnershipTransfer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancel_ownership_transfer",
+        "tags": [
+          "Ownership transfer"
+        ],
+        "summary": "Cancel the pending transfer",
+        "description": "An owner or the nominee.",
+        "responses": {
+          "204": {
+            "description": "Cancelled."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/ownership-transfer/confirm": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "post": {
+        "operationId": "confirm_ownership_transfer",
+        "tags": [
+          "Ownership transfer"
+        ],
+        "summary": "Confirm a transfer",
+        "description": "Only the nominee. The nominee becomes an owner and the owner who started it an admin.",
+        "responses": {
+          "200": {
+            "description": "The nominee's membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Member"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "post": {
+        "operationId": "create_project",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create a project",
+        "description": "Needs the member organization role. Creates the project's tenant; the caller becomes the project's explicit admin. 409 name_taken.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              },
+              "example": {
+                "name": "Production"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The project.",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_projects",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "List projects",
+        "description": "Every project for organization members, the granted ones for collaborators; in id order.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of projects.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects/{project}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Project"
+        }
+      ],
+      "get": {
+        "operationId": "get_project",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Get a project",
+        "description": "Needs an effective project role. Others get 404.",
+        "responses": {
+          "200": {
+            "description": "The project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "rename_project",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Rename a project",
+        "description": "Needs the project's admin role. 409 name_taken.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The renamed project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_project",
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Delete a project",
+        "description": "Needs the project's admin role. Deletes its tenant, project roles, pending invitations and API keys; no\ntoken is issued for it afterwards. TerraBase databases are not deleted: the platform deletes them first.\n",
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects/{project}/members": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Project"
+        }
+      ],
+      "get": {
+        "operationId": "list_project_members",
+        "tags": [
+          "Project members"
+        ],
+        "summary": "List explicit project roles",
+        "description": "Needs an effective project role. Lists explicit grants only; organization members' implied roles are not repeated. In user id order.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of project members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMemberPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects/{project}/members/{user}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Project"
+        },
+        {
+          "$ref": "#/components/parameters/User"
+        }
+      ],
+      "put": {
+        "operationId": "set_project_member_role",
+        "tags": [
+          "Project members"
+        ],
+        "summary": "Grant or change a project role",
+        "description": "Needs the project's admin role. A new grant needs a member of the organization (404 otherwise; invite anyone else).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectRoleRequest"
+              },
+              "example": {
+                "role": "admin"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The project member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMember"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "remove_project_member",
+        "tags": [
+          "Project members"
+        ],
+        "summary": "Remove a project role",
+        "description": "Needs the project's admin role. A collaborator left with no project role leaves the organization.",
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/api-keys": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "post": {
+        "operationId": "create_organization_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Create an organization API key",
+        "description": "Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrganizationApiKeyRequest"
+              },
+              "example": {
+                "name": "ci",
+                "scopes": [
+                  "databases:read",
+                  "documents:read"
+                ],
+                "expires_at": null
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The key and its secret string, shown once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeySecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_organization_api_keys",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "List organization API keys",
+        "description": "Needs admin. Unrevoked keys, never secrets, in creation order.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of keys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/api-keys/{key}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Key"
+        }
+      ],
+      "get": {
+        "operationId": "get_organization_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Get an organization API key",
+        "description": "Needs admin.",
+        "responses": {
+          "200": {
+            "description": "The key, without its secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKey"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revoke_organization_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Revoke an organization API key",
+        "description": "Needs admin. No token is issued for it afterwards; tokens already issued expire within 15 minutes.",
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/api-keys/{key}/rotate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Key"
+        }
+      ],
+      "post": {
+        "operationId": "rotate_organization_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Rotate an organization API key",
+        "description": "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateApiKeyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The key and its new secret string, shown once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeySecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Project"
+        }
+      ],
+      "post": {
+        "operationId": "create_project_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Create a project API key",
+        "description": "Needs the project's member role; scopes must be within the caller's. The key string is answered once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectApiKeyRequest"
+              },
+              "example": {
+                "name": "backend",
+                "scopes": [
+                  "documents:read",
+                  "documents:write"
+                ],
+                "database": "app",
+                "expires_at": null
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The key and its secret string, shown once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeySecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_project_api_keys",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "List project API keys",
+        "description": "Needs the project's member role. Unrevoked keys, never secrets, in creation order.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of keys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Project"
+        },
+        {
+          "$ref": "#/components/parameters/Key"
+        }
+      ],
+      "get": {
+        "operationId": "get_project_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Get a project API key",
+        "description": "Needs the project's member role.",
+        "responses": {
+          "200": {
+            "description": "The key, without its secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKey"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revoke_project_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Revoke a project API key",
+        "description": "Needs the project's member role. No token is issued for it afterwards; tokens already issued expire within 15 minutes.",
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}/rotate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        },
+        {
+          "$ref": "#/components/parameters/Project"
+        },
+        {
+          "$ref": "#/components/parameters/Key"
+        }
+      ],
+      "post": {
+        "operationId": "rotate_project_api_key",
+        "tags": [
+          "API keys"
+        ],
+        "summary": "Rotate a project API key",
+        "description": "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateApiKeyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The key and its new secret string, shown once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeySecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/v1/terrascale/organizations/{organization}/audit-events": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Organization"
+        }
+      ],
+      "get": {
+        "operationId": "list_audit_events",
+        "tags": [
+          "Audit"
+        ],
+        "summary": "List audit events",
+        "description": "Needs admin. Newest first; kept at least 90 days.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of audit events.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/terrascale/oauth/token": {
+      "post": {
+        "operationId": "oauth_token",
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Token endpoint",
+        "description": "The grants this contract adds. The existing ones (authorization_code, refresh_token, the TS-582 headless\ngrants) are unchanged and described in the served OpenAPI. Tokens are ES256 JWTs with typ at+jwt;\ndocs/platform-contract.md section 6.3 lists their claims.\n",
+        "security": [
+          {
+            "clientBasic": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ClientCredentialsGrant"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TokenExchangeGrant"
+                  }
+                ]
+              },
+              "examples": {
+                "apiKey": {
+                  "summary": "An organization API key, for a project token",
+                  "value": {
+                    "grant_type": "client_credentials",
+                    "project": "01K6SY8PVAFJ6SW3RT5CY4TQKF",
+                    "scope": "documents:read documents:write"
+                  }
+                },
+                "user": {
+                  "summary": "A user's sign-in token, for a project token",
+                  "value": {
+                    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                    "subject_token": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9…",
+                    "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                    "organization": "01K6SY8000E008000000000001",
+                    "project": "01K6SY8PVAFJ6SW3RT5CY4TQKF"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An organization or project access token.",
+            "headers": {
+              "Cache-Control": {
+                "description": "no-store",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request, unsupported_grant_type, unauthorized_client, invalid_grant, invalid_scope or invalid_target.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_client; unknown, wrong, revoked and expired keys answer alike.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited.",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "platformUser": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer). Organization,\nproject, API key and service tokens are refused.\n"
+      },
+      "clientBasic": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "OAuth client authentication; for an API key, the key id and the whole key string."
+      }
+    },
+    "headers": {
+      "Location": {
+        "description": "The created resource.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait.",
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "Organization": {
+        "name": "organization",
+        "in": "path",
+        "required": true,
+        "description": "Organization id.",
+        "schema": {
+          "$ref": "#/components/schemas/Ulid"
+        }
+      },
+      "Project": {
+        "name": "project",
+        "in": "path",
+        "required": true,
+        "description": "Project id, also its tenant slug.",
+        "schema": {
+          "$ref": "#/components/schemas/Ulid"
+        }
+      },
+      "User": {
+        "name": "user",
+        "in": "path",
+        "required": true,
+        "description": "User id (the sub of its tokens).",
+        "schema": {
+          "$ref": "#/components/schemas/Ulid"
+        }
+      },
+      "Invitation": {
+        "name": "invitation",
+        "in": "path",
+        "required": true,
+        "description": "Invitation id.",
+        "schema": {
+          "$ref": "#/components/schemas/Ulid"
+        }
+      },
+      "Key": {
+        "name": "key",
+        "in": "path",
+        "required": true,
+        "description": "API key id.",
+        "schema": {
+          "$ref": "#/components/schemas/ApiKeyId"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Page size.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "The previous page's next.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "invalid_request, or name_taken-style input errors listed on the operation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "invalid_request",
+                "message": "The request is invalid."
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "unauthorized; no valid platform sign-in token.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "Bearer",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "forbidden_role, or for invitations email_mismatch.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "not_found; also for anything the caller cannot see.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired or not_pending.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "temporarily_unavailable; storage could not complete the request.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Ulid": {
+        "type": "string",
+        "minLength": 26,
+        "maxLength": 26,
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339, UTC."
+      },
+      "Name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "description": "Trimmed; contains a letter or digit and no control characters."
+      },
+      "Email": {
+        "type": "string",
+        "format": "email",
+        "maxLength": 254
+      },
+      "OrganizationRole": {
+        "type": "string",
+        "enum": [
+          "viewer",
+          "member",
+          "admin",
+          "owner"
+        ]
+      },
+      "ProjectRole": {
+        "type": "string",
+        "enum": [
+          "viewer",
+          "member",
+          "admin"
+        ]
+      },
+      "Scope": {
+        "type": "string",
+        "enum": [
+          "databases:read",
+          "databases:write",
+          "documents:read",
+          "documents:write",
+          "shapes:read"
+        ]
+      },
+      "ApiKeyId": {
+        "type": "string",
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+        "example": "01ARZ3NDEKTSV4RRFFQ69G5FA8"
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "OAuthError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_description": {
+            "type": "string"
+          }
+        }
+      },
+      "NameRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          }
+        }
+      },
+      "Organization": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_by",
+          "created_at",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "role": {
+            "description": "The caller's organization role; null for a collaborator.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrganizationRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "example": {
+          "id": "01K6SY8000E008000000000001",
+          "name": "Acme",
+          "created_by": "2F3GPKWPKB9HYRX7RA3CP3TKJZ",
+          "created_at": "2026-10-06T12:00:00Z",
+          "role": "owner"
+        }
+      },
+      "OrganizationPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Organization"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OrganizationRoleRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/OrganizationRole"
+          }
+        }
+      },
+      "ProjectRoleRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          }
+        }
+      },
+      "Member": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "role",
+          "joined_at"
+        ],
+        "properties": {
+          "user_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "role": {
+            "$ref": "#/components/schemas/OrganizationRole"
+          },
+          "joined_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "MemberPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "name",
+          "issuer",
+          "created_by",
+          "created_at",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "organization_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "issuer": {
+            "type": "string",
+            "format": "uri",
+            "description": "The project tenant's issuer, {public origin}/{project id}."
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          }
+        },
+        "example": {
+          "id": "01K6SY8PVAFJ6SW3RT5CY4TQKF",
+          "organization_id": "01K6SY8000E008000000000001",
+          "name": "Production",
+          "issuer": "https://gru.auth.terrascale.tech/01K6SY8PVAFJ6SW3RT5CY4TQKF",
+          "created_by": "2F3GPKWPKB9HYRX7RA3CP3TKJZ",
+          "created_at": "2026-10-06T12:00:00Z",
+          "role": "admin"
+        }
+      },
+      "ProjectPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProjectMember": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "role",
+          "granted_at"
+        ],
+        "properties": {
+          "user_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          },
+          "granted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "ProjectMemberPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectMember"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CreateInvitationRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "role"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "role": {
+            "description": "An organization role without project_id, a project role with it.",
+            "type": "string",
+            "enum": [
+              "viewer",
+              "member",
+              "admin",
+              "owner"
+            ]
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Ulid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Invitation": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "role",
+          "project_id",
+          "invited_by",
+          "created_at",
+          "expires_at",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "member",
+              "admin",
+              "owner"
+            ]
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Ulid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invited_by": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "accepted",
+              "declined",
+              "revoked",
+              "expired"
+            ]
+          }
+        }
+      },
+      "InvitationCreated": {
+        "type": "object",
+        "required": [
+          "invitation",
+          "token"
+        ],
+        "properties": {
+          "invitation": {
+            "$ref": "#/components/schemas/Invitation"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^tsi_[0-9a-hjkmnp-tv-z]{52}$",
+            "description": "Shown once; also emailed to the invitee."
+          }
+        }
+      },
+      "InvitationPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Invitation"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InvitationTokenRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "InvitationLookup": {
+        "type": "object",
+        "required": [
+          "organization",
+          "project",
+          "email",
+          "role",
+          "expires_at"
+        ],
+        "properties": {
+          "organization": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Ulid"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "project": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/Ulid"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "member",
+              "admin",
+              "owner"
+            ]
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "AcceptedInvitation": {
+        "type": "object",
+        "required": [
+          "organization_id",
+          "project_id",
+          "role"
+        ],
+        "properties": {
+          "organization_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "project_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Ulid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "member",
+              "admin",
+              "owner"
+            ]
+          }
+        }
+      },
+      "StartTransferRequest": {
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "$ref": "#/components/schemas/Ulid"
+          }
+        }
+      },
+      "OwnershipTransfer": {
+        "type": "object",
+        "required": [
+          "from_user_id",
+          "to_user_id",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "from_user_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "to_user_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "CreateOrganizationApiKeyRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            }
+          },
+          "expires_at": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CreateProjectApiKeyRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            }
+          },
+          "database": {
+            "description": "A TerraBase database name; the key then reaches only that database.",
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RotateApiKeyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "previous_secret_ttl": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400,
+            "default": 0,
+            "description": "Seconds the previous secret keeps working."
+          }
+        }
+      },
+      "ApiKey": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "organization_id",
+          "project_id",
+          "database",
+          "scopes",
+          "created_by",
+          "created_at",
+          "expires_at",
+          "previous_secret_expires_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ApiKeyId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "organization_id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "project_id": {
+            "description": "null for an organization key.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Ulid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "database": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            }
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previous_secret_expires_at": {
+            "description": "Until when the secret before the last rotation still works; null when it no longer does.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ApiKeySecret": {
+        "type": "object",
+        "required": [
+          "api_key",
+          "key"
+        ],
+        "properties": {
+          "api_key": {
+            "$ref": "#/components/schemas/ApiKey"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$",
+            "description": "The whole key string, shown once. Its leading 26-character ULID is the entity and OAuth client id."
+          }
+        }
+      },
+      "ApiKeyPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "actor",
+          "action",
+          "target",
+          "detail",
+          "occurred_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "actor": {
+            "type": "string",
+            "description": "The acting user id."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "organization.created",
+              "organization.renamed",
+              "member.role_changed",
+              "member.removed",
+              "member.left",
+              "member.joined",
+              "invitation.created",
+              "invitation.revoked",
+              "invitation.accepted",
+              "invitation.declined",
+              "ownership.transfer_started",
+              "ownership.transfer_confirmed",
+              "ownership.transfer_cancelled",
+              "project.created",
+              "project.renamed",
+              "project.deleted",
+              "project_member.role_set",
+              "project_member.removed",
+              "api_key.created",
+              "api_key.rotated",
+              "api_key.revoked"
+            ]
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A user id, email, project id or key id."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The new role, name or scopes."
+          },
+          "occurred_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "AuditEventPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ClientCredentialsGrant": {
+        "type": "object",
+        "description": "An API key exchanged for an organization or project token.",
+        "required": [
+          "grant_type"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "const": "client_credentials"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Ulid",
+            "description": "Organization keys, the project to act in (omit for an organization token); project keys, optional and equal to the key's."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Space-separated subset of the key's scopes; default all of them."
+          },
+          "client_id": {
+            "type": "string",
+            "description": "With client_secret_post, the key id."
+          },
+          "client_secret": {
+            "type": "string",
+            "description": "With client_secret_post, the whole key string."
+          }
+        }
+      },
+      "TokenExchangeGrant": {
+        "type": "object",
+        "description": "A user's sign-in access token exchanged for an organization or project token (RFC 8693).",
+        "required": [
+          "grant_type",
+          "subject_token",
+          "subject_token_type",
+          "organization"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "const": "urn:ietf:params:oauth:grant-type:token-exchange"
+          },
+          "subject_token": {
+            "type": "string",
+            "description": "A sign-in access token of this tenant, issued to the same client."
+          },
+          "subject_token_type": {
+            "type": "string",
+            "const": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "organization": {
+            "$ref": "#/components/schemas/Ulid"
+          },
+          "project": {
+            "$ref": "#/components/schemas/Ulid",
+            "description": "Omit for an organization token."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Space-separated subset of what the user's role allows; default all of it."
+          },
+          "client_id": {
+            "type": "string",
+            "description": "A public client, or a confidential one with client_secret_post."
+          },
+          "client_secret": {
+            "type": "string"
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "scope"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "ES256 JWT, typ at+jwt."
+          },
+          "issued_token_type": {
+            "type": "string",
+            "const": "urn:ietf:params:oauth:token-type:access_token",
+            "description": "Token exchange only."
+          },
+          "token_type": {
+            "type": "string",
+            "const": "Bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "maximum": 900
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
