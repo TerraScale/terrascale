@@ -1,0 +1,121 @@
+/* Team page: invite forms, member search, and inline role editing. */
+
+.ts-access-toolbar {
+  align-items: center;
+}
+
+.ts-access-toolbar > .ts-btn {
+  margin-left: auto;
+}
+
+.ts-access-invite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ts-s3);
+}
+
+.ts-access-invite > .ts-field {
+  flex: 1 1 220px;
+}
+
+.ts-access-member {
+  flex-wrap: nowrap;
+  min-width: 220px;
+}
+
+.ts-access-role {
+  width: auto;
+  min-width: 112px;
+}
+
+.ts-access-date {
+  white-space: nowrap;
+}
+
+/* Member filters sit on the tab row, right-aligned. */
+.ts-access-filters {
+  flex: 1 1 360px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.ts-access-filters .ts-filter-field {
+  min-width: 0;
+}
+
+.ts-access-search {
+  flex: 1 1 220px;
+  max-width: 280px;
+}
+
+.ts-access-filters .ts-filter-field:has(.ts-menu) {
+  flex: 0 0 170px;
+}
+
+/* 390px: filters stack full width, as in the prototype. */
+@media (max-width: 47.99rem) {
+  .ts-access-filters {
+    flex-wrap: wrap;
+  }
+
+  .ts-access-search {
+    max-width: none;
+  }
+
+  .ts-access-filters .ts-filter-field:has(.ts-menu) {
+    flex: 1 1 100%;
+  }
+}
+
+/* Role and invitation distributions: one colored share bar per category. */
+.ts-access-shares {
+  display: grid;
+  gap: var(--ts-s4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-access-share {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s3);
+}
+
+.ts-access-share > .ts-chart-meter {
+  grid-column: 1 / -1;
+}
+
+.ts-access-share .ts-svg-sharebar-fill {
+  fill: var(--tone);
+}
+
+.ts-access-share-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-access-share-label > .ts-dot {
+  color: var(--tone);
+}
+
+.ts-access-share-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Invitations and their form share the lower member-page row. */
+.ts-access-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: var(--ts-s5);
+  align-items: start;
+}
+.ts-access-bottom .ts-access-invite { display: grid; }
+@media (max-width: 900px) {
+  .ts-access-bottom { grid-template-columns: minmax(0, 1fr); }
+}

@@ -1,0 +1,17 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
+@inject AssetUrls Assets
+@if (Model.Measurement.RegionsPending)
+{
+    <section class="ts-card" id="home-regions" aria-labelledby="home-regions-title" data-init="@("@get('" + WorkspaceUrl.For(Model.Shell.Context, "/overview/regions") + "')")"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="home-regions-title">Regions</h2><p class="ts-card-description">Regions used by this @Model.RegionScope · ts-status measurements</p></div></header><div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">Loading region health and latency…</p></div></div></section>
+}
+else
+{
+<section class="ts-card" id="home-regions" aria-labelledby="home-regions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="home-regions-title">Regions</h2><p class="ts-card-description">Regions used by this @Model.RegionScope · ts-status measurements</p></div></header><div class="ts-card-body">
+            @if (Model.Measurement.RegionError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Region measurements unavailable</p><p class="ts-alert-body">@Model.Measurement.RegionError</p></div> }
+            @if (Model.Measurement.Regions.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No database regions in this @(Model.RegionScope).</p></div> }
+            else { <div class="ts-home-regions"><div class="ts-region-map ts-home-region-map" aria-hidden="true"><img class="ts-region-map-image" src="@Assets.Url("brand/region-map.svg")" alt="" loading="lazy" decoding="async" />@foreach (var region in Model.Measurement.Regions) { if (MappedRegions.Contains(region.Code)) { <span class="ts-region-node" data-region="@region.Code.ToLowerInvariant()"><span class="ts-region-node-ring"></span><span class="ts-region-node-core"></span></span> } }</div><div class="ts-table-wrap" role="region" aria-label="@($"{Model.RegionScope} regions table")" tabindex="0"><table class="ts-table"><caption class="ts-sr-only">@Model.RegionScope region health, latency and database counts</caption><thead><tr><th>Region</th><th>Health</th><th class="ts-num">Latency</th><th class="ts-num">Databases</th></tr></thead><tbody>@foreach (var region in Model.Measurement.Regions.OrderBy(item => Regions.Rank(item.Code))) { <tr><th scope="row"><span class="ts-home-region-code">@if (Regions.Country(region.Code) is { Length: > 0 } known) { <img class="ts-home-region-flag" src="@Assets.Url($"flags/{known}.svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@region.Code</span></span></th><td><span class="ts-badge @(region.Status == "healthy" ? "ts-badge-success" : region.Status is "lagging" or "degraded" ? "ts-badge-warning" : "ts-badge-neutral")">@region.Status</span></td><td class="ts-num">@region.Latency</td><td class="ts-num">@region.Databases</td></tr> }</tbody></table></div></div> }
+        </div></section>
+}
+@functions {
+    private static readonly HashSet<string> MappedRegions = new(StringComparer.OrdinalIgnoreCase) { "gru", "fra", "sjc" };
+}

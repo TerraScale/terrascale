@@ -1,0 +1,37 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Usage.UsagePage>
+@using TerraScale.Dashboard.Features.Usage
+@using TerraScale.Dashboard.Features.Billing
+@if (Model.InternalBill is not null)
+{
+    <div class="ts-stack-lg">
+        <div class="ts-stack-sm"><h2 class="ts-section-title">Report-only spending cap</h2><p class="ts-meta">Internal caps only report alerts. They never charge Stripe, restrict writes or suspend services.</p></div>
+        <form id="spending-controls" class="ts-stack ts-spending-form" method="post" action="/api/v1/dashboard/usage/internal-spending-cap" data-submit-once>
+            <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+            <section class="ts-card" aria-labelledby="organization-controls-title">
+                <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-controls-title">Organization report-only cap</h2><p class="ts-card-description">@Model.Shell.Context.Organization!.Name</p></div></header>
+                <div class="ts-card-body"><fieldset class="ts-stack" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Organization report-only cap</legend><div class="ts-spending-control">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Report-only cap (USD)", "Monthly estimate alert only. Leave empty or enter 0 for no alert threshold.", (Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))))</div></fieldset></div>
+            </section>
+            @if (Model.Shell.Context.CanManage) { <div><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save report-only cap</span></button></div> }
+            else { <p class="ts-meta">Only organization owners and admins can change the report-only cap.</p> }
+        </form>
+    </div>
+}
+else
+{
+    var plan = PlanCatalog.For(Model.Selection.Context.Organization!);
+    <section class="ts-card" aria-labelledby="spending-title"><div class="ts-card-body ts-stack-sm"><h2 class="ts-card-title" id="spending-title">Spending and overages</h2>
+    @if (plan is { PriceCents: > 0 })
+    {
+        <p class="ts-meta">Operation units above @plan.Name's included allowance are billed at @OperationUnitOverage.Rate operation units. Overage charges are added to your invoice.</p>
+    }
+    else if (plan is { PriceCents: 0 })
+    {
+        <p class="ts-meta">Free stops new writes at its included operation allowance; reads and deletes keep working. No usage charges. Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units.</p>
+    }
+    else
+    {
+        <p class="ts-meta">Paid plans bill operation units above their included allowance at @OperationUnitOverage.Rate operation units. Choose a plan in billing to see its allowances.</p>
+    }
+    <p class="ts-meta">Customer hard spending caps are unavailable. Paid overage charges have no customer-set spending limit.</p>
+    <div><a class="ts-link" href="/organization?tab=billing">Manage billing and upgrade</a></div><div><a class="ts-link" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "")">View plan usage</a></div></div></section>
+}

@@ -1,0 +1,37 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Profile.ProfilePage>
+@using TerraScale.Dashboard.Features.Auth
+<section class="ts-card" id="profile-sign-in-methods" aria-labelledby="profile-methods-title">
+    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-methods-title">Sign-in methods</h2><p class="ts-card-description">Manage the providers linked to your account. Email-code sign-in remains available after unlinking.</p></div></header>
+    <div class="ts-card-body ts-stack-sm">
+        @if (Model.Providers is null)
+        {
+            <p class="ts-meta" role="status">Sign-in methods are unavailable right now.</p>
+            <a class="ts-btn ts-btn-secondary" href="/profile#profile-sign-in-methods">Refresh sign-in methods</a>
+        }
+        else if (Model.Providers.Count == 0)
+        {
+            <div class="ts-empty" role="status"><p class="ts-empty-title">No linked providers</p><p class="ts-empty-detail">You can sign in with an email code.</p></div>
+        }
+        else
+        {
+            <ul class="ts-profile-methods" aria-label="Linked sign-in providers">
+                @foreach (var provider in Model.Providers)
+                {
+                    <li class="ts-profile-method"><div><span class="ts-strong">@TsAuthGateway.ProviderName(provider)</span> <span class="ts-badge ts-badge-success">Linked</span></div><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/profile?unlink=@provider#profile-sign-in-methods" aria-label="Unlink @TsAuthGateway.ProviderName(provider)">Unlink</a></li>
+                }
+            </ul>
+            @if (Model.ConfirmProvider is { } selected && Model.Providers.Contains(selected))
+            {
+                <form method="post" action="/api/v1/dashboard/profile/providers/@selected/unlink" class="ts-form ts-profile-method-confirm" aria-labelledby="unlink-provider-title">
+                    <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                    <h3 class="ts-card-title" id="unlink-provider-title">Unlink @TsAuthGateway.ProviderName(selected)?</h3>
+                    <p class="ts-meta">This signs you out on every device and revokes existing tokens. Sign in again using email or another linked provider.</p>
+                    <p class="ts-hint" id="unlink-code-help">Open TerraScale sign-in and request a code for your account email. Return here with the code without completing sign-in in that tab.</p>
+                    <div><a class="ts-btn ts-btn-secondary" href="@TsAuthGateway.RequestSignInCodeUrl" @(ExternalLink.Attributes)>Request email code @Icons.Render("ExternalLink", 14)@(ExternalLink.Hint)</a></div>
+                    <div class="ts-field"><label class="ts-label" for="unlink-provider-code">Email code</label><input class="ts-input ts-mono" id="unlink-provider-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" aria-describedby="unlink-code-help" required /></div>
+                    <div class="ts-form-actions"><a class="ts-btn ts-btn-secondary" href="/profile#profile-sign-in-methods">Cancel</a><button class="ts-btn ts-btn-danger" type="submit">Unlink @TsAuthGateway.ProviderName(selected) and sign out</button></div>
+                </form>
+            }
+        }
+    </div>
+</section>

@@ -1,0 +1,45 @@
+.ts-analytics-regions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--ts-s5);
+  align-items: start;
+}
+.ts-analytics-map { border: 0; background: transparent; }
+.ts-analytics-map .ts-region-node-flag {
+  position: absolute;
+  width: 16px;
+  height: 12px;
+  left: -8px;
+  top: -24px;
+  border-radius: 2px;
+}
+.ts-analytics-map .ts-region-node-label {
+  position: absolute;
+  left: 14px;
+  top: -12px;
+  padding: var(--ts-s1) var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  white-space: nowrap;
+  font-size: var(--ts-fs-xs);
+}
+.ts-analytics-map .ts-region-node-label strong { display: block; font-weight: 500; }
+.ts-analytics-map .ts-region-node-ring { display: none; }
+.ts-analytics-region { color: var(--ts-ink); text-decoration: none; }
+.ts-analytics-region:hover { border-color: var(--ts-line-strong); text-decoration: none; }
+@media (max-width: 64rem) {
+  .ts-analytics-regions { grid-template-columns: minmax(0, 1fr); }
+}
+/* Line plots (AnalyticsLineView): fluid width at a fixed 200px height, so labels keep their
+   pixel size at any column width. The left gutter holds the y-axis labels drawn at x=-10. */
+.ts-chart-shell:has(> .ts-analytics-plot) { container-type: inline-size; }
+.ts-chart.ts-analytics-plot {
+  width: calc(100% - 56px);
+  height: 200px;
+  margin-left: 48px;
+}
+@container (max-width: 32rem) {
+  .ts-analytics-plot .ts-chart-tick-minor { display: none; }
+}

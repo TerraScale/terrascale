@@ -1,0 +1,616 @@
+/* Databases list and detail: search, name cell, region labels, detail header,
+   create dialog and its progress, region cards, facts grid, backup switch,
+   and the danger zone. */
+
+/* Keep search and creation together at the right edge of the list header. */
+#project-databases .ts-card-actions {
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+
+/* Search shrinks as needed to leave room for the creation button. */
+.ts-db-search {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  width: 240px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ts-db-search > .ts-input {
+  flex-basis: 240px;
+  min-width: 6rem;
+}
+
+.ts-db-search > .ts-btn {
+  padding-inline: var(--ts-s1);
+}
+
+.ts-db-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  color: var(--ts-ink);
+}
+
+/* The detail header's database mark: a larger accent icon tile. */
+.ts-db-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+  color: var(--ts-ink-2);
+}
+
+.ts-db-name:hover .ts-strong {
+  color: var(--ts-link);
+}
+
+.ts-databases .ts-db-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3) var(--ts-s4);
+}
+
+.ts-databases .ts-db-header h1 {
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
+}
+
+.ts-databases .ts-db-header > .ts-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin-left: auto;
+}
+
+.ts-db-region {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  white-space: nowrap;
+}
+
+.ts-db-region-flag {
+  flex: none;
+  width: 16px;
+  height: 12px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+/* Detail header: breadcrumb above the database identity. */
+.ts-db-head {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.ts-db-tabs {
+  margin-top: calc(-1 * var(--ts-s4));
+}
+
+.ts-db-tabs .ts-tab[data-kind="danger"] {
+  color: var(--ts-danger);
+}
+
+.ts-db-tabs .ts-tab[data-kind="danger"][aria-current="page"]::after {
+  background: var(--ts-danger);
+}
+
+.ts-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink-3);
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+}
+
+.ts-breadcrumb > a {
+  color: var(--ts-ink-2);
+}
+
+.ts-breadcrumb > [aria-current] {
+  color: var(--ts-ink);
+}
+
+.ts-db-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.ts-db-title {
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Danger zone: a boxed section with a red heading and one row per action. */
+.ts-card.ts-card-boxed.ts-db-danger { border-color: var(--ts-danger); }
+.ts-db-danger .ts-card-title { color: var(--ts-danger); }
+
+.ts-db-danger-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+  padding-top: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-danger-row > .ts-list-main {
+  flex: 1 1 240px;
+}
+
+/* Import tab: icon tile above the empty-state title. */
+.ts-db-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--ts-s2);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+}
+
+/* Replication topology: map (styled by .ts-analytics-map) beside per-region cards. */
+.ts-db-topology {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--ts-s5);
+  align-items: start;
+}
+.ts-db-topology > ul { margin: 0; padding: 0; list-style: none; }
+@media (max-width: 64rem) {
+  .ts-db-topology { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Branches tab: full-width rows; name wraps first on narrow screens. */
+.ts-db-branches {
+  display: grid;
+  margin: var(--ts-s4) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-branch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2) var(--ts-s4);
+  min-height: 52px;
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-db-branch-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.ts-db-branch .ts-meta {
+  margin-left: auto;
+}
+
+/* Inline restore form in the restore points table. */
+.ts-db-restore {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-db-restore > .ts-input {
+  min-width: 160px;
+}
+
+/* Label/value tiles split by vertical hairlines. Like .ts-stats, the grid is
+   shifted left and clipped so the first tile of each row hides its divider
+   and lines up with the section edge. */
+.ts-db-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  row-gap: var(--ts-s4);
+  margin-left: calc(-1 * var(--ts-s4));
+  overflow: hidden;
+}
+
+.ts-db-facts > div {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  margin-left: -1px;
+  padding: 0 var(--ts-s4);
+  border-left: 1px solid var(--ts-line);
+}
+
+.ts-db-facts dt {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-db-facts dd {
+  font-weight: 600;
+}
+
+.ts-db-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+  padding: var(--ts-s4) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-db-setting > .ts-list-main {
+  flex: 1 1 240px;
+}
+
+/* Database list: roomy rows, the whole name cell is the link. Narrow
+   columns stack each database into a block: name, then status and regions. */
+.ts-db-table td {
+  padding-block: var(--ts-s4);
+}
+
+.ts-db-table .ts-db-name {
+  font-size: var(--ts-fs-lg);
+}
+
+.ts-db-table .ts-db-name .ts-meta {
+  font-size: var(--ts-fs-xs);
+}
+
+@container page (width < 768px) {
+  /* Visually hidden, still read as the column headers. */
+  .ts-db-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .ts-db-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: var(--ts-s2) var(--ts-s3);
+    padding: var(--ts-s4) 0;
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .ts-db-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .ts-db-table td:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* List metrics: muted sparkline beside the canonical text value. */
+.ts-db-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-db-spark {
+  width: 64px;
+  height: 20px;
+}
+
+.ts-db-spark path {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+@container page (width < 768px) {
+  .ts-db-spark {
+    display: none;
+  }
+
+  /* Headers are hidden here, so each metric names itself. */
+  .ts-db-table td[data-label]::before {
+    content: attr(data-label) " ";
+    color: var(--ts-ink-2);
+  }
+}
+
+.ts-db-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s1);
+}
+
+/* Create dialog: the fields beside the region map, then the actions. The
+   progress panel covers both while the create request is open. */
+dialog.ts-db-create-dialog {
+  width: min(60rem, calc(100vw - 2 * var(--ts-s4)));
+}
+
+dialog.ts-db-create-dialog .ts-dialog-content {
+  gap: var(--ts-s6);
+  padding: var(--ts-s8);
+}
+
+dialog.ts-db-create-dialog .ts-dialog-title {
+  font-size: var(--ts-fs-xl);
+}
+
+.ts-db-create-form {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s6) var(--ts-s8);
+}
+
+.ts-db-create-form > .ts-alert,
+.ts-db-create-form > .ts-dialog-footer {
+  grid-column: 1 / -1;
+}
+
+.ts-db-create-fields {
+  display: grid;
+  gap: var(--ts-s6);
+  min-width: 0;
+}
+
+.ts-db-create-fields .ts-label {
+  font-size: var(--ts-fs-md);
+}
+
+/* Isolated so the map's raised hub nodes stay under the progress panel. */
+.ts-db-create-aside {
+  position: sticky;
+  top: 0;
+  isolation: isolate;
+}
+
+.ts-db-create-form > .ts-dialog-footer {
+  padding-top: var(--ts-s5);
+  border-top: 1px solid var(--ts-line);
+}
+
+@media (max-width: 47.99rem) {
+  dialog.ts-db-create-dialog .ts-dialog-content {
+    padding: var(--ts-s5);
+  }
+
+  .ts-db-create-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-db-create-aside {
+    position: static;
+  }
+
+  .ts-db-create-form > .ts-dialog-footer > .ts-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* Region cards: a checkbox per region; the first checked region of a new
+   database is its primary. */
+.ts-db-regions {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ts-db-regions > legend {
+  float: left;
+  width: 100%;
+}
+
+.ts-db-region-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--ts-s2);
+  max-width: 44rem;
+}
+
+.ts-db-region-card {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  min-height: 60px;
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius);
+  cursor: pointer;
+  transition: border-color var(--ts-fast) var(--ts-ease), background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-db-region-card:hover {
+  border-color: var(--ts-control-line-hover);
+}
+
+.ts-db-region-card:has(input:checked) {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+}
+
+.ts-db-region-card:has(input:focus-visible) {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
+}
+
+.ts-db-region-card:has(input:required) {
+  cursor: default;
+}
+
+.ts-db-region-card input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ts-accent-fill);
+}
+
+.ts-db-region-card img {
+  flex: none;
+  width: 24px;
+  height: 18px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+.ts-db-region-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.ts-db-region-name {
+  font-weight: 600;
+}
+
+.ts-db-region-primary {
+  display: none;
+}
+
+.ts-db-region-card:has(input:checked) > .ts-db-region-primary {
+  display: inline-flex;
+}
+
+.ts-db-region-card:has(input:checked) ~ .ts-db-region-card > .ts-db-region-primary {
+  display: none;
+}
+
+.ts-db-regions:has(> .ts-field-error:not([hidden])) .ts-db-region-card {
+  border-color: var(--ts-danger);
+}
+
+.ts-db-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2) var(--ts-s4);
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+}
+
+/* Create progress: shown from the moment the form is sent (.ts-db-creating)
+   until the new database opens, or the dialog reopens with the reason it
+   was refused. */
+.ts-db-progress {
+  position: absolute;
+  inset: 0;
+  z-index: var(--ts-z-sticky);
+  display: none;
+  place-content: center;
+  justify-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s6);
+  background: var(--ts-surface);
+  text-align: center;
+}
+
+.ts-db-create-form.ts-db-creating > .ts-db-progress {
+  display: grid;
+  animation: ts-pop-in var(--ts-base) var(--ts-ease);
+}
+
+.ts-db-progress-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-accent-soft);
+  color: var(--ts-link);
+}
+
+/* A ring that keeps circling the mark while the database is created. */
+.ts-db-progress-mark::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border: 2px solid transparent;
+  border-top-color: var(--ts-accent);
+  border-radius: inherit;
+  animation: ts-button-spin var(--ts-loop) linear infinite;
+}
+
+.ts-db-progress-title {
+  font-size: var(--ts-fs-xl);
+  font-weight: 600;
+}
+
+.ts-db-progress-bar {
+  width: min(16rem, 100%);
+  height: 4px;
+  border-radius: var(--ts-radius-pill);
+  background: var(--ts-accent-fill);
+  animation: ts-progress-pulse var(--ts-loop) ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-db-progress-mark::after {
+    border-color: var(--ts-accent);
+    animation: none;
+  }
+
+  .ts-db-progress-bar {
+    animation: none;
+  }
+}
+
+/* Ready: the new database's first view confirms the create finished. */
+/* The ?created=1 confirmation is a toast: opaque surface, bottom-right. */
+.ts-db-created {
+  position: fixed;
+  right: var(--ts-s6);
+  bottom: var(--ts-s6);
+  z-index: var(--ts-z-tooltip);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ts-s3);
+  width: min(360px, calc(100vw - 2 * var(--ts-s4)));
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  animation: ts-pop-in var(--ts-base) var(--ts-ease);
+}
+
+.ts-db-created-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius-pill);
+  background: color-mix(in oklab, var(--alert) var(--ts-tint-badge), transparent);
+  color: var(--alert);
+}

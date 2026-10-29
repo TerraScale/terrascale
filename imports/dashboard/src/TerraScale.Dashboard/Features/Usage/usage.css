@@ -1,0 +1,310 @@
+/* Usage: allowance and sample capacity gauges, history totals, and storage
+   share list. */
+
+.ts-usage-sample-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--ts-s4);
+}
+
+/* Allowance meters: compact cards, three across until the page is narrow. */
+.ts-usage-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-s4);
+  margin-block-end: var(--ts-s3);
+}
+
+@container page (width < 768px) {
+  .ts-usage-gauges {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ts-usage-gauge {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s4);
+}
+
+.ts-usage-gauges > .ts-usage-gauge {
+  display: grid;
+  min-width: 0;
+  gap: var(--ts-s3);
+}
+
+.ts-usage-gauges .ts-stack-sm {
+  gap: var(--ts-s1);
+}
+
+.ts-usage-gauges .ts-usage-gauge-value {
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+}
+
+.ts-usage-ring {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+
+/* The centered value lets pointer events through to the ring's tooltip. */
+.ts-usage-ring-value {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  line-height: 1.1;
+  pointer-events: none;
+}
+
+.ts-usage-ring-value strong {
+  font-size: var(--ts-fs-lg);
+}
+
+.ts-usage-ring-value small,
+.ts-usage-gauge-value small {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-usage-gauge-value {
+  font-size: var(--ts-fs-lg);
+  font-weight: 600;
+}
+
+.ts-usage-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s4);
+}
+
+.ts-usage-figures > div {
+  display: grid;
+  gap: 2px;
+}
+
+.ts-usage-figures dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-usage-figures dd {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-usage-share {
+  display: grid;
+  gap: var(--ts-s4);
+  list-style: none;
+}
+
+.ts-usage-share > li {
+  display: grid;
+  gap: 6px;
+}
+
+.ts-usage-share a[aria-current="page"] {
+  color: var(--ts-link);
+}
+
+.ts-usage-billing-kpis .ts-svg-sharebar {
+  margin-block: var(--ts-s1);
+}
+
+.ts-usage-page[aria-current="page"] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+/* Replication: flat stat row, flag and mono region codes, filters that stack. */
+.ts-usage-replication .ts-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-block-end: var(--ts-s6);
+  margin-inline-start: 0;
+  border-block: 1px solid var(--ts-line);
+}
+
+.ts-usage-replication .ts-stats::before,
+.ts-usage-replication .ts-stats::after {
+  content: none;
+}
+
+.ts-usage-replication .ts-stat {
+  margin-inline-start: 0;
+  padding-block: var(--ts-s4);
+}
+
+.ts-usage-replication .ts-stat + .ts-stat {
+  padding-inline-start: var(--ts-s4);
+  border-inline-start: 1px solid var(--ts-line);
+}
+
+.ts-usage-sub {
+  margin-block: var(--ts-s6) var(--ts-s3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-usage-region,
+.ts-usage-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ts-usage-pair {
+  gap: var(--ts-s2);
+}
+
+.ts-usage-flag {
+  flex: none;
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+.ts-usage-filters {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: var(--ts-s4);
+}
+
+@container page (width < 768px) {
+  .ts-usage-replication .ts-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-usage-replication .ts-stat:nth-child(2n + 1) {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .ts-usage-replication .ts-stat:nth-child(n + 3) {
+    border-block-start: 1px solid var(--ts-line);
+  }
+
+  .ts-usage-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-usage-filters > .ts-btn {
+    grid-column: 1 / -1;
+  }
+}
+
+@container page (width < 400px) {
+  .ts-usage-replication .ts-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-usage-replication .ts-stat,
+  .ts-usage-replication .ts-stat + .ts-stat {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .ts-usage-replication .ts-stat + .ts-stat {
+    border-block-start: 1px solid var(--ts-line);
+  }
+
+  .ts-usage-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Spending controls: flat sections with a consistent category grid. */
+.ts-spending-notice {
+  align-self: end;
+  width: min(100%, 400px);
+}
+
+/* Respect native hidden state before Datastar initializes. */
+.ts-spending-notice[hidden],
+.ts-spending-project[hidden],
+.ts-spending-databases[hidden] {
+  display: none;
+}
+
+.ts-spending-form > .ts-card {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s8);
+  padding-block-start: var(--ts-s6);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+.ts-spending-identity,
+.ts-spending-excess {
+  flex-wrap: nowrap;
+}
+
+.ts-spending-identity > svg {
+  flex: none;
+}
+
+.ts-spending-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-spending-control {
+  max-width: 400px;
+}
+
+.ts-spending-excess {
+  padding-block-start: var(--ts-s4);
+  border-block-start: 1px solid var(--ts-line);
+  cursor: pointer;
+}
+
+.ts-spending-database + .ts-spending-database,
+.ts-spending-actions {
+  padding-block-start: var(--ts-s5);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+@container page (width < 1100px) {
+  .ts-spending-limit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page (width < 768px) {
+  .ts-spending-form > .ts-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+}
+
+@container page (width < 400px) {
+  .ts-spending-limit-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-spending-actions > .ts-btn {
+    width: 100%;
+  }
+}
+
+.ts-usage-header { margin-bottom: var(--ts-s5); }
+.ts-usage-header h1 { font-size: var(--ts-fs-2xl); letter-spacing: -0.03em; }
+.ts-usage-header p { margin-top: var(--ts-s2); }
+.ts-usage .ts-usage-gauge { display: grid; align-items: start; gap: var(--ts-s3); }
+.ts-usage-allowance-meter .ts-svg-sharebar-fill { fill: var(--ts-chart-1); }
+.ts-usage-allowance-meter[data-state="warning"] .ts-svg-sharebar-fill { fill: var(--ts-warning); }
+.ts-usage-allowance-meter[data-state="danger"] .ts-svg-sharebar-fill { fill: var(--ts-danger); }
+.ts-usage-filters .ts-field { min-width: 0; }

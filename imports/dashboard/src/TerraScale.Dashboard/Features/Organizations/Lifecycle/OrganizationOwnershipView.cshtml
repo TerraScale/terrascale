@@ -1,0 +1,37 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
+@using TerraScale.Dashboard.Features.Organizations
+<p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access#transfer-ownership-and-leave" @(ExternalLink.Attributes)>Ownership transfer and offboarding guide@(ExternalLink.Hint)</a></p>
+@if (Model.Shell.Context.Organization is { } org)
+{
+    var transfer = Model.Access?.PendingTransfer;
+    var members = Model.Access?.Members ?? org.Members.Values.ToArray();
+    var nominee = members.FirstOrDefault(member => member.UserId == transfer?.ToUserId);
+    var owner = members.FirstOrDefault(member => member.UserId == org.OwnerUserId);
+    var expiry = transfer?.ExpiresAt.UtcDateTime.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+    @if (org.Kind != "personal" && Model.Shell.Context.Role != "owner")
+    {
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Lifecycle.OrganizationLifecycleView, OrganizationPage>(Model))
+    }
+    @if (transfer?.ToUserId == Model.Shell.Context.UserId)
+    {
+        <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">You are asked to take ownership</p><p class="ts-alert-body">@(owner?.Name ?? org.OwnerUserId) wants to make you the owner of @org.Name. You would control its billing, members, and deletion, and @(owner?.Name ?? org.OwnerUserId) would become an admin. The request expires @expiry.</p><div class="ts-row"><form method="post" action="/api/v1/dashboard/organization/members/ownership/confirm"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Accept ownership</button></form><form method="post" action="/api/v1/dashboard/organization/members/ownership/cancel"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Decline</button></form></div></div>
+    }
+    @if (Model.Shell.Context.Role == "owner")
+    {
+        @if (org.Kind != "personal") { <p class="ts-meta">As the owner you can't leave this organization. Transfer ownership to another member first.</p> }
+        @if (transfer is not null)
+        {
+            <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Ownership transfer pending</p><p class="ts-alert-body">Waiting for @(nominee?.Name ?? transfer.ToUserId) (@nominee?.Email) to accept. The request expires @expiry.</p><form method="post" action="/api/v1/dashboard/organization/members/ownership/cancel"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Cancel transfer</button></form></div>
+        }
+        else if (members.Any(member => member.UserId != Model.Shell.Context.UserId && member.Role != "owner" && member.Status == "active"))
+        {
+            <button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="transfer-ownership">Transfer ownership</button>
+            <dialog id="transfer-ownership" class="ts-dialog" closedby="any" aria-labelledby="transfer-ownership-title"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="transfer-ownership-title">Transfer ownership</h2><p class="ts-dialog-description">The member you choose becomes the owner once they accept, within the provider's transfer expiry. You then become an admin, and billing and deletion pass to the new owner.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="transfer-ownership">@Icons.Render("X", 18)</button></header><form method="post" action="/api/v1/dashboard/organization/members/ownership" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="new-owner">New owner</label><select class="ts-select" id="new-owner" name="userID" required>@foreach (var member in members.Where(member => member.UserId != Model.Shell.Context.UserId && member.Role != "owner" && member.Status == "active")) { <option value="@member.UserId">@member.Name · @member.Email</option> }</select></div><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="transfer-ownership">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Request transfer</button></div></form></div></dialog>
+        }
+        else { <p class="ts-meta">Invite another member before transferring ownership.</p> }
+        @if (org.Kind != "personal")
+        {
+            @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Lifecycle.OrganizationLifecycleView, OrganizationPage>(Model))
+        }
+    }
+}

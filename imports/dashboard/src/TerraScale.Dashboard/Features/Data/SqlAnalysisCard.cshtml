@@ -1,0 +1,9 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+<section class="ts-card ts-card-boxed" id="sql-analysis" aria-labelledby="sql-analysis-title">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-analysis-title">Input check</h2></div></header>
+<div class="ts-card-body ts-stack-sm">
+<p>Input check only: checks for blank input, the 16 KiB size limit, one statement, unsupported parameters and transaction commands.</p>
+<p class="ts-meta">It does not validate SQL syntax, table or column names, permissions, or whether the statement can run. Nothing is executed by this check.</p>
+@if(Model.SqlChecked){<p role="status">Input checks passed. SQL validity has not been checked.</p>}
+<p class="ts-meta">Each run is its own transaction. SQL tables are separate from document collections. SQL indexes currently enforce uniqueness; they do not accelerate reads.</p>
+</div></section>
