@@ -30,6 +30,12 @@ remains on hold until security review explicitly approves it. It is independent
 of the rejected/unresolved CORS span-matcher performance experiment; that runtime
 matcher remains excluded.
 
+Additional local-only salvage: beta's `fix/sql-http-boundary-coverage` at
+`f9bbc5be4c4a0558ed49d00e87af2106bd0cb0a0` contributes 16 real HTTP SQL/Hrana
+boundary cases: exact/over-limit fixed and chunked bodies, statement/request
+counts, row/change-group limits, rollback and recovery. Port the tests, without
+the dated qualification report; the folded PR's current CI must qualify them.
+
 | Additional salvage source | Decision | Hold / evidence |
 | --- | --- | --- |
 | delta `fix-dependency-advisories-3086c1c81.bundle` (native upgrade) | held, not ported | Publication, ARM64 and storage-format holds remain. Source bundle stays in `~/Backups/worktree-salvage-20261029/terrascale/`; no upgrade or activation in this PR. |
