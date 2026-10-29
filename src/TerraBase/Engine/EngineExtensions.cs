@@ -88,6 +88,7 @@ public static class EngineExtensions
         // Shape sealing and snapshots open their derived-data transactions through the Turso engine.
         services.AddSingleton<IShapeStorage>(provider => new TursoShapeStorage(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton<IShapeSnapshotTransactions>(provider => new TursoShapeSnapshotTransactions(provider.GetRequiredService<TursoStorageEngine>()));
+        services.AddSingleton<IShapeCleanupStore>(provider => new TursoShapeCleanupStore(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton(provider => new StampingStorageEngine(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<StampingStorageEngine>());
         return services.AddSingleton<IWriteStamps>(provider => provider.GetRequiredService<StampingStorageEngine>());

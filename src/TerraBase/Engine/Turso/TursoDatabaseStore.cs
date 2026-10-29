@@ -101,7 +101,7 @@ internal sealed partial class TursoDatabaseStore(
             organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, incarnation TEXT NOT NULL, replica INTEGER NOT NULL,
             UNIQUE (organization, project, database)
         );
-        """;
+        """ + ShapeCleanupSchemaSql;
 
     // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
     // with it (the metadata collections here), holding the materialized JSON of its live documents (doc): reads, queries,
