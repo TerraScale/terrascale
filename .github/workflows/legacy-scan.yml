@@ -1,0 +1,36 @@
+name: legacy-scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          path: target
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: TerraScale/terrascale
+          ref: a2e200187ffe32084a10f2a81c9e3e1f59b49a29
+          persist-credentials: false
+          path: legacy-scanner
+      - name: scan for legacy terms
+        run: python3 legacy-scanner/scripts/legacy-scan/scan.py --repo ts-python --root target --output legacy-hits.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: legacy-hits
+          path: legacy-hits.md
+          if-no-files-found: error
