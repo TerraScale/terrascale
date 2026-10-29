@@ -1,0 +1,24 @@
+[package]
+name = "ts_sync_revision_host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "ts-sync-revision-host"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bytes = "1.11.1"
+crc32c = "0.6.8"
+prost = "0.14.1"
+rand.workspace = true
+roaring = "0.11.2"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+signal-hook = "0.3.18"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+turso_core = { workspace = true, features = ["conn_raw_api"] }
+turso_sync_engine.workspace = true
