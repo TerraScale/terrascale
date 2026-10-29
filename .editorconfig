@@ -72,3 +72,17 @@ dotnet_diagnostic.IDE0350.severity = silent
 
 # Soft limit for editors; long string literals may exceed it.
 max_line_length = 140
+
+# Match the Dashboard build's recommended style severity in formatter workspaces too.
+[{src,tests}/TerraScale.Dashboard*/**.cs]
+dotnet_diagnostic.IDE0011.severity = error
+dotnet_diagnostic.IDE0022.severity = error
+dotnet_diagnostic.IDE0160.severity = error
+dotnet_diagnostic.IDE0021.severity = error
+dotnet_diagnostic.IDE0045.severity = error
+dotnet_diagnostic.IDE0046.severity = error
+dotnet_diagnostic.IDE0047.severity = error
+dotnet_diagnostic.IDE0055.severity = error
+dotnet_diagnostic.IDE0059.severity = error
+dotnet_diagnostic.IDE0061.severity = error
+dotnet_diagnostic.IDE0078.severity = error

@@ -1,4 +1,0 @@
-@inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationPage>
-<div id="ts-notifications-body" aria-busy="false" data-attr:aria-busy="$_notificationsPending ? 'true' : 'false'" data-show="!$_notificationsPending &amp;&amp; $_notificationsLoaded">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationInbox, TerraScale.Dashboard.Features.Notifications.NotificationPage>(Model))</div>
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ShellNotificationsMenu, ShellModel>(Model.Shell))
-@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ShellNotificationsBell, ShellModel>(Model.Shell))

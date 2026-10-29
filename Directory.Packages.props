@@ -58,6 +58,8 @@
   </ItemGroup>
   <ItemGroup Label="Integrations">
     <PackageVersion Include="Sentry.AspNetCore" Version="6.12.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageVersion Include="Stripe.net" Version="53.0.0" />
   </ItemGroup>
   <!-- OpenTelemetry: keep every package on the same release train. The Prometheus
        exporter is only published as beta; it serves the required /metrics scrape. -->
@@ -105,5 +107,9 @@
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- FakeTimeProvider: drives the backup scheduler's clock. Ships on the 10.x train with Resilience. -->
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
+  </ItemGroup>
+  <!-- Preserve the dashboard's imported Scalar dependency without changing other areas. -->
+  <ItemGroup Condition="$(MSBuildProjectName.StartsWith('TerraScale.Dashboard'))">
+    <PackageVersion Update="Scalar.AspNetCore" Version="2.18.0" />
   </ItemGroup>
 </Project>

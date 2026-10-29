@@ -1,0 +1,78 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Onboarding.OnboardingPage>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column">
+    <div class="@(Model.Step == "payment-method" ? "ts-onboarding ts-onboarding-wide" : "ts-onboarding")">
+    <header class="ts-onboarding-header"><span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span><h1 class="ts-sr-only">Activate your TerraScale account</h1></header>
+    <div class="ts-onboarding-progress">
+        <div class="ts-row-between ts-meta"><span class="ts-eyebrow">Step @Model.CurrentStep of 3</span><span>@Model.Progress%</span></div>
+        <div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow="@Model.Progress" aria-valuemin="0" aria-valuemax="100"><div class="ts-progress-bar" data-progress="@Model.Progress"></div></div>
+        <ol class="ts-onboarding-steps" aria-label="Onboarding progress">
+            @foreach (var step in Model.Steps)
+            {
+                <li class="@("ts-onboarding-step" + (step.Current ? " ts-onboarding-step-current" : "") + (step.Completed ? " ts-onboarding-step-complete" : ""))" aria-current="@(step.Current ? "step" : null)"><span class="ts-onboarding-step-icon" aria-hidden="true">@(step.Completed ? "✓" : step.Number)</span><span>@step.Label</span><span class="ts-sr-only">@step.State</span></li>
+            }
+        </ol>
+    </div>
+    <div class="ts-onboarding-card">
+        @if (Model.Step == "payment-method" && Model.PaymentCanceled)
+        {
+            <div class="ts-alert ts-alert-warning" role="status"><strong class="ts-alert-title">Payment setup canceled</strong><p class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can continue on the @PlanCatalog.For("free").Name plan or try checkout again.</p></div>
+        }
+        @if (Model.Error.Length != 0)
+        { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+        @if (Model.Step == "account-information")
+        {
+            <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="account-information-title">Review your account information</h2><p class="ts-meta">Signed in as @Model.Email</p></div>
+            <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="account-information-title">
+                <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="account-information" />
+                <div class="ts-field"><label class="ts-label" for="displayName">Full name</label><input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" maxlength="128" autocomplete="name" required /></div>
+                <div class="ts-field"><label class="ts-label" for="accountEmail">Email</label><input class="ts-input" id="accountEmail" type="email" value="@Model.Email" readonly aria-describedby="accountEmail-hint" /><p class="ts-hint" id="accountEmail-hint">Your sign-in email cannot be changed during account setup.</p></div>
+                <p class="ts-meta">By continuing you accept the <a href="https://docs.terrascale.tech/legal/terms" @(ExternalLink.Attributes)>Terms of Service@(ExternalLink.Hint)</a>, <a href="https://docs.terrascale.tech/legal/privacy" @(ExternalLink.Attributes)>Privacy Policy@(ExternalLink.Hint)</a> and <a href="https://docs.terrascale.tech/legal/dpa" @(ExternalLink.Attributes)>Data Processing Agreement@(ExternalLink.Hint)</a>.</p>
+                <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue <span aria-hidden="true">→</span></button></div>
+            </form>
+        }
+        else if (Model.Step == "payment-method")
+        {
+            <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="payment-method-title">
+                <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="payment-method" /><input type="hidden" name="return" value="/onboarding" />
+                <div class="ts-row-between ts-onboarding-payment-head">
+                    <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="payment-method-title">Choose your plan</h2><p class="ts-meta">Payment setup is optional for your Personal workspace. Stripe collects your card and confirms the subscription.</p></div>
+                </div>
+                <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
+                    @foreach (var plan in Model.Plans ?? [])
+                    {
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.Price<span class="ts-meta"> @plan.PriceUnit</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
+                    }
+                </fieldset>
+                <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>
+                <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>Contact sales@(ExternalLink.Hint)</a></p>
+                <p class="ts-meta">Continue to Stripe Checkout or stay on @PlanCatalog.For("free").Name without payment.</p>
+                <div class="ts-onboarding-footer"><button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on @PlanCatalog.For("free").Name</button><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button></div>
+            </form>
+        }
+        else
+        {
+            <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="project-title">Create your first project</h2><p class="ts-meta">Choose where your project's data will live.</p></div>
+            <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="project-title">
+                <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="project" />
+                <div class="ts-field"><label class="ts-label" for="projectName">Project name</label><input class="ts-input" id="projectName" name="name" maxlength="100" value="@Model.ProjectName" autocomplete="organization" required /></div>
+                <div class="ts-field"><label class="ts-label" for="region">Primary region</label>
+                    @{ var regions = Model.Regions ?? []; var selectedRegion = Model.Region.Length > 0 ? Model.Region : regions.FirstOrDefault() ?? ""; }
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionPicker, RegionMapField>(new("region", selectedRegion, Available: regions)))
+                    <select class="ts-select" id="region" name="region" required aria-describedby="region-hint">@if (selectedRegion.Length > 0 && !regions.Contains(selectedRegion)) { <option value="@selectedRegion" selected>@selectedRegion · Unavailable</option> }@foreach (var code in regions) { <option value="@code" selected="@(code == selectedRegion ? "selected" : null)">@code · @TerraScale.Dashboard.Common.UI.Regions.Name(code)</option> }</select><p class="ts-hint" id="region-hint">@(regions.Count == 0 ? "Serving regions could not be loaded. Reload this page to try again." : "You can add regions to your project later.")</p>
+                </div>
+                <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard <span aria-hidden="true">→</span></button></div>
+            </form>
+        }
+    </div>
+    </div>
+    </div>
+</main>
+@functions {
+    public DocumentModel LayoutModel => Model.Document;
+}

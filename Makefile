@@ -214,3 +214,19 @@ benchmark-smoke:
 .PHONY: terrabase-test-shard
 terrabase-test-shard:
 	python3 scripts/ci/terrabase-shard.py $(SHARD)
+
+.PHONY: dashboard-build dashboard-lint dashboard-test-fast dashboard-test-slow dashboard-check
+dashboard-build:
+	$(MAKE) -f scripts/dashboard/Makefile build
+
+dashboard-lint:
+	$(MAKE) -f scripts/dashboard/Makefile lint
+
+dashboard-test-fast:
+	bash scripts/dashboard/test-fast.sh
+
+dashboard-test-slow:
+	$(MAKE) -f scripts/dashboard/Makefile test-slow
+
+dashboard-check:
+	$(MAKE) -f scripts/dashboard/Makefile check
