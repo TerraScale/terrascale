@@ -41,6 +41,7 @@
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="NativeCompressions" />
+    <PackageReference Include="NATS.Client.KeyValueStore" />
     <PackageReference Include="Ulid" />
     <PackageReference Include="NUlid" />
     <PackageReference Include="SqlParserCS" />

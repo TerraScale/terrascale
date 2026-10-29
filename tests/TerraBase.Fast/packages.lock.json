@@ -506,6 +506,33 @@
         "resolved": "0.6.1",
         "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
       },
+      "NATS.Client.Abstractions": {
+        "type": "Transitive",
+        "resolved": "3.3.1",
+        "contentHash": "uyMgyvDiLTWrJ78K0mU2U/f/2iLH0DciGRWoVizwJMc0dfJlPl20Cy1hPjmIigRZOqDj3/brRn7LU+joZ7KU5Q=="
+      },
+      "NATS.Client.Core": {
+        "type": "Transitive",
+        "resolved": "3.3.1",
+        "contentHash": "AgMWqf0YqmZsC/1F2g6nfYm/eNJ98G0xp1R0Qm5pbphzuuPSH6KosOxpBIqZcU4swB3qjt5Ef8L85mCFoJVcSA==",
+        "dependencies": {
+          "NATS.Client.Abstractions": "3.3.1",
+          "NATS.NKeys": "1.0.1"
+        }
+      },
+      "NATS.Client.JetStream": {
+        "type": "Transitive",
+        "resolved": "3.3.1",
+        "contentHash": "rtygTQ+4Mglm843+Ijz/96aXAS6KL514E0QwusMxefaKGEkRvh6i5ONoXlGE5uI2p4EgYZGHZqQCfkvZUW/QVg==",
+        "dependencies": {
+          "NATS.Client.Core": "3.3.1"
+        }
+      },
+      "NATS.NKeys": {
+        "type": "Transitive",
+        "resolved": "1.0.1",
+        "contentHash": "xtURX0fexmMd10noG3Uc8gFgwaH7QLQxxgdaVoQKFo0+8a4blwe8vPGgY2S5pzeVYcRXyjlIoA4AR4JgtThyjQ=="
+      },
       "OpenTelemetry": {
         "type": "Transitive",
         "resolved": "1.19.1",
@@ -586,6 +613,7 @@
           "JsonSchema.Net": "[8.0.5, )",
           "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.23.0, )",
+          "NATS.Client.KeyValueStore": "[3.3.1, )",
           "NUlid": "[1.7.3, )",
           "NativeCompressions": "[0.6.1, )",
           "OpenTelemetry.Exporter.Prometheus.AspNetCore": "[1.19.1-beta.1, )",
@@ -845,6 +873,15 @@
         "dependencies": {
           "NativeCompressions.LZ4": "0.6.1",
           "NativeCompressions.Zstandard": "0.6.1"
+        }
+      },
+      "NATS.Client.KeyValueStore": {
+        "type": "CentralTransitive",
+        "requested": "[3.3.1, )",
+        "resolved": "3.3.1",
+        "contentHash": "CMuHkfbeZ4hLm1XIqEfNcaB+2LC5E7BydbBKELBEz4+dAgtT0kAc2Seg6e0REokAAKfFZdSQYiQkjwamL+yAMg==",
+        "dependencies": {
+          "NATS.Client.JetStream": "3.3.1"
         }
       },
       "NUlid": {
