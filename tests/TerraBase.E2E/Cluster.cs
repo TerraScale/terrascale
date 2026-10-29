@@ -56,6 +56,7 @@ public sealed class Cluster : IAsyncDisposable
         try
         {
             var database = await api.CreateManagedDatabaseAsync("canary");
+            await api.VerifyProjectBindingAsync(database.Organization, database.Project);
             await api.SetPlanAsync(api.User, database.Organization, "enterprise");
             client = api.WithToken(api.Issuer.Mint(api.User, token =>
             {
