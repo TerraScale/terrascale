@@ -2,7 +2,7 @@ From: TerraScale
 Subject: [PATCH] Expose the explicit WAL revision contract
 
 diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
-index feaea5ab3..c82333cc6 100644
+index feaea5ab3..7c7201283 100644
 --- a/src/Turso.Data.Sqlite/SqliteConnection.cs
 +++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
 @@ -712,6 +712,18 @@ public partial class SqliteConnection : DbConnection
@@ -16,8 +16,8 @@ index feaea5ab3..c82333cc6 100644
 +    public void ReadWalFramePages(ulong firstFrame, Span<uint> pageNumbers, Span<uint> databaseSizes)
 +        => TursoBindings.ReadWalFramePages(DatabaseHandle, firstFrame, pageNumbers, databaseSizes);
 +
-+    public bool TryReadPage(uint pageNumber, ulong watermark, Span<byte> page)
-+        => TursoBindings.TryReadPage(DatabaseHandle, pageNumber, watermark, page);
++    public bool TryReadSnapshotPage(uint pageNumber, Span<byte> page)
++        => TursoBindings.TryReadSnapshotPage(DatabaseHandle, pageNumber, page);
 +
 +    public int PageSize => TursoBindings.GetPageSize(DatabaseHandle);
 +
@@ -25,7 +25,7 @@ index feaea5ab3..c82333cc6 100644
      {
          get
 diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
-index 8d6776b07..adfa8fb46 100644
+index 8d6776b07..b65da8c84 100644
 --- a/src/Turso.Raw/Public/TursoBindings.cs
 +++ b/src/Turso.Raw/Public/TursoBindings.cs
 @@ -110,6 +110,81 @@ public static class TursoBindings
@@ -71,7 +71,7 @@ index 8d6776b07..adfa8fb46 100644
 +        }
 +    }
 +
-+    public static unsafe bool TryReadPage(TursoDatabaseHandle db, uint pageNumber, ulong watermark, Span<byte> page)
++    public static unsafe bool TryReadSnapshotPage(TursoDatabaseHandle db, uint pageNumber, Span<byte> page)
 +    {
 +        ArgumentNullException.ThrowIfNull(db);
 +        db.ThrowIfInvalid();
@@ -79,7 +79,7 @@ index 8d6776b07..adfa8fb46 100644
 +        RequireWalContract();
 +        fixed (byte* buffer = page)
 +        {
-+            var status = TursoInterop.WalReadPage(db, pageNumber, watermark, buffer, (nuint)page.Length, out var found, out var errorPtr);
++            var status = TursoInterop.SnapshotReadPage(db, pageNumber, buffer, (nuint)page.Length, out var found, out var errorPtr);
 +            ThrowIfError(status, errorPtr);
 +            return found != 0;
 +        }
@@ -120,7 +120,7 @@ index 000000000..930ff29bf
 +
 +public readonly record struct TursoWalState(ulong MaxFrame, uint CheckpointSequence);
 diff --git a/src/Turso.Raw/TursoInterop.cs b/src/Turso.Raw/TursoInterop.cs
-index d1119181c..826de8bdc 100644
+index d1119181c..349d906dd 100644
 --- a/src/Turso.Raw/TursoInterop.cs
 +++ b/src/Turso.Raw/TursoInterop.cs
 @@ -58,6 +58,27 @@ internal static class TursoInterop
@@ -141,9 +141,9 @@ index d1119181c..826de8bdc 100644
 +    internal static extern unsafe TursoStatusCode WalFramePages(
 +        TursoDatabaseHandle connection, ulong firstFrame, uint count, uint* pageNumbers, uint* databaseSizes, out IntPtr errorPtr);
 +
-+    [DllImport(DllName, EntryPoint = "turso_terrascale_wal_read_page", CallingConvention = CallingConvention.Cdecl)]
-+    internal static extern unsafe TursoStatusCode WalReadPage(
-+        TursoDatabaseHandle connection, uint pageNumber, ulong watermark, byte* page, nuint pageLength, out int found, out IntPtr errorPtr);
++    [DllImport(DllName, EntryPoint = "turso_terrascale_snapshot_read_page", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern unsafe TursoStatusCode SnapshotReadPage(
++        TursoDatabaseHandle connection, uint pageNumber, byte* page, nuint pageLength, out int found, out IntPtr errorPtr);
 +
 +    [DllImport(DllName, EntryPoint = "turso_terrascale_page_size", CallingConvention = CallingConvention.Cdecl)]
 +    internal static extern uint PageSize(TursoDatabaseHandle connection);

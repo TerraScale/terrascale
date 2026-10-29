@@ -719,8 +719,8 @@ public partial class SqliteConnection : DbConnection
     public void ReadWalFramePages(ulong firstFrame, Span<uint> pageNumbers, Span<uint> databaseSizes)
         => TursoBindings.ReadWalFramePages(DatabaseHandle, firstFrame, pageNumbers, databaseSizes);
 
-    public bool TryReadPage(uint pageNumber, ulong watermark, Span<byte> page)
-        => TursoBindings.TryReadPage(DatabaseHandle, pageNumber, watermark, page);
+    public bool TryReadSnapshotPage(uint pageNumber, Span<byte> page)
+        => TursoBindings.TryReadSnapshotPage(DatabaseHandle, pageNumber, page);
 
     public int PageSize => TursoBindings.GetPageSize(DatabaseHandle);
 
