@@ -62,6 +62,10 @@ public sealed partial class FakeS3
     /// <summary>Object PUTs refused with <c>AccessDenied</c>, without storing their content.</summary>
     public Func<string, bool> FailPut { get; set; } = _ => false;
 
+    public Func<string, HttpStatusCode?>? FailShapeDelete { get; set; }
+
+    public bool Expire(string key) => _objects.TryRemove(key, out _);
+
     /// <summary>Platform anchor GETs missing Tigris's consistent-read header.</summary>
     public int InconsistentAnchorReads => Volatile.Read(ref _inconsistentAnchorReads);
 
@@ -327,6 +331,17 @@ public sealed partial class FakeS3
         });
         services.AddHttpClient("shapes-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
+
+    public void RejectShapeCredentials(IServiceCollection services) => services.AddSingleton(new ShapeStorageSettings
+    {
+        Endpoint = new Uri(ObjectStorage),
+        Region = "test-region-1",
+        Bucket = Bucket,
+        AccessKeyId = ShapeAccessKey,
+        SecretKey = ShapeSecretKey + "-revoked",
+        CloudflareApiToken = FakeCloudflare.Token,
+        Cdn = R2 ? new Uri("https://" + ShapeStorageSettings.CdnHost + "/") : null,
+    });
 
     // One exact allocation for a body of known length (ReadAsByteArrayAsync buffers it, then copies): parts are 128 MiB, and
     // the suite's parallel tests share one process.
@@ -606,6 +621,11 @@ public sealed partial class FakeS3
         if (request.Method == HttpMethod.Delete && objects.ContainsKey(key) && Locked(key))
         {
             return S3Error(HttpStatusCode.Forbidden, "RetentionRuleViolation");
+        }
+
+        if (request.Method == HttpMethod.Delete && !customer && FailShapeDelete?.Invoke(key) is { } refused)
+        {
+            return S3Error(refused, refused == HttpStatusCode.Forbidden ? "AccessDenied" : "InternalError");
         }
 
         if (request.Method == HttpMethod.Delete)

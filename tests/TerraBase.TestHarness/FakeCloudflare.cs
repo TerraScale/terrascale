@@ -19,12 +19,19 @@ public sealed class FakeCloudflare : IDisposable
     private const string Zone = "4cc466e19478c116fae7dc445a6d0911";
     private const string Api = "https://api.cloudflare.com/client/v4";
     private readonly ConcurrentQueue<string> _purged = new();
+    private readonly ConcurrentQueue<(DateTimeOffset At, string[] Prefixes)> _attempts = new();
     private readonly SemaphoreSlim _requests = new(0);
     private readonly ConcurrentQueue<(string Host, string Start, string End)> _windows = new();
     private readonly SemaphoreSlim _queries = new(0);
 
     /// <summary>Every URL purged so far, in request order.</summary>
     public IReadOnlyCollection<string> Purged => _purged;
+
+    public Func<IReadOnlyList<string>, HttpResponseMessage?>? PurgeAnswer { get; set; }
+
+    public TimeProvider Time { get; set; } = TimeProvider.System;
+
+    public IReadOnlyCollection<(DateTimeOffset At, string[] Prefixes)> Attempts => _attempts;
 
     /// <summary>The (cache status, count) groups every analytics query answers.</summary>
     public IReadOnlyList<(string CacheStatus, long Count)> Analytics { get; set; } = [];
@@ -83,9 +90,16 @@ public sealed class FakeCloudflare : IDisposable
 
     private HttpResponseMessage Purge(JsonElement body)
     {
-        foreach (var file in body.GetProperty("prefixes").EnumerateArray())
+        var prefixes = body.GetProperty("prefixes").EnumerateArray().Select(prefix => prefix.GetString()!).ToArray();
+        _attempts.Enqueue((Time.GetUtcNow(), prefixes));
+        if (PurgeAnswer?.Invoke(prefixes) is { } answer)
         {
-            _purged.Enqueue(file.GetString()!);
+            return answer;
+        }
+
+        foreach (var prefix in prefixes)
+        {
+            _purged.Enqueue(prefix);
         }
 
         _ = _requests.Release();

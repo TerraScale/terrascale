@@ -22,13 +22,25 @@ ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GC
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS= DOTNET_ROOT=/usr/share/dotnet NUGET_SCRATCH=/nuget-scratch
 # The WAL power-loss tests compile their LD_PRELOAD shim with cc and the C library headers.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev \
+    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # Chromium for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
 # installs the same browser revision. Redocly (auth-openapi-check) is fetched once here too.
 RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
+# The shared shape-purge budget tests run a real nats-server; the release tarball is pinned by SHA-256.
+ARG BUILDARCH
+RUN case "$BUILDARCH" in \
+        amd64) sum=67cb8e10bc6f0c4b47f75a728529a20953dbae2a4f9a4a52ae8517d65ae303ff ;; \
+        arm64) sum=bc2c788dcbf2849af749564e06a0d48c19bced851f2d68a2e21c54d078949b28 ;; \
+        *) exit 1 ;; \
+    esac \
+    && curl --fail --location --retry 3 --proto '=https' --tlsv1.2 -o /tmp/nats-server.tar.gz \
+        "https://github.com/nats-io/nats-server/releases/download/v2.15.2/nats-server-v2.15.2-linux-$BUILDARCH.tar.gz" \
+    && echo "$sum  /tmp/nats-server.tar.gz" | sha256sum --check \
+    && tar -xzf /tmp/nats-server.tar.gz -C /usr/local/bin --strip-components=1 "nats-server-v2.15.2-linux-$BUILDARCH/nats-server" \
+    && rm /tmp/nats-server.tar.gz
 # .git is excluded: its packs and index differ per clone and would invalidate every later cached layer.
 COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
