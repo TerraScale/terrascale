@@ -149,7 +149,7 @@ public static class TursoBindings
         }
     }
 
-    public static unsafe bool TryReadPage(TursoDatabaseHandle db, uint pageNumber, ulong watermark, Span<byte> page)
+    public static unsafe bool TryReadSnapshotPage(TursoDatabaseHandle db, uint pageNumber, Span<byte> page)
     {
         ArgumentNullException.ThrowIfNull(db);
         db.ThrowIfInvalid();
@@ -157,7 +157,7 @@ public static class TursoBindings
         RequireWalContract();
         fixed (byte* buffer = page)
         {
-            var status = TursoInterop.WalReadPage(db, pageNumber, watermark, buffer, (nuint)page.Length, out var found, out var errorPtr);
+            var status = TursoInterop.SnapshotReadPage(db, pageNumber, buffer, (nuint)page.Length, out var found, out var errorPtr);
             ThrowIfError(status, errorPtr);
             return found != 0;
         }
