@@ -82,6 +82,10 @@ class _Exchange:
             return _spec.backoff(attempt, parse_retry_after(response.headers.get("retry-after")))
         return None
 
+    def request(self) -> httpx.Request:
+        # Direct construction excludes cookies and defaults adopted from other origins.
+        return httpx.Request("POST", self.endpoint, data=self.form, headers=self.headers())
+
     def headers(self) -> dict[str, str]:
         return {"Authorization": self._auth, "Accept": "application/json"}
 
@@ -169,7 +173,7 @@ class APIKeyTokenSource:
                 attempt += 1
                 started = time.monotonic()
                 try:
-                    response = self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+                    response = self._http.send(self._x.request(), auth=None, follow_redirects=False)
                 except httpx.TransportError as exc:
                     delay = self._x.retry_delay(None, attempt, self._max_attempts)
                     if delay is None:
@@ -224,7 +228,7 @@ class AsyncAPIKeyTokenSource:
                 attempt += 1
                 started = time.monotonic()
                 try:
-                    response = await self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+                    response = await self._http.send(self._x.request(), auth=None, follow_redirects=False)
                 except httpx.TransportError as exc:
                     delay = self._x.retry_delay(None, attempt, self._max_attempts)
                     if delay is None:

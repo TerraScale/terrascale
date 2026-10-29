@@ -31,7 +31,9 @@ jobs:
           python-version: ${{ matrix.python }}
           activate-environment: true
           enable-cache: true
-          cache-dependency-glob: requirements-ci.txt
+          cache-dependency-glob: |
+            requirements-ci.txt
+            requirements-audit.txt
       - run: 'uv pip sync --require-hashes --only-binary :all: requirements-ci.txt'
       - name: validate active build requirements on every supported interpreter
         run: python scripts/check-build-requirements.py
@@ -42,11 +44,17 @@ jobs:
         if: matrix.python == '3.12'
         with:
           path: ~/.cache/pip-audit
-          key: pip-audit-${{ runner.os }}-${{ hashFiles('requirements-ci.txt') }}
+          key: pip-audit-${{ runner.os }}-${{ hashFiles('requirements-ci.txt', 'requirements-audit.txt') }}
           restore-keys: pip-audit-${{ runner.os }}-
-      - name: audit runtime, dev and build graph (all severities)
+      - name: install isolated audit toolchain
         if: matrix.python == '3.12'
-        run: pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt --cache-dir ~/.cache/pip-audit
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/ts-audit"
+          uv pip sync --python "$RUNNER_TEMP/ts-audit"/bin/python --require-hashes --only-binary :all: requirements-audit.txt
+      - name: audit runtime, dev, build and audit graphs (all severities)
+        if: matrix.python == '3.12'
+        run: |
+          "$RUNNER_TEMP/ts-audit"/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
       - run: uv pip install --no-deps --no-build-isolation -e '.[dev]' && uv pip check
       # Both tools target Python 3.10 in pyproject.toml; their result is interpreter-independent.
       - run: ruff check src tests
