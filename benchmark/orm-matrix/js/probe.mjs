@@ -104,7 +104,7 @@ for (let repeat = 1; repeat <= repeats; repeat++) for (const tool of ['prisma', 
       let text;
       if (tool === 'prisma') text = await runCli('prisma', ['db', 'pull', '--schema', 's2.prisma', '--print'], dir);
       else { await runCli('drizzle', ['introspect', '--config', 'drizzle.config.cjs'], dir); text = await readFile(join(dir, 'introspected/schema.ts'), 'utf8'); }
-      for (const name of Object.values(names)) assert(text.includes(name));
+      for (const name of Object.values(names)) assert(text.includes(JSON.stringify(name)));
       return { command: tool === 'prisma' ? 'prisma db pull --print' : 'drizzle-kit introspect' };
     });
     await stage('crud', ['migrate_table'], async () => { const id = ulid(); assert.equal((await api.create({ id, label: 'create', payload: {} })).id, id); assert.equal((await api.get(id)).label, 'create'); assert.equal((await api.update(id, 'updated')).label, 'updated'); await api.remove(id); assert.equal(await api.get(id), null); });
@@ -115,7 +115,7 @@ for (let repeat = 1; repeat <= repeats; repeat++) for (const tool of ['prisma', 
       await api.tx(async tx => { await tx.create({ id, label: 'committed', payload: {} }); assert.equal((await tx.get(id)).label, 'committed'); });
       assert.equal((await api.get(id)).label, 'committed'); await api.remove(id);
     });
-    await stage('json', ['migrate_table'], async () => { const id = ulid(), payload = { score: 7, nested: ['value', true, null] }; await api.create({ id, label: 'json', payload }); assert.deepEqual((await api.get(id)).payload, payload); assert.equal((await api.json(id)).length, 1); await api.remove(id); });
+    await stage('json', ['migrate_table'], async () => { const id = ulid(), other = ulid(), payload = { score: 7, nested: ['value', true, null] }; await api.create({ id, label: 'json', payload }); await api.create({ id: other, label: 'nonmatching', payload: { score: 8 } }); assert.deepEqual((await api.get(id)).payload, payload); assert.equal((await api.json(id)).length, 1); assert.equal((await api.json(other)).length, 0); await api.remove(id); await api.remove(other); });
     await stage('prepared', api ? (tool === 'drizzle' ? ['migrate_table'] : []) : ['connect'], async () => ({ protocol: tool === 'prisma' ? 'default unnamed Parse/Bind/Execute via adapter-pg' : 'named node-postgres Parse/Bind/Execute', namedCache: tool === 'prisma' ? 'not asserted' : 'one Parse, two Binds', observed: await api.prepared(observed) }));
     await stage('errors', ['migrate_table'], async () => {
       const id = ulid(), states = []; await api.create({ id, label: 'duplicate', payload: {} });

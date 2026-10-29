@@ -26,10 +26,10 @@ Each JSONL row contains `{surface,tool,repeat,check,status,detail}`. Status is `
 |---|---|
 | connect | Generate/load the actual ORM client and execute SELECT 1. |
 | migrate_table / migrate_fk / migrate_index | Generate native PostgreSQL DDL through Prisma migrate diff or Drizzle Kit's snapshot/migration API, then execute each stage. FK and index stages independently require only tables. |
-| introspect | Run real Prisma db pull --print or drizzle-kit introspect and require both owned tables in the generated schema. Attempt even after connect fails. |
+| introspect | Run real Prisma db pull --print or drizzle-kit introspect and require exact quoted names for both owned tables in the generated schema. Attempt even after connect fails. |
 | crud | Generated ORM create/read/update/delete operations; assert returned values and absence after delete. |
 | transactions | Roll back an inserted record, assert absence, then commit and read a recovery transaction. |
-| json | Round-trip nested JSON and use the ORM to filter a JSON field. |
+| json | Round-trip nested JSON, require a matching row, and reject a second row with score 8 against the score 7 filter. |
 | prepared | Execute with two different bound ULIDs; observe actual pg ParseComplete/BindComplete events. Prisma uses default unnamed extended protocol, requiring at least two Parses/Binds, and makes no named-cache claim. Drizzle uses one named prepared query, requiring one Parse and two Binds on the same connection. |
 | errors | Independently assert 23505, 42601 and 23503 through ORM operations; observe actual server ErrorResponse codes before ORM wrapping. Assert a subsequent query succeeds. |
 

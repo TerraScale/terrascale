@@ -9,6 +9,8 @@ Measured on delta through `ts-heavy-any`: three repeats against an isolated Post
 
 Prepared execution uses actual protocol counters. Prisma's adapter used unnamed statements, with at least two Parses and Binds for two values. Drizzle reused a named statement: one Parse and two Binds. These are distinct preparation behaviors, both measured successfully. Error checks cover `23505`, `23503`, `42601`, and a successful subsequent query.
 
+The control was rerun after tightening introspection to exact quoted table names and adding a nonmatching JSON row; all checks still passed 3/3.
+
 Raw measurements: [reference-js.jsonl.gz](reference-js.jsonl.gz), 66 rows including six cleanup checks. Installation used `npm ci --ignore-scripts` with the committed lockfile; Prisma's downloaded schema engine passed the pinned SHA-256 verification before execution.
 
 After provisioning dependencies and `PRISMA_SCHEMA_ENGINE_BINARY` as documented, reproduce inside an admitted heavy job:
