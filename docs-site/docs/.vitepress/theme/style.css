@@ -1,0 +1,171 @@
+/* TerraScale docs: VitePress mapped onto the shared --ts-* tokens (tokens.css) and the shared
+   component spec. Write against tokens only; no gradients, no glows. */
+@font-face {
+  font-family: Geist;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/Geist-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: Geist;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/geist-variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/geist-mono-variable.woff2') format('woff2');
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  :root {
+    --docs-glass: var(--ts-glass);
+    --docs-glass-strong: var(--ts-glass-strong);
+    --docs-frost: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+    --docs-frost-lg: blur(var(--ts-blur-lg)) saturate(var(--ts-saturate));
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root { --docs-glass: var(--ts-surface); --docs-glass-strong: var(--ts-surface); --docs-frost: none; --docs-frost-lg: none; }
+}
+
+:root, .dark {
+  --vp-font-family-base: var(--ts-font-sans);
+  --vp-font-family-mono: var(--ts-font-mono);
+  --vp-c-bg: var(--ts-canvas);
+  --vp-c-bg-alt: var(--ts-sidebar);
+  --vp-c-bg-elv: var(--ts-surface);
+  --vp-c-bg-soft: var(--ts-surface-2);
+  --vp-c-default-soft: var(--ts-surface-2);
+  --vp-c-text-1: var(--ts-ink);
+  --vp-c-text-2: var(--ts-ink-2);
+  --vp-c-text-3: var(--ts-ink-3);
+  --vp-c-divider: var(--ts-line);
+  --vp-c-border: var(--ts-line-strong);
+  --vp-c-gutter: var(--ts-line);
+  --vp-c-brand-1: var(--ts-link);
+  --vp-c-brand-2: var(--ts-accent);
+  --vp-c-brand-3: var(--ts-accent-fill);
+  --vp-c-brand-soft: var(--ts-accent-soft);
+  --vp-button-brand-bg: var(--ts-primary);
+  --vp-button-brand-hover-bg: var(--ts-primary-hover);
+  --vp-button-brand-text: var(--ts-on-primary);
+  --vp-input-border-color: var(--ts-control-line);
+  --vp-input-switch-bg-color: var(--ts-surface-2);
+  --vp-shadow-1: none;
+  --vp-shadow-3: none;
+  --vp-backdrop-bg-color: var(--ts-scrim);
+  --vp-nav-height: var(--ts-header-h);
+  --vp-nav-bg-color: transparent;
+  --vp-local-nav-bg-color: transparent;
+  --vp-nav-screen-bg-color: var(--docs-glass-strong);
+  --vp-local-search-bg: var(--docs-glass-strong);
+  --vp-sidebar-width: var(--ts-sidebar-width);
+
+  --vp-code-font-size: 0.88em;
+  --vp-code-color: var(--ts-ink);
+  --vp-code-bg: var(--ts-surface-2);
+  --vp-code-link-color: var(--ts-link);
+  --vp-code-link-hover-color: var(--ts-accent);
+  --vp-code-block-color: var(--ts-syn-fn);
+  --vp-code-block-bg: var(--ts-surface);
+  --vp-code-lang-color: var(--ts-ink-3);
+  --vp-code-line-highlight-color: var(--ts-surface-2);
+  --vp-code-copy-code-bg: transparent;
+  --vp-code-copy-code-border-color: transparent;
+  --vp-code-copy-code-hover-bg: var(--ts-surface-2);
+  --vp-code-copy-code-hover-border-color: transparent;
+  --vp-code-copy-code-active-text: var(--ts-ink-2);
+
+  /* Shiki css-variables theme (config.ts) -> shared syntax tokens. */
+  --shiki-foreground: var(--ts-syn-fn);
+  --shiki-background: var(--ts-surface);
+  --shiki-token-keyword: var(--ts-syn-keyword);
+  --shiki-token-string: var(--ts-syn-string);
+  --shiki-token-string-expression: var(--ts-syn-string);
+  --shiki-token-constant: var(--ts-syn-number);
+  --shiki-token-function: var(--ts-syn-fn);
+  --shiki-token-parameter: var(--ts-syn-fn);
+  --shiki-token-punctuation: var(--ts-syn-punct);
+  --shiki-token-comment: var(--ts-syn-comment);
+  --shiki-token-link: var(--ts-link);
+
+  --vp-local-search-result-bg: transparent;
+  --vp-local-search-result-border: transparent;
+  --vp-local-search-result-selected-bg: var(--ts-surface-2);
+  --vp-local-search-result-selected-border: transparent;
+  --vp-local-search-highlight-bg: var(--ts-accent-soft);
+  --vp-local-search-highlight-text: var(--ts-ink);
+
+  --vp-badge-info-text: var(--ts-ink-2);
+  --vp-badge-info-bg: var(--ts-surface-3);
+  --vp-badge-tip-text: var(--ts-success);
+  --vp-badge-tip-bg: color-mix(in oklab, var(--ts-success) var(--ts-tint-badge), transparent);
+  --vp-badge-warning-text: var(--ts-warning);
+  --vp-badge-warning-bg: color-mix(in oklab, var(--ts-warning) var(--ts-tint-badge), transparent);
+  --vp-badge-danger-text: var(--ts-danger);
+  --vp-badge-danger-bg: color-mix(in oklab, var(--ts-danger) var(--ts-tint-badge), transparent);
+}
+body { font-size: var(--ts-fs-md); }
+:focus-visible { outline: 2px solid var(--ts-link); outline-offset: 3px; }
+.VPNavBarTitle .logo { height: 22px; }
+@media (min-width: 960px) {
+  :root .VPNavBar.has-sidebar .divider { padding-left: 0; }
+  :root .VPNavBarTitle.has-sidebar .title { border-bottom-color: transparent; }
+}
+.VPNavBarTitle .title { gap: var(--ts-s3); font-size: var(--ts-fs-sm); font-weight: 500; color: var(--ts-ink-3); }
+.VPNavBar .VPNavBarMenu .VPNavBarMenuLink { font-size: var(--ts-fs-md); font-weight: 500; }
+.VPNavBar .VPNavBarMenu .VPNavBarMenuLink:not(.active) { color: var(--ts-ink-2); }
+.VPNavBar .VPNavBarMenu .VPNavBarMenuLink:not(.active):hover { color: var(--ts-ink); }
+@media (min-width: 768px) {
+  :root .VPNavBarSearch .DocSearch-Button { height: var(--ts-control-h-sm); min-width: 220px; border: 1px solid var(--ts-line-strong); border-radius: var(--ts-radius); background: transparent; }
+  :root .VPNavBarSearch .DocSearch-Button:hover { border-color: var(--ts-control-line); }
+}
+:root .DocSearch-Button .DocSearch-Button-Placeholder { font-size: var(--ts-fs-sm); color: var(--ts-ink-3); }
+:root .DocSearch-Button .DocSearch-Button-Key { border-color: var(--ts-line-strong); background: var(--ts-surface); font-family: var(--ts-font-mono); color: var(--ts-ink-3); }
+
+/* ---- Sidebar ---- */
+.VPSidebar { border-inline-end: 1px solid var(--ts-line); }
+.VPSidebarItem.level-0 { padding-bottom: var(--ts-s4); border-top: 0; }
+.VPSidebarItem.level-0 > .item { padding-inline: var(--ts-s2); }
+/* Item text lines up with the logo; long labels fit on one line. */
+@media (min-width: 960px) { html:root .VPSidebar { padding-left: var(--ts-s6); padding-right: var(--ts-s3); } }
+.VPSidebar .group + .group { border-top: 0; padding-top: 0; }
+.VPSidebarItem.level-1 > .item { padding: 0 var(--ts-s2); border-radius: var(--ts-radius); min-height: var(--ts-control-h); transition: background-color var(--ts-fast) var(--ts-ease); }
+.VPSidebar .VPSidebarItem.level-1 .text { font-size: var(--ts-fs-sm); font-weight: 500; line-height: 24px; }
+.VPSidebarItem.level-1 > .item:hover { background: var(--ts-surface-2); }
+.VPSidebarItem.level-1.is-active > .item { background: var(--ts-nav-active-bg); }
+.VPSidebarItem.level-1.is-active > .item .text { color: var(--ts-ink); }
+.VPSidebar .group + .group { border-top: 0; padding-top: 0; }
+.vp-doc h1 { font-size: 32px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.vp-doc h2 { font-size: 20px; font-weight: 600; }
+.vp-doc h3 { font-size: 16px; font-weight: 600; }
+.vp-doc p, .vp-doc li { line-height: 1.7; }
+.vp-doc p { color: var(--ts-ink-2); }
+.vp-doc div[class*='language-'], .vp-doc .custom-block { border-radius: var(--ts-radius); }
+.vp-doc table { font-size: 13px; }
+.vp-doc th { background: var(--ts-surface-2); }
+.vp-doc tr:nth-child(2n) { background: var(--ts-surface); }
+.VPDocFooter .pager-link { border-radius: var(--ts-radius); }
+.DocSearch-Button, .VPLocalSearchBox .search-input { border-color: var(--ts-control-line); }
+@media (max-width: 959px) {
+  .VPSidebar { width: min(86vw, 300px); max-width: 300px; }
+  .VPSidebar:not(.open) { visibility: hidden; }
+}
+@media (max-width: 767px) {
+  .vp-doc h1 { font-size: 26px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

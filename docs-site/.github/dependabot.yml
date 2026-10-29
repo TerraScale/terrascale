@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Security updates arrive as one grouped PR per ecosystem; a limit of 0 turns off version-update PRs.
+  - package-ecosystem: npm
+    directories: ["/", "/examples/terrabase-js", "/create-terrascale-app", "/examples/browser-todos", "/examples/orm-drizzle", "/examples/orm-prisma"]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
