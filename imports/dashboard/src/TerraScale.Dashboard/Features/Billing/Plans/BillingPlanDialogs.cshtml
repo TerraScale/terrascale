@@ -1,0 +1,27 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingPage>
+@using TerraScale.Dashboard.Features.Billing
+@using TerraScale.Dashboard.Features.Billing.Plans
+@{
+    var data = Model.PlanChanges;
+    var owner = Model.CanManage;
+    var subscribed = data.Binding?.SubscriptionId is { Length: > 0 } && data.Binding.Status is not ("canceled" or "incomplete_expired");
+    var currentKey = data.State?.PlanKey ?? (subscribed ? Model.Plans.FirstOrDefault(plan => plan.Id == Model.Shell.Context.Organization!.PlanId)?.Key : null) ?? "";
+}
+@if (owner)
+{
+    <dialog id="change-billing-plan" class="ts-dialog ts-dialog-wide" aria-labelledby="change-billing-plan-title"><div class="ts-dialog-content ts-stack"><div class="ts-billing-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="change-billing-plan-title">Choose a plan</h2><p class="ts-dialog-description">Select a plan to review its price and billing cadence.</p></div><button class="ts-icon-btn" type="button" aria-label="Close plan selection" command="close" commandfor="change-billing-plan">@Icons.Render("X", 18)</button></div>
+        <form method="get" action="/organization" class="ts-form"><input type="hidden" name="tab" value="billing" /><input type="hidden" name="review" value="1" /><fieldset class="ts-stack-sm"><legend class="ts-section-title">Plan</legend>@foreach (var plan in Model.Plans.Where(plan => plan.PriceCents > 0)) { <label class="ts-check"><input type="radio" name="plan" value="@plan.Key" required checked="@(plan.Key == currentKey ? "checked" : null)" /><span><strong>@plan.Name</strong> · @plan.Price @plan.PriceUnit · @plan.BillingDescription<br /><small>@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.OperationsAllowance · @plan.EgressAllowance · @plan.MemberAllowance</small></span></label> }@if (Model.Shell.Context.Organization!.Kind == "personal" && data.State is not null) { <label class="ts-check"><input type="radio" name="plan" value="free" /><span><strong>@PlanCatalog.For("free").Name</strong> · at renewal</span></label> }</fieldset><div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="change-billing-plan">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Review change</button></div></form>
+    </div></dialog>
+    @if (data.Review is { } review)
+    {
+        <dialog id="review-billing-plan" class="ts-dialog" data-init="el.showModal()" aria-labelledby="review-billing-plan-title"><div class="ts-dialog-content ts-stack"><div class="ts-billing-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="review-billing-plan-title">Review plan change</h2><p class="ts-dialog-description">Stripe confirms the final charge and billing date.</p></div><a class="ts-icon-btn" href="/organization?tab=billing" aria-label="Close plan review">@Icons.Render("X", 18)</a></div>
+            @if (review.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@review.Error</p></div>@if (review.CanUndo) { <form method="post" action="/billing/change/undo"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary" type="submit">Undo scheduled change</button></form> } }
+            else if (review.Plan is { } plan)
+            {
+                <dl class="ts-kv">@foreach (var row in new[] { ("Plan", plan.Name), ("Price", review.Price), ("Charge today", review.Estimate), ("Effective", review.Effect), ("Storage", plan.StorageAllowance), ("Operation units", plan.OperationsAllowance), ("Client egress", plan.EgressAllowance), ("Databases", plan.DatabaseAllowance), ("Team", plan.MemberAllowance) }) { <div><dt>@row.Item1</dt><dd>@row.Item2</dd></div> }</dl>
+                @foreach (var warning in review.Warnings) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">@warning.Title</p><p class="ts-alert-body">@warning.Detail</p></div> }
+                <form method="post" action="@review.Action" class="ts-dialog-footer"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="plan" value="@plan.Key" /><input type="hidden" name="interval" value="@review.Interval" /><input type="hidden" name="return" value="/organization?tab=billing" /><a class="ts-btn ts-btn-ghost" href="/organization?tab=billing">Cancel</a><button class="ts-btn ts-btn-primary" type="submit">Confirm change</button></form>
+            }
+        </div></dialog>
+    }
+}

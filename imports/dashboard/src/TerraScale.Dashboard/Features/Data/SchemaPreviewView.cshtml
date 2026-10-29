@@ -1,0 +1,23 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.SchemaPreviewPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page">
+@(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "schema", Model.Collection)))
+<section class="ts-card"><header class="ts-card-head"><div class="ts-card-heading"><h1 class="ts-card-title">Preview document schema</h1><p class="ts-card-description">Inspect existing documents without changing them or the active schema. Each page examines at most 100 documents and 1 MiB, returning at most 16 hashed diagnostics.</p></div></header><div class="ts-card-body ts-stack-lg">
+@if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
+<form method="post" class="ts-form" action="@("/databases/" + Model.Database.Id + "/schema/preview")">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-field"><label class="ts-label" for="preview-collection">Collection</label><input class="ts-input ts-mono" id="preview-collection" name="collection" value="@Model.Collection" maxlength="128" required /></div>
+<div class="ts-field"><label class="ts-label" for="preview-schema">Proposed JSON Schema</label><textarea class="ts-input ts-mono" id="preview-schema" name="schema" rows="12" maxlength="49152" spellcheck="false" required>@Model.Schema</textarea></div>
+<p class="ts-hint">Dashboard schemas are limited to 48 KiB (API: 64 KiB). Start again after editing the schema or collection. Writes between pages can make the preview stale. Cancel by leaving this page; no background scan continues.</p>
+<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit" name="cursor" value="">Start preview</button>@if(Model.Cursor.Length > 0){<button class="ts-btn ts-btn-secondary" type="submit" name="cursor" value="@Model.Cursor">Inspect next page</button>}</div>
+</form>
+@if(Model.Preview is { } result){
+<section aria-labelledby="preview-result"><h2 id="preview-result">@(result.Complete ? "Final page inspected" : "More documents remain")</h2><p role="status">This page: @result.Examined examined · @result.Valid valid · @result.Invalid invalid. Counts are per page, not a collection-wide clean bill.</p>
+<dl class="ts-kv"><dt>Schema hash</dt><dd class="ts-break"><code>@result.SchemaHash</code></dd><dt>Data frontier</dt><dd class="ts-break"><code>@result.Frontier</code></dd></dl>
+@if(result.Diagnostics.Count > 0){<div class="ts-table-wrap"><table class="ts-table"><caption>Bounded hashed diagnostics; document values are never shown</caption><thead><tr><th scope="col">Document hash</th><th scope="col">Path hash</th><th scope="col">Rule</th></tr></thead><tbody>@foreach(var item in result.Diagnostics){<tr><td class="ts-break"><code>@item.IdHash</code></td><td class="ts-break"><code>@item.PathHash</code></td><td>@item.Keyword</td></tr>}</tbody></table></div>}
+else{<p class="ts-meta">No invalid documents on this page.</p>}
+</section>}
+<p class="ts-meta">This regional snapshot can become stale after writes. Applying a schema validates future writes locally; preview does not create a global write barrier or repair historical documents.</p>
+<a href="@DatabaseService.Path(Model.Database.Id, "schema", Model.Collection)">Back to schema</a>
+</div></section></main>
+@functions { public ShellModel LayoutModel => Model.Shell; }

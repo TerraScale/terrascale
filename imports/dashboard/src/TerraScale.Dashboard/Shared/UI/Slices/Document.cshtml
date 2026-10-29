@@ -1,0 +1,33 @@
+@inherits RazorLayoutSlice<DocumentModel>
+@inject AssetUrls Assets
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
+<!DOCTYPE html>
+<html lang="en" data-theme="@Model.Theme" data-nonce="@Model.Nonce">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="@(Model.Theme == "system" ? "light dark" : Model.Theme)" />
+    <meta name="theme-color" content="#151515" />
+    <title>@Model.Title · TerraScale</title>
+    <link rel="icon" type="image/svg+xml" href="@Assets.Url("brand/logo-icon-blue.svg")" />
+    <link rel="preload" href="@Assets.Url("fonts/Geist-Variable.woff2")" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="@Assets.Url("fonts/GeistMono-Variable.woff2")" as="font" type="font/woff2" crossorigin />
+    <link id="ts-css" rel="stylesheet" href="@Assets.Url("css/terrascale.css")" data-dashboard-css />
+    <script type="module" src="@Assets.Url("js/button-loading.js")" nonce="@Model.Nonce"></script>
+    <script type="module" src="@Assets.Url("js/datastar.js")" integrity="@AssetUrls.DatastarIntegrity" crossorigin="anonymous" nonce="@Model.Nonce"></script>
+</head>
+<body class="@Model.BodyClass" data-signals="{_navPending: false}" data-class:ts-nav-pending="$_navPending"
+      data-on:click__window="$_navPending = $_navPending || !!(!evt.defaultPrevented &amp;&amp; evt.button === 0 &amp;&amp; !evt.metaKey &amp;&amp; !evt.ctrlKey &amp;&amp; !evt.shiftKey &amp;&amp; !evt.altKey &amp;&amp; evt.target.closest &amp;&amp; evt.target.closest('a[href]:not([target]):not([download])') &amp;&amp; evt.target.closest('a[href]').origin === location.origin &amp;&amp; (evt.target.closest('a[href]').pathname !== location.pathname || evt.target.closest('a[href]').search !== location.search))"
+      data-on:submit__window="evt.target.hasAttribute('data-submit-once') &amp;&amp; $_navPending ? evt.preventDefault() : ($_navPending = $_navPending || (!evt.defaultPrevented &amp;&amp; evt.target.method !== 'dialog' &amp;&amp; !evt.target.target))"
+      data-on:pageshow__window="$_navPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_navPending = false)">
+    <a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
+    <div id="ts-auth-main">@await RenderBodyAsync()</div>
+    @if (HostEnvironment.IsDevelopment())
+    {
+        <div id="ts-dev-updates" hidden data-signals="{_devBoot: '', _devFirstBoot: '', _devRevision: -1, _devFirstRevision: -1, _devCss: '', _devFirstCss: '', _devJs: '', _devFirstJs: ''}"
+             data-attr:data-dev-ready="$_devBoot ? 'true' : 'false'"
+             data-init="@@get('/__dev/events', {openWhenHidden: true, retryMaxCount: 1000})"
+             data-effect="$_devBoot &amp;&amp; ($_devFirstBoot = $_devFirstBoot || $_devBoot) !== $_devBoot &amp;&amp; location.reload(); $_devRevision >= 0 &amp;&amp; ($_devFirstRevision = $_devFirstRevision === -1 ? $_devRevision : $_devFirstRevision) !== $_devRevision &amp;&amp; location.reload(); $_devCss &amp;&amp; ($_devFirstCss = $_devFirstCss || $_devCss) !== $_devCss &amp;&amp; (document.getElementById('ts-css').href = '/css/terrascale.css?v=' + $_devCss, $_devFirstCss = $_devCss); $_devJs &amp;&amp; ($_devFirstJs = $_devFirstJs || $_devJs) !== $_devJs &amp;&amp; location.reload()"></div>
+    }
+</body>
+</html>

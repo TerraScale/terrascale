@@ -1,0 +1,9 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+@if(Model.Browse.Cursor.Length > 0){<form id="document-browse-context" method="post" hidden><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="cursor" value="@Model.Browse.Cursor" /></form>}
+<nav class="ts-pager" aria-label="Document pages">
+<span class="ts-meta" role="status">@Model.Summary</span>
+<div class="ts-row">
+@if(Model.Browse.Cursor.Length > 0){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.FirstPath">First page</a>}
+@if(Model.Browse.More){<form id="document-browse-next" method="post" action="@Model.NextPath"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="cursor" value="@Model.Browse.NextCursor" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">@(Model.Search.Length > 0 ? "Continue search" : "Next")</button></form>}
+</div>
+</nav>

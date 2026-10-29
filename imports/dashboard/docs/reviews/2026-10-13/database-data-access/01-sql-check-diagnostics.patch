@@ -1,0 +1,12 @@
+--- a/src/TerraScale.Dashboard/Features/Data/DataEndpoints.cs
++++ b/src/TerraScale.Dashboard/Features/Data/DataEndpoints.cs
+@@ -95,7 +95,8 @@
+                     if (action == "sql/check")
+                     {
+                         var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
+-                        return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlChecked: true) : Results.Json(diagnostics);
++                        var problem = diagnostics.FirstOrDefault(item => item.Severity == "error");
++                        return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, formError: problem?.Message ?? "", sql: form["sql"].ToString(), sqlChecked: problem is null) : Results.Json(diagnostics);
+                     }
+                     if (action is "sql" or "saved-queries")
+                     {
