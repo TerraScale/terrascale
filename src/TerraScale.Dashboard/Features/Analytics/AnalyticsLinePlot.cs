@@ -9,6 +9,8 @@ namespace TerraScale.Dashboard.Features.Analytics
     public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks,
         IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestDot> Markers, IReadOnlyList<RequestColumn> Columns)
     {
+        private static readonly double[] GridFactors = [1d, 2d, 5d];
+
         public static AnalyticsLinePlot For(string label, string range, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)
         {
             return Build(label, range, starts, series, value => value.ToString("N0", CultureInfo.InvariantCulture), value => ChartGeometry.Compact(Math.Floor(value)), 0);
@@ -34,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Analytics
 
             var maximum = series.SelectMany(row => row.Values.Where((value, index) => !Missing(row, index))).DefaultIfEmpty().Max();
             // Four whole, round grid steps (1, 2 or 5 × 10ⁿ each): 40 → 0, 10, 20, 30, 40 rather than 0, 12, 25, 37, 50.
-            var gridStep = Enumerable.Range(firstPower, 20 - firstPower).SelectMany(power => new[] { 1d, 2d, 5d }.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= (double)maximum);
+            var gridStep = Enumerable.Range(firstPower, 20 - firstPower).SelectMany(power => GridFactors.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= (double)maximum);
             var scale = maximum == 0 ? 1 : gridStep * 4;
             double X(int index)
             {

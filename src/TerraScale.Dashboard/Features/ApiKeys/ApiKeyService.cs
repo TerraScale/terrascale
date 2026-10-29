@@ -318,6 +318,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
 
         private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
+        private static readonly string[] FullAccessScopes = ["documents:read", "documents:write", "databases:read", "databases:write"];
 
         private static string KeysPath(DatabaseScope scope)
         {
@@ -507,7 +508,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
         {
-            if (new[] { "documents:read", "documents:write", "databases:read", "databases:write" }.All(key.Scopes.Contains))
+            if (FullAccessScopes.All(key.Scopes.Contains))
             {
                 return ("Full-access key", "rose", "ShieldAlert");
             }

@@ -7,10 +7,12 @@ namespace TerraScale.Dashboard.Features.Data
 {
     internal static class JsonDraft
     {
+        private static readonly JsonSerializerOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, WriteIndented = true };
+
         // Format is for display only; both callers retain Razor HTML encoding.
         internal static string Format(JsonElement value, int maxBytes)
         {
-            var pretty = JsonSerializer.Serialize(value, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, WriteIndented = true }).ReplaceLineEndings("\r\n");
+            var pretty = JsonSerializer.Serialize(value, Json).ReplaceLineEndings("\r\n");
             return Encoding.UTF8.GetByteCount(pretty) <= maxBytes ? pretty : Compact(value);
         }
 
