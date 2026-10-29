@@ -15,7 +15,7 @@ Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/reg
 
 1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), select **Create account**, and enter the code sent to your email.
 2. Finish setup: choose a plan (or continue without a payment method), then name your first project and pick its region.
-3. Open **Databases**, select **New database**, enter a name starting with a lowercase letter (then lowercase letters, digits and inner hyphens), and keep the default of all serving regions or explicitly select at least two. Single-region databases are not supported. Select **Create database**.
+3. Open **Databases**, select **New database**, enter a name starting with a lowercase letter (then lowercase letters, digits and inner hyphens), and select **Create database**.
 4. Open **API keys**, select **Create credential**, then **API key**. Name it, limit **Database access** to that database, choose **Read and write** and select **Create key**. Copy the key when the dashboard shows it and keep it in your secret manager.
 
 The key has the form `<key ID>_<secret>`. It is a client credential, not a bearer token: the API answers `401` when you send it directly.

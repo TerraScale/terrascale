@@ -11,7 +11,6 @@ Check `ts help <command>` for your installed release. Select a project with `-pr
 | `orgs create <name>`, `orgs info <selector>`, `orgs rename <selector> <new-name>` | Sign-in only; IDs take precedence over names. `orgs` includes organizations without projects. |
 | `projects info <selector>`, `projects rename <selector> <new-name>` | Sign-in only; use an ID or `-org` to disambiguate names. `projects create <name>` uses your selected/only organization, creating an initial organization when needed. |
 | `orgs delete <selector>`, `projects delete <selector>` | Resolve identity first; type its ID in a terminal or explicitly consent with `-yes`. Server permissions remain required. |
-| `-home-region <region>`, `-replica-regions <comma-list-or-none>`, `-placement all` before `db create <db>` | Atomic create-time placement intent. All placement conflicts with an explicit replica list. Omitted placement is server-selected; invalid/home-only placement may be refused. |
 | `backup policy <db>`, `backup policy-set <db> <cron-or-none> <days>` | Five-field UTC cron; retention 1–35 days. Quote cron. `none` removes the custom schedule. Policy metadata is not proof of usable backup history. |
 | `backup window <db> [destination]`, `backup plan <db> <RFC3339> [destination]` | Destination is `platform` (default) or `customer`. Window reports available history; plan inspects metadata, not object integrity. |
 | `backup restore-at <db> <RFC3339> <new-db> [destination]` | Restores independently into a new database; requires permitted history and spare database capacity. |

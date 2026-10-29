@@ -146,7 +146,7 @@ ts db branch example example-preview
 ```
 
 Database deletion asks you to type the database name in a terminal before it
-changes placement or deletes data. For an unattended script, explicitly consent
+deletes data. For an unattended script, explicitly consent
 with `ts -project my-project -yes db delete example`. Keep `-yes` before the command.
 
 
