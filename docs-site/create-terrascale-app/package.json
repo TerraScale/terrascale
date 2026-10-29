@@ -1,0 +1,23 @@
+{
+  "name": "create-terrascale-app",
+  "version": "0.1.0",
+  "description": "Scaffold a Next.js + TerraScale app that reads and writes TerraScale documents.",
+  "type": "module",
+  "bin": {
+    "create-terrascale-app": "./bin/create-terrascale-app.mjs"
+  },
+  "files": [
+    "bin/",
+    "template/",
+    "README.md"
+  ],
+  "engines": {
+    "node": "22.x || 24.x"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
