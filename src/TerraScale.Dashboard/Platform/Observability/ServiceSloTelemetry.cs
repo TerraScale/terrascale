@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Platform.Observability
     {
         private static readonly object OutcomeKey = new();
         private static readonly AsyncLocal<Outcome?> Current = new();
+        private static readonly string[] UntrackedPaths = ["/health", "/healthz", "/readyz", "/metrics", "/internal", "/__test", "/css", "/js", "/fonts", "/brand", "/flags", "/favicon.ico"];
         private sealed class Outcome { public int Bad; }
         private sealed class ObservedLifetime(IHttpRequestLifetimeFeature inner, Outcome outcome) : IHttpRequestLifetimeFeature
         {
@@ -30,7 +31,7 @@ namespace TerraScale.Dashboard.Platform.Observability
         {
             var status = error is AccountAccessException access ? access.StatusCode :
                 error is HttpRequestException { StatusCode: { } code } ? (int)code : 503;
-            if (status >= 500 || status == 408)
+            if (status is >= 500 or 408)
             {
                 MarkBad();
             }
@@ -39,8 +40,7 @@ namespace TerraScale.Dashboard.Platform.Observability
         public async Task ObserveAsync(HttpContext http, RequestDelegate next)
         {
             var path = http.Request.Path;
-            if (new[] { "/health", "/healthz", "/readyz", "/metrics", "/internal", "/__test", "/css", "/js", "/fonts", "/brand", "/flags", "/favicon.ico" }
-                .Any(prefix => path.StartsWithSegments(prefix)))
+            if (UntrackedPaths.Any(prefix => path.StartsWithSegments(prefix)))
             { await next(http); return; }
             var previous = Current.Value;
             var outcome = new Outcome();

@@ -13,12 +13,13 @@ namespace TerraScale.Dashboard.Features.Billing
                 httpClient: new SystemNetHttpClient(new HttpClient(), enableTelemetry: false)));
         private readonly TextWriter output = output ?? Console.Out;
         private readonly TextWriter error = error ?? Console.Error;
+        private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
         public async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
         {
             if (args.Length != 0)
             {
-                await error.WriteLineAsync("The audit-stripe command accepts no options.");
+                await error.WriteLineAsync("The audit-stripe command accepts no options.", cancellationToken);
                 return 1;
             }
 
@@ -113,12 +114,12 @@ namespace TerraScale.Dashboard.Features.Billing
                 details["customers_with_multiple_current_subscriptions"] = currentCustomerCounts.Count(pair => pair.Value > 1);
                 details["subscription_attribution"] = "Customer counts are an inventory only; organization links require a trusted local account record.";
                 var report = new { checks, details, passed = checks.Values.All(value => value) };
-                await output.WriteLineAsync(JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+                await output.WriteLineAsync(JsonSerializer.Serialize(report, Json), cancellationToken);
                 return report.passed ? 0 : 1;
             }
             catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                await error.WriteLineAsync(JsonSerializer.Serialize(new { passed = false, error = SafeErrorName(exception) }));
+                await error.WriteLineAsync(JsonSerializer.Serialize(new { passed = false, error = SafeErrorName(exception) }), cancellationToken);
                 return 2;
             }
         }

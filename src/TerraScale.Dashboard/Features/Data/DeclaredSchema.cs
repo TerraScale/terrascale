@@ -12,6 +12,7 @@ namespace TerraScale.Dashboard.Features.Data
     public static class DeclaredSchemaEndpoints
     {
         private const int MaxSchemaBytes = 64 * 1024;
+        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
         public static IEndpointRouteBuilder MapDeclaredSchema(this IEndpointRouteBuilder endpoints)
         {
@@ -56,7 +57,8 @@ namespace TerraScale.Dashboard.Features.Data
                     }
                     else if (page.Collection.Length == 0)
                     {
-                        page = page with { Collection = (await data.CollectionsAsync(context, databaseId, http.RequestAborted)).FirstOrDefault()?.Name ?? "" };
+                        var collections = await data.CollectionsAsync(context, databaseId, http.RequestAborted);
+                        page = page with { Collection = collections.Count > 0 ? collections[0]?.Name ?? "" : "" };
                     }
 
                     if (page.Collection.Length > 0)
@@ -118,7 +120,7 @@ namespace TerraScale.Dashboard.Features.Data
                         var declared = await sdk.GetDeclaredSchemaAsync(page.Collection, http.RequestAborted);
                         var json = declared.Schema is { ValueKind: not JsonValueKind.Null } value ? JsonDraft.Format(value, MaxSchemaBytes) : "";
                         page = page with { Declared = json, Draft = json.Length > 0 ? json : "{}", Notice = http.Request.Query["saved"] == "applied" ? "Validation schema applied." : http.Request.Query["saved"] == "removed" ? "Validation schema removed." : "" };
-                        page = page with { Inferred = JsonSerializer.Serialize(await data.SchemaAsync(context, databaseId, page.Collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }) };
+                        page = page with { Inferred = JsonSerializer.Serialize(await data.SchemaAsync(context, databaseId, page.Collection, http.RequestAborted), Json) };
                     }
                     else if (submitted)
                     {

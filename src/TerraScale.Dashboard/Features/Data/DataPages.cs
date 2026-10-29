@@ -99,6 +99,9 @@ namespace TerraScale.Dashboard.Features.Data
     public sealed record DataGridRow(string Id, IReadOnlyList<DataGridCell> Cells);
     public sealed record DataGrid(IReadOnlyList<DataGridColumn> Columns, IReadOnlyList<DataGridRow> Rows, int Matched, bool More, int HiddenColumns, string Json)
     {
+        // Named apart from the Json property, which holds the serialized rows.
+        private static readonly JsonSerializerOptions IndentedJson = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
         public static DataGrid Create(IReadOnlyList<DatabaseSqlRow> input, int matched, bool more)
         {
             var rows = input.Take(200).ToArray();
@@ -136,7 +139,7 @@ namespace TerraScale.Dashboard.Features.Data
             names = [.. names.Take(24)];
             var columns = names.Select(name => new DataGridColumn(name.Name, values.All(fields => !fields.TryGetValue(name, out var value) || value.ValueKind == JsonValueKind.Number), name.Root)).ToArray();
             var laidOut = rows.Select((row, index) => new DataGridRow(row.Id, [.. names.Select(name => values[index].TryGetValue(name, out var value) ? Cell(value) : new DataGridCell("", "missing"))])).ToArray();
-            return new(columns, laidOut, Math.Max(input.Count, matched), more, hidden, JsonSerializer.Serialize(rows, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+            return new(columns, laidOut, Math.Max(input.Count, matched), more, hidden, JsonSerializer.Serialize(rows, IndentedJson));
         }
 
         private static DataGridCell Cell(JsonElement value)

@@ -17,12 +17,14 @@ namespace TerraScale.Dashboard.Features.Billing
                 httpClient: new SystemNetHttpClient(new HttpClient(), enableTelemetry: false)));
         private readonly TextWriter output = output ?? Console.Out;
         private readonly TextWriter error = error ?? Console.Error;
+        private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
+        private static readonly string[] CustomerUpdateFields = ["name", "address", "tax_id"];
 
         public async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
         {
             if (args.Length != 0)
             {
-                await error.WriteLineAsync("The setup-stripe command accepts no options.");
+                await error.WriteLineAsync("The setup-stripe command accepts no options.", cancellationToken);
                 return 1;
             }
 
@@ -33,12 +35,12 @@ namespace TerraScale.Dashboard.Features.Billing
                 var changes = new List<string>();
                 await SetupPricesAsync(client, changes, cancellationToken);
                 await SetupPortalAsync(client, changes, cancellationToken);
-                await output.WriteLineAsync(JsonSerializer.Serialize(new { mode = stripe.IsLive ? "live" : "test", changes }, new JsonSerializerOptions { WriteIndented = true }));
+                await output.WriteLineAsync(JsonSerializer.Serialize(new { mode = stripe.IsLive ? "live" : "test", changes }, Json), cancellationToken);
                 return 0;
             }
             catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                await error.WriteLineAsync(JsonSerializer.Serialize(new { error = exception is StripeException ? "StripeException" : exception.GetType().Name }));
+                await error.WriteLineAsync(JsonSerializer.Serialize(new { error = exception is StripeException ? "StripeException" : exception.GetType().Name }), cancellationToken);
                 return 2;
             }
         }
@@ -172,7 +174,7 @@ namespace TerraScale.Dashboard.Features.Billing
         internal static bool BillingCustomerUpdates(PortalConfiguration portal)
         {
             return portal.Features?.CustomerUpdate is { Enabled: true } customer &&
-            new[] { "name", "address", "tax_id" }.All(field => customer.AllowedUpdates?.Contains(field, StringComparer.Ordinal) == true);
+            CustomerUpdateFields.All(field => customer.AllowedUpdates?.Contains(field, StringComparer.Ordinal) == true);
         }
     }
 }
