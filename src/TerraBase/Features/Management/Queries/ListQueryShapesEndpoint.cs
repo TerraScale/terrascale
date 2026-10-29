@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>GET …/databases/{database}/query-shapes</c>: observed canonical query statistics.</summary>
-public sealed class ListQueryShapesEndpoint(IManagementService management, IQueryShapeTracker tracker) : EndpointWithoutRequest<IResult>
+internal sealed class ListQueryShapesEndpoint(IManagementService management, IQueryShapeTracker tracker) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

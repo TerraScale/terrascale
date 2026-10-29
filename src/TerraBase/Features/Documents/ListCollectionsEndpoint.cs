@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Documents;
 
 /// <summary><c>GET /v1/projects/{project}/databases/{database}/collections?limit=&amp;cursor=</c>: lists collections in name order.</summary>
-public sealed class ListCollectionsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class ListCollectionsEndpoint(IDocumentService documents, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     private const int DefaultLimit = 50;
     private const int MaxLimit = 200;

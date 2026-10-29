@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>GET …/saved-queries/{query}</c>: reads a saved query.</summary>
-public sealed class GetSavedQueryEndpoint(IManagementService management, IQueryService queries) : EndpointWithoutRequest<IResult>
+internal sealed class GetSavedQueryEndpoint(IManagementService management, IQueryService queries) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

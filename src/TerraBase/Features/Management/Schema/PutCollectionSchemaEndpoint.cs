@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Schema;
 
 /// <summary><c>PUT …/schema/{collection}</c>: declares a collection's unique fields and compound keys.</summary>
-public sealed class PutCollectionSchemaEndpoint(IManagementService management, IUniqueSchemaService schema) : Endpoint<UniqueSchemaRequest, IResult>
+internal sealed class PutCollectionSchemaEndpoint(IManagementService management, IUniqueSchemaService schema) : Endpoint<UniqueSchemaRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

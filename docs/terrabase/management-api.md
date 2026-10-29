@@ -23,8 +23,7 @@ ts-orchestrator and ts-auth.
 
 TS-589 moves public data management to the [project route table](api.md). The
 organization and membership operations below remain hidden legacy compatibility
-paths; ts-auth owns public identity and projects. COS approved verified migration
-bindings on 2026-10-07 ([decision 0011](decisions/0011-project-catalog-trust.md)).
+paths; ts-auth owns public identity and projects.
 
 ## Dashboard integration
 
@@ -68,39 +67,6 @@ exists. TerraBase authorizes every request against the organizations the acting 
 - ts-dashboard calls with the signed-in user's token. A ts-auth client-credentials token (`sub` =
   client id) for an accepted audience acts as a user whose id is that client id: it reaches only
   organizations that id is a member of.
-
-### Verified project bindings
-
-Existing catalog project mappings are storage records, not proof of ts-auth
-authority. Project JWTs receive `404` until a binding for the exact trusted
-issuer and storage organization is verified; database creation does not adopt
-an unverified mapping. Legacy callers without project JWTs keep their existing
-membership/key access and data.
-
-`POST /v1/management/organizations/{legacyOrganization}/projects/{project}/binding`
-is hidden from OpenAPI and served only on the TLS client listener. Send
-`{"organization":"<ts-auth organization id>"}` with the user's ts-auth sign-in
-bearer token. That subject must currently be an owner of the legacy storage
-organization. TerraBase forwards the same token only to
-`{configured issuer origin}/v1/{configured issuer tenant}/organizations/{organization}/projects/{project}`;
-redirects are not followed. ts-auth must answer with the exact project and
-organization IDs and effective `role: "admin"`. Its live management API checks
-membership, sign-in revocation and authentication epoch. Project/API-key tokens,
-document keys and the internal listener's platform operator cannot establish this binding.
-
-TerraBase rechecks legacy ownership inside the catalog transaction and records
-the binding's version, issuer, project, storage organization, ts-auth organization,
-verifying subject and time. Failed verification writes no binding. Subsequent
-project JWTs resolve the verified namespace offline; this action preserves
-database IDs, files and document versions. Fresh JWT enrollment creates an
-opaque namespace and its verified binding atomically, without legacy membership.
-Fresh bindings rely on the signed project claim and leave the ts-auth
-organization unset; project JWTs do not require `org_id`.
-
-This explicit verification replaces automatic JWT reuse of legacy mappings by
-COS's 2026-10-07 decision. Client-chosen project IDs in Management commits now
-require the internal listener's platform operator; generated-ID legacy creation
-remains available to ordinary members ([commit contract](management-commits.md#management-operations)).
 
 ### Signing keys
 
@@ -266,11 +232,6 @@ Base path: `/v1/management`.
 | `PATCH` | `…/projects/{project}/databases/{database}` | `{replicaRegions}` or `{allRegions: true}` → database with its new placement; home region only (`421 wrong_region` elsewhere) |
 | `DELETE` | `…/projects/{project}/databases/{database}` | `204`; deletes the data. Branches are independent and stay. Home region only (`421 wrong_region` elsewhere), once it has no replica regions (`409 database_replicated`) |
 | `POST` | `…/databases/{database}/branches` | `{name}` → `201` database in the same project holding a consistent snapshot copy; home region only, and the branch has no replicas |
-| `POST` | `/commits` | atomic commit of Management operations and dashboard documents ([management-commits.md](management-commits.md)) |
-| `GET` | `/commits/{id}` | recorded outcome of the acting user's commit; `404` if it never committed |
-| `GET` | `/versions?organization=…` | account and organization versions for fencing commits |
-| `GET` | `/documents/{collection}/by-key?id={id}` | a document of the dashboard document space; one UTF-8 query-encoded key ([contract](id-contract.md)) |
-| `POST` | `/documents/{collection}/query` | query v1 over the dashboard document space |
 
 Shapes:
 
@@ -349,9 +310,7 @@ invitation, `404` for an unknown token, `409` when the invitation expired, is no
 already a member.
 
 `POST /v1/management/invitations/lookup` with `{tokenHash}` (lowercase hex SHA-256 of the token) answers a
-pending, unexpired invitation with its organization's id and name, and `404` otherwise. Invitations whose
-token the dashboard generates (sending only its hash), decline and resend are commit operations: see
-[Invitations by token hash](management-commits.md#invitations-by-token-hash).
+pending, unexpired invitation with its organization's id and name, and `404` otherwise.
 
 Rules:
 
@@ -834,7 +793,7 @@ not cover branches.
 | IDs | Canonical uppercase ULIDs | All repositories use the same contract, document ids included |
 | Database names | `^[a-z][a-z0-9_-]{0,62}$` | dashboard and SDK use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` (leading digit allowed, no `_`, no trailing `-`) |
 | JSON | camelCase, ISO 8601 timestamps | control-plane-v1 uses snake_case, Unix-ms strings and `next_cursor` |
-| Idempotency | commits carry a client commit id with a durable, queryable outcome ([management-commits.md](management-commits.md#uncertain-outcomes)); other routes have none | control-plane-v1 requires `Idempotency-Key` on mutations |
+| Idempotency | these routes have no idempotency key | control-plane-v1 requires `Idempotency-Key` on mutations |
 | Authentication | ts-auth access token (`at+jwt`); `sub` is the user, the route names the organization | control-plane-v1 uses a `control`-role `tbk1.` key with no user identity |
 | Regions, placement, residency | not modeled | dashboard and SDK send them on project and database create; ts-orchestrator places partitions |
 | Organization delete | deletes an empty organization | dashboard only marks `deletionRequested` and keeps the data |

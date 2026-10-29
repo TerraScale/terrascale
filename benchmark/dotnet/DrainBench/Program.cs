@@ -1,11 +1,11 @@
 // Measures what releasing abandoned Turso statements costs (#115): write throughput and latency, concurrent read latency,
 // the server's CPU, memory and GC, with 0 % to 50 % of writes failing. --mode system instead measures system database
-// writes (API keys, management commits) and a tenant write control (2026-10-12-system-synchronous-full.md). Runs one real terrabase process (the binary given)
 // under the --wrap command (default: taskset to CPUs 0,1), records the limits that process actually has, and drives the
 // load from this process, which should run on other CPUs. See benchmark/bench/2026-10-12-statement-drain.md.
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -65,7 +65,7 @@ try
         Console.WriteLine($"# {label}: system database writes, {seconds} s per phase, wrap: {string.Join(' ', wrap)}");
         Console.WriteLine("| variant | write | writers | writes/s | p50 / p95 / p99 ms | CPU % of allowed | unexpected |");
         Console.WriteLine("| --- | --- | ---: | ---: | ---: | ---: | ---: |");
-        foreach (var (kind, count) in new[] { ("api key", 1), ("api key", 16), ("management commit", 1), ("management commit", 16), ("tenant put", 1), ("tenant put", 16) })
+        foreach (var (kind, count) in new[] { ("api key", 1), ("api key", 16), ("organization create", 1), ("organization create", 16), ("tenant put", 1), ("tenant put", 16) })
         {
             await SystemPhaseAsync(kind, count, owner, organization, project, TimeSpan.FromSeconds(3), record: false);
             await SystemPhaseAsync(kind, count, owner, organization, project, TimeSpan.FromSeconds(seconds), record: true);
@@ -179,7 +179,6 @@ async Task PhaseAsync(double rate, string kind, TimeSpan duration, bool record)
         $"{(allAfter - allBefore) / elapsed:F1} ({(gen2After - gen2Before) / elapsed:F2}) | {(pauseAfter - pauseBefore) * 1000 / elapsed:F1} | {unexpected} |"));
 }
 
-// One kind of write from count writers, each as fast as it gets answers: an API key or a management commit (a new
 // organization) commits to the system database; a tenant put to the tenant database, the control.
 async Task SystemPhaseAsync(string kind, int count, string owner, string organization, string project, TimeSpan duration, bool record)
 {
@@ -198,8 +197,8 @@ async Task SystemPhaseAsync(string kind, int count, string owner, string organiz
             {
                 "api key" => await StatusAsync(HttpMethod.Post, "/admin/api-keys",
                     new { name = "bench", scopes = new[] { "documents:read" }, organizationId = organization, projectId = project }),
-                "management commit" => await StatusAsync(HttpMethod.Post, "/v1/management/commits",
-                    new { id = Ulid(), ops = new object[] { new { op = "create_organization", id = Ulid(), name = $"bench-{Ulid()}" } } }, user: owner),
+                "organization create" => await StatusAsync(HttpMethod.Post, "/v1/management/organizations",
+                    new { name = $"bench-{Ulid()}" }, user: owner),
                 _ => await StatusAsync(HttpMethod.Put, Document(Guid.NewGuid().ToString("N")), new { n = 1 }),
             };
             mine.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
@@ -360,30 +359,26 @@ string Document(string id) => $"{database}/collections/items/documents/by-key?id
 
 async Task<(string Owner, string Organization, string Project, string DatabaseId, string Path)> CreateTenantAsync()
 {
-    var (owner, org, proj, db) = (Ulid(), Ulid(), Ulid(), Ulid());
-    using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/v1/management/commits", UriKind.Relative))
+    var owner = Ulid();
+    async Task<string> CreateAsync(string path, string name)
     {
-        Content = new StringContent(JsonSerializer.Serialize(new
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(path, UriKind.Relative))
         {
-            id = Ulid(),
-            ops = new object[]
-            {
-                new { op = "create_organization", id = org, name = "drain-bench" },
-                new { op = "set_plan", organization = org, plan = "enterprise" },
-                new { op = "create_project", organization = org, id = proj, name = "bench" },
-                new { op = "create_database", organization = org, project = proj, name = "bench", id = db },
-            },
-        }), Encoding.UTF8, "application/json"),
-        Version = HttpVersion.Version20,
-        VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-    };
-    request.Headers.Add("X-TerraBase-User-Id", owner);
-    using var response = await http.SendAsync(request);
-    if (!response.IsSuccessStatusCode)
-    {
-        throw new InvalidOperationException($"commit: {response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+            Content = JsonContent.Create(new { name }),
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        request.Headers.Add("X-TerraBase-User-Id", owner);
+        using var response = await http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
     }
 
+    var org = await CreateAsync("/v1/management/organizations", "drain-bench");
+    var root = $"/v1/management/organizations/{org}";
+    await SendAsync(HttpMethod.Put, root + "/plan", new { plan = "enterprise" }, HttpStatusCode.OK, owner);
+    var proj = await CreateAsync(root + "/projects", "bench");
+    var db = await CreateAsync(root + $"/projects/{proj}/databases", "bench");
     return (owner, org, proj, db, $"/v1/projects/{proj}/databases/bench");
 }
 

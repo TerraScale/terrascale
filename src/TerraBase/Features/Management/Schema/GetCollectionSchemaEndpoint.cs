@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Schema;
 
 /// <summary><c>GET …/databases/{database}/schema/{collection}</c>: infers the fields of a collection.</summary>
-public sealed class GetCollectionSchemaEndpoint(IManagementService management, ISchemaService schema) : EndpointWithoutRequest<IResult>
+internal sealed class GetCollectionSchemaEndpoint(IManagementService management, ISchemaService schema) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

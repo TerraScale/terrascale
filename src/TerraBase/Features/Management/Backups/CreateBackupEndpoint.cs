@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>POST …/databases/{database}/backups</c>: backs a database up now.</summary>
-public sealed class CreateBackupEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
+internal sealed class CreateBackupEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

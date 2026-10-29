@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>POST …/databases/{database}/point-in-time/restore</c>: restores a database as of a time into a new database.</summary>
-public sealed class RestorePointInTimeEndpoint(IManagementService management, IManagedBackupService backups)
+internal sealed class RestorePointInTimeEndpoint(IManagementService management, IManagedBackupService backups)
     : Endpoint<PointInTimeRestoreRequest, IResult>
 {
     /// <inheritdoc />

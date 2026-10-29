@@ -11,11 +11,8 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Management;
 
 /// <summary>Registers the Management slice.</summary>
-public static class ManagementExtensions
+internal static class ManagementExtensions
 {
-    /// <summary>
-    /// <see cref="ITenantDirectory"/> and the database tooling. Endpoints authenticate users with the <c>UserAuth</c> slice.
-    /// </summary>
     public static IServiceCollection AddTerraBaseManagement(this IServiceCollection services)
     {
         // One catalog instance behind every interface: it remembers that the catalog version is current.

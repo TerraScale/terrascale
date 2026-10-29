@@ -4,13 +4,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Platform;
 
-/// <summary>
-/// TerraScale's own databases (dogfooding): one organization and a separate project and database for ts-auth and for the
-/// dashboard, under fixed ids so every node and region that seeds them writes the same records. Project tokens trust only
-/// the global ts-auth issuer. Access requires the
-/// platform operator on the internal listener, a matching scoped project token, or a platform admin through explore.
-/// </summary>
-public static class PlatformDatabases
+internal static class PlatformDatabases
 {
     /// <summary>The platform organization, on the enterprise plan (no per-tenant request budget).</summary>
     public const string OrganizationId = "00000000000000000000000001";

@@ -36,9 +36,8 @@ func Probe(ctx context.Context, r *Run) ([]ProbeStep, error) {
 	// A database of its own per probe, so the probe can be rerun on the same node.
 	db, coll := "probe-"+strings.ToLower(ulid.Make().String()), "c"
 	base := r.DatabasePath(db)
-	commit := map[string]any{"id": ulid.Make().String(), "ops": []any{map[string]any{
-		"op": "create_database", "organization": r.Organization, "project": r.Project, "name": db, "id": ulid.Make().String()}}}
-	if _, err := c.JSON(ctx, http.MethodPost, "/v1/management/commits", commit, nil); err != nil {
+	if _, err := c.JSON(ctx, http.MethodPost,
+		"/v1/management/organizations/"+r.Organization+"/projects/"+r.Project+"/databases", map[string]string{"name": db}, nil); err != nil {
 		return nil, fmt.Errorf("probe database: %w", err)
 	}
 	if _, err := c.JSON(ctx, http.MethodPost, base+"/collections", map[string]string{"name": coll}, nil); err != nil {

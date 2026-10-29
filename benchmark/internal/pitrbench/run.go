@@ -29,7 +29,6 @@ type Run struct {
 	Database     string    `json:"database"`
 	DatabaseID   string    `json:"database_id"`
 	Owner        string    `json:"owner"`
-	SetupCommit  string    `json:"setup_commit"` // the tenant commit's id: a rerun replays it instead of conflicting
 	Collection   string    `json:"collection"`
 	Commit       string    `json:"commit"`
 	Binary       string    `json:"binary"`

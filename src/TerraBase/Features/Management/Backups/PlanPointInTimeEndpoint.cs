@@ -14,7 +14,7 @@ namespace TerraBase.Features.Management.Backups;
 public sealed record PointInTimePlanRequest(DateTimeOffset? PointInTime, string? Destination = null);
 
 /// <summary><c>POST …/databases/{database}/point-in-time/plan</c>: previews continuous backup metadata without restoring.</summary>
-public sealed class PlanPointInTimeEndpoint(IManagementService management, IPointInTimeRestore restore) : Endpoint<PointInTimePlanRequest, IResult>
+internal sealed class PlanPointInTimeEndpoint(IManagementService management, IPointInTimeRestore restore) : Endpoint<PointInTimePlanRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

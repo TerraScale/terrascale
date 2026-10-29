@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary>PUT a project's customer backup destination.</summary>
-public sealed class SetBackupDestinationEndpoint(IManagementService management, IProjectBackupDestinations destinations) : Endpoint<ProjectBackupDestinationRequest, IResult>
+internal sealed class SetBackupDestinationEndpoint(IManagementService management, IProjectBackupDestinations destinations) : Endpoint<ProjectBackupDestinationRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

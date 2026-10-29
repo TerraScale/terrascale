@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>POST …/databases/{database}/sql/check</c>: validates and explains a SQL statement without running it.</summary>
-public sealed class CheckSqlEndpoint(IManagementService management, IQueryService queries) : Endpoint<SqlRequest, IResult>
+internal sealed class CheckSqlEndpoint(IManagementService management, IQueryService queries) : Endpoint<SqlRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

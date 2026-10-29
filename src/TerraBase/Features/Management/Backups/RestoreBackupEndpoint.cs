@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>POST …/databases/{database}/backups/{backup}/restore</c>: restores a backup into a new database.</summary>
-public sealed class RestoreBackupEndpoint(IManagementService management, IManagedBackupService backups) : Endpoint<NameRequest, IResult>
+internal sealed class RestoreBackupEndpoint(IManagementService management, IManagedBackupService backups) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

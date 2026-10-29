@@ -35,9 +35,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     private readonly bool production;
     private readonly RegionalNode? node;
+    private readonly (string Address, string TrustFile)? issuer;
 
-    private TerraBaseTestServer(string directory, bool production, RegionalNode? node = null)
+    private TerraBaseTestServer(string directory, bool production, RegionalNode? node = null, (string Address, string TrustFile)? issuer = null)
     {
+        this.issuer = issuer;
         this.directory = directory;
         this.production = production;
         this.node = node;
@@ -119,7 +121,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     internal static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartRegionalAsync(RegionalNode node, CancellationToken cancellationToken = default) =>
         StartAsync(production: false, cancellationToken, node);
 
-    private static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(bool production, CancellationToken cancellationToken, RegionalNode? node = null)
+    internal static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartWithIssuerAsync(string issuer, string trustFile, CancellationToken cancellationToken) =>
+        StartAsync(production: false, cancellationToken, issuer: (issuer, trustFile));
+
+    private static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(bool production, CancellationToken cancellationToken, RegionalNode? node = null, (string Address, string TrustFile)? issuer = null)
     {
         var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
         if (string.IsNullOrEmpty(binary) || !File.Exists(binary))
@@ -127,7 +132,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return (null, "TERRABASE_BINARY must name the TerraBase binary built from this commit (make auth-test-fast sets it)");
         }
 
-        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, production, node);
+        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, production, node, issuer);
         try
         {
             await server.StartAsync(binary, cancellationToken);
@@ -397,6 +402,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             // All three backend ports are freshly owned by this child, including metrics on every restart.
             start.ArgumentList.Add(this.production ? "--environment=Production" : "--environment=Development");
+            if (this.issuer is { } issuer)
+            {
+                start.ArgumentList.Add($"--auth-issuer={issuer.Address}");
+                start.ArgumentList.Add("--auth-audience=https://api.terrascale.tech");
+                start.Environment["SSL_CERT_FILE"] = issuer.TrustFile;
+            }
             start.ArgumentList.Add("--port=0");
             start.ArgumentList.Add($"--internal-port={this.node?.Port ?? 0}");
             start.ArgumentList.Add("--metrics-port=0");

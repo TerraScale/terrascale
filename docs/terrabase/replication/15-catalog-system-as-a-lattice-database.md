@@ -12,8 +12,6 @@ contract:
   one concurrent create per region.
 - **Usage totals** become `inc` counters, so every machine's counts sum without forwarding (`CatalogPrimaryClient`
   goes).
-- **Management commits** ([0008](../decisions/0008-management-commits.md)) stay atomic (one stamp) and idempotent by id.
-  `fence` and `assert` ops are evaluated locally, with no global serializability.
 - **Durability:** every `_system` commit syncs its write-ahead log ([0012](../decisions/0012-system-database-synchronous-full.md)),
   so an acknowledged key, revocation or registration survives a power loss of its machine.
 

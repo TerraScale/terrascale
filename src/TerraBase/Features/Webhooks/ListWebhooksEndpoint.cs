@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Webhooks;
 
 /// <summary>Lists collection webhooks without signing secrets.</summary>
-public sealed class ListWebhooksEndpoint(IManagementService management, IWebhooks webhooks) : EndpointWithoutRequest<IResult>
+internal sealed class ListWebhooksEndpoint(IManagementService management, IWebhooks webhooks) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

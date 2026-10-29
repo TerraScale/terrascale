@@ -17,7 +17,7 @@ public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IR
 /// Per-database region placement (docs/cross-region.md): the checks of a requested placement, and the <c>421 wrong_region</c>
 /// a region outside a database's placement answers with, naming the regions that serve it.
 /// </summary>
-public static class DatabaseRegions
+internal static class DatabaseRegions
 {
     internal const int MaxReplicas = 8;
 
@@ -35,7 +35,7 @@ public static class DatabaseRegions
     internal readonly union HomeRegionCheck(Done, Misdirected, NotFound, Unavailable);
 
     /// <summary>Marks an endpoint that answers for databases placed elsewhere itself: reading, updating and deleting the record.</summary>
-    public sealed class PlacementAware;
+    internal sealed class PlacementAware;
 
     /// <summary>
     /// Why <paramref name="replicas"/> cannot be the replica regions of a database at home in this region, or the accepted

@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Webhooks;
 
 /// <summary>Registers a collection's public HTTPS change receiver.</summary>
-public sealed class CreateWebhookEndpoint(IManagementService management, IWebhooks webhooks) : Endpoint<CreateWebhookRequest, IResult>
+internal sealed class CreateWebhookEndpoint(IManagementService management, IWebhooks webhooks) : Endpoint<CreateWebhookRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

@@ -10,7 +10,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH …/databases/{database}</c>: renames a database or sets its replica regions (docs/cross-region.md).</summary>
-public sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

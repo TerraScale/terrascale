@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Lists a database's functions.</summary>
-public sealed class ListFunctionsEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
+internal sealed class ListFunctionsEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

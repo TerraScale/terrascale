@@ -11,7 +11,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/projects/{project}/databases</c>: creates an empty database in a project.</summary>
-public sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRemoteDurability durability, IRegionCatalog regions)
+internal sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRemoteDurability durability, IRegionCatalog regions)
     : Endpoint<DatabaseRegionsRequest, IResult>
 {
     internal const string OperationName = "createDatabase";

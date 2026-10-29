@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/organizations/{organization}/projects</c>: creates a project.</summary>
-public sealed class CreateProjectEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
+internal sealed class CreateProjectEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

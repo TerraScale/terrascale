@@ -7,8 +7,8 @@
 ## Context
 
 `_system.db` holds what authenticates and authorizes every request on a node: organizations, projects, database
-registrations, memberships, API keys and their revocations, and the management commit records
-([0005](0005-multi-tenancy.md), [0008](0008-management-commits.md)). Under 0003 its commits, like every other, stayed in
+registrations, API keys and their revocations
+([0005](0005-multi-tenancy.md)). Under 0003 its commits, like every other, stayed in
 the OS page cache until a checkpoint synced them.
 
 The write-ahead log fault shim (`tests/TerraBase.E2E/WalFaults`, H4) simulated a power loss on a region: every log cut

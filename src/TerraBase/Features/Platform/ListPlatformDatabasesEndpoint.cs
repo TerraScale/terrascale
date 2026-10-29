@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Platform;
 
 /// <summary><c>GET /v1/platform/databases</c>: the platform databases, for platform admins.</summary>
-public sealed class ListPlatformDatabasesEndpoint(IManagementService management, TerraBaseOptions options, ILogger<ListPlatformDatabasesEndpoint> logger)
+internal sealed class ListPlatformDatabasesEndpoint(IManagementService management, TerraBaseOptions options, ILogger<ListPlatformDatabasesEndpoint> logger)
     : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />

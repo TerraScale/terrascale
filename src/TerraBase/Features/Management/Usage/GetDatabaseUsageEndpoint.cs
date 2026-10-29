@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary><c>GET …/databases/{database}/usage</c>: reads the storage and operation usage of a database.</summary>
-public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     /// <summary>What the read and write counts guarantee, for every usage route.</summary>
     internal const string CountsDescription =

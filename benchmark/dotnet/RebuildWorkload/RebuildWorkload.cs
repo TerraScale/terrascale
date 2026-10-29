@@ -1,10 +1,8 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
@@ -186,27 +184,9 @@ namespace TerraBase.Fast.Benchmark
 
         private static async Task RegisterAsync(ManagementApi api, TenantContext database, string replica, CancellationToken token)
         {
-            var commit = new JsonObject
-            {
-                ["id"] = EntityIds.New().ToString(),
-                ["ops"] = new JsonArray
-                {
-                    new JsonObject { ["op"] = "create_organization", ["id"] = database.OrganizationId, ["name"] = "rebuild-benchmark" },
-                    new JsonObject { ["op"] = "set_plan", ["organization"] = database.OrganizationId, ["plan"] = "enterprise" },
-                    new JsonObject { ["op"] = "create_project", ["organization"] = database.OrganizationId, ["id"] = database.ProjectId, ["name"] = "rebuild" },
-                    new JsonObject { ["op"] = "create_database", ["organization"] = database.OrganizationId, ["project"] = database.ProjectId,
-                        ["name"] = "main", ["id"] = database.DatabaseId, ["replica_regions"] = new JsonArray(replica) },
-                },
-            };
-            using var service = api.Service(api.User);
-            using var content = new StringContent(commit.ToJsonString(), Encoding.UTF8, "application/json");
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), content, token);
-            var body = await response.Content.ReadAsStringAsync(token);
-            if (response.StatusCode != HttpStatusCode.Conflict || (!body.Contains("\"id_taken\"", StringComparison.Ordinal)
-                && !body.Contains("\"name_taken\"", StringComparison.Ordinal)))
-            {
-                response.EnsureSuccessStatusCode();
-            }
+            await CatalogFixture.RegisterProjectAsync(api, api.User, database.OrganizationId, database.ProjectId!, token);
+            await api.SetPlanAsync(api.User, database.OrganizationId, "enterprise", token);
+            await CatalogFixture.RegisterAsync(api, api.User, database, "main", [replica], token);
         }
 
         private static async Task<IDatabaseStore> StoreAsync(ManagementApi api, TenantContext database, CancellationToken token)

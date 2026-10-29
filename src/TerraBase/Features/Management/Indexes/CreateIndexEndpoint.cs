@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <summary><c>POST …/databases/{database}/indexes</c>: builds a secondary index.</summary>
-public sealed class CreateIndexEndpoint(IManagementService management, IIndexService indexes) : Endpoint<CreateIndexRequest, IResult>
+internal sealed class CreateIndexEndpoint(IManagementService management, IIndexService indexes) : Endpoint<CreateIndexRequest, IResult>
 {
     private const int MaxFields = 4;
 

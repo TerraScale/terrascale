@@ -8,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Queries;
 
 /// <summary><c>POST …/databases/{database}/sql</c>: runs a read-only SQL statement.</summary>
-public sealed class RunSqlEndpoint(IManagementService management, IQueryService queries) : Endpoint<SqlRequest, IResult>
+internal sealed class RunSqlEndpoint(IManagementService management, IQueryService queries) : Endpoint<SqlRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()

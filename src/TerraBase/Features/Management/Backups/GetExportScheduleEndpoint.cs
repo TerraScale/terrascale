@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary><c>GET …/databases/{database}/export-schedule</c>: reads when a database is exported to its project's customer bucket.</summary>
-public sealed class GetExportScheduleEndpoint(IManagementService management, IScheduledExports exports) : EndpointWithoutRequest<IResult>
+internal sealed class GetExportScheduleEndpoint(IManagementService management, IScheduledExports exports) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()

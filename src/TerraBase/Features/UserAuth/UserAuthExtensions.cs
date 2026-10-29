@@ -13,7 +13,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.UserAuth;
 
 /// <summary>Registers ts-auth user authentication and reads the authenticated user.</summary>
-public static class UserAuthExtensions
+internal static class UserAuthExtensions
 {
     /// <summary>Authorization policy of endpoints that act as a ts-auth user.</summary>
     public const string PolicyName = "user";
@@ -68,8 +68,7 @@ public static class UserAuthExtensions
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
 
-    /// <summary>Whether the request came from the platform operator (internal listener).</summary>
-    public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
+    internal static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
 
     // Only an identity these schemes authenticated, never one another scheme (an API key) added to the principal.
     private static ClaimsIdentity? Identity(ClaimsPrincipal user, string scheme) =>

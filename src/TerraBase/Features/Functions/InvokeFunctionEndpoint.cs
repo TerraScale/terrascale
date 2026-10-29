@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Functions;
 
 /// <summary>Runs a function over HTTPS.</summary>
-public sealed class InvokeFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
+internal sealed class InvokeFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBodyBytes = 1024 * 1024;
 

@@ -137,6 +137,15 @@ public sealed class CatalogLatticeTests
         await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
         await Assert.That(await sjc.Tenants.EnsureLocalDatabaseAsync(tenant, CancellationToken.None) is Done).IsTrue();
         await Assert.That(File.Exists(sjc.FileOf(tenant))).IsTrue();
+        var version = await gru.VersionAsync($"projects/{project}/databases", database);
+        await CatalogFixture.RegisterAsync(gru.Api, user, tenant, "main", Sjc);
+        await CatalogFixture.RegisterAsync(sjc.Api, user, tenant, "main", ["gru"]);
+        await Assert.That(await gru.VersionAsync($"projects/{project}/databases", database)).IsEqualTo(version);
+        await sjc.StopAsync();
+        await sjc.StartAsync();
+        sjc = cluster["sjc"];
+        await CatalogFixture.RegisterAsync(sjc.Api, user, tenant, "main", ["gru"]);
+        await Assert.That(File.Exists(sjc.FileOf(tenant))).IsTrue();
         await gru.WriteAsync(tenant, async transaction =>
         {
             _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
@@ -154,6 +163,10 @@ public sealed class CatalogLatticeTests
         await Assert.That(await sjc.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue();
         await Assert.That(await sjc.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
         await Assert.That(await sjc.UntilAsync($"projects/{project}/database_names", "main", json => json is null)).IsTrue();
+
+        await Assert.That(async () => await CatalogFixture.RegisterAsync(sjc.Api, user, tenant, "main", []))
+            .Throws<InvalidOperationException>();
+        await Assert.That(await sjc.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
 
         var recreated = EntityIds.New().ToString();
         await CatalogFixture.RegisterAsync(sjc.Api, user, tenant with { DatabaseId = recreated }, "main", []);
