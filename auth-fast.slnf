@@ -1,0 +1,9 @@
+{
+  "solution": {
+    "path": "TerraScale.slnx",
+    "projects": [
+      "src/TerraBase/TerraBase.csproj",
+      "tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj"
+    ]
+  }
+}

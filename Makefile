@@ -116,8 +116,7 @@ auth-openapi-check: auth-build
 # Builds only the Fast suite and its references; the Slow suite has its own target.
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
 auth-test-fast: restore turso-native
-	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
+	dotnet build auth-fast.slnf --configuration $(CONFIGURATION) --no-restore --nologo
 	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
 auth-test-slow: auth-build turso-native
