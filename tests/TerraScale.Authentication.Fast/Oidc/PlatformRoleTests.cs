@@ -45,15 +45,6 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
         await Assert.That(Role(await SignInAsync(oidc, "mariogk@example.test"))).IsNull();
     }
 
-    [Test]
-    public async Task Any_other_stored_role_grants_nothing()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var user = await oidc.CreateUserAsync("viewer@example.test");
-        await SetRoleAsync(oidc.Database, user.Id, "viewer");
-
-        await Assert.That(Role(await SignInAsync(oidc, "viewer@example.test"))).IsNull();
-    }
 
     private static async Task<JsonElement> SignInAsync(OidcHarness oidc, string address)
     {

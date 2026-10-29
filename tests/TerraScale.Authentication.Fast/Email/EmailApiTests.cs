@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
-using TerraScale.Authentication.Fast.Platform;
+
 
 namespace TerraScale.Authentication.Fast.Email;
 
@@ -476,7 +476,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"someone-else@example.test\"]}}", 502, "email_acceptance_unknown")]
     public async Task Test_sends_report_actual_provider_acceptance(int status, string body, int expected, string? error)
     {
-        await using var provider = await EmailTests.FakeCloudflare.StartAsync((HttpStatusCode)status, body: body);
+        await using var provider = await EmailProviderFixture.FakeCloudflare.StartAsync((HttpStatusCode)status, body: body);
         using var http = ProviderClient(provider);
         var captured = new CapturingEmailSender();
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services =>
@@ -502,7 +502,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [Arguments("{\"success\":true,\"result\":{\"suppressed_recipients\":[\"provider-owner@example.test\"]}}", "rejected")]
     public async Task Product_ledgers_preserve_unconfirmed_provider_outcomes_without_resending(string body, string expected)
     {
-        await using var provider = await EmailTests.FakeCloudflare.StartAsync(body: body);
+        await using var provider = await EmailProviderFixture.FakeCloudflare.StartAsync(body: body);
         using var http = ProviderClient(provider);
         var captured = new CapturingEmailSender();
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services =>
@@ -535,7 +535,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         await Assert.That(provider.Calls).IsEqualTo(deliveries.Length);
     }
 
-    private static HttpClient ProviderClient(EmailTests.FakeCloudflare provider) => new(new EmailTests.ProviderRoute(provider.Address, provider)
+    private static HttpClient ProviderClient(EmailProviderFixture.FakeCloudflare provider) => new(new EmailProviderFixture.ProviderRoute(provider.Address, provider)
     {
         InnerHandler = new HttpClientHandler { AllowAutoRedirect = false },
     });

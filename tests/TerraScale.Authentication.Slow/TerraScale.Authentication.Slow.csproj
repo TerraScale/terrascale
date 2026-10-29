@@ -13,11 +13,15 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
+    <!-- Stopped-copy recovery scenarios inspect the fixture-owned Turso file. -->
+    <ProjectReference Include="../../src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Bogus" />
+    <PackageReference Include="ZLogger" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
   <ItemGroup>
     <!-- Shared harness source; deliberately not a third test project. -->

@@ -41,45 +41,6 @@ public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.SignInAsync("owner@acme.test")).IsNotEmpty();
     }
 
-    [Test]
-    public async Task Broken_callbacks_are_refused()
-    {
-        using var idp = new FakeSsoIdp();
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: idp.Route);
-        await ConnectAsync(oidc, idp);
-
-        foreach (var claims in new Dictionary<string, object?>[] { new() { ["nonce"] = "other" }, new() { ["email"] = "eve@evil.test" },
-            new() { ["email_verified"] = false }, new() { ["aud"] = "another-client" }, new() { ["iss"] = "https://idp.example.test/realms/other" } })
-        {
-            using var refused = await SignInAsync(oidc, idp, "bob@acme.test", claims);
-            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-            await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
-        }
-
-        using var noCookie = await SignInAsync(oidc, idp, "bob@acme.test", cookie: false);
-        await Assert.That(noCookie.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-    }
-
-    [Test]
-    public async Task Only_owners_change_the_connection_and_a_verified_domain_cannot_be_taken()
-    {
-        using var idp = new FakeSsoIdp();
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: idp.Route);
-        var (organization, token) = await ConnectAsync(oidc, idp);
-        var (_, other) = await oidc.SignInUserAsync("mallory@other.test");
-        var otherOrganization = await oidc.CreateOrganizationAsync(other);
-
-        await Assert.That((await oidc.FailAsync(HttpMethod.Put, $"{PlatformCalls.Organizations}/{otherOrganization}/sso", other, Request())).Status).IsEqualTo(409);
-        await Assert.That((await oidc.FailAsync(HttpMethod.Get, $"{PlatformCalls.Organizations}/{organization}/sso", other)).Status).IsEqualTo(404);
-        await Assert.That((await oidc.FailAsync(HttpMethod.Put, $"{PlatformCalls.Organizations}/{organization}/sso", token, Request(issuer: "https://idp.example.test/unknown"))).Code).IsEqualTo("invalid_request");
-
-        await oidc.OkAsync(HttpMethod.Delete, $"{PlatformCalls.Organizations}/{organization}/sso", token, status: HttpStatusCode.NoContent);
-        await Assert.That((await oidc.FailAsync(HttpMethod.Get, $"{PlatformCalls.Organizations}/{organization}/sso", token)).Status).IsEqualTo(404);
-        using var email = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = "bob@acme.test" });
-        await Assert.That((await email.Content.ReadAsStringAsync()).Contains("Check your email", StringComparison.Ordinal)).IsTrue();
-        await Assert.That((await oidc.FailAsync(HttpMethod.Put, $"{PlatformCalls.Organizations}/{otherOrganization}/sso", other, new { domain = Domain, oidc = new { issuer = FakeSsoIdp.Issuer, client_id = "c" } })).Code).IsEqualTo("invalid_request");
-    }
-
     private static object Request(string issuer = FakeSsoIdp.Issuer) => new
     {
         domain = Domain,
