@@ -1,0 +1,5 @@
+# Runtime/dev/build requirements come from pyproject.toml via compile-ci-lock.sh.
+# The audit CLI has its own Python 3.12 lock; SDK tests continue on 3.10–3.13.
+pip
+twine
+editables

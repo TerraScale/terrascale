@@ -1,0 +1,57 @@
+name: publish
+
+# Publishes to PyPI with trusted publishing (no token) when a GitHub release
+# is published for a vX.Y.Z tag. PyPI side: project "terrascale", owner
+# TerraScale, repo ts-python, workflow publish.yml, environment pypi.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: tests
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a release commit from main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
+          python-version: "3.12"
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements-ci.txt
+            requirements-audit.txt
+      - name: tag matches version
+        run: test "v$(sed -n 's/__version__ = "\(.*\)"/\1/p' src/terrascale/_version.py)" = "${{ github.event.release.tag_name || github.ref_name }}"
+      - run: 'uv pip sync --require-hashes --only-binary :all: requirements-ci.txt'
+      - run: bash scripts/check-ci-lock.sh
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pip-audit
+          key: pip-audit-${{ runner.os }}-${{ hashFiles('requirements-ci.txt', 'requirements-audit.txt') }}
+          restore-keys: pip-audit-${{ runner.os }}-
+      - name: install isolated audit toolchain
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/ts-audit"
+          uv pip sync --python "$RUNNER_TEMP/ts-audit"/bin/python --require-hashes --only-binary :all: requirements-audit.txt
+      - name: audit runtime, dev, build and audit graphs (all severities)
+        run: |
+          "$RUNNER_TEMP/ts-audit"/bin/pip-audit --strict --disable-pip --require-hashes -r requirements-ci.txt -r requirements-audit.txt --cache-dir ~/.cache/pip-audit
+      - run: uv build --no-build-isolation && twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
