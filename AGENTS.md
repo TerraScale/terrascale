@@ -1,48 +1,28 @@
-AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
-# Rules
-- No AI attribution in commits or PRs: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]`, no similar notices.
-- Use feature-sliced design: keep similar or dependent files and services together.
+# ts-dotnet
 
-# Libraries
-- Use TUnit for tests.
+Follow [workspace Shipping code](/home/mariogk/Projects/TerraScale/AGENTS.md#shipping-code-user-2026-10-29-go-fast-break-things-fast-q-trunk-q-local-check).
+## Layout and checks
 
-## Local CPU Priority
-- Prefix local builds, tests, lints, benchmarks, dev servers, and watchers with `nice -n 19` (for example `nice -n 19 make test-fast`).
-- CI (`CI=true`) runs at full priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts, or Containerfiles.
+- SDK: `src/TerraScale.DotNet`; TUnit tests: `tests/TerraScale.DotNet.Tests`; contract fixtures: `contracts/`.
+- Keep related files and services together using feature-sliced design.
+- Use the SDK pinned in `global.json`; nullable types, analyzers and warnings as errors stay enabled.
+- Build: `dotnet build TerraScale.DotNet.slnx --configuration Release`.
+- Fast: `dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --framework net10.0`.
+- Release checks: `bash scripts/check-release.sh`.
 
-## Public contract work
-Land the owning public REST, WebSocket, or SSE contract before the SDK operation. Never invent a route, DTO, header, field, error, or server behavior. Verify: method or protocol message; versioned path or endpoint; operation identity; parameters and requiredness; media types; field names, types, and nullability; security scheme and scope; success, error, and partial outcomes; idempotency and retry; pagination or checkpoint semantics; generated contract and route-manifest parity.
+## API rules
 
-## Entity Framework Core
-Keep EF Core support in `src/TerraScale.EntityFrameworkCore`. It uses this SDK and public Database API operations and cannot reference TerraBase or server projects. Expose async, cancellation-aware `DbContext` integration. Map EF model metadata to public database, environment, repository, key, schema, and query contracts. Keep provider tests apart from base SDK tests.
+- Land the owning public REST, WebSocket or SSE contract before its SDK operation. Verify method/message, versioned endpoint, operation identity, parameters, media types, field types/nullability, security/scope, success/error/partial outcomes, retry/idempotency, pagination/checkpoints and generated contract/route parity. Never invent server behavior.
+- APIs are async and cancellation-aware. Never use `.Result`, `.Wait()` or sync-over-async. Clients are thread-safe after construction; never dispose caller-owned `HttpClient`.
+- Do not serialize independent caller work without a correctness reason. Bound batch/pagination concurrency and backpressure; stream with `IAsyncEnumerable<T>`.
+- Retry only documented transient failures safe to repeat. Mutations need stable idempotency. Respect deadlines, cancellation, `Retry-After` and overload; never auto-retry validation, authentication, authorization or deterministic conflicts.
+- Use discoverable TerraScale names and immutable records. Validate options at construction with actionable errors; document public APIs with XML docs.
+- Fix first-party timeout, retry, concurrency and buffer limits in code. Preserve caller cancellation and security validation.
+- No console output or process-wide mutable state. Only an explicitly owned reactive object may start and dispose hidden background work.
 
-## Async, retry, and resources
-- APIs are asynchronous and cancellation-aware. Never block (`.Result`, `.Wait()`, sync-over-async).
-- SDK clients are thread-safe after construction. Never dispose a caller-owned `HttpClient`.
-- Don't serialize independent caller work without a correctness reason. Bound concurrency and backpressure for batches and pagination. Stream results with `IAsyncEnumerable<T>`.
-- Retry only documented transient failures that are safe to repeat; mutations need stable idempotency first. Respect deadlines, cancellation, `Retry-After`, and overload. Never auto-retry validation, authentication, authorization, or deterministic conflicts.
+## Configuration
 
-## Developer experience
-- Use discoverable TerraScale-specific names and immutable records. Validate options at construction with actionable errors.
-- Fix first-party timeout, retry, concurrency, and buffer limits in code. Keep caller cancellation and security validation. Expose no tuning knobs.
-- Provide XML docs for public APIs. Enable nullable reference types, analyzers, and warnings as errors.
-- No console output or process-wide mutable state. Hidden background work is forbidden unless an explicitly owned reactive object starts and disposes it.
-
-## Pull requests
-
-- **Start from latest main.** Base every change on the most recent `main`: before starting, `git fetch origin` and branch from `origin/main`, never from a stale local `main`, another feature branch or an old worktree. Before every push, `git fetch origin && git rebase origin/main` again; right before merging, rebase once more and merge only when CI is green on that exact head.
-
-## Zero configuration (user decision 2026-10-09, do not revert)
-- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles, or kill switches in code, config, or CI. Delete switches and their guarded paths.
-- Every region always serves. NetBird network membership admits a node automatically; the node discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
-- OCI Vault creates, delivers, and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once there and picked up automatically. Nobody copies secrets by hand.
-- One correct value per setting, in code. Expose no tuning knobs. Fakes, demo stores, and skip-auth exist only in test code and test binaries.
-- CI rejects new switch-style configuration. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
-
-Public regional endpoint discovery is automatic. Customer credentials authorize access; production service credentials arrive from OCI Vault. This contract is not evidence that every runtime flow has shipped; see [README.md](README.md) for SDK and qualification gaps. Existing production switches are inventoried for their owning implementation threads. Documentation changes must not invent APIs or bypass authorization, tenant scope, registered callbacks, payment consent, or safety guards.
-
-## Model routing
-- Short, bounded work (quick subagents, lookups, small edits): Claude Haiku 5.5 (`claude-haiku-5-5`). If unavailable, use OpenAI GPT-6.1-Sol via Codex (`gpt-6.1-sol`), after confirming the ID in the live model catalog.
-- Never use Claude Haiku 4.5 (`claude-haiku-4-5`, any dated variant) or fall back silently to an older model. If neither model is available, stop and report it.
-- Claude Opus 5.5 (`claude-opus-5-5`) advises on substantial work and runs any task expected to take over 10 minutes. The Haiku default never overrides this.
-- T3 Code threads run in full-access mode, subject to tool safety constraints.
+- Keep features always on; no feature flags, enable switches, opt-ins or kill switches. Keep one correct value in code, with no new tuning knobs.
+- Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- Keep the switch-style configuration check; unavoidable third-party names need a narrow allowance and a one-line reason.
+- README.md records implementation and qualification gaps. Do not claim unshipped behavior or bypass authorization, tenant scope, registered callbacks, payment consent or safety guards.
