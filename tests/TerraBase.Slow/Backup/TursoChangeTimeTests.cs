@@ -3,7 +3,7 @@ using TerraBase.Engine.Turso;
 using Turso;
 using Turso.Data.Sqlite;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
 /// <summary>
 /// What a point-in-time restore relies on from Turso's change capture, measured on the real driver with the capture mode

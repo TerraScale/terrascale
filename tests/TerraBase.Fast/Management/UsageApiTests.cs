@@ -456,27 +456,33 @@ public sealed class UsageApiTests
     }
 
     [Test]
-    [Arguments("?granularity=week", "granularity must be hour or day")]
-    [Arguments("?from=yesterday", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?from=1969-12-31T00:00:00Z", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?to=9999-12-31T23:30:00Z", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?from=10:00", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?from=2026-10-06", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?to=2026-10-06T10:00:00", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?to=10/06/2026 10:00:00 +00:00", "from and to must be RFC 3339 instants from 1970 to 9998")]
-    [Arguments("?from=2026-10-06T12:00:00Z&to=2026-10-06T10:00:00Z", "from must be before to, at most 840 hours or 400 days earlier")]
-    [Arguments("?from=2026-10-06T10:45:00Z&to=2026-10-06T10:15:00Z", "from must be before to, at most 840 hours or 400 days earlier")]
-    [Arguments("?from=2026-10-06T10:15:00Z&to=2026-10-06T10:15:00Z", "from must be before to, at most 840 hours or 400 days earlier")]
-    [Arguments("?from=2026-01-01T00:00:00Z&to=2026-03-01T00:00:00Z", "from must be before to, at most 840 hours or 400 days earlier")]
-    [Arguments("?granularity=day&from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z", "from must be before to, at most 840 hours or 400 days earlier")]
-    public async Task A_usage_period_that_is_not_one_of_at_most_840_hours_or_400_days_is_invalid(string query, string message)
+    public async Task A_usage_period_that_is_not_one_of_at_most_840_hours_or_400_days_is_invalid()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
 
-        foreach (var path in new[] { database.Path, database.ProjectPath })
+        (string Query, string Message)[] cases =
+        [
+            ("?granularity=week", "granularity must be hour or day"),
+            ("?from=yesterday", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?from=1969-12-31T00:00:00Z", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?to=9999-12-31T23:30:00Z", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?from=10:00", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?from=2026-10-06", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?to=2026-10-06T10:00:00", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?to=10/06/2026 10:00:00 +00:00", "from and to must be RFC 3339 instants from 1970 to 9998"),
+            ("?from=2026-10-06T12:00:00Z&to=2026-10-06T10:00:00Z", "from must be before to, at most 840 hours or 400 days earlier"),
+            ("?from=2026-10-06T10:45:00Z&to=2026-10-06T10:15:00Z", "from must be before to, at most 840 hours or 400 days earlier"),
+            ("?from=2026-10-06T10:15:00Z&to=2026-10-06T10:15:00Z", "from must be before to, at most 840 hours or 400 days earlier"),
+            ("?from=2026-01-01T00:00:00Z&to=2026-03-01T00:00:00Z", "from must be before to, at most 840 hours or 400 days earlier"),
+            ("?granularity=day&from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z", "from must be before to, at most 840 hours or 400 days earlier"),
+        ];
+        foreach (var (query, message) in cases)
         {
-            await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(path + "/usage" + query)), HttpStatusCode.BadRequest, "invalid_request", message);
+            foreach (var path in new[] { database.Path, database.ProjectPath })
+            {
+                await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri(path + "/usage" + query)), HttpStatusCode.BadRequest, "invalid_request", message);
+            }
         }
 
         using var offset = await api.Client.GetAsync(Uri(database.Path + "/usage?from=2026-10-06T10:00:00.5-03:00&to=2026-10-06T14:00:00%2B00:00"));
