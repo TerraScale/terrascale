@@ -48,7 +48,7 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
         }
     }
 
-    public static object Sql(string sql, params object?[] args) => new { sql, args };
+    public static object Stmt(string sql, params object?[] args) => new { sql, args };
 
     public static object Named(string sql, Dictionary<string, object?> named) => new { sql, named };
 
@@ -67,7 +67,7 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
         return [.. body.GetProperty("results").EnumerateArray()];
     }
 
-    public Task<JsonElement[]> OkAsync(params string[] statements) => OkAsync([.. statements.Select(sql => Sql(sql))]);
+    public Task<JsonElement[]> OkAsync(params string[] statements) => OkAsync([.. statements.Select(sql => Stmt(sql))]);
 
     public async Task<SqlRefusal> RefusedAsync(HttpClient client, params object[] statements)
     {
@@ -79,7 +79,7 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
     }
 
     public Task<SqlRefusal> RefusedAsync(params string[] statements) =>
-        RefusedAsync(Writer, [.. statements.Select(sql => Sql(sql))]);
+        RefusedAsync(Writer, [.. statements.Select(sql => Stmt(sql))]);
 
     public async Task<long> CountAsync(string table) =>
         (await OkAsync($"SELECT count(*) FROM {table}"))[0].GetProperty("rows")[0][0].GetInt64();
