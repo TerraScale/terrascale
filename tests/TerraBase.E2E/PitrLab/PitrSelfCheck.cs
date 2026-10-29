@@ -310,6 +310,7 @@ internal static class PitrSelfCheck
         }, services =>
         {
             services.AddHttpClient(S3ObjectStore.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => Handler(serve.Authority));
+            PitrTarget.UseConfiguredMasterKey(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -365,6 +366,8 @@ internal static class PitrSelfCheck
 
         check("node.restore", restore.StatusCode == HttpStatusCode.Created && restored == texts.Count,
             $"point-in-time restore from s3-serve: {(int)restore.StatusCode}, {restored}/{texts.Count} documents with their latest text; drill passed: {status.LastDrill?.Passed}");
+
+        await PitrTarget.CheckAsync(work, root, database, api.User, status.LastShippedAt!.Value, texts, masterKey, time, Handler, check, cancellationToken);
 
         var scratch = Path.Combine(work, "scratch");
         var keysPrefix = $"v1/keys/{database.Organization}/{database.Project}/";

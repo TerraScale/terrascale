@@ -116,7 +116,11 @@ today's defective behaviour) is never counted as an acceptance pass.
   upload and storage; used at C5 and C8 only.
 - **Path B, isolated target node:** a second node with its own data directory, bucket settings naming a byte-exact local
   copy of the source's Tigris objects (PitrLab `download` → `s3-serve`), and the source's organization/project/database
-  ids registered (`adopt`). It restores from the copy alone, without any source file. Used for every cut, then the target
+  ids prepared before startup by PitrLab's `prepare-target` test fixture. `adopt` then validates that live catalog
+  registration and initializes the collections and index through the surviving routes. Database create routes generate
+  IDs, while encrypted backup objects require their original paths, so ordinary create cannot replace this fixture.
+  This is tenant backup replay with explicitly seeded catalog identity, not production catalog recovery or whole-node
+  disaster recovery. It restores from the copy alone, without any source file. Used for every cut, then the target
   node is restarted and every restored database verified again. The source run directory and the downloaded copy are
   never modified; every mutation and every target node works on its own new copy.
 - **Fault matrix (isolated mutated copies, PitrLab `mutate`):** missing middle segment, missing last segment at or

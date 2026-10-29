@@ -25,8 +25,6 @@
 #   copy LABEL            byte-exact download of the database and keys prefixes into $BASE/copies/LABEL
 #   tcuts                 after the source audit: bounded cuts T<phase> and T<phase>m1 at the first segment holding u1, d1
 #                         and r1 writes and 1 ms before it (the bounded rule on each mutation)
-#   path-b ROOT LABEL [CUTS]  s3-serve on ROOT, fresh target node, adopt, restore every cut (default: every recorded
-#                         cut), verify, restart, verify --compare
 #   mutate KIND KEY LABEL  isolated mutated copy of copies/pristine (or MUTATE_FROM) + its audit
 #   fault KIND KEY CUT LABEL  the mutated copy restored at CUT on a fresh target, recorded
 #   fault-matrix          every fault case from the run's own audit and cuts (cmd_fault_matrix)
@@ -60,6 +58,16 @@
 # Nothing here deletes data.
 set -euo pipefail
 set +x # never trace: env files hold the master key
+
+if [[ ${1:-} == help || ${1:-} == --help ]]; then
+	cat <<'USAGE'
+path-b ROOT LABEL [CUTS]: serve an isolated bucket copy, prepare the pinned tenant catalog with
+PitrLab's test fixture, start the target, validate with adopt, restore and verify each cut,
+then restart and compare versions. Defaults to every recorded cut. This tests tenant backup
+replay; it does not recover a production catalog or prove whole-node disaster recovery.
+USAGE
+	exit 0
+fi
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 : "${BASE:?BASE (run base directory) is required}"
@@ -462,13 +470,19 @@ tstart() {
 		--env-file "$BASE/secrets/t-$1.env" >"$BASE/out/target-$1-start-$2.json"
 }
 
-# target_up LABEL ROOT [KEY_FROM]: s3-serve on ROOT plus a fresh, isolated target node that adopts the run's tenant.
 target_up() {
 	local label=$1 root=$2 from=${3:-${SOURCE_ENV:-$BASE/secrets/source.env}} tdir=$BASE/targets/$1 pid
 	mkdir -p "$BASE/targets"
 	if [[ ! -e $BASE/s3/t-$label.ready.json ]]; then
 		cmd_serve "t-$label" "$root"
 		envfile "t-$label" "t-$label" "$from" >/dev/null
+	fi
+	if [[ ! -s $tdir/catalog-ready.json ]]; then
+		jq -n --arg data "$tdir/data" --arg out "$tdir/catalog-ready.json" \
+			--slurpfile run "$RUN/run.json" \
+			'{mode:"prepare-target",data_directory:$data,out:$out,target:($run[0] | {organization,project,database:.database_id,name:.database,owner})}' \
+			>"$BASE/jobs/prepare-target-$label.json"
+		lab "$BASE/jobs/prepare-target-$label.json" "$BASE/secrets/t-$label.env"
 	fi
 	pid=$(jq -r '.pid // 0' "$tdir/node.json" 2>/dev/null || echo 0)
 	# (kill -0 0 would signal this process group and succeed)
