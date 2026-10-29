@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Observability;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Platform;
