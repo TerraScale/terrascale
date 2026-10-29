@@ -214,3 +214,7 @@ benchmark-smoke:
 .PHONY: terrabase-test-shard
 terrabase-test-shard:
 	python3 scripts/ci/terrabase-shard.py $(SHARD)
+
+.PHONY: docs-test-fast
+docs-test-fast:
+	cd docs-site && bash scripts/test-fast.sh
