@@ -18,7 +18,6 @@ Errors use `{"error":{"code":"invalid_arguments","message":"…"}}`, with option
 
 `shell` uses NDJSON: `{"type":"record","data":…}` followed by exactly one `{"type":"complete"}` on successful termination, or `{"type":"error","error":…}` and nonzero exit. Missing complete means incomplete; JSON SIGINT exits 1.
 
-The [JSON Schema](https://docs.terrascale.tech/cli-output.schema.json) maps individual commands in `x-commandResults` to success definitions. Validate finite results once and check exit status for each command. Metadata may contain additional fields; preserve opaque versions and large integers.
 
 | Commands | Successful JSON |
 | --- | --- |

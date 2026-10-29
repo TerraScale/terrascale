@@ -140,7 +140,7 @@ the same name when you have none.
 
 In CI, set `TERRASCALE_API_KEY` to an API key instead of running `ts auth login`.
 Database commands then act as that key in its project. Store the key in your CI
-secret store. See [CI](/ru/guides/migrations#ci).
+secret store. See [CI](/ru/guides/migrations).
 
 ## Manage databases
 
