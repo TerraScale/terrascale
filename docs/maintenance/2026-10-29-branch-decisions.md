@@ -42,6 +42,11 @@ partitioning real donor RPCs and observes both failed donor transfers. Retain
 main's explicit all-regions create request. Port only these test/fixture changes;
 no native dependency pin or held native-upgrade work is included.
 
+Additional home-code salvage: mariogk-dev's `ts962-readiness-fix.patch` contributes
+only the missing closure storage-failure-during-shutdown regression in auth
+`HealthTests`. The closure worker runtime fix already exists on main. Do not port
+the patch's file-storage identity, settings, runtime or unrelated tests.
+
 | Additional salvage source | Decision | Hold / evidence |
 | --- | --- | --- |
 | delta `fix-dependency-advisories-3086c1c81.bundle` (native upgrade) | held, not ported | Publication, ARM64 and storage-format holds remain. Source bundle stays in `~/Backups/worktree-salvage-20261029/terrascale/`; no upgrade or activation in this PR. |
