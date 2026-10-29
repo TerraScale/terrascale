@@ -43,7 +43,7 @@ public sealed class ChunkedMemoryAdmissionTests
         await Assert.That(json.Length).IsEqualTo(BodyBytes);
         await RequestLogMemoryFixture.DrainAsync(api.Server, deadline.Token);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
-        using (var held = budget.TryReserve(MemoryLane.Bulk, TenantBytes - operationBytes, database))
+        using (var held = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Bulk, TenantBytes - operationBytes, database))
         {
             await Assert.That(held).IsNotNull();
             using var content = new FragmentedContent(json, fragmentBytes);
@@ -51,7 +51,7 @@ public sealed class ChunkedMemoryAdmissionTests
             written.EnsureSuccessStatusCode();
             await RequestLogMemoryFixture.DrainAsync(api.Server, deadline.Token);
             // Reuse the complete request and metadata allowance; every operation lease must have returned.
-            using var returned = budget.TryReserve(MemoryLane.Foreground, operationBytes, database);
+            using var returned = budget.TryReserve(MemoryLane.Foreground, MemoryAccounting.Available(api.Server, TenantBytes, database) - held!.Bytes, database);
             await Assert.That(returned).IsNotNull();
         }
         using var read = await tenant.Data.GetAsync(uri, deadline.Token);

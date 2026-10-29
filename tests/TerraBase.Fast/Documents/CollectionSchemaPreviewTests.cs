@@ -4,6 +4,7 @@ using System.Text;
 using Bogus;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Fast.Platform;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Hosting;
 
@@ -86,7 +87,7 @@ public sealed class CollectionSchemaPreviewTests
         listener.Start();
         var path = $"{api.Collections}/items/schema/preview";
         await api.Server.Services.GetRequiredService<IRequestLogs>().FlushAsync(CancellationToken.None);
-        var baseline = await api.ReservedBytesAsync();
+        var baseline = await api.ReservedBytesAsync() - MemoryAccounting.Retained(api.Server);
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(path, UriKind.Relative)) { Content = new StringContent(Schema, Encoding.UTF8, "application/json") };
@@ -102,7 +103,7 @@ public sealed class CollectionSchemaPreviewTests
         await Assert.That(await requests.Finished.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsTrue();
         listener.Dispose();
         await api.Server.Services.GetRequiredService<IRequestLogs>().FlushAsync(CancellationToken.None);
-        await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(baseline);
+        await Assert.That(await api.ReservedBytesAsync() - MemoryAccounting.Retained(api.Server)).IsEqualTo(baseline);
         (await api.SendRawAsync(HttpMethod.Post, path, Schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
     }
 }

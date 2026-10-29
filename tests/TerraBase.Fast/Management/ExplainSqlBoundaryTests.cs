@@ -12,6 +12,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Fast.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -129,7 +130,7 @@ public sealed class ExplainSqlBoundaryTests
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
         await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
-        using (var held = budget.TryReserve(MemoryLane.Foreground, Budget - reserved - 1024 * 1024 + 1))
+        using (var held = budget.TryReserve(MemoryLane.Foreground, MemoryAccounting.Available(api.Server, Budget) - reserved - 1024 * 1024 + 1))
         {
             await Assert.That(held).IsNotNull();
             var headers = await SendHeadersOnlyAsync(api, client, database);
@@ -158,7 +159,7 @@ public sealed class ExplainSqlBoundaryTests
         await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         var mark = tracker!.Mark();
-        using (var held = budget.TryReserve(MemoryLane.Foreground, Budget - reserved - 1024 * 1024 + 1))
+        using (var held = budget.TryReserve(MemoryLane.Foreground, MemoryAccounting.Available(api.Server, Budget) - reserved - 1024 * 1024 + 1))
         {
             var headers = await SendHeadersOnlyAsync(api, client, database);
             await Assert.That(headers[0]).StartsWith("HTTP/1.1 503 ");
@@ -785,7 +786,7 @@ public sealed class ExplainSqlBoundaryTests
             result = (reserved ?? throw new InvalidOperationException("the server's memory budget gauge was not observed"))
                 - usage.ReservedMeasurementBytes;
         });
-        return result;
+        return result - MemoryAccounting.Retained(api.Server);
     }
 
     private static async Task SeedRemotePlacementAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)

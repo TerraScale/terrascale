@@ -14,6 +14,7 @@ using TerraBase.Fast.Management;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
+using TerraBase.Fast.Platform;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -323,7 +324,7 @@ public sealed class DocumentCacheTests
             await completed.Completion.Task.WaitAsync(operationTimeout.Token);
             await RequestLogMemoryFixture.DrainAsync(server, operationTimeout.Token);
             var budget = server.Services.GetRequiredService<IMemoryBudget>();
-            using var recoveredBudget = budget.TryReserve(MemoryLane.Foreground, Budget);
+            using var recoveredBudget = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
             await Assert.That(recoveredBudget).IsNotNull();
             recoveredBudget!.Dispose();
             using var subsequent = await client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);

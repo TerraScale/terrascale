@@ -89,8 +89,7 @@ public sealed class QosAdmissionTests
                 Interlocked.Increment(ref reads);
             }
         };
-        var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
-        using (var all = budget.TryReserve(MemoryLane.Foreground, Budget, null))
+        using (var all = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, Budget))
         {
             await Assert.That(all).IsNotNull();
             using var refused = await client.GetAsync(uri);
@@ -231,7 +230,7 @@ public sealed class QosAdmissionTests
         }
 
         await RequestLogMemoryFixture.DrainAsync(api.Server);
-        using (var released = api.Server.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 262_144, database))
+        using (var released = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, 262_144, database))
         {
             await Assert.That(released).IsNotNull();
         }

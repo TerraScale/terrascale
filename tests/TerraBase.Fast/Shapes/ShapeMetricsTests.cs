@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
+using TerraBase.Fast.Platform;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
@@ -129,7 +130,7 @@ public sealed class ShapeMetricsTests
         var metrics = Metrics(server);
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 
-        using (var whole = metrics.TryReserve(Budget, null))
+        using (var whole = metrics.TryReserve(MemoryAccounting.Available(server, Budget), null))
         {
             await Assert.That(whole).IsNotNull();
             await Assert.That(metrics.TryReserve(1, null)).IsNull();
@@ -144,7 +145,7 @@ public sealed class ShapeMetricsTests
             await Assert.That(async () => await Admitted(metrics, 1024, ct => new TaskCompletionSource().Task.WaitAsync(ct), canceled.Token))
                 .Throws<OperationCanceledException>();
         }
-        using var all = metrics.TryReserve(Budget, null);
+        using var all = metrics.TryReserve(MemoryAccounting.Available(server, Budget), null);
         await Assert.That(all).IsNotNull();
         await Assert.That(Sample(await ScrapeAsync(server), "terrabase_memory_reserved_bytes")).IsEqualTo((double)Budget);
     }
@@ -164,7 +165,7 @@ public sealed class ShapeMetricsTests
 
         using var second = metrics.TryReserve(share, other);
         await Assert.That(second).IsNotNull();
-        using var rest = metrics.TryReserve(Budget - 2 * share, null);
+        using var rest = metrics.TryReserve(MemoryAccounting.Available(server, Budget - 2 * share), null);
         await Assert.That(rest).IsNotNull();
         await Assert.That(metrics.TryReserve(1, null)).IsNull();
         await Assert.That(metrics.TryReserve(1, tenant)).IsNull();
@@ -271,8 +272,8 @@ public sealed class ShapeMetricsTests
         await Assert.That(Sample(secondScrape, "terrabase_shape_reads_total")).IsEqualTo(2d);
         await Assert.That(firstScrape).DoesNotContain("terrabase_shape_redirects_total");
         await Assert.That(Sample(secondScrape, "terrabase_shape_redirects_total")).IsEqualTo(1d);
-        await Assert.That(Sample(firstScrape, "terrabase_memory_reserved_bytes")).IsEqualTo(1024d);
-        await Assert.That(Sample(secondScrape, "terrabase_memory_reserved_bytes")).IsEqualTo(0d);
+        await Assert.That(Sample(firstScrape, "terrabase_memory_reserved_bytes")).IsEqualTo(1024d + MemoryAccounting.Retained(first));
+        await Assert.That(Sample(secondScrape, "terrabase_memory_reserved_bytes")).IsEqualTo((double)MemoryAccounting.Retained(second));
     }
 
     [Test]

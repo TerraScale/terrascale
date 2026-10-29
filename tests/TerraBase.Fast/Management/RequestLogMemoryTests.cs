@@ -9,6 +9,7 @@ using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Fast.Platform;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -60,7 +61,7 @@ public sealed class RequestLogMemoryTests
         await RequestsAsync(100);
         await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(token);
         await Assert.That(Interlocked.Read(ref dropped)).IsEqualTo(0);
-        using (var spare = budget.TryReserve(MemoryLane.Foreground, Budget - pending * 4096, tenant: null))
+        using (var spare = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, Budget - pending * 4096))
         {
             await Assert.That(spare).IsNotNull();
             using var extra = budget.TryReserve(MemoryLane.Foreground, 1, tenant: null);
@@ -77,7 +78,7 @@ public sealed class RequestLogMemoryTests
         }
 
         await RequestLogMemoryFixture.DrainAsync(api.Server, token);
-        using (var released = budget.TryReserve(MemoryLane.Foreground, Budget, tenant: null))
+        using (var released = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, Budget))
         {
             await Assert.That(released).IsNotNull();
         }
@@ -129,7 +130,6 @@ public sealed class RequestLogMemoryTests
         // This test isolates retained observations from the separate document/API-key cache.
         api.Server.Services.GetRequiredService<DocumentCache>().Dispose();
         await RequestLogMemoryFixture.DrainAsync(api.Server, token);
-        var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
         var started = clock.GetUtcNow();
         for (var batch = 0; batch < 2; batch++)
         {
@@ -144,17 +144,17 @@ public sealed class RequestLogMemoryTests
 
             // Leave only request-log leases pending, so a missing process charge cannot pass this assertion.
             await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(token);
-            using (var tenantShare = budget.TryReserve(MemoryLane.Foreground, Budget / 16, database))
+            using (var tenantShare = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, Budget / 16, database))
             {
                 await Assert.That(tenantShare).IsNotNull();
             }
-            using (var process = budget.TryReserve(MemoryLane.Foreground, Budget, tenant: null))
+            using (var process = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, Budget))
             {
                 await Assert.That(process).IsNull();
             }
 
             await RequestLogMemoryFixture.DrainAsync(api.Server, token);
-            using var released = budget.TryReserve(MemoryLane.Foreground, Budget, tenant: null);
+            using var released = MemoryAccounting.ReserveAvailable(api.Server, MemoryLane.Foreground, Budget);
             await Assert.That(released).IsNotNull();
         }
 

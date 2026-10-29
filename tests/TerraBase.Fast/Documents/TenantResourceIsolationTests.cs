@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Fast.Management;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
+using TerraBase.Fast.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -32,8 +33,7 @@ public sealed class TenantResourceIsolationTests
         }
 
         await RequestLogMemoryFixture.DrainAsync(management.Server);
-        var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
-        using (var held = budget.TryReserve(MemoryLane.Bulk, Budget - 16 * 1024, null))
+        using (var held = MemoryAccounting.ReserveAvailable(management.Server, MemoryLane.Bulk, Budget - 16 * 1024))
         {
             await Assert.That(held).IsNotNull();
 
@@ -46,7 +46,7 @@ public sealed class TenantResourceIsolationTests
         using var recovered = await owner.GetAsync(route);
         recovered.EnsureSuccessStatusCode();
         await RequestLogMemoryFixture.DrainAsync(management.Server);
-        using var all = budget.TryReserve(MemoryLane.Foreground, Budget, null);
+        using var all = MemoryAccounting.ReserveAvailable(management.Server, MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
     }
 
@@ -61,7 +61,7 @@ public sealed class TenantResourceIsolationTests
         var budget = server.Services.GetRequiredService<IMemoryBudget>();
         var faker = new Faker();
         var tenant = new TenantContext(faker.Random.Guid().ToString(), plan, faker.Random.Guid().ToString());
-        var share = (long)(Budget * QosPolicy.For(plan).MemoryShare);
+        var share = Math.Min((long)(Budget * QosPolicy.For(plan).MemoryShare), MemoryAccounting.Available(server, Budget));
         using var first = budget.TryReserve(MemoryLane.Foreground, share - 1, tenant);
         using var second = budget.TryReserve(MemoryLane.Bulk, 1, tenant with { ProjectId = faker.Random.Guid().ToString() });
         using var refused = budget.TryReserve(MemoryLane.Bulk, 1, tenant);
@@ -74,14 +74,14 @@ public sealed class TenantResourceIsolationTests
         var metrics = await server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         var reserved = metrics.Split('\n').Where(line => line.StartsWith("terrabase_memory_reserved", StringComparison.Ordinal))
             .Select(line => long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture));
-        await Assert.That(reserved).Contains(share);
+        await Assert.That(reserved).Contains(share + MemoryAccounting.Retained(server));
         first!.Dispose();
         first.Dispose();
         second!.Dispose();
         using var recovered = budget.TryReserve(MemoryLane.Foreground, share, tenant);
         await Assert.That(recovered).IsNotNull();
         recovered!.Dispose();
-        using var all = budget.TryReserve(MemoryLane.Foreground, Budget, null);
+        using var all = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
         using var globalRefusal = budget.TryReserve(MemoryLane.Foreground, 1, tenant);
         await Assert.That(globalRefusal).IsNull();
@@ -122,7 +122,7 @@ public sealed class TenantResourceIsolationTests
                 reservation.Dispose();
             }
         }
-        using var all = budget.TryReserve(MemoryLane.Foreground, Budget, null);
+        using var all = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
     }
 
@@ -136,8 +136,7 @@ public sealed class TenantResourceIsolationTests
         var database = await hobby.ContextAsync(management.Server, "shop");
         await other.ContextAsync(management.Server, "shop");
         await RequestLogMemoryFixture.DrainAsync(management.Server);
-        var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
-        using (var held = budget.TryReserve(MemoryLane.Bulk, Budget / 16, database))
+        using (var held = MemoryAccounting.ReserveAvailable(management.Server, MemoryLane.Bulk, Budget / 16, database))
         {
             await Assert.That(held).IsNotNull();
             using var refused = await hobby.Data.GetAsync(hobby.Database("shop", "/collections"));
@@ -150,7 +149,7 @@ public sealed class TenantResourceIsolationTests
         using var recovered = await hobby.Data.GetAsync(hobby.Database("shop", "/collections"));
         recovered.EnsureSuccessStatusCode();
         await RequestLogMemoryFixture.DrainAsync(management.Server);
-        using var reusable = budget.TryReserve(MemoryLane.Foreground, Budget / 16, database);
+        using var reusable = MemoryAccounting.ReserveAvailable(management.Server, MemoryLane.Foreground, Budget / 16, database);
         await Assert.That(reusable).IsNotNull();
     }
 

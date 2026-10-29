@@ -23,6 +23,17 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
     private string? _fenced;
     private IMemoryReservation? _retained;
 
+    internal long RetainedBytes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _retained?.Bytes ?? 0;
+            }
+        }
+    }
+
     internal bool IsAttachedTo(SqliteConnection writer)
     {
         lock (_gate)

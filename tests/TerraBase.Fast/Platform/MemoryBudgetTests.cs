@@ -88,7 +88,7 @@ public sealed class MemoryBudgetTests
         using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         response.EnsureSuccessStatusCode();
         var budget = server.Services.GetRequiredService<IMemoryBudget>();
-        using var all = budget.TryReserve(MemoryLane.Foreground, bytes);
+        using var all = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, bytes);
         using var excess = budget.TryReserve(MemoryLane.Foreground, 1);
         await Assert.That(all).IsNotNull();
         await Assert.That(excess).IsNull();
@@ -99,6 +99,27 @@ public sealed class MemoryBudgetTests
         {
             await using var refused = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         });
+    }
+
+    [Test]
+    public async Task Revision_indexes_remain_charged_until_their_stores_are_disposed()
+    {
+        IMemoryBudget budget;
+        await using (var server = await StartAsync())
+        {
+            budget = server.Services.GetRequiredService<IMemoryBudget>();
+            var retained = MemoryAccounting.Retained(server);
+            await Assert.That(retained).IsGreaterThan(0);
+            using var available = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
+            await Assert.That(available).IsNotNull();
+            await Assert.That(available!.Bytes).IsEqualTo(Budget - retained);
+            using var excess = budget.TryReserve(MemoryLane.Foreground, 1);
+            await Assert.That(excess).IsNull();
+        }
+
+        using var released = budget.TryReserve(MemoryLane.Foreground, Budget);
+        await Assert.That(released).IsNotNull();
+        await Assert.That(released!.Bytes).IsEqualTo(Budget);
     }
 
     [Test]
@@ -128,7 +149,7 @@ public sealed class MemoryBudgetTests
         using var first = budget.TryReserve(MemoryLane.Foreground, 1);
 
         using var huge = budget.TryReserve(MemoryLane.Foreground, long.MaxValue);
-        using var rest = budget.TryReserve(MemoryLane.Bulk, Budget - 1);
+        using var rest = MemoryAccounting.ReserveAvailable(server, MemoryLane.Bulk, Budget - 1);
         using var over = budget.TryReserve(MemoryLane.Bulk, 1);
 
         await Assert.That(first).IsNotNull();
@@ -142,10 +163,10 @@ public sealed class MemoryBudgetTests
         using var tooLarge = budget.TryReserve(MemoryLane.Foreground, Budget + 1);
         await Assert.That(tooLarge).IsNull();
         listener.RecordObservableInstruments();
-        await Assert.That(total).IsEqualTo(0);
-        using var all = budget.TryReserve(MemoryLane.Foreground, Budget);
+        await Assert.That(total).IsEqualTo(MemoryAccounting.Retained(server));
+        using var all = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
-        await Assert.That(all!.Bytes).IsEqualTo(Budget);
+        await Assert.That(all!.Bytes).IsEqualTo(MemoryAccounting.Available(server, Budget));
         listener.RecordObservableInstruments();
         await Assert.That(total).IsEqualTo(Budget);
         using var excess = budget.TryReserve(MemoryLane.Foreground, 1);
@@ -160,7 +181,7 @@ public sealed class MemoryBudgetTests
         using var stillExhausted = budget.TryReserve(MemoryLane.Foreground, 1);
         await Assert.That(stillExhausted).IsNull();
         all!.Dispose();
-        using var recovered = budget.TryReserve(MemoryLane.Foreground, Budget);
+        using var recovered = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
         await Assert.That(recovered).IsNotNull();
     }
 
@@ -239,8 +260,8 @@ public sealed class MemoryBudgetTests
 
         await Assert.That(peak).IsGreaterThanOrEqualTo(Size);
         await Assert.That(peak).IsLessThanOrEqualTo(Budget);
-        await Assert.That(total).IsEqualTo(0);
-        using var all = budget.TryReserve(MemoryLane.Foreground, Budget);
+        await Assert.That(total).IsEqualTo(MemoryAccounting.Retained(server));
+        using var all = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
     }
 
@@ -269,7 +290,7 @@ public sealed class MemoryBudgetTests
             deadline.Cancel();
         }
 
-        using var all = budget.TryReserve(MemoryLane.Foreground, Budget);
+        using var all = MemoryAccounting.ReserveAvailable(server, MemoryLane.Foreground, Budget);
         await Assert.That(all).IsNotNull();
         using var excess = budget.TryReserve(MemoryLane.Foreground, 1);
         await Assert.That(excess).IsNull();
