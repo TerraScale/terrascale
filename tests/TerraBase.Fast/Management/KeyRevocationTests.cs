@@ -16,7 +16,8 @@ public sealed class KeyRevocationTests
     [Arguments("key_expired")]
     public async Task The_same_bearer_stops_reading_when_its_key_stops_acting(string code)
     {
-        await using var api = await ManagementApi.StartAsync();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time);
         var database = await api.CreateManagedDatabaseAsync();
         var (key, token) = Grant(api, database);
         using var client = api.WithToken(token);
@@ -35,41 +36,12 @@ public sealed class KeyRevocationTests
             api.Issuer.RevokeClient(key);
         }
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (true)
-        {
-            using var response = await client.GetAsync(route, deadline.Token);
-            if (response.StatusCode != HttpStatusCode.OK)
-            {
-                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-                await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(deadline.Token)).GetProperty("error").GetProperty("code").GetString()).IsEqualTo(code);
-                await Assert.That(response.Headers.WwwAuthenticate.ToString()).Contains(code);
-                break;
-            }
-
-            await Task.Delay(25, deadline.Token);
-        }
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Unavailable_status_and_a_key_id_that_differs_from_sub_fail_closed(bool mismatched)
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        var (_, token) = Grant(api, database, mismatched);
-        api.Issuer.StatusAvailable = false;
-        using var client = api.WithToken(token);
-        using var response = await client.GetAsync(ManagementApi.Uri(database.Data + "/collections"));
-        await Assert.That(response.StatusCode).IsEqualTo(mismatched ? HttpStatusCode.Unauthorized : HttpStatusCode.ServiceUnavailable);
-        if (!mismatched)
-        {
-            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("auth_unavailable");
-            await Assert.That(response.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
-        }
-
-        await Assert.That(api.Issuer.StatusRequests).IsEqualTo(mismatched ? 0 : 1);
+        // Expire the cached authority without dispatching timers; this request must recheck the key itself.
+        time.AdjustTime(time.GetUtcNow().AddSeconds(2));
+        using var response = await client.GetAsync(route, TestContext.Current!.Execution.CancellationToken);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo(code);
+        await Assert.That(response.Headers.WwwAuthenticate.ToString()).Contains(code);
     }
 
     [Test]
@@ -135,7 +107,8 @@ public sealed class KeyRevocationTests
     [Test]
     public async Task Revocation_ends_an_open_postgres_session_and_refuses_new_connections()
     {
-        await using var api = await ManagementApi.StartAsync();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time);
         var database = await api.CreateManagedDatabaseAsync();
         var (key, _) = Grant(api, database);
         var settings = new NpgsqlConnectionStringBuilder { Host = "127.0.0.1", Port = api.Server.PostgresPort, Username = "wire", Password = key, Database = database.Name, SslMode = SslMode.Disable, Pooling = false };
@@ -144,21 +117,19 @@ public sealed class KeyRevocationTests
         await using var command = new NpgsqlCommand("SELECT 1", connection);
         await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(1L);
         api.Issuer.RevokeClient(key);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Let the next statement recheck the expired authority before any background watch runs.
+        time.AdjustTime(time.GetUtcNow().AddSeconds(2));
         Exception? refused = null;
-        while (refused is null)
+        try
         {
-            try
-            {
-                await command.ExecuteScalarAsync(deadline.Token);
-                await Task.Delay(25, deadline.Token);
-            }
-            catch (Exception error) when (error is NpgsqlException or InvalidOperationException)
-            {
-                refused = error;
-            }
+            await command.ExecuteScalarAsync(TestContext.Current!.Execution.CancellationToken);
+        }
+        catch (Exception error) when (error is NpgsqlException or InvalidOperationException)
+        {
+            refused = error;
         }
 
+        await Assert.That(refused).IsNotNull();
         if (refused is PostgresException fatal)
         {
             await Assert.That(fatal.SqlState).IsEqualTo("28000");

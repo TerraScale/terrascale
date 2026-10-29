@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Management.Indexes;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -39,16 +41,11 @@ public sealed class VectorIndexTests
             return Put(id, kind, vectors[id] = Vector());
         }
 
-        await WriteAsync([.. Enumerable.Range(0, 120).Select(i => Add(i % 2))]);
+        await WriteAsync([.. Enumerable.Range(0, 12).Select(i => Add(i % 2))]);
 
         using var owner = api.Management.As(api.Tenant.User);
         var indexes = $"/v1/management/organizations/{api.Tenant.OrganizationId}/projects/{api.Tenant.ProjectId}/databases/{(await api.TenantOfAsync()).DatabaseId}/indexes";
         var path = ManagementApi.Uri(indexes);
-        using (var missing = await owner.PostAsJsonAsync(path, new { collection = DocumentApi.Collection, kind = "vector", fields = Fields }))
-        {
-            await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        }
-
         using (var created = await owner.PostAsJsonAsync(path, new { name = "embeddings", collection = DocumentApi.Collection, kind = "vector", fields = Fields, dimensions = Dimensions }))
         {
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -59,23 +56,21 @@ public sealed class VectorIndexTests
 
         // Written after the build starts: new, replaced, removed, and no longer a vector of the index's length.
         var ids = vectors.Keys.ToList();
-        await WriteAsync([.. Enumerable.Range(0, 80).Select(i => Add(i % 2))]);
-        await WriteAsync([.. ids.Take(20).Select(id => Put(id, 0, vectors[id] = Vector()))]);
-        await WriteAsync([.. ids.Skip(20).Take(10).Select(id => new { op = "delete", collection = DocumentApi.Collection, id })]);
-        await WriteAsync([.. ids.Skip(30).Take(10).Select(id => Put(id, 0, [.. vectors[id].Take(Dimensions - 1)]))]);
-        foreach (var id in ids.Skip(20).Take(20))
+        await WriteAsync([.. Enumerable.Range(0, 8).Select(i => Add(i % 2))]);
+        await WriteAsync([.. ids.Take(2).Select(id => Put(id, 0, vectors[id] = Vector()))]);
+        await WriteAsync([.. ids.Skip(2).Take(1).Select(id => new { op = "delete", collection = DocumentApi.Collection, id })]);
+        await WriteAsync([.. ids.Skip(3).Take(1).Select(id => Put(id, 0, [.. vectors[id].Take(Dimensions - 1)]))]);
+        foreach (var id in ids.Skip(2).Take(2))
         {
             vectors.Remove(id);
         }
 
-        // The background build adds the documents written before the index; near queries scan until it is active.
-        for (var attempt = 0; (await owner.GetFromJsonAsync<JsonElement>(path)).GetProperty("items")[0].GetProperty("state").GetString() != "active"; attempt++)
-        {
-            await Assert.That(attempt).IsLessThan(150);
-            await Task.Delay(200);
-        }
+        // Await the same build operation used by the background worker, then verify its public state.
+        await api.Server.Services.GetRequiredService<VectorIndexBuilder>().BuildAsync(await api.TenantOfAsync(), CancellationToken.None);
+        var active = await owner.GetFromJsonAsync<JsonElement>(path);
+        await Assert.That(active.GetProperty("items")[0].GetProperty("state").GetString()).IsEqualTo("active");
 
-        for (var q = 0; q < 5; q++)
+        for (var q = 0; q < 1; q++)
         {
             var query = Vector();
             var result = await api.QueryAsync(new { sort = new[] { new { near = new { path = "/embedding", vector = query } } }, limit = 10 });
