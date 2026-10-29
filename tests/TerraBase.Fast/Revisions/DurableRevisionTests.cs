@@ -178,13 +178,35 @@ public sealed class DurableRevisionTests
         await Assert.That(next.Pages).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task AMissingPageIsRecordedAsDamageAndRefusesTheCopy()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = new RevisionDatabase();
+        await database.CreateAsync(api);
+        await database.InsertAsync(api, 2_000);
+        var store = (TursoDatabaseStore?)await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database.Database, CancellationToken.None);
+        var replica = new RevisionReplica();
+        var bootstrap = await replica.PullAsync(api.Server, database.Database);
+        await Assert.That(bootstrap.Revision.Generation).IsGreaterThan(1UL);
+
+        await using (var file = new FileStream(store!.FilePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+        {
+            file.SetLength(file.Length / 2);
+        }
+
+        await Assert.That(() => new RevisionReplica().PullAsync(api.Server, database.Database)).Throws<InvalidDataException>();
+        await Assert.That(store.CloseRefusal).IsNotNull();
+        await Assert.That(() => new RevisionReplica().PullAsync(api.Server, database.Database)).Throws<InvalidOperationException>();
+    }
+
     private static async Task AssertConvergedAsync(ManagementApi api, RevisionDatabase database, RevisionReplica replica, RevisionPullResult pull)
     {
         var fresh = new RevisionReplica();
         var bootstrap = await fresh.PullAsync(api.Server, database.Database);
         await Assert.That(bootstrap.Revision).IsEqualTo(pull.Revision);
         await Assert.That(replica.SameAs(fresh)).IsTrue();
-        await Assert.That(database.Missing(replica)).IsEqualTo(0);
+        await Assert.That(database.Differences(replica)).IsEqualTo(0);
         await Assert.That(await database.LostAckedWritesAsync(api)).IsEqualTo(0);
     }
 

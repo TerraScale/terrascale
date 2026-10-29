@@ -3,41 +3,25 @@ using System.Buffers.Binary;
 using System.Globalization;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Revisions;
+using TerraBase.Features.Memory;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed class TursoRevisionLedger(string path)
+internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, TenantContext? tenant) : IDisposable
 {
     internal const ulong CheckpointFrames = 1024;
     private const int FrameBatch = 1024;
+    private const long BaseBytes = 4096;
+    private const long IndexEntryBytes = 24;
+    private const long PageNumberBytes = 8;
 
     private readonly Lock _gate = new();
     private RevisionManifest? _manifest;
     private LiveGeneration _live = new();
     private SqliteConnection? _attached;
     private string? _fenced;
-
-    internal bool CheckpointDue
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _attached is not null && _live.MaxFrame - _live.BaseFrame >= CheckpointFrames;
-            }
-        }
-    }
-
-    internal DatabaseRevision? Current
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _attached is null || _manifest is null ? null : _manifest.Current(_live.MaxFrame);
-            }
-        }
-    }
+    private IMemoryReservation? _retained;
 
     internal bool IsAttachedTo(SqliteConnection writer)
     {
@@ -151,12 +135,10 @@ internal sealed class TursoRevisionLedger(string path)
 
     internal static void EndSnapshot(SqliteConnection reader) => Execute(reader, "ROLLBACK;");
 
-    internal RevisionPullResult? Pull(SqliteConnection reader, string? clientRevision, Action<uint, ReadOnlySpan<byte>> page, CancellationToken cancellationToken)
+    internal RevisionPullPlan PlanPull(SqliteConnection reader, string? clientRevision)
     {
         var snapshot = reader.GetWalState();
         var size = PageCount(reader);
-        RevisionPlan plan;
-        DatabaseRevision revision;
         lock (_gate)
         {
             ThrowIfFenced();
@@ -164,16 +146,32 @@ internal sealed class TursoRevisionLedger(string path)
                 || snapshot.CheckpointSequence != _live.CheckpointSequence
                 || snapshot.MaxFrame != _live.MaxFrame)
             {
-                return null;
+                throw new InvalidOperationException("a pull snapshot must match the revision index it was planned against");
             }
 
-            plan = RevisionPlanner.Plan(_manifest, _live, clientRevision);
-            revision = _manifest.Current(snapshot.MaxFrame);
-        }
+            var reservation = memory?.TryReserve(MemoryLane.Bulk, BaseBytes + (IndexedPages() * PageNumberBytes * 2), tenant);
+            if (memory is not null && reservation is null)
+            {
+                throw new StorageBusyException();
+            }
 
-        var pages = plan.Full is null
-            ? plan.Pages.Where(number => number <= size).Order()
-            : Enumerable.Range(1, (int)size).Select(number => (uint)number);
+            try
+            {
+                var plan = RevisionPlanner.Plan(_manifest, _live, clientRevision);
+                uint[]? pages = plan.Full is null ? [.. plan.Pages.Where(number => number <= size).Order()] : null;
+                return new RevisionPullPlan(_manifest.Current(snapshot.MaxFrame), plan.Full, pages, size, reservation);
+            }
+            catch
+            {
+                reservation?.Dispose();
+                throw;
+            }
+        }
+    }
+
+    internal static RevisionPullResult Stream(SqliteConnection reader, RevisionPullPlan plan, Action<uint, ReadOnlySpan<byte>> page, CancellationToken cancellationToken)
+    {
+        var pages = plan.Pages ?? Enumerable.Range(1, (int)plan.DatabaseSize).Select(number => (uint)number);
         var sent = 0;
         var buffer = ArrayPool<byte>.Shared.Rent(reader.PageSize);
         try
@@ -184,7 +182,7 @@ internal sealed class TursoRevisionLedger(string path)
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!reader.TryReadSnapshotPage(number, span))
                 {
-                    throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture, $"page {number} is missing at frame {revision.Frame}"));
+                    throw StoredDataCorruption.Create(string.Create(CultureInfo.InvariantCulture, $"page {number} of {plan.DatabaseSize} is missing at frame {plan.Revision.Frame}"));
                 }
 
                 page(number, span);
@@ -196,7 +194,55 @@ internal sealed class TursoRevisionLedger(string path)
             ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        return new RevisionPullResult(revision, plan.Full, sent, size);
+        return new RevisionPullResult(plan.Revision, plan.Full, sent, plan.DatabaseSize);
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _retained?.Dispose();
+            _retained = null;
+        }
+    }
+
+    private long IndexedPages() =>
+        _live.Pages.Count + _manifest!.Sealed.Sum(entry => (long)entry.Pages.Count) + _manifest.Horizon.Sum(bucket => (long)bucket.Pages.Count);
+
+    private void Account()
+    {
+        if (memory is null || _manifest is null)
+        {
+            return;
+        }
+
+        var needed = BaseBytes + (IndexedPages() * IndexEntryBytes);
+        if (_retained is { } held && held.Bytes >= needed)
+        {
+            return;
+        }
+
+        if (_retained is { } grown && memory.TryGrow(grown, needed - grown.Bytes))
+        {
+            return;
+        }
+
+        if (memory.TryReserve(MemoryLane.Bulk, needed, tenant) is { } fresh)
+        {
+            _retained?.Dispose();
+            _retained = fresh;
+            return;
+        }
+
+        _manifest.Horizon.Clear();
+        for (var index = 0; index < _manifest.Sealed.Count; index++)
+        {
+            _manifest.Sealed[index] = _manifest.Sealed[index] with { Full = true, Pages = new Dictionary<uint, ulong>() };
+        }
+
+        _live.Full = true;
+        _live.Pages.Clear();
+        _live.Pages.TrimExcess();
     }
 
     private bool CheckpointLocked(SqliteConnection writer)
@@ -305,10 +351,12 @@ internal sealed class TursoRevisionLedger(string path)
         }
 
         _live.MaxFrame = upTo;
+        Account();
     }
 
     private void Store()
     {
+        Account();
         try
         {
             RevisionManifestFile.Store(path, _manifest!);

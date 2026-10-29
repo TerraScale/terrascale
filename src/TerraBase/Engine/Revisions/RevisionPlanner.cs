@@ -17,6 +17,11 @@ internal readonly record struct RevisionPlan(FullReason? Full, IReadOnlySet<uint
 
 internal sealed record RevisionPullResult(DatabaseRevision Revision, FullReason? Full, int Pages, uint DatabaseSize);
 
+internal sealed record RevisionPullPlan(DatabaseRevision Revision, FullReason? Full, uint[]? Pages, uint DatabaseSize, IDisposable? Reservation) : IDisposable
+{
+    public void Dispose() => Reservation?.Dispose();
+}
+
 internal static class RevisionPlanner
 {
     public static RevisionPlan Plan(RevisionManifest manifest, LiveGeneration live, string? client)

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -7,6 +6,7 @@ using TerraBase.Engine.Revisions;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Fast.Revisions;
 
@@ -49,10 +49,44 @@ internal sealed class RevisionReplica
         && Enumerable.Range(1, (int)Size).All(number =>
             _pages.TryGetValue((uint)number, out var mine) && other._pages.TryGetValue((uint)number, out var theirs) && mine.AsSpan().SequenceEqual(theirs));
 
-    public bool Holds(string marker)
+    public Dictionary<string, string> Rows()
     {
-        var bytes = Encoding.UTF8.GetBytes(marker);
-        return _pages.Values.Any(page => page.AsSpan().IndexOf(bytes) >= 0);
+        var directory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var file = Path.Combine(directory, "replica.db");
+            using (var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write))
+            {
+                for (uint number = 1; number <= Size; number++)
+                {
+                    stream.Write(_pages[number]);
+                }
+            }
+
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ConnectionString);
+            connection.Open();
+            using var check = connection.CreateCommand();
+            check.CommandText = "PRAGMA integrity_check";
+            if (check.ExecuteScalar() as string != "ok")
+            {
+                throw new InvalidDataException("the replica image fails its integrity check");
+            }
+
+            using var query = connection.CreateCommand();
+            query.CommandText = "SELECT id, v FROM items";
+            using var reader = query.ExecuteReader();
+            var rows = new Dictionary<string, string>(StringComparer.Ordinal);
+            while (reader.Read())
+            {
+                rows[reader.GetString(0)] = reader.GetString(1);
+            }
+
+            return rows;
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 }
 
@@ -120,7 +154,11 @@ internal sealed class RevisionDatabase
         return _acked.Count(row => !rows.TryGetValue(row.Key, out var value) || value != row.Value) + rows.Keys.Count(id => !_acked.ContainsKey(id));
     }
 
-    public int Missing(RevisionReplica replica) => _acked.Values.Count(value => !replica.Holds(value[..28]));
+    public int Differences(RevisionReplica replica)
+    {
+        var rows = replica.Rows();
+        return _acked.Count(row => !rows.TryGetValue(row.Key, out var value) || value != row.Value) + rows.Keys.Count(id => !_acked.ContainsKey(id));
+    }
 
     private async Task<JsonElement> ExecuteAsync(ManagementApi api, object[] statements)
     {

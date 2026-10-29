@@ -24,39 +24,58 @@ internal sealed partial class TursoDatabaseStore
 
     internal async Task<RevisionPullResult> PullRevisionAsync(string? clientRevision, Action<uint, ReadOnlySpan<byte>> page, CancellationToken cancellationToken)
     {
-        while (true)
+        if (Ledger is { } ledger && !IsSystem)
         {
-            var reader = await RentAsync(cancellationToken).ConfigureAwait(false);
-            RevisionPullResult? result;
-            try
+            await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
+        }
+
+        ThrowIfRefused(rebuild: false);
+        var reader = await RentAsync(cancellationToken).ConfigureAwait(false);
+        RevisionPullResult result;
+        try
+        {
+            using var plan = await WithWriterAsync(writer =>
             {
-                await WithWriterAsync(writer =>
-                {
-                    Revisions.Catch(writer.Connection);
-                    TursoRevisionLedger.BeginSnapshot(reader.Connection);
-                    return true;
-                }, "a revision pull", cancellationToken).ConfigureAwait(false);
+                RefuseFaultedCopy();
+                Revisions.Catch(writer.Connection);
+                TursoRevisionLedger.BeginSnapshot(reader.Connection);
                 try
                 {
-                    result = await io.RunAsync(() => Revisions.Pull(reader.Connection, clientRevision, page, cancellationToken), cancellationToken).ConfigureAwait(false);
+                    return Revisions.PlanPull(reader.Connection, clientRevision);
                 }
-                finally
+                catch
                 {
-                    await io.RunAsync(() => TursoRevisionLedger.EndSnapshot(reader.Connection), CancellationToken.None).ConfigureAwait(false);
+                    TursoRevisionLedger.EndSnapshot(reader.Connection);
+                    throw;
                 }
-            }
-            catch (Exception error)
+            }, "a revision pull", cancellationToken).ConfigureAwait(false);
+            try
             {
-                await RecordOperationDamageAsync(error).ConfigureAwait(false);
-                await io.RunAsync(() => pool.Discard(reader), CancellationToken.None).ConfigureAwait(false);
-                throw;
+                result = await io.RunAsync(() => TursoRevisionLedger.Stream(reader.Connection, plan, page, cancellationToken), cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                await io.RunAsync(() => TursoRevisionLedger.EndSnapshot(reader.Connection), CancellationToken.None).ConfigureAwait(false);
             }
 
-            await ReturnAsync(reader).ConfigureAwait(false);
-            if (result is not null)
-            {
-                return result;
-            }
+            RefuseFaultedCopy();
+        }
+        catch (Exception error)
+        {
+            await RecordOperationDamageAsync(error).ConfigureAwait(false);
+            await io.RunAsync(() => pool.Discard(reader), CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+
+        await ReturnAsync(reader).ConfigureAwait(false);
+        return result;
+    }
+
+    private void RefuseFaultedCopy()
+    {
+        if (CloseRefusal is { } refusal)
+        {
+            throw new ReplicaCopyFaultedException(refusal);
         }
     }
 

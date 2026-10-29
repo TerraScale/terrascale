@@ -235,7 +235,7 @@ internal sealed partial class TursoDatabaseStore(
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
     internal TursoWriteLane WriteLane { get; } = new(name, io);
 
-    internal TursoRevisionLedger Revisions { get; } = new(path);
+    internal TursoRevisionLedger Revisions { get; } = new(path, schemaMemory, tenant);
 
     // Boxed so a reader never sees a torn value.
     private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
@@ -710,11 +710,14 @@ internal sealed partial class TursoDatabaseStore(
                 await session.ExecuteAsync(WriteLane, () => Scalar(session.Connection, null, TursoSession.CaptureOn), cancellationToken).ConfigureAwait(false);
             }
 
-            await session.ExecuteAsync(WriteLane, () =>
+            if (CloseRefusal is null)
             {
-                Revisions.Attach(session.Connection);
-                return true;
-            }, cancellationToken).ConfigureAwait(false);
+                await session.ExecuteAsync(WriteLane, () =>
+                {
+                    Revisions.Attach(session.Connection);
+                    return true;
+                }, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -1335,6 +1338,7 @@ internal sealed partial class TursoDatabaseStore(
     /// </summary>
     public void Dispose()
     {
+        Revisions.Dispose();
         pool.Close(this);
         // A writer holding _writer now closes the connection itself when it releases it.
         if (_writer.Wait(0))
