@@ -8,6 +8,12 @@
         "resolved": "35.6.5",
         "contentHash": "2FGZn+aAVHjmCgClgmGkTDBVZk0zkLvAKGaxEf5JL6b3i9JbHTE4wnuY4vHCuzlCmJdU6VZjgDfHwmYkQF8VAA=="
       },
+      "Microsoft.Extensions.TimeProvider.Testing": {
+        "type": "Direct",
+        "requested": "[10.10.0, )",
+        "resolved": "10.10.0",
+        "contentHash": "8duZdxuO3Oo8tlyQXVq1drXee6GJC9DjUU97Pq3YaIqf92jrAHsWxbbRKwvjQI48Mer3IANwUKF0elqvHeY4Rw=="
+      },
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
         "requested": "[11.0.0-rc.1.26425.128, )",
@@ -34,6 +40,17 @@
           "Microsoft.Testing.Extensions.TrxReport": "2.5.1",
           "TUnit.Assertions": "1.73.19",
           "TUnit.Engine": "1.73.19"
+        }
+      },
+      "ZLogger": {
+        "type": "Direct",
+        "requested": "[2.5.10, )",
+        "resolved": "2.5.10",
+        "contentHash": "KjQaJ1M3b7cuouXwxhX1CEyCqQ1mOlFslGe5lSELmDYIo5kemzi2Y23jeESqtXrNw+iLLN2+89qpm9Il/cG0bg==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging": "8.0.0",
+          "System.IO.Hashing": "8.0.0",
+          "Utf8StringInterpolation": "1.3.1"
         }
       },
       "libsodium": {
@@ -429,6 +446,21 @@
           "ZString": "[2.6.0, )"
         }
       },
+      "turso.data": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Raw": "[0.8.2, )"
+        }
+      },
+      "turso.data.sqlite": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Data": "[0.8.2, )"
+        }
+      },
+      "turso.raw": {
+        "type": "Project"
+      },
       "Geralt": {
         "type": "CentralTransitive",
         "requested": "[4.4.0, )",
@@ -696,17 +728,6 @@
         "contentHash": "znVAGER3PL9M9JaF9OjJBxaNxyiANWuP2ofWN172e0eGM+vsmeIIEYr9RKn/hUQ167zGFfo8JtHzdbZp4i9Wqw==",
         "dependencies": {
           "Sentry.Extensions.Logging": "6.12.0"
-        }
-      },
-      "ZLogger": {
-        "type": "CentralTransitive",
-        "requested": "[2.5.10, )",
-        "resolved": "2.5.10",
-        "contentHash": "KjQaJ1M3b7cuouXwxhX1CEyCqQ1mOlFslGe5lSELmDYIo5kemzi2Y23jeESqtXrNw+iLLN2+89qpm9Il/cG0bg==",
-        "dependencies": {
-          "Microsoft.Extensions.Logging": "8.0.0",
-          "System.IO.Hashing": "8.0.0",
-          "Utf8StringInterpolation": "1.3.1"
         }
       },
       "ZString": {
