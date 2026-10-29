@@ -46,3 +46,7 @@ for (const file of ['_redirects', '_headers', 'pricing.json', 'regions.json']) {
 assert.equal(read('sdk.html'), secureHtml(readFileSync(new URL('../static/sdk.html', import.meta.url), 'utf8')))
 assert.ok(!existsSync(new URL('../build/_worker.js', import.meta.url)), 'static assets only')
 console.log('Verified five prerendered pages, navigation, canonical URLs, CSP hashes, and static resources.')
+const sdk = read('sdk.html')
+assert.ok(sdk.includes('content="terrascale.tech/sdk git https://github.com/TerraScale/terrascale sdk/go"'), 'Go 1.25+ subdirectory discovery')
+assert.ok(sdk.includes('name="go-source"'), 'Go source links')
+assert.ok(!sdk.includes('github.com/TerraScale/ts-go'), 'SDK source uses monorepo')

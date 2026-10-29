@@ -37,11 +37,17 @@ npm run cf:dev
 
 ## Deployment
 
-GitHub Actions runs CodeQL and secret scanning (`.github/workflows/`). `npm run
-build` runs the `scripts/*.test.mjs` tests before prerendering. Cloudflare Workers
-Builds builds `main` from Git (`npm run build`, then `npx wrangler deploy`). `wrangler.toml` serves
-`build/` as static assets only (no Worker script) on `terrascale.tech` and
-`www.terrascale.tech`. `npm run cf:dev` serves the built site locally.
+The monorepo's `.github/workflows/landing-ci.yml` validates changes under
+`landing-site/` and deploys green `main` to the existing Cloudflare Worker.
+From the monorepo root, `make landing-test-fast` installs locked dependencies,
+runs the tests, prerenders the site and validates the static output. Production
+builds publish their monorepo commit in `/build-info.json`.
+
+`wrangler.toml` serves `build/` as static assets only (no Worker script) on
+`terrascale.tech` and `www.terrascale.tech`. Pricing and region catalogs remain
+published at `/pricing.json` and `/regions.json`. The `/sdk` vanity route uses
+Go 1.25+ subdirectory discovery for `sdk/go` in the monorepo; Go releases use
+`sdk/go/v*` tags.
 
 ## Icons
 
