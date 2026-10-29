@@ -8,6 +8,7 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
+using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
@@ -44,7 +45,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>
     internal const string LockFileName = ".terrabase.lock";
-    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix];
+    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix];
 
     // The data directory's own scratch: native temporary files (.tmp), backup frames (.backup), import staging (.import) and
     // export scratch (.exports). Never databases: the file audit warned about every backup frame and native temp file each

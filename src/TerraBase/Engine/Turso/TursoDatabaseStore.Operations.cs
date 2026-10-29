@@ -129,7 +129,17 @@ internal sealed partial class TursoDatabaseStore
         {
             if (CurrentWriter() is { } writer && CloseRefusal is null)
             {
-                await WriteLane.RunAsync(() => Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);"), CancellationToken.None).ConfigureAwait(false);
+                await WriteLane.RunAsync(() =>
+                {
+                    if (Revisions.IsAttachedTo(writer.Connection))
+                    {
+                        Revisions.Checkpoint(writer.Connection);
+                    }
+                    else
+                    {
+                        Scalar(writer.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                    }
+                }, CancellationToken.None).ConfigureAwait(false);
             }
             operation?.Complete();
         }

@@ -175,6 +175,10 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             {
                 opening = true;
                 OpenExisting(connection, new SqliteConnectionStringBuilder(connectionString).DataSource);
+                if (store is not null)
+                {
+                    connection.UseManualWal();
+                }
             }, cancellationToken).ConfigureAwait(false);
             await session.ExecuteAsync(io, () =>
             {
