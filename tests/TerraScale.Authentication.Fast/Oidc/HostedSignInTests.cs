@@ -42,7 +42,11 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         using var unknown = await oidc.PostFormAsync(SignIn, new() { ["email"] = "nobody@example.test", ["next"] = string.Empty });
         await Assert.That(unknown.StatusCode).IsEqualTo(known.StatusCode);
         await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await unknown.Content.ReadAsStringAsync()).Contains("If an account exists for <strong>nobody@example.test</strong>");
+        var page = await unknown.Content.ReadAsStringAsync();
+        await Assert.That(page).Contains("If an account exists for <strong>nobody@example.test</strong>");
+        // No mail goes to an unknown address (no enumeration), so the page says what to check and where to sign up.
+        await Assert.That(page).Contains("that the address is spelled right");
+        await Assert.That(page).Contains("/ui/terrascale/sign-up");
 
         // Exactly one mail went out: the one for the known address from the same-origin post.
         var (recipient, _) = await oidc.Email.NextAsync();
