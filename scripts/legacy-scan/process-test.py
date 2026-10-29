@@ -70,6 +70,10 @@ cases = [
     ({"parser.cs": "JsonDocument document; document = await JsonDocument.ParseAsync(stream); return document; DocumentKey"}, "fail", 1, {"documents"}, [("parser.cs", 1, "documents", "E4")]),
     ({"src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Properties/Resources.cs": "Too many restrictions specified for collection {collectionName}. DocumentKey"}, "fail", 1, {"documents"}),
     ({"src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/SqliteConnection.cs": "DbMetaDataCollectionNames.MetaDataCollections CollectionName collectionName UnknownCollection; webhooks"}, "fail", 1, {"webhooks"}),
+    ({"parser.py": "from collections.abc import Awaitable, Callable; import collections; collections.defaultdict; collections.Counter"}, "fail", 0, set()),
+    ({"parser.py": "import collections; documents"}, "fail", 1, {"documents"}),
+    ({"parser.rs": "use std::collections::{hash_map::RandomState, BTreeSet}; collections::HashMap"}, "fail", 0, set()),
+    ({"parser.rs": "use std::collections::HashMap; DocumentKey"}, "fail", 1, {"documents"}),
     ({"Hrana.txt": "SQL rows"}, "fail", 1, {"hrana"}),
 ]
 for name in ["src/TerraScale.Endpoints/RequestBinder.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Properties/Resources.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/SqliteConnection.cs"]:
