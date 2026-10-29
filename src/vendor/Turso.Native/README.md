@@ -8,7 +8,7 @@ The required `native` job still gates `test`. Native maintenance is an explicit
 One maintenance dispatch runs two independent clean builds per real architecture
 and compares their library bytes before preparing an artifact for parent publication; they do not qualify Fast, publish images or upload a release.
 
-Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-20261029`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-20261029), which adds the WAL revision contract ([2026-10-29-wal-revision.md](2026-10-29-wal-revision.md)) and the connection interrupt, query timeout and value length exports (patch 0005, run https://github.com/TerraScale/terrascale/actions/runs/40941384797) to the 2026-10-23 build.
+Release: [`turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-20261029`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-20261029), which adds the WAL revision contract ([2026-10-29-wal-revision.md](2026-10-29-wal-revision.md)) and the connection interrupt, query timeout and value length exports (patch 0005, run https://github.com/TerraScale/terrascale/actions/runs/40941384797) to the 2026-10-23 build.
 `SHA256SUMS` pins both qualified libraries; downloads and managed builds reject
 missing or mismatched bytes. Never replace or append assets to encryption-only
 `turso-native-v1` or overwrite the combined release.
