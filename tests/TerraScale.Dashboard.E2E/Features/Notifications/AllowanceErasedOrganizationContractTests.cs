@@ -49,7 +49,8 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
             }
 
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            { if (logLevel >= LogLevel.Warning)
+            {
+                if (logLevel >= LogLevel.Warning)
                 {
                     Interlocked.Increment(ref Count);
                 }

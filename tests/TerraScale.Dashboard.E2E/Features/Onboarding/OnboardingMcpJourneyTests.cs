@@ -165,7 +165,9 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
             .Single(value => value.StartsWith("ts-dashboard-session=", StringComparison.Ordinal)).Split(';')[0];
         }
 
-        private static void Check(bool condition, string message) { if (!condition)
+        private static void Check(bool condition, string message)
+        {
+            if (!condition)
             {
                 throw new InvalidOperationException(message);
             }

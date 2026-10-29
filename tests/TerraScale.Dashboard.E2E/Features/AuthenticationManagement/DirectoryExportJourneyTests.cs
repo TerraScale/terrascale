@@ -115,7 +115,9 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement
                 HttpJourney.PostFormAsync(browser, "/api/v1/auth-management/users/export", new() { ["_csrf"] = csrf, ["project_id"] = project, ["format"] = format, ["after"] = after });
         }
 
-        private static void Check(bool condition, string message) { if (!condition)
+        private static void Check(bool condition, string message)
+        {
+            if (!condition)
             {
                 throw new InvalidOperationException(message);
             }

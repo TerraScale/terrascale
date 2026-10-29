@@ -157,7 +157,9 @@ namespace TerraScale.Dashboard.E2E
                 var next = new DateTimeOffset(now.Year, now.Month, 1, 12, 0, 0, TimeSpan.Zero).AddMonths(1);
                 Interlocked.Add(ref offset, (next - now).Ticks);
             }
-            public void Tick() { foreach (var timer in timers.Keys)
+            public void Tick()
+            {
+                foreach (var timer in timers.Keys)
                 {
                     timer.Fire();
                 }
@@ -170,7 +172,9 @@ namespace TerraScale.Dashboard.E2E
             }
             private sealed class ManualTimer(TimerCallback callback, object? state, ConcurrentDictionary<ManualTimer, byte> timers) : ITimer
             {
-                public void Fire() { if (timers.ContainsKey(this))
+                public void Fire()
+                {
+                    if (timers.ContainsKey(this))
                     {
                         callback(state);
                     }

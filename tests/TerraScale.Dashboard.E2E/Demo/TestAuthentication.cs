@@ -48,7 +48,9 @@ namespace TerraScale.Dashboard.E2E.Demo
         });
         }
 
-        private static T Locked<T>(Tenant tenant, Func<T> action) { lock (tenant)
+        private static T Locked<T>(Tenant tenant, Func<T> action)
+        {
+            lock (tenant)
             {
                 return action();
             }
